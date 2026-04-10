@@ -1,0 +1,191 @@
+        <div class="page-view active dashboard-sky-theme">
+            <div class="page-title flex-between dashboard-page-title-compact">
+                <div class="dashboard-title-line" style="flex:1; min-width:0;">
+                    <h1>PostgreSQL Control Center</h1>
+                    <span class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></span>
+                </div>
+                <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
+                    <div class="glass-panel p-2 rounded" style="display:flex; align-items:center; gap:0.5rem;">
+                        <span class="text-muted" style="font-size:0.75rem;">DB Health</span>
+                        <span id="pgHealthScoreBadge" class="badge badge-success" style="min-width:5.5rem; text-align:center;">--</span>
+                    </div>
+                    <div id="pgStatusStrip"></div>
+                    <div class="time-picker glass-panel p-2 rounded custom-select-group text-right" style="display:flex; flex-direction:column; gap:0.15rem;">
+                        <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="pgLastRefreshTime">--:--:--</span></span>
+                        <span class="text-muted" style="font-size:0.75rem" id="pg-uptime">Loading...</span>
+                        <span class="text-muted" style="font-size:0.75rem" id="pg-version">Loading...</span>
+                    </div>
+                    <button class="btn btn-sm btn-outline" onclick="window.appNavigate('drilldown-pg-enterprise')" title="Advanced / raw Timescale-backed enterprise metrics"><i class="fa-solid fa-server"></i> Advanced</button>
+                    <button class="btn btn-sm btn-outline text-accent" onclick="window.PgDashboardView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                </div>
+            </div>
+
+            <!-- SQL Server-style strips (consistent visual language) -->
+            <div class="top-strips dashboard-top-strips" style="margin-top:0.5rem; display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+                <div class="glass-panel dashboard-strip-panel">
+                    <div class="dashboard-strip-header">
+                        <h4>
+                            <span class="dashboard-strip-header-icons" aria-hidden="true">
+                                <i class="fa-solid fa-database" title="PostgreSQL"></i>
+                                <i class="fa-solid fa-gauge-high" title="Workload"></i>
+                                <i class="fa-solid fa-microchip" title="Host"></i>
+                            </span>
+                            Workload &amp; Activity
+                        </h4>
+                    </div>
+                    <div class="dashboard-strip-metrics-row--9">
+                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-queries')" title="Transactions per second (from pg_stat_database deltas). Useful for workload intensity baseline.">
+                            <div class="strip-metric-label">TPS</div>
+                            <div class="strip-metric-value metric-value" data-metric="tps">Loading...</div>
+                            <div class="text-muted sub">Transactions/sec</div>
+                        </div>
+                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-sessions')" title="Active vs waiting sessions (from pg_stat_activity). High waiting suggests contention (locks/IO).">
+                            <div class="strip-metric-label">Sessions</div>
+                            <div class="strip-metric-value metric-value" data-metric="sessions-aw">--</div>
+                            <div class="text-muted sub">Active / Waiting</div>
+                        </div>
+                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-sessions')" title="Active/total connections. Spikes can indicate pool issues or connection storms.">
+                            <div class="strip-metric-label">Connections</div>
+                            <div class="strip-metric-value metric-value" data-metric="connections">Loading...</div>
+                            <div class="text-muted sub">Active / Total</div>
+                        </div>
+                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-storage')" title="Buffer cache hit ratio (pg_stat_database). Low values suggest disk reads / missing indexes / small cache.">
+                            <div class="strip-metric-label">Cache Hit</div>
+                            <div class="strip-metric-value metric-value" data-metric="cache-hit">Loading...</div>
+                            <div class="text-muted sub">Buffer hit ratio</div>
+                        </div>
+                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-cpu')" title="Host CPU utilization %. High sustained CPU can slow query execution and background tasks.">
+                            <div class="strip-metric-label">CPU</div>
+                            <div class="strip-metric-value metric-value" data-metric="system-cpu">Loading...</div>
+                            <div class="text-muted sub">System CPU</div>
+                        </div>
+                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-memory')" title="Host memory used %. High memory pressure can cause swapping and latency spikes.">
+                            <div class="strip-metric-label">Memory</div>
+                            <div class="strip-metric-value metric-value" data-metric="system-mem">Loading...</div>
+                            <div class="text-muted sub">System RAM</div>
+                        </div>
+                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-replication')" title="Max replication lag in seconds (derived from lag MB and WAL rate). High lag risks stale reads and RPO/RTO impact.">
+                            <div class="strip-metric-label">Replication Lag</div>
+                            <div class="strip-metric-value metric-value" data-metric="repl-lag">--</div>
+                            <div class="text-muted sub">Max lag (sec)</div>
+                        </div>
+                        <div class="strip-metric-cell" id="pgDiskFreeCell" style="display:none;" title="Host filesystem free space for the configured PG mount(s). If this goes low, PostgreSQL can crash or go read-only due to WAL/data writes failing.">
+                            <div class="strip-metric-label">Disk Free</div>
+                            <div class="strip-metric-value metric-value" data-metric="disk-free">--</div>
+                            <div class="text-muted sub" id="pgDiskFreeSub">--</div>
+                        </div>
+                        <div class="strip-metric-cell" id="pgDbSizeCell" title="Total database sizes (sum of pg_database_size). Growth is estimated from previous sample.">
+                            <div class="strip-metric-label">DB Size</div>
+                            <div class="strip-metric-value metric-value" data-metric="db-size">--</div>
+                            <div class="text-muted sub" id="pgDbSizeSub">--</div>
+                        </div>
+                        <div class="strip-metric-cell" id="pgBackupCell" style="display:none; cursor:pointer;" onclick="window.appNavigate('pg-backups')" title="Last backup run status (reported by your backup job). If this is missing or failed, your recovery posture is unknown/at risk. Click for history.">
+                            <div class="strip-metric-label">Backup</div>
+                            <div class="strip-metric-value metric-value" data-metric="backup-status">--</div>
+                            <div class="text-muted sub" id="pgBackupSub">--</div>
+                        </div>
+                        <div class="strip-metric-cell" id="pgPoolerCell" style="display:none;" title="PgBouncer pool health (clients waiting vs active servers). Only shown if pgbouncer_admin_dsn is configured and stats are collected.">
+                            <div class="strip-metric-label">Pooler</div>
+                            <div class="strip-metric-value metric-value" data-metric="pooler-wait">--</div>
+                            <div class="text-muted sub" id="pgPoolerSub">--</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-panel dashboard-strip-panel">
+                    <div class="dashboard-strip-header">
+                        <h4>
+                            <span class="dashboard-strip-header-icons" aria-hidden="true">
+                                <i class="fa-solid fa-heartbeat" title="DBA checks"></i>
+                                <i class="fa-solid fa-shield-halved" title="Risk"></i>
+                            </span>
+                            Durability &amp; Risk Signals
+                        </h4>
+                    </div>
+                    <div class="dashboard-strip-metrics-row--8">
+                        <div class="strip-metric-cell" id="metric-xid-wraparound" title="Transaction ID (XID) wraparound risk. Approaching autovacuum_freeze_max_age can force emergency vacuum / read-only risk.">
+                            <div class="strip-metric-label">XID Wraparound</div>
+                            <div class="strip-metric-value metric-value" data-metric="xid-wraparound">0%</div>
+                            <div class="text-muted sub" id="xid-trend">Safe</div>
+                        </div>
+                        <div class="strip-metric-cell" id="metric-wal-fails" title="WAL archiver failures (pg_stat_archiver). Non-zero indicates durability risk and broken backups/archiving.">
+                            <div class="strip-metric-label">WAL Fails</div>
+                            <div class="strip-metric-value metric-value" data-metric="wal-fails">0</div>
+                            <div class="text-muted sub" id="wal-trend">Healthy</div>
+                        </div>
+                        <div class="strip-metric-cell" id="metric-table-bloat" title="Highest table bloat estimate (dead tuples vs live). Rising bloat increases IO and slows queries; tune vacuum and indexes.">
+                            <div class="strip-metric-label">Max Table Bloat</div>
+                            <div class="strip-metric-value metric-value" data-metric="max-bloat">0%</div>
+                            <div class="text-muted sub" id="bloat-trend">Clean</div>
+                        </div>
+                        <div class="strip-metric-cell" title="WAL generation rate (MB/min) from pg_stat_wal deltas. Helps spot write bursts and replication pressure.">
+                            <div class="strip-metric-label">WAL Rate</div>
+                            <div class="strip-metric-value metric-value" data-metric="wal-rate">--</div>
+                            <div class="text-muted sub">MB/min</div>
+                        </div>
+                        <div class="strip-metric-cell" id="metric-blocking-sessions" style="cursor:pointer;" onclick="window.appNavigate('pg-locks')" title="Count of sessions waiting on locks (wait_event_type=Lock). Non-zero usually means contention/blocking chains.">
+                            <div class="strip-metric-label">Blocking Sessions</div>
+                            <div class="strip-metric-value metric-value" data-metric="blocking-sessions">0</div>
+                            <div class="text-muted sub">Lock waits</div>
+                        </div>
+                        <div class="strip-metric-cell" title="Checkpoint pressure = requested/timed. High values imply forced checkpoints causing IO spikes; review checkpoint settings and WAL volume.">
+                            <div class="strip-metric-label">Checkpoint Pressure</div>
+                            <div class="strip-metric-value metric-value" data-metric="checkpoint-pressure">--</div>
+                            <div class="text-muted sub">Req/Timed</div>
+                        </div>
+                        <div class="strip-metric-cell" title="Max age(datfrozenxid) across DBs. Large age means vacuum freeze may be falling behind (wraparound risk).">
+                            <div class="strip-metric-label">XID Age</div>
+                            <div class="strip-metric-value metric-value" data-metric="xid-age">--</div>
+                            <div class="text-muted sub">max age(datfrozenxid)</div>
+                        </div>
+                        <div class="strip-metric-cell" id="pgCritErrorsCell" style="display:none; cursor:pointer;" onclick="window.appNavigate('pg-logs')" title="Critical errors seen in PostgreSQL logs in the last hour (FATAL/PANIC/ERROR, auth failures, OOM). Click to browse recent events.">
+                            <div class="strip-metric-label">Critical Errors</div>
+                            <div class="strip-metric-value metric-value" data-metric="crit-errors">0</div>
+                            <div class="text-muted sub" id="pgCritErrorsSub">Last 60m</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Time Series Charts -->
+            <div class="charts-grid mt-3" style="display:grid; grid-template-columns:2fr 1fr 1fr; gap:0.75rem;">
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Database Throughput (TPS)</h3></div>
+                    <div class="chart-container" style="height:130px;"><canvas id="pgTpsChart"></canvas></div>
+                </div>
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Connection State</h3></div>
+                    <div class="chart-container doughnut-container" style="height:130px;"><canvas id="pgConnChart"></canvas></div>
+                </div>
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Blocking (Mini)</h3></div>
+                    <div style="max-height:130px; overflow:auto;">
+                        <table class="table table-sm" style="margin:0; font-size:0.75rem;">
+                            <thead><tr><th>PID</th><th>Wait</th><th>Query</th></tr></thead>
+                            <tbody id="pgBlockingMiniTbody">
+                                <tr><td colspan="3" class="text-muted">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:0.75rem;">
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">WAL Generation Trend</h3></div>
+                    <div class="chart-container" style="height:120px;"><canvas id="pgWalRateChart"></canvas></div>
+                </div>
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Autovacuum Activity</h3></div>
+                    <div class="chart-container" style="height:120px;"><canvas id="pgAutovacChart"></canvas></div>
+                </div>
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Dead Tuple Ratio</h3></div>
+                    <div class="chart-container" style="height:120px;"><canvas id="pgDeadTupleChart"></canvas></div>
+                </div>
+                <div class="chart-card glass-panel" id="pgReplLagChartCard" style="padding:0.75rem; display:none;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Replication Lag (Replicas)</h3></div>
+                    <div class="chart-container" style="height:120px;"><canvas id="pgReplLagDetailChart"></canvas></div>
+                </div>
+            </div>
+        </div>

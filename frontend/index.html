@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQL_Optima | Modular SPA</title>
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="assets/css/styles.css">
+    <!-- Google Fonts: Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <i class="fa-solid fa-server xl-icon logo-icon" id="brand-icon"></i>
+                <h2>SQL_Optima</h2>
+                <button class="btn btn-icon btn-sm sidebar-inline-toggle" id="sidebar-toggle-inline" title="Collapse sidebar" aria-label="Collapse sidebar" style="margin-left:auto;">
+                    <i class="fa-solid fa-angles-left"></i>
+                </button>
+            </div>
+
+            <!-- Target Selection -->
+            <div class="db-selector-wrapper custom-select-group" style="padding: 0.5rem 1.5rem 1rem 1.5rem;">
+                <div>
+                    <label for="instance-select" style="font-size:0.7rem;">Target Server Instance</label>
+                    <select id="instance-select" class="custom-select"><option value="">Loading config...</option></select>
+                </div>
+                <div>
+                    <label for="database-select" style="font-size:0.7rem;">Target Database</label>
+                    <select id="database-select" class="custom-select"><option value="all">-- All Databases --</option></select>
+                </div>
+            </div>
+
+            <!-- Placeholder until config loads; router.js replaces this when an instance is selected -->
+            <ul class="nav-links" id="sidebar-nav" style="padding-top:0.25rem;">
+                <li data-route="global" class="active"><i class="fa-solid fa-globe"></i> Global Estate Overview</li>
+            </ul>
+
+            <div class="sidebar-footer">
+                <div class="theme-toggle-wrapper">
+                    <i class="fa-solid fa-sun"></i>
+                    <label class="switch">
+                        <input type="checkbox" id="theme-toggle" checked>
+                        <span class="slider round"></span>
+                    </label>
+                    <i class="fa-solid fa-moon"></i>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <header class="top-header">
+                <button class="btn btn-icon btn-sm" id="sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar" style="margin-right:0.75rem;">
+                    <i class="fa-solid fa-bars"></i>
+                </button>
+                <div class="search-bar">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="text" id="global-search" placeholder="Search servers, queries, alerts...">
+                </div>
+                <div class="header-actions">
+                    <div class="user-profile">
+                        <img src="https://ui-avatars.com/api/?name=Admin+User&background=random" alt="User" class="avatar">
+                    </div>
+                </div>
+            </header>
+
+            <!-- Dynamic Router Outlet -->
+            <div class="views-container" id="router-outlet">
+                <!-- Modules injected here -->
+            </div>
+        </main>
+    </div>
+
+    <script src="js/utils/debug.js"></script>
+    <script type="module" src="js/entry.js"></script>
+    <script src="js/utils/template.js"></script>
+    <script src="js/components/auth.js"></script>
+    <script src="js/components/router.js"></script>
+    <script src="js/pages/global.js"></script>
+    
+    <!-- MSSQL Dedicated UI Layouts -->
+    <script src="js/pages/mssql_Dashboard.js"></script>
+    <script src="js/pages/mssql_CpuDrilldown.js"></script>
+    <script src="js/pages/mssql_CpuDashboard.js"></script>
+    <script src="js/pages/mssql_InstanceHealthDashboard.js"></script>
+    <script src="js/pages/mssql_QueryDrilldown.js"></script>
+    <script src="js/pages/mssql_GrowthDrilldown.js"></script>
+    <script src="js/pages/mssql_IndexDrilldown.js"></script>
+    <script src="js/pages/mssql_LocksDrilldown.js"></script>
+    <script src="js/pages/mssql_DeadlockDrilldown.js"></script>
+    <script src="js/pages/mssql_Reports.js"></script>
+    <script src="js/pages/mssql_Jobs.js"></script>
+    <script src="js/pages/mssql_TopQueriesDrilldown.js"></script>
+    <script src="js/pages/mssql_MetricDetailDrilldown.js"></script>
+    <script src="js/pages/mssql_BottlenecksDrilldown.js"></script>
+    <script src="js/pages/mssql_HADashboard.js"></script>
+    <script src="js/pages/mssql_EnterpriseMetrics.js"></script>
+    <script src="js/pages/mssql_PerformanceDebt.js"></script>
+    <script src="js/pages/mssql_Settings.js"></script>
+    
+    <!-- PostgreSQL Dedicated UI Layouts -->
+    <script src="js/pages/overview.js"></script>
+    <script src="js/pages/sessions.js"></script>
+    <script src="js/pages/locks.js"></script>
+    <script src="js/pages/queries.js"></script>
+    <script src="js/pages/pg_explain.js"></script>
+    <script src="js/pages/PgStorage.js"></script>
+    <script src="js/pages/replication.js"></script>
+    <script src="js/pages/PgAlerts.js"></script>
+    <script src="js/pages/PgConfig.js"></script>
+    <script src="js/pages/pg_cpu.js"></script>
+    <script src="js/pages/pg_memory.js"></script>
+    <script src="js/pages/pg_enterprise.js"></script>
+    <script src="js/pages/pg_backups.js"></script>
+    <script src="js/pages/pg_logs.js"></script>
+    <script src="js/pages/mssql_DeadlockDashboard.js"></script>
+    <script src="js/pages/cnpg_cluster.js"></script>
+    <script src="js/pages/rules_engine.js"></script>
+    <script src="js/pages/pg_best_practices.js"></script>
+    <script src="js/pages/mssql_LiveDiagnostics.js"></script>
+    <script src="js/components/dynamic-dashboard.js"></script>
+  </body>
+</html>

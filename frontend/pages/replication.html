@@ -1,0 +1,76 @@
+        <div class="page-view active">
+            <div class="page-title">
+                <h1><i class="fa-solid fa-clone text-accent"></i> Replication & Background Engine Status</h1>
+                <p class="subtitle">Monitor WAL replication topologies, Standby sync lag, and internal Checkpointer stats.</p>
+            </div>
+
+            <!-- Top Cards -->
+            <div class="metrics-grid mt-4">
+                <div class="metric-card glass-panel status-healthy">
+                    <div class="metric-header"><span class="metric-title">Cluster Topology State</span><i class="fa-solid fa-server card-icon"></i></div>
+                    <div class="metric-value">1 <span style="font-size:0.5em">Primary</span> | 2 <span style="font-size:0.5em">Standbys</span></div>
+                    <div class="metric-trend positive"><i class="fa-solid fa-check-double"></i> Async Streaming</div>
+                </div>
+                <div class="metric-card glass-panel status-warning">
+                    <div class="metric-header"><span class="metric-title">Max Replication Lag</span><i class="fa-solid fa-clock card-icon"></i></div>
+                    <div class="metric-value">12<span style="font-size:0.5em"> MB</span> / 4<span style="font-size:0.5em">s</span></div>
+                    <div class="metric-trend warning"><i class="fa-solid fa-triangle-exclamation"></i> Sync Delay Detected</div>
+                </div>
+                <div class="metric-card glass-panel status-healthy">
+                    <div class="metric-header"><span class="metric-title">WAL Gen Rate</span><i class="fa-solid fa-file-pen card-icon"></i></div>
+                    <div class="metric-value">4.5<span style="font-size:0.5em"> MB/s</span></div>
+                    <div class="metric-trend positive"><i class="fa-solid fa-arrow-right"></i> Stable Transmission</div>
+                </div>
+                <div class="metric-card glass-panel status-healthy">
+                    <div class="metric-header"><span class="metric-title">BGWriter Efficiency</span><i class="fa-solid fa-brush card-icon"></i></div>
+                    <div class="metric-value">98<span>%</span></div>
+                    <div class="metric-trend positive"><i class="fa-solid fa-check"></i> Few maxwritten stops</div>
+                </div>
+            </div>
+            
+            <div class="charts-grid mt-4">
+                <div class="chart-card glass-panel" style="height: 300px;">
+                    <div class="card-header">
+                        <h3>Replication Lag Trend (MB/s)</h3>
+                    </div>
+                    <div class="chart-container" style="height: 200px;"><canvas id="pgReplCtx"></canvas></div>
+                </div>
+                <div class="chart-card glass-panel col-span-2" style="height: 300px;">
+                    <div class="card-header">
+                        <h3>Checkpointer: Timed vs Requested</h3>
+                    </div>
+                    <div class="chart-container" style="height: 200px;"><canvas id="pgCheckChart"></canvas></div>
+                </div>
+            </div>
+
+            <div class="table-card glass-panel mt-4">
+                <div class="card-header"><h3>Connected Standby Nodes</h3></div>
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>App Name (Node)</th><th>Client Addr</th><th>State</th><th>Sync State</th><th>WAL Sent</th><th>WAL Replay Lag</th><th>Last Replay Timestamp</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>walreceiver (PG-DR-01)</strong></td>
+                                <td>10.0.5.21</td>
+                                <td><span class="badge badge-success">streaming</span></td>
+                                <td><span class="text-accent">async</span></td>
+                                <td>0/789AC00</td>
+                                <td>0 bytes</td>
+                                <td>2026-10-25 14:00:00</td>
+                            </tr>
+                            <tr>
+                                <td><strong>walreceiver (PG-Report-02)</strong></td>
+                                <td>10.0.5.22</td>
+                                <td><span class="badge badge-success">streaming</span></td>
+                                <td><span class="text-accent">async</span></td>
+                                <td>0/789AA00</td>
+                                <td><span class="text-danger font-bold">12 MB</span></td>
+                                <td><span class="text-warning">2026-10-25 13:59:56</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>

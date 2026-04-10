@@ -1,0 +1,59 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/rsharma155/sql_optima/internal/config"
+)
+
+type HealthResponse struct {
+	Status    string `json:"status"`
+	Timestamp string `json:"timestamp"`
+	Version   string `json:"version,omitempty"`
+}
+
+func HandleHealthLiveness(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	resp := HealthResponse{
+		Status:    "ok",
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func HandleHealthReadiness(w http.ResponseWriter, r *http.Request, cfg *config.Config, queriesLoaded bool) {
+	w.Header().Set("Content-Type", "application/json")
+
+	strictMode := os.Getenv("HEALTH_STRICT") == "1"
+
+	if strictMode && !queriesLoaded {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "unhealthy",
+			"reason":  "queries.yml not loaded",
+			"version": "1.0.0",
+		})
+		return
+	}
+
+	if len(cfg.Instances) == 0 {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "unhealthy",
+			"reason":  "no database instances configured",
+			"version": "1.0.0",
+		})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":    "ok",
+		"instances": len(cfg.Instances),
+		"queries":   queriesLoaded,
+		"version":   "1.0.0",
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
+}

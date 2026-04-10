@@ -1,0 +1,51 @@
+<div class="page-view active dashboard-sky-theme">
+  <div class="page-title flex-between dashboard-page-title-compact">
+    <div class="dashboard-title-line" style="flex:1; min-width:0;">
+      <h1><i class="fa-solid fa-shield-halved text-accent"></i> PostgreSQL Backup Timeline</h1>
+      <span class="subtitle">Reported by your backup job via API (Timescale-backed)</span>
+    </div>
+    <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
+      <button class="btn btn-sm btn-outline" onclick="window.appNavigate('pg-dashboard')"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      <button class="btn btn-sm btn-outline text-accent" onclick="window.PgBackupsView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+    </div>
+  </div>
+
+  <div class="glass-panel p-2 rounded" style="margin-top:0.75rem; display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
+    <div class="custom-select-group">
+      <label class="text-muted" style="font-size:0.75rem;">History limit</label>
+      <select id="pgBackupLimit" class="custom-select">
+        <option value="50">50</option>
+        <option value="100" selected>100</option>
+        <option value="250">250</option>
+      </select>
+    </div>
+    <div class="custom-select-group" style="min-width:260px; flex:1;">
+      <label class="text-muted" style="font-size:0.75rem;">Search</label>
+      <input id="pgBackupSearch" class="custom-input" placeholder="filter by tool / type / status / error text" />
+    </div>
+    <div class="text-muted" style="font-size:0.75rem;" id="pgBackupMeta">Loading…</div>
+  </div>
+
+  <div class="table-card glass-panel mt-3" style="padding:0.75rem;">
+    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Backup runs</h3></div>
+    <div class="table-responsive" style="max-height:560px; overflow:auto;">
+      <table class="data-table" style="font-size:0.75rem;">
+        <thead>
+          <tr>
+            <th style="min-width:110px;">Started</th>
+            <th style="min-width:110px;">Finished</th>
+            <th style="min-width:90px;">Status</th>
+            <th style="min-width:110px;">Tool</th>
+            <th style="min-width:120px;">Type</th>
+            <th style="min-width:110px;">Size</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody id="pgBackupTbody">
+          <tr><td colspan="7" class="text-center text-muted">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+

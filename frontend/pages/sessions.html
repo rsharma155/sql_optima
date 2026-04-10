@@ -1,0 +1,100 @@
+        <div class="page-view active dashboard-sky-theme">
+            <div class="page-title flex-between dashboard-page-title-compact">
+                <div class="dashboard-title-line" style="flex:1; min-width:0;">
+                    <h1>PostgreSQL Sessions &amp; Activity</h1>
+                    <span class="subtitle">Instance: <span id="pgSessionsInstance">--</span> | Database: <span class="text-accent" id="pgSessionsDatabase">all</span></span>
+                </div>
+                <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
+                    <div id="pgSessionsStatusStrip"></div>
+                    <div class="filter-group glass-panel p-2 rounded custom-select-group">
+                        <select id="sessionStateFilter" class="custom-select"><option value="all">All States</option><option value="active">Active Only</option><option value="idle in transaction">Idle in Transaction</option></select>
+                    </div>
+                    <button class="btn btn-sm btn-outline" onclick="window.appNavigateBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+                    <button class="btn btn-sm btn-outline text-accent" onclick="window.PgSessionsView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                </div>
+            </div>
+            
+            <div class="glass-panel dashboard-strip-panel mt-3">
+                <div class="dashboard-strip-header">
+                    <h4>
+                        <span class="dashboard-strip-header-icons" aria-hidden="true">
+                            <i class="fa-solid fa-person-circle-exclamation" title="Contention & risk"></i>
+                            <i class="fa-solid fa-stopwatch" title="Long running"></i>
+                        </span>
+                        Session Spotlight (Live)
+                    </h4>
+                </div>
+                <div class="dashboard-strip-metrics-row--8">
+                    <div class="strip-metric-cell" title="Active sessions count (live).">
+                        <div class="strip-metric-label">Active</div>
+                        <div class="strip-metric-value metric-value" id="pgSessActiveNow">—</div>
+                        <div class="text-muted sub">live</div>
+                    </div>
+                    <div class="strip-metric-cell" title="Sessions waiting on something (live; wait_event not empty).">
+                        <div class="strip-metric-label">Waiting</div>
+                        <div class="strip-metric-value metric-value" id="pgSessWaitingNow">—</div>
+                        <div class="text-muted sub">live</div>
+                    </div>
+                    <div class="strip-metric-cell" title="Idle in transaction sessions (live). Often indicates open transactions holding locks.">
+                        <div class="strip-metric-label">Idle in Txn</div>
+                        <div class="strip-metric-value metric-value" id="pgSessIdleInTxnNow">—</div>
+                        <div class="text-muted sub">live</div>
+                    </div>
+                    <div class="strip-metric-cell" title="Longest active duration (time in current active state).">
+                        <div class="strip-metric-label">Longest Active</div>
+                        <div class="strip-metric-value metric-value" id="pgSessLongestActiveDur">—</div>
+                        <div class="text-muted sub" id="pgSessLongestActivePid">—</div>
+                    </div>
+                    <div class="strip-metric-cell" title="Longest idle-in-transaction duration (time in current idle-in-txn state).">
+                        <div class="strip-metric-label">Longest Idle-in-Txn</div>
+                        <div class="strip-metric-value metric-value" id="pgSessLongestIdleInTxnDur">—</div>
+                        <div class="text-muted sub" id="pgSessLongestIdleInTxnPid">—</div>
+                    </div>
+                    <div class="strip-metric-cell" title="Sessions blocked by another backend (live; blocked_by present).">
+                        <div class="strip-metric-label">Blocked</div>
+                        <div class="strip-metric-value metric-value" id="pgSessBlockedNow">—</div>
+                        <div class="text-muted sub">live</div>
+                    </div>
+                    <div class="strip-metric-cell" title="Total sessions returned in the live snapshot.">
+                        <div class="strip-metric-label">Total</div>
+                        <div class="strip-metric-value metric-value" id="pgSessTotalNow">—</div>
+                        <div class="text-muted sub">live</div>
+                    </div>
+                    <div class="strip-metric-cell" title="Quick reminder: Use the filter dropdown to focus on active or idle-in-txn sessions.">
+                        <div class="strip-metric-label">Tip</div>
+                        <div class="strip-metric-value metric-value">Filter</div>
+                        <div class="text-muted sub">active / idle-in-txn</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-grid mt-3" style="display:grid; grid-template-columns:2fr 1fr; gap:0.75rem;">
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Session State Trend</h3></div>
+                    <div class="chart-container" style="height:170px"><canvas id="pgSessionStateTrendChart"></canvas></div>
+                </div>
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Idle-in-Txn Trend</h3></div>
+                    <div class="chart-container" style="height:170px"><canvas id="pgIdleInTxnTrendChart"></canvas></div>
+                </div>
+            </div>
+
+            <div class="table-card glass-panel mt-4">
+                <div class="card-header">
+                    <h3>Sessions (Live)</h3>
+                    <div style="display:flex; gap:0.5rem">
+                        <button class="btn btn-sm btn-outline"><i class="fa-solid fa-play text-success"></i> Resume (future)</button>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>PID</th><th>User | Database</th><th>App Name</th><th>State</th><th>Duration</th><th>Wait Event</th><th>Block PID</th><th>Query</th><th>Actions</th></tr>
+                        </thead>
+                        <tbody id="sessionsTbody">
+                            <tr><td colspan="9" class="text-center text-muted">Loading sessions...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>

@@ -1,0 +1,91 @@
+        <div class="page-view active dashboard-sky-theme">
+            <div class="page-title flex-between">
+                <div>
+                    <button class="btn btn-secondary btn-sm" onclick="window.appNavigateBack()" style="margin-right:1rem;">
+                        <i class="fa-solid fa-arrow-left"></i> Back
+                    </button>
+                    <h1><i class="fa-solid fa-memory text-accent"></i> Memory Usage Details</h1>
+                    <p class="subtitle">OS Memory vs PostgreSQL Memory consumption with historical trends.</p>
+                </div>
+                <div class="flex gap-2">
+                    <button class="btn btn-secondary" onclick="window.appNavigate('pg-cpu')">
+                        <i class="fa-solid fa-microchip"></i> View CPU
+                    </button>
+                    <div class="time-picker glass-panel p-2 rounded custom-select-group text-right">
+                        <span class="text-muted" style="font-size:0.8rem">Last Updated: <strong id="last-updated">Loading...</strong></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="top-strips dashboard-top-strips" style="margin-top:0.5rem;">
+                <div class="glass-panel dashboard-strip-panel">
+                    <div class="dashboard-strip-header">
+                        <h4><span class="dashboard-strip-header-icons" aria-hidden="true"><i class="fa-solid fa-memory"></i></span> Memory & Cache</h4>
+                    </div>
+                    <div class="dashboard-strip-metrics-row--6">
+                        <div class="strip-metric-cell">
+                            <div class="strip-metric-label">OS Memory Used</div>
+                            <div class="strip-metric-value metric-value" id="os-memory-current">--</div>
+                            <div class="text-muted sub" id="os-memory-trend">Host used / total</div>
+                        </div>
+                        <div class="strip-metric-cell">
+                            <div class="strip-metric-label">PostgreSQL Memory</div>
+                            <div class="strip-metric-value metric-value" id="pg-memory-current">--</div>
+                            <div class="text-muted sub" id="pg-memory-trend">shared_buffers configured</div>
+                        </div>
+                        <div class="strip-metric-cell">
+                            <div class="strip-metric-label">Cache Hit</div>
+                            <div class="strip-metric-value metric-value" id="cache-hit-ratio">--</div>
+                            <div class="text-muted sub" id="cache-hit-trend">Buffer hit ratio</div>
+                        </div>
+                        <div class="strip-metric-cell">
+                            <div class="strip-metric-label">Total Memory</div>
+                            <div class="strip-metric-value metric-value" id="total-memory">--</div>
+                            <div class="text-muted sub" id="total-memory-trend">Host total</div>
+                        </div>
+                        <div class="strip-metric-cell">
+                            <div class="strip-metric-label">OS Active</div>
+                            <div class="strip-metric-value metric-value" id="os-mem-active">--</div>
+                            <div class="text-muted sub">Used vs free</div>
+                        </div>
+                        <div class="strip-metric-cell">
+                            <div class="strip-metric-label">PG Share</div>
+                            <div class="strip-metric-value metric-value" id="pg-mem-share">--</div>
+                            <div class="text-muted sub">% of host memory</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="charts-grid mt-3" style="display:grid; grid-template-columns:2fr 1fr; gap:0.75rem;">
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Memory Usage Over Time</h3></div>
+                    <div class="chart-container" style="height:140px;"><canvas id="memoryTimeSeriesChart"></canvas></div>
+                </div>
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">OS Memory Distribution</h3></div>
+                    <div class="chart-container doughnut-container" style="height:140px;"><canvas id="osMemoryBreakdownChart"></canvas></div>
+                </div>
+            </div>
+
+            <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 2fr; gap:0.75rem;">
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">PG Memory Components</h3></div>
+                    <div class="chart-container doughnut-container" style="height:140px;"><canvas id="pgMemoryBreakdownChart"></canvas></div>
+                </div>
+                <div class="table-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Memory Usage Details</h3></div>
+                    <div class="table-responsive" style="max-height:140px; overflow-y:auto;">
+                        <table class="data-table" style="font-size:0.7rem;">
+                            <thead>
+                                <tr><th>Time</th><th>OS Mem %</th><th>PG Mem %</th><th>Cache Hit %</th><th>Shared Buffers</th></tr>
+                            </thead>
+                            <tbody id="memory-details-table">
+                                <tr><td colspan="5" class="text-center text-muted">Loading memory data...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>

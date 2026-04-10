@@ -1,0 +1,1280 @@
+{
+	"Golang errors": {},
+	"Issues": [
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/storage/archiver/archiver.go",
+			"code": "204: func (a *Archiver) verifyParquetFile(path string, expectedRows int) error {\n205: \tf, err := os.Open(path)\n206: \tif err != nil {\n",
+			"line": "205",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null,
+			"autofix": "Consider using os.Root to scope file access under a fixed root (Go \u003e=1.24). Prefer root.Open/root.Stat over os.Open/os.Stat to prevent directory traversal."
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/storage/archiver/archiver.go",
+			"code": "172: \n173: \tf, err := os.Create(parquetPath)\n174: \tif err != nil {\n",
+			"line": "173",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null,
+			"autofix": "Consider using os.Root to scope file access under a fixed root (Go \u003e=1.24). Prefer root.Open/root.Stat over os.Open/os.Stat to prevent directory traversal."
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/config/queries.go",
+			"code": "26: func LoadQueries(path string) error {\n27: \tdata, err := os.ReadFile(path)\n28: \tif err != nil {\n",
+			"line": "27",
+			"column": "15",
+			"nosec": false,
+			"suppressions": null,
+			"autofix": "Consider using os.Root to scope file access under a fixed root (Go \u003e=1.24). Prefer root.Open/root.Stat over os.Open/os.Stat to prevent directory traversal."
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/config/config.go",
+			"code": "36: func LoadConfig(path string) (*Config, error) {\n37: \tdata, err := os.ReadFile(path)\n38: \tif err != nil {\n",
+			"line": "37",
+			"column": "15",
+			"nosec": false,
+			"suppressions": null,
+			"autofix": "Consider using os.Root to scope file access under a fixed root (Go \u003e=1.24). Prefer root.Open/root.Stat over os.Open/os.Stat to prevent directory traversal."
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "LOW",
+			"cwe": {
+				"id": "400",
+				"url": "https://cwe.mitre.org/data/definitions/400.html"
+			},
+			"rule_id": "G112",
+			"details": "Potential Slowloris Attack because ReadHeaderTimeout is not configured in the http.Server",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/cmd/server/main.go",
+			"code": "126: \n127: \tserver := \u0026http.Server{\n128: \t\tAddr:    port,\n129: \t\tHandler: httpHandler,\n130: \t}\n131: \n",
+			"line": "127-130",
+			"column": "13",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "276",
+				"url": "https://cwe.mitre.org/data/definitions/276.html"
+			},
+			"rule_id": "G301",
+			"details": "Expect directory permissions to be 0750 or less",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/storage/archiver/archiver.go",
+			"code": "154: \n155: \tif err := os.MkdirAll(dir, 0755); err != nil {\n156: \t\treturn fmt.Errorf(\"failed to create directory: %w\", err)\n",
+			"line": "155",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "117",
+				"url": "https://cwe.mitre.org/data/definitions/117.html"
+			},
+			"rule_id": "G706",
+			"details": "Log injection via taint analysis",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "847: \t\tif err != nil {\n848: \t\t\tlog.Printf(\"[API] DB Throughput error for %s: %v\", instance, err)\n849: \t\t\tdbStats = []map[string]interface{}{}\n",
+			"line": "848",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "117",
+				"url": "https://cwe.mitre.org/data/definitions/117.html"
+			},
+			"rule_id": "G706",
+			"details": "Log injection via taint analysis",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "813: \t\tif err != nil {\n814: \t\t\tlog.Printf(\"[API] AG Health error for %s: %v\", instance, err)\n815: \t\t\tagStats = []map[string]interface{}{}\n",
+			"line": "814",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "117",
+				"url": "https://cwe.mitre.org/data/definitions/117.html"
+			},
+			"rule_id": "G706",
+			"details": "Log injection via taint analysis",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "777: \t\t\t// This can happen if the table doesn't exist yet\n778: \t\t\tlog.Printf(\"[API] Query Store Bottlenecks error for %s: %v\", instance, err)\n779: \t\t\tqueries = []map[string]interface{}{}\n",
+			"line": "778",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "117",
+				"url": "https://cwe.mitre.org/data/definitions/117.html"
+			},
+			"rule_id": "G706",
+			"details": "Log injection via taint analysis",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "509: \t\tif err != nil {\n510: \t\t\tlog.Printf(\"[Router] TimescaleDB fetch failed for %s, falling back to cache: %v\", instance, err)\n511: \t\t\tjson.NewEncoder(w).Encode(ms.GetCachedDashboard(instance))\n",
+			"line": "510",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "117",
+				"url": "https://cwe.mitre.org/data/definitions/117.html"
+			},
+			"rule_id": "G706",
+			"details": "Log injection via taint analysis",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "445: \t\tif err != nil {\n446: \t\t\tlog.Printf(\"[API] PostgreSQL Archiver error for %s: %v\", instance, err)\n447: \t\t\tstats = []map[string]interface{}{}\n",
+			"line": "446",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "117",
+				"url": "https://cwe.mitre.org/data/definitions/117.html"
+			},
+			"rule_id": "G706",
+			"details": "Log injection via taint analysis",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "411: \t\tif err != nil {\n412: \t\t\tlog.Printf(\"[API] PostgreSQL Checkpoint error for %s: %v\", instance, err)\n413: \t\t\tstats = []map[string]interface{}{}\n",
+			"line": "412",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "117",
+				"url": "https://cwe.mitre.org/data/definitions/117.html"
+			},
+			"rule_id": "G706",
+			"details": "Log injection via taint analysis",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/cmd/server/main.go",
+			"code": "120: \t\t\tmiddleware.SecurityHeadersMiddleware(r))))\n121: \tlog.Printf(\"Starting Dual-Engine API \u0026 Static Server on http://localhost%s\", port)\n122: \n",
+			"line": "121",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/storage/archiver/archiver.go",
+			"code": "195: \tif err := a.verifyParquetFile(parquetPath, len(rows)); err != nil {\n196: \t\tos.Remove(parquetPath)\n197: \t\treturn fmt.Errorf(\"parquet verification failed: %w\", err)\n",
+			"line": "196",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/service/collector.go",
+			"code": "311: \t}\n312: \ts.tsLogger.LogSQLServerDiskHistory(ctx, instanceName, disk)\n313: \n",
+			"line": "312",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/service/collector.go",
+			"code": "301: \t}\n302: \ts.tsLogger.LogSQLServerLockHistory(ctx, instanceName, locks)\n303: \n",
+			"line": "302",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/service/collector.go",
+			"code": "292: \t}\n293: \ts.tsLogger.LogSQLServerConnectionHistory(ctx, instanceName, conns)\n294: \n",
+			"line": "293",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/service/collector.go",
+			"code": "281: \t}\n282: \ts.tsLogger.LogSQLServerWaitHistory(ctx, instanceName, waits)\n283: \n",
+			"line": "282",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/service/collector.go",
+			"code": "269: \tif len(metrics.PLEHistory) \u003e 0 {\n270: \t\ts.tsLogger.LogSQLServerMemoryHistory(ctx, instanceName, metrics.PLEHistory[len(metrics.PLEHistory)-1])\n271: \t}\n",
+			"line": "270",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/service/collector.go",
+			"code": "266: \t}\n267: \ts.tsLogger.LogSQLServerCPUHistory(ctx, instanceName, cpuTicks)\n268: \n",
+			"line": "267",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/repository/pg_stats.go",
+			"code": "1277: \t\t\tvar bloatPct float64\n1278: \t\t\tbloatRows.Scan(\u0026tableName, \u0026deadTuples, \u0026bloatPct)\n1279: \t\t\tif bloatPct \u003e 20 {\n",
+			"line": "1278",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/repository/pg_stats.go",
+			"code": "1232: \tvar maxConn int\n1233: \tdb.QueryRow(\"SELECT setting::int FROM pg_settings WHERE name = 'max_connections'\").Scan(\u0026maxConn)\n1234: \n",
+			"line": "1233",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/repository/pg_stats.go",
+			"code": "1229: \tvar connCount int\n1230: \tdb.QueryRow(\"SELECT count(*) FROM pg_stat_activity\").Scan(\u0026connCount)\n1231: \n",
+			"line": "1230",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/repository/pg_stats.go",
+			"code": "1215: \t\t\tvar query string\n1216: \t\t\trows.Scan(\u0026pid, \u0026duration, \u0026query)\n1217: \t\t\talerts = append(alerts, models.PgAlert{\n",
+			"line": "1216",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/repository/pg_stats.go",
+			"code": "225: \t\tlog.Printf(\"[POSTGRES] reconnectInstance: ping failed for %s: %v\", instanceName, err)\n226: \t\tnewDb.Close()\n227: \t\tc.mutex.Lock()\n",
+			"line": "226",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/repository/pg_stats.go",
+			"code": "170: \tif oldDb, ok := c.conns[instanceName]; ok \u0026\u0026 oldDb != nil {\n171: \t\toldDb.Close()\n172: \t}\n",
+			"line": "171",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/repository/pg_stats.go",
+			"code": "110: \t\t\t\t\t\t}\n111: \t\t\t\t\t\trows.Close()\n112: \t\t\t\t\t\tcfg.Instances[idx].Databases = discoverDbs\n",
+			"line": "111",
+			"column": "7",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/repository/pg_stats.go",
+			"code": "107: \t\t\t\t\t\t\tvar dbName string\n108: \t\t\t\t\t\t\trows.Scan(\u0026dbName)\n109: \t\t\t\t\t\t\tdiscoverDbs = append(discoverDbs, dbName)\n",
+			"line": "108",
+			"column": "8",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/repository/mssql_stats.go",
+			"code": "84: \t\t\t\t\t}\n85: \t\t\t\t\trows.Close()\n86: \t\t\t\t\tcfg.Instances[i].Databases = discoverDbs\n",
+			"line": "85",
+			"column": "6",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/repository/mssql_stats.go",
+			"code": "81: \t\t\t\t\t\tvar dbName string\n82: \t\t\t\t\t\trows.Scan(\u0026dbName)\n83: \t\t\t\t\t\tdiscoverDbs = append(discoverDbs, dbName)\n",
+			"line": "82",
+			"column": "7",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/repository/mssql_dashboard.go",
+			"code": "435: \t\t\t}\n436: \t\t\trows.Close()\n437: \n",
+			"line": "436",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/repository/mssql_dashboard.go",
+			"code": "92: \tsessionQuery := `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running'`\n93: \tdb.QueryRow(sessionQuery).Scan(\u0026metrics.ActiveUsers)\n94: \n",
+			"line": "93",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "856: \t\tw.Header().Set(\"Content-Type\", \"application/json\")\n857: \t\tjson.NewEncoder(w).Encode(map[string]interface{}{\n858: \t\t\t\"instance\": instance,\n859: \t\t\t\"count\":    len(dbStats),\n860: \t\t\t\"db_stats\": dbStats,\n861: \t\t\t\"note\":     \"DB Throughput data will appear after the first collection cycle\",\n862: \t\t})\n863: \t})).Methods(\"GET\")\n",
+			"line": "857-862",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "835: \t\t\tw.WriteHeader(http.StatusBadRequest)\n836: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n837: \t\t\treturn\n",
+			"line": "836",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "822: \t\tw.Header().Set(\"Content-Type\", \"application/json\")\n823: \t\tjson.NewEncoder(w).Encode(map[string]interface{}{\n824: \t\t\t\"instance\": instance,\n825: \t\t\t\"count\":    len(agStats),\n826: \t\t\t\"ag_stats\": agStats,\n827: \t\t\t\"note\":     \"AG Health data will appear after the first collection cycle\",\n828: \t\t})\n829: \t})).Methods(\"GET\")\n",
+			"line": "823-828",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "801: \t\t\tw.WriteHeader(http.StatusBadRequest)\n802: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n803: \t\t\treturn\n",
+			"line": "802",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "786: \t\tw.Header().Set(\"Content-Type\", \"application/json\")\n787: \t\tjson.NewEncoder(w).Encode(map[string]interface{}{\n788: \t\t\t\"instance\":   instance,\n789: \t\t\t\"time_range\": timeRange,\n790: \t\t\t\"limit\":      limit,\n791: \t\t\t\"count\":      len(queries),\n792: \t\t\t\"queries\":    queries,\n793: \t\t\t\"note\":       \"Query Store data will appear after the first collection cycle (15 min)\",\n794: \t\t})\n795: \t})).Methods(\"GET\")\n",
+			"line": "787-794",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "735: \t\t\tw.WriteHeader(http.StatusBadRequest)\n736: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n737: \t\t\treturn\n",
+			"line": "736",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "720: \t\t\tw.WriteHeader(http.StatusInternalServerError)\n721: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n722: \t\t\treturn\n",
+			"line": "721",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "694: \t\t\tw.WriteHeader(http.StatusBadRequest)\n695: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n696: \t\t\treturn\n",
+			"line": "695",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "681: \t\t\tw.WriteHeader(http.StatusInternalServerError)\n682: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n683: \t\t\treturn\n",
+			"line": "682",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "668: \t\t\tw.WriteHeader(http.StatusBadRequest)\n669: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n670: \t\t\treturn\n",
+			"line": "669",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "657: \t\t\tw.WriteHeader(http.StatusInternalServerError)\n658: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n659: \t\t\treturn\n",
+			"line": "658",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "644: \t\t\tw.WriteHeader(http.StatusBadRequest)\n645: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n646: \t\t\treturn\n",
+			"line": "645",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "633: \t\t\tw.WriteHeader(http.StatusInternalServerError)\n634: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n635: \t\t\treturn\n",
+			"line": "634",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "620: \t\t\tw.WriteHeader(http.StatusBadRequest)\n621: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n622: \t\t\treturn\n",
+			"line": "621",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "609: \t\t\tw.WriteHeader(http.StatusInternalServerError)\n610: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n611: \t\t\treturn\n",
+			"line": "610",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "596: \t\t\tw.WriteHeader(http.StatusBadRequest)\n597: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n598: \t\t\treturn\n",
+			"line": "597",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "568: \t\t\tw.WriteHeader(http.StatusBadRequest)\n569: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n570: \t\t\treturn\n",
+			"line": "569",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "541: \t\t\tw.WriteHeader(http.StatusBadRequest)\n542: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n543: \t\t\treturn\n",
+			"line": "542",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "533: \t\tw.Header().Set(\"Content-Type\", \"application/json\")\n534: \t\tjson.NewEncoder(w).Encode(ms.MsRepo.FetchAgentJobs(instance))\n535: \t})).Methods(\"GET\")\n",
+			"line": "534",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "522: \t\t\tw.WriteHeader(http.StatusBadRequest)\n523: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n524: \t\t\treturn\n",
+			"line": "523",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "510: \t\t\tlog.Printf(\"[Router] TimescaleDB fetch failed for %s, falling back to cache: %v\", instance, err)\n511: \t\t\tjson.NewEncoder(w).Encode(ms.GetCachedDashboard(instance))\n512: \t\t\treturn\n",
+			"line": "511",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "503: \t\tif source == \"live\" {\n504: \t\t\tjson.NewEncoder(w).Encode(ms.GetCachedDashboard(instance))\n505: \t\t\treturn\n",
+			"line": "504",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "490: \t\t\tw.WriteHeader(http.StatusBadRequest)\n491: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n492: \t\t\treturn\n",
+			"line": "491",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "481: \t\tw.Header().Set(\"Content-Type\", \"application/json\")\n482: \t\tjson.NewEncoder(w).Encode(ms.GetMssqlOverview(instance))\n483: \t})).Methods(\"GET\")\n",
+			"line": "482",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "467: \t\t\tw.WriteHeader(http.StatusBadRequest)\n468: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n469: \t\t\treturn\n",
+			"line": "468",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "454: \t\tw.Header().Set(\"Content-Type\", \"application/json\")\n455: \t\tjson.NewEncoder(w).Encode(map[string]interface{}{\n456: \t\t\t\"instance\": instance,\n457: \t\t\t\"count\":    len(stats),\n458: \t\t\t\"stats\":    stats,\n459: \t\t\t\"note\":     \"WAL Archiver data from TimescaleDB\",\n460: \t\t})\n461: \t})).Methods(\"GET\")\n",
+			"line": "455-460",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "433: \t\t\tw.WriteHeader(http.StatusBadRequest)\n434: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n435: \t\t\treturn\n",
+			"line": "434",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "420: \t\tw.Header().Set(\"Content-Type\", \"application/json\")\n421: \t\tjson.NewEncoder(w).Encode(map[string]interface{}{\n422: \t\t\t\"instance\": instance,\n423: \t\t\t\"count\":    len(stats),\n424: \t\t\t\"stats\":    stats,\n425: \t\t\t\"note\":     \"BGWriter/Checkpoint data from TimescaleDB\",\n426: \t\t})\n427: \t})).Methods(\"GET\")\n",
+			"line": "421-426",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "399: \t\t\tw.WriteHeader(http.StatusBadRequest)\n400: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n401: \t\t\treturn\n",
+			"line": "400",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "367: \t\t\tw.WriteHeader(http.StatusBadRequest)\n368: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n369: \t\t\treturn\n",
+			"line": "368",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "340: \t\t\tw.WriteHeader(http.StatusBadRequest)\n341: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n342: \t\t\treturn\n",
+			"line": "341",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "313: \t\t\tw.WriteHeader(http.StatusBadRequest)\n314: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n315: \t\t\treturn\n",
+			"line": "314",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "306: \t\tw.Header().Set(\"Content-Type\", \"application/json\")\n307: \t\tjson.NewEncoder(w).Encode(ms.GetCachedPgThroughputDashboard(instance, database))\n308: \t})).Methods(\"GET\")\n",
+			"line": "307",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "295: \t\t\tw.WriteHeader(http.StatusBadRequest)\n296: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n297: \t\t\treturn\n",
+			"line": "296",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "263: \t\t\tw.WriteHeader(http.StatusBadRequest)\n264: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n265: \t\t\treturn\n",
+			"line": "264",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "236: \t\t\tw.WriteHeader(http.StatusBadRequest)\n237: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n238: \t\t\treturn\n",
+			"line": "237",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "209: \t\t\tw.WriteHeader(http.StatusBadRequest)\n210: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n211: \t\t\treturn\n",
+			"line": "210",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "176: \t\t\tw.WriteHeader(http.StatusBadRequest)\n177: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n178: \t\t\treturn\n",
+			"line": "177",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "149: \t\t\tw.WriteHeader(http.StatusBadRequest)\n150: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n151: \t\t\treturn\n",
+			"line": "150",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "122: \t\t\tw.WriteHeader(http.StatusBadRequest)\n123: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n124: \t\t\treturn\n",
+			"line": "123",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "95: \t\t\tw.WriteHeader(http.StatusBadRequest)\n96: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n97: \t\t\treturn\n",
+			"line": "96",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "68: \t\t\tw.WriteHeader(http.StatusBadRequest)\n69: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n70: \t\t\treturn\n",
+			"line": "69",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "61: \t\tw.Header().Set(\"Content-Type\", \"application/json\")\n62: \t\tjson.NewEncoder(w).Encode(ms.GetPostgresOverview(instance))\n63: \t})).Methods(\"GET\")\n",
+			"line": "62",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "47: \t\t\tw.WriteHeader(http.StatusBadRequest)\n48: \t\t\tjson.NewEncoder(w).Encode(map[string]string{\"error\": err.Error()})\n49: \t\t\treturn\n",
+			"line": "48",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "39: \t\tw.Header().Set(\"Content-Type\", \"application/json\")\n40: \t\tjson.NewEncoder(w).Encode(ms.FetchGlobalEstate())\n41: \t})).Methods(\"GET\")\n",
+			"line": "40",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/router.go",
+			"code": "33: \t\tw.Header().Set(\"Content-Type\", \"application/json\")\n34: \t\tjson.NewEncoder(w).Encode(redactSensitiveData(cfg))\n35: \t})).Methods(\"GET\")\n",
+			"line": "34",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/ravisharma/MyStuff/AI_Code/sql_optima/sql_monitoring_UI/backend/internal/api/health.go",
+			"code": "51: \n52: \tjson.NewEncoder(w).Encode(map[string]interface{}{\n53: \t\t\"status\":    \"ok\",\n54: \t\t\"instances\": len(cfg.Instances),\n55: \t\t\"queries\":   queriesLoaded,\n56: \t\t\"version\":   \"1.0.0\",\n57: \t\t\"timestamp\": time.Now().Format(time.RFC3339),\n58: \t})\n59: }\n",
+			"line": "52-58",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		}
+	],
+	"Stats": {
+		"files": 31,
+		"lines": 8550,
+		"nosec": 0,
+		"found": 79
+	},
+	"GosecVersion": "dev"
+}

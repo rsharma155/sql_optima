@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  # The Go Backend metrics scraper & API engine
+  backend:
+    build:
+      # Parent of sql_monitoring_UI must include pg_explain_analyze (e.g. sql_optima/). For a standalone clone, run `go mod vendor` under backend/ and use Dockerfile.standalone or build the binary locally.
+      context: ../..
+      dockerfile: sql_monitoring_UI/docker/Dockerfile.backend
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../config.yaml:/app/config.yaml
+      - ../queries.yml:/app/queries.yml
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # Optional decoupled NGINX UI (If Go isn't hosting it)
+  frontend:
+    build:
+      context: ../..
+      dockerfile: sql_monitoring_UI/docker/Dockerfile.frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

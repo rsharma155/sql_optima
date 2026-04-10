@@ -1,0 +1,40 @@
+# Stage 1: Build the Go Backend
+# Build context: parent of `sql_monitoring_UI` (e.g. sql_optima/) so `pg_explain_analyze/` is available.
+FROM golang:1.25.7 AS builder
+
+WORKDIR /build
+COPY sql_monitoring_UI/backend/ ./backend/
+COPY sql_monitoring_UI/frontend/ ./frontend/
+COPY sql_monitoring_UI/config.yaml ./
+COPY sql_monitoring_UI/queries.yml ./
+COPY pg_explain_analyze/ ./pg_explain_analyze/
+
+WORKDIR /build/backend
+RUN go mod edit -replace=github.com/yourorg/pg_explain_analyze=../pg_explain_analyze \
+	&& go mod download \
+	&& CGO_ENABLED=0 GOOS=linux go build -o dbmonitor ./cmd/server
+
+# Stage 2: Minimal Runtime
+FROM alpine:3.21
+WORKDIR /app
+
+RUN apk add --no-cache ca-certificates wget \
+    && adduser -D -H -u 65532 appuser
+
+RUN mkdir -p /app/backend /app/frontend
+
+COPY --from=builder /build/backend/dbmonitor /app/backend/
+COPY --from=builder /build/frontend/ /app/frontend/
+COPY --from=builder /build/config.yaml /app/
+COPY --from=builder /build/queries.yml /app/
+
+RUN chown -R appuser:appuser /app
+
+WORKDIR /app/backend
+USER appuser
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/api/health || exit 1
+
+CMD ["./dbmonitor"]

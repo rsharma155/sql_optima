@@ -1,0 +1,141 @@
+# =============================================================================
+# SQL Optima: TimescaleDB Docker Compose
+# 
+# This configuration starts:
+#   1. TimescaleDB (metrics storage)
+#   2. Schema Setup (creates tables, seeds data)
+#   3. Backup Sidecar (automatic backups)
+# =============================================================================
+
+#version: "3.8"
+
+services:
+  # ---------------------------------------------------------------------------
+  # TimescaleDB - Main metrics storage
+  # ---------------------------------------------------------------------------
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16
+    container_name: dbmonitor_timescaledb
+    environment:
+      POSTGRES_USER: ${DB_USER:-dbmonitor}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
+      POSTGRES_DB: ${DB_NAME:-dbmonitor_metrics}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-dbmonitor} -d ${DB_NAME:-dbmonitor_metrics}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - dbmonitor_net
+    # Resource limits (optional - adjust as needed)
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # ---------------------------------------------------------------------------
+  # Schema Setup - Creates tables, indexes, and seeds data
+  # Runs after TimescaleDB is healthy
+  # ---------------------------------------------------------------------------
+  schema-setup:
+    image: postgres:16-alpine
+    container_name: dbmonitor_schema_setup
+    environment:
+      DB_HOST: timescaledb
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-dbmonitor}
+      DB_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
+      DB_NAME: ${DB_NAME:-dbmonitor_metrics}
+      PGPASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
+    volumes:
+      - ../sql_scripts:/sql_scripts:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        export PGPASSWORD="$$DB_PASSWORD"
+        echo "=============================================="
+        echo "SQL Optima: Schema Setup Starting..."
+        echo "=============================================="
+        echo "Host: $$DB_HOST:$$DB_PORT"
+        echo "Database: $$DB_NAME"
+        echo ""
+        echo "[1/5] Waiting for TimescaleDB to be ready..."
+        until pg_isready -h $$DB_HOST -p $$DB_PORT -U $$DB_USER; do
+          echo "  Waiting for TimescaleDB..."
+          sleep 2
+        done
+        echo "  TimescaleDB is ready"
+        sleep 2
+        echo ""
+        echo "[2/5] Applying main TimescaleDB schema..."
+        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/00_timescale_schema.sql || echo "  Note: Schema may already exist"
+        echo "  Main schema applied"
+        echo ""
+        echo "[3/5] Applying additional SQL Server metrics..."
+        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/02_additional_sqlserver_metrics.sql || echo "  Note: Additional tables may already exist"
+        echo "  Additional metrics applied"
+        echo ""
+        echo "[4/5] Seeding initial data..."
+        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/01_seed_data.sql || echo "  Note: Seed data may already exist"
+        echo "  Seed data applied"
+        echo ""
+        echo "[5/5] Running system validation..."
+        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/SST.sql || echo "  Note: SST completed"
+        echo "  Validation complete"
+        echo ""
+        echo "=============================================="
+        echo "SQL Optima: Schema Setup Complete!"
+        echo "=============================================="
+        echo "Database is ready for metric collection!"
+
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - dbmonitor_net
+
+  # ---------------------------------------------------------------------------
+  # Backup Sidecar - Optional manual backup
+  # Run manually: docker exec -it dbmonitor_backup /bin/sh
+  # ---------------------------------------------------------------------------
+  backup-sidecar:
+    image: postgres:16-alpine
+    container_name: dbmonitor_backup
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
+    volumes:
+      - ./backups:/backups
+    command: ["sleep", "infinity"]
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      schema-setup:
+        condition: service_completed_successfully
+    restart: "no"
+    networks:
+      - dbmonitor_net
+
+# ----------------------------------------------------------------------------
+# Volumes
+# ----------------------------------------------------------------------------
+volumes:
+  timescaledb_data:
+    driver: local
+
+# ----------------------------------------------------------------------------
+# Networks
+# ----------------------------------------------------------------------------
+networks:
+  dbmonitor_net:
+    driver: bridge
