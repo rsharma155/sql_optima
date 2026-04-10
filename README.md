@@ -21,7 +21,7 @@ Use this option to spin up the entire application (Go Backend API + NGINX Fronte
 
 ### Execution Steps:
 1. Ensure you have [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine installed.
-2. Place the **`pg_explain_analyze`** module next to **`sql_monitoring_UI`** under the same parent folder (the backend image compiles it in). If you only have this repository, add that sibling checkout or run `go mod vendor` under `backend/` and switch the backend Dockerfile to `go build -mod=vendor`.
+2. Place the **`pg_explain_analyze`** module next to **`sql_monitoring_UI`** under the same parent folder (see `replace` in `backend/go.mod`). The Docker build runs `go mod download` and does **not** use a committed `vendor/` tree. For offline local builds only, you may run `cd backend && go mod vendor` (the `vendor/` directory is gitignored).
 3. From the **`sql_monitoring_UI`** directory, run:
    ```bash
    docker-compose -f docker/docker-compose.yml up --build -d

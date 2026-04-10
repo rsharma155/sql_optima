@@ -32,6 +32,10 @@ server.exe
 bin/
 dist/
 
+# Vendored modules — do not commit (avoids huge trees + false-positive secret scans on upstream specs).
+# Restore locally anytime: cd backend && go mod vendor
+backend/vendor/
+
 # Test binary, built with `go test -c`
 *.test
 
