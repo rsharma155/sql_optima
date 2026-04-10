@@ -3,27 +3,22 @@
 instances:
   - name: "SQL-Prod-01"
     type: "sqlserver"
-    host: "192.168.1.10"
+    host: "0.0.0.0"
     port: 1433
    # User and password will be read from environment variables
    # DB_SQL_PROD_01_USER and DB_SQL_PROD_01_PASSWORD
 
   - name: "SQL-Prod-02"
     type: "sqlserver"
-    host: "192.168.1.11"
+    host: "1.1.1.1"
     port: 1433
     # User and password will be read from environment variables
     # DB_SQL_PROD_01_USER and DB_SQL_PROD_01_PASSWORD
 
-  - name: "SQL-local"
-    type: "sqlserver"
-    host: "192.168.1.21"
-    port: 1433
-
   - name: "PG-Cluster-01"
     type: "postgres"
-    host: "192.168.1.21"
-    port: 30432
+    host: "2.2.2.2"
+    port: 5432
     ha_provider: "cnpg"
     # Optional (local-only): disk paths on the monitoring server for statfs-based free-space checks.
     # pg_disk_paths:
