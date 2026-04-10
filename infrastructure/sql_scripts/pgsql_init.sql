@@ -7,7 +7,9 @@
 -- Usage:   Execute this script as a superuser (e.g., postgres)
 --          psql -U postgres -d postgres -f pgsql_init.sql
 --
--- Note:    Adjust the password according to your security policy.
+-- Note:    No default password is set in-repo. After CREATE ROLE, run:
+--            ALTER ROLE dbmonitor_user PASSWORD 'your-secret-from-vault';
+--          Or use: psql -v dbpass="'$(openssl rand -base64 24)'" -f ... (wrap in your automation).
 --          Grant usage on specific schemas as needed for your databases.
 -- ============================================================================
 
@@ -19,14 +21,13 @@ BEGIN
     ) THEN
         CREATE ROLE dbmonitor_user WITH
             LOGIN
-            PASSWORD = 'MonitorPass123!'
             NOSUPERUSER
             NOCREATEDB
             NOCREATEROLE
             NOREPLICATION
             CONNECTION LIMIT 100;
         
-        RAISE NOTICE 'Role [dbmonitor_user] created successfully.';
+        RAISE NOTICE 'Role [dbmonitor_user] created — set password with ALTER ROLE dbmonitor_user PASSWORD ''...''';
     ELSE
         RAISE NOTICE 'Role [dbmonitor_user] already exists.';
     END IF;

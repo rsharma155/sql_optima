@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/config"
+	"github.com/rsharma155/sql_optima/internal/service"
 )
 
 type HealthResponse struct {
@@ -24,7 +25,7 @@ func HandleHealthLiveness(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func HandleHealthReadiness(w http.ResponseWriter, r *http.Request, cfg *config.Config, queriesLoaded bool) {
+func HandleHealthReadiness(w http.ResponseWriter, r *http.Request, cfg *config.Config, queriesLoaded bool, metricsSvc *service.MetricsService) {
 	w.Header().Set("Content-Type", "application/json")
 
 	strictMode := os.Getenv("HEALTH_STRICT") == "1"
@@ -47,6 +48,20 @@ func HandleHealthReadiness(w http.ResponseWriter, r *http.Request, cfg *config.C
 			"version": "1.0.0",
 		})
 		return
+	}
+
+	tsOK := true
+	if metricsSvc != nil && os.Getenv("HEALTH_CHECK_TIMESCALE") == "1" {
+		tsOK = metricsSvc.TimescalePing(r.Context()) == nil
+		if !tsOK {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "unhealthy",
+				"reason":  "timescale unavailable",
+				"version": "1.0.0",
+			})
+			return
+		}
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

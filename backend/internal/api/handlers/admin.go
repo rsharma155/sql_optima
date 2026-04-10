@@ -3,10 +3,12 @@ package handlers
 import (
 	"encoding/json"
 	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/gorilla/mux"
+	"github.com/rsharma155/sql_optima/internal/middleware"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
@@ -41,7 +43,7 @@ func (h *AdminHandlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "username and password are required"})
 		return
 	}
-	if req.Role != "admin" && req.Role != "viewer" {
+	if req.Role != "admin" && req.Role != "dba" && req.Role != "viewer" {
 		req.Role = "viewer"
 	}
 
@@ -52,6 +54,8 @@ func (h *AdminHandlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	middleware.AuditAction(slog.Default(), r, "admin_create_user", slog.String("new_username", req.Username), slog.String("role", req.Role))
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,

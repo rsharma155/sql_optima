@@ -7,7 +7,8 @@
 -- Usage:   Execute this script on your SQL Server instance as a sysadmin or
 --          user with privileges to create logins and grant permissions.
 --
--- Note:    Adjust the password complexity according to your security policy.
+-- Note:    Replace __STRONG_PASSWORD_FROM_VAULT__ before running, or create the login
+--          outside this script and skip the CREATE LOGIN block.
 -- ============================================================================
 
 USE master;
@@ -17,7 +18,7 @@ GO
 IF NOT EXISTS (SELECT name FROM sys.server_principals WHERE name = 'dbmonitor_user')
 BEGIN
     CREATE LOGIN [dbmonitor_user] WITH 
-        PASSWORD = N'Hello@123',
+        PASSWORD = N'__STRONG_PASSWORD_FROM_VAULT__',
         DEFAULT_DATABASE = [master],
         CHECK_POLICY = ON,
         CHECK_EXPIRATION = OFF;

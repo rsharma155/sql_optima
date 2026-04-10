@@ -45,8 +45,20 @@ func GenerateToken(userID int, username, role string) (string, error) {
 	return token.SignedString(JWTSecret)
 }
 
-// ValidateToken parses and validates a JWT, returning the claims.
+// ValidateToken parses and validates a bearer token (OIDC if configured, otherwise local HS256 JWT).
 func ValidateToken(tokenString string) (*AuthClaims, error) {
+	return ValidateTokenWithContext(context.Background(), tokenString)
+}
+
+// ValidateTokenWithContext is like ValidateToken but uses ctx for OIDC verification.
+func ValidateTokenWithContext(ctx context.Context, tokenString string) (*AuthClaims, error) {
+	if getOIDCVerifier() != nil {
+		return validateOIDCToken(ctx, tokenString)
+	}
+	return validateLocalJWT(tokenString)
+}
+
+func validateLocalJWT(tokenString string) (*AuthClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &AuthClaims{}, func(t *jwt.Token) (interface{}, error) {
 		return JWTSecret, nil
 	})
@@ -89,7 +101,7 @@ func RequireAuth(requiredRole string) func(http.Handler) http.Handler {
 				return
 			}
 
-			claims, err := ValidateToken(parts[1])
+			claims, err := ValidateTokenWithContext(r.Context(), parts[1])
 			if err != nil {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)

@@ -9,7 +9,8 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ 	"github.com/lib/pq"
+	"github.com/rsharma155/sql_optima/internal/security/sqlsandbox"
 )
 
 type PostgresCollector struct {
@@ -143,7 +144,11 @@ func (c *PostgresCollector) normalizeValue(val interface{}, colName string) inte
 }
 
 func (c *PostgresCollector) ExecuteRule(ctx context.Context, detectionSQL string) ([]map[string]interface{}, string, error) {
-	results, err := c.ExecuteQuery(ctx, detectionSQL, 30*time.Second)
+	wrapped, err := sqlsandbox.WrapWithRowLimit("postgres", detectionSQL, sqlsandbox.DefaultMaxRows)
+	if err != nil {
+		return nil, "", fmt.Errorf("sql sandbox: %w", err)
+	}
+	results, err := c.ExecuteQuery(ctx, wrapped, 30*time.Second)
 	if err != nil {
 		return nil, "", fmt.Errorf("detection query failed: %w", err)
 	}

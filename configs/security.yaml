@@ -1,0 +1,3 @@
+# Documentary defaults — real flags use env: AUTH_REQUIRED, AUTH_MODE, JWT_SECRET, OIDC_*.
+security:
+  auth_required: false

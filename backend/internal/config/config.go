@@ -46,6 +46,11 @@ type Instance struct {
 }
 
 func LoadConfig(path string) (*Config, error) {
+	return LoadConfigWithSecurity(path, LoadSecurity())
+}
+
+// LoadConfigWithSecurity loads config and optionally strips YAML passwords so only env credentials apply.
+func LoadConfigWithSecurity(path string, sec Security) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -60,6 +65,10 @@ func LoadConfig(path string) (*Config, error) {
 	for i := range cfg.Instances {
 		inst := &cfg.Instances[i]
 		inst.ID = i + 1
+
+		if sec.DisallowYAMLPasswords {
+			inst.Password = ""
+		}
 
 		// Build env var name: DB_<INSTANCE_NAME>_USER/PASSWORD
 		envPrefix := fmt.Sprintf("DB_%s",

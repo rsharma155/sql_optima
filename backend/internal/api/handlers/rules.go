@@ -17,6 +17,7 @@ import (
 	_ "github.com/microsoft/go-mssqldb"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/ruleengine/models"
+	"github.com/rsharma155/sql_optima/internal/security/sqlsandbox"
 )
 
 type RulesHandler struct {
@@ -522,7 +523,18 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 			log.Printf("[RulesHandler] Executing query for %s: %s", r.RuleID, query)
 		}
 
-		targetRows, err := db.QueryContext(ctx, query)
+		dialect := "postgres"
+		if instanceType == "sqlserver" {
+			dialect = "sqlserver"
+		}
+		wrapped, serr := sqlsandbox.WrapWithRowLimit(dialect, query, sqlsandbox.DefaultMaxRows)
+		if serr != nil {
+			log.Printf("[RulesHandler] Sandbox rejected SQL for %s: %v", r.RuleID, serr)
+			continue
+		}
+		qctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		targetRows, err := db.QueryContext(qctx, wrapped)
+		cancel()
 		if err != nil {
 			log.Printf("[RulesHandler] Query failed for %s: %v", r.RuleID, err)
 			continue

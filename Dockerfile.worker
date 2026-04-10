@@ -1,0 +1,16 @@
+# docker build -f Dockerfile.worker -t sql-optima-worker .
+FROM golang:1.25-bookworm AS build
+WORKDIR /src/backend
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+COPY backend/ ./
+COPY config.yaml queries.yml ../
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /worker ./cmd/worker
+
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /srv
+COPY --from=build /src/config.yaml /src/queries.yml ./
+COPY --from=build /worker ./backend/worker
+WORKDIR /srv/backend
+USER nonroot:nonroot
+ENTRYPOINT ["./worker"]

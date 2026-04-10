@@ -1,0 +1,4 @@
+# Collector tuning placeholders (extend as needed).
+collectors:
+  live_interval_seconds: 15
+  historical_interval_seconds: 60

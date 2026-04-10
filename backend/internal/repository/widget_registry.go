@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/models"
+	"github.com/rsharma155/sql_optima/internal/security/sqlsandbox"
 )
 
 // WidgetRepository handles CRUD operations for the optima_ui_widgets registry
@@ -131,8 +132,12 @@ func (r *WidgetRepository) ExecuteWidgetQuery(ctx context.Context, widgetID stri
 		return nil, fmt.Errorf("unresolved parameter placeholders in query")
 	}
 
-	// Execute the dynamic query
-	rows, err := r.pool.Query(ctx, sql)
+	wrapped, err := sqlsandbox.WrapWithRowLimit("postgres", sql, sqlsandbox.DefaultMaxRows)
+	if err != nil {
+		return nil, fmt.Errorf("widget sql sandbox: %w", err)
+	}
+
+	rows, err := r.pool.Query(ctx, wrapped)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed for widget %s: %w", widgetID, err)
 	}

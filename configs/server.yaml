@@ -1,0 +1,3 @@
+# Optional server defaults (overridden by SQL_OPTIMA_* env vars after MergeViperConfigs).
+server:
+  port: ":8080"

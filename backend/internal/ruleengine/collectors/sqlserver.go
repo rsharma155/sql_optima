@@ -10,6 +10,7 @@ import (
 	"time"
 
 	_ "github.com/microsoft/go-mssqldb"
+	"github.com/rsharma155/sql_optima/internal/security/sqlsandbox"
 )
 
 type SQLServerCollector struct {
@@ -140,7 +141,11 @@ func (c *SQLServerCollector) normalizeValue(val interface{}, colName string) int
 }
 
 func (c *SQLServerCollector) ExecuteRule(ctx context.Context, detectionSQL string) ([]map[string]interface{}, string, error) {
-	results, err := c.ExecuteQuery(ctx, detectionSQL, 30*time.Second)
+	wrapped, err := sqlsandbox.WrapWithRowLimit("sqlserver", detectionSQL, sqlsandbox.DefaultMaxRows)
+	if err != nil {
+		return nil, "", fmt.Errorf("sql sandbox: %w", err)
+	}
+	results, err := c.ExecuteQuery(ctx, wrapped, 30*time.Second)
 	if err != nil {
 		return nil, "", fmt.Errorf("detection query failed: %w", err)
 	}

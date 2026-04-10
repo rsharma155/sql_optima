@@ -5,5 +5,8 @@ export const appState = {
     currentDatabase: 'all',
     activeViewId: 'global',
     isAuthenticated: false,
+    /** When true, API expects JWT on /api/config and dashboard routes (AUTH_REQUIRED=1). */
+    authRequired: false,
+    authMode: 'local',
     navigationHistory: []
 };

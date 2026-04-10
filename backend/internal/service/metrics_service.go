@@ -76,6 +76,14 @@ func (s *MetricsService) IsTimescaleConnected() bool {
 	return s.tsLogger != nil && s.tsHotStorage != nil
 }
 
+// TimescalePing checks connectivity to TimescaleDB when configured (for readiness probes).
+func (s *MetricsService) TimescalePing(ctx context.Context) error {
+	if s == nil || s.tsHotStorage == nil {
+		return fmt.Errorf("timescale not configured")
+	}
+	return s.tsHotStorage.Pool().Ping(ctx)
+}
+
 // FetchPgBestPracticesWithTimescale runs the pg_settings DBA audit. When a recent postgres_settings_snapshot
 // exists in Timescale for this instance, current setting (and unit) values are taken from that snapshot for
 // any parameter present in both the snapshot and the audit list; boot/default values always come from live pg_settings.
