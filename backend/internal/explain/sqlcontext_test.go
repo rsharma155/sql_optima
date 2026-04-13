@@ -3,7 +3,7 @@ package explain
 import (
 	"testing"
 
-	"github.com/yourorg/pg_explain_analyze/types"
+	"github.com/rsharma155/sql_optima/internal/explain/types"
 )
 
 func TestExtractIndexColumns(t *testing.T) {

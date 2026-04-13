@@ -157,14 +157,9 @@ func (tl *TimescaleLogger) GetPostgresSystemStats(ctx context.Context, instanceN
 }
 
 func (tl *TimescaleLogger) LogPostgresThroughput(ctx context.Context, instanceName string, databaseName string, tps, cacheHitPct float64, txnDelta, blksRead, blksHit int64) error {
+	// Append-only: no UNIQUE matching this ON CONFLICT on default schema (42P10).
 	query := `INSERT INTO postgres_throughput_metrics (capture_timestamp, server_instance_name, database_name, tps, cache_hit_pct, txn_delta, blks_read_delta, blks_hit_delta)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (server_instance_name, database_name, capture_timestamp) DO UPDATE SET
-			tps = EXCLUDED.tps,
-			cache_hit_pct = EXCLUDED.cache_hit_pct,
-			txn_delta = EXCLUDED.txn_delta,
-			blks_read_delta = EXCLUDED.blks_read_delta,
-			blks_hit_delta = EXCLUDED.blks_hit_delta`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	now := time.Now().UTC()
 	_, err := tl.pool.Exec(ctx, query, now, instanceName, databaseName, tps, cacheHitPct, txnDelta, blksRead, blksHit)

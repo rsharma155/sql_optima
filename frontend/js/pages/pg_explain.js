@@ -3,14 +3,19 @@
  */
 window.PgExplainView = function PgExplainView() {
     const inst = window.appState.config?.instances?.[window.appState.currentInstanceIdx] || { name: '--', type: 'postgres' };
-    const esc = window.escapeHtml || function (s) { return String(s || ''); };
+    /** Escape for HTML; must preserve numeric 0 (global escapeHtml used to use !x which hid 0). */
+    function esc(s) {
+        if (s === null || s === undefined) return '';
+        var str = String(s);
+        return window.escapeHtml ? window.escapeHtml(str) : str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    }
 
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme pg-explain-page">
             <div class="page-title flex-between dashboard-page-title-compact">
                 <div class="dashboard-title-line" style="flex:1; min-width:0;">
                     <h1><i class="fa-solid fa-diagram-project text-accent"></i> EXPLAIN Plan Analyzer</h1>
-                    <span class="subtitle">Instance: <span class="text-accent">${esc(inst.name)}</span> — paste a plan from psql/your client. Add your SQL for line-level hints and concrete index suggestions (heuristic).</span>
+                    <span class="subtitle">Instance: <span class="text-accent">${esc(inst.name)}</span> — paste a JSON plan and SQL for analysis, optimization report, and optional <strong>index advisor</strong> (HypoPG when the server can reach your DB).</span>
                 </div>
                 <div class="flex-between dashboard-page-title-actions" style="gap:0.5rem; flex-wrap:wrap;">
                     <button type="button" class="btn btn-sm btn-outline" onclick="window.appNavigate('pg-queries')"><i class="fa-solid fa-bolt"></i> Query Performance</button>
@@ -19,37 +24,34 @@ window.PgExplainView = function PgExplainView() {
             </div>
 
             <div class="glass-panel mt-3" style="padding:1rem 1.1rem;">
-                <h2 class="pg-explain-field-label" style="margin:0 0 0.5rem 0; font-size:0.95rem;"><i class="fa-solid fa-list-ol text-accent"></i> How to add your plan</h2>
-                <ol class="pg-explain-steps">
-                    <li>Run <code>EXPLAIN (ANALYZE, BUFFERS) …</code> or <code>EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) …</code> in your database client.</li>
-                    <li>Copy the <strong>full</strong> plan output into the large <strong>Execution plan</strong> box below.</li>
-                    <li><strong>Recommended:</strong> paste the same SQL into <strong>Optional: original SQL</strong> so we can map findings to lines, suggest <code>CREATE INDEX … (columns)</code>, and show rewrite focus notes (best-effort; not exact parser positions).</li>
-                    <li>Use <strong>Analyze plan</strong> for findings + <strong>Plan map</strong> (card tree) + <strong>Metrics</strong> (depesz-style table). Use <strong>Optimization report</strong> for the narrative score and recommendations.</li>
-                </ol>
-            </div>
-
-            <div class="glass-panel mt-3" style="padding:1rem 1.1rem;">
                 <div class="pg-explain-layout">
                     <div class="pg-explain-field">
                         <label class="pg-explain-field-label" for="pgExplainQuery">Optional: original SQL (strongly recommended)</label>
-                        <p class="pg-explain-field-hint">Enables SQL line excerpts, concrete index DDL from plan filters, and targeted rewrite hints. Not executed on the server.</p>
+                        <p class="pg-explain-field-hint">Required for <strong>Index advisor &amp; rewrites</strong>. Also enables SQL line excerpts and heuristic index hints. Not executed on the server.</p>
                         <textarea id="pgExplainQuery" class="pg-explain-textarea pg-explain-textarea--sql" rows="4" spellcheck="false" placeholder="SELECT u.id, u.name FROM users u WHERE u.status = 'active';"></textarea>
                     </div>
 
                     <div class="pg-explain-field">
+                    <!--
                         <div class="pg-explain-plan-banner" role="note">
                             <i class="fa-solid fa-paste" style="margin-top:0.15rem; color:var(--accent);"></i>
-                            <span><strong>Paste your plan here</strong> — required. Text tree or one JSON document from <code>FORMAT JSON</code>.</span>
+                            <span><strong>Paste JSON here</strong> — required. Output from <code>EXPLAIN (…, FORMAT JSON)</code> only.</span>
                         </div>
+                        -->
                         <label class="pg-explain-field-label" for="pgExplainPlan">Execution plan <span class="badge badge-danger" style="font-size:0.65rem; vertical-align:middle;">Required</span></label>
-                        <p class="pg-explain-field-hint">Max ~512 KB. JSON plans unlock <strong>Plan map</strong> and the <strong>Metrics</strong> table; text plans still work for findings.</p>
-                        <textarea id="pgExplainPlan" class="pg-explain-textarea pg-explain-textarea--plan" rows="18" spellcheck="false" placeholder="Example (text):&#10;Seq Scan on users  (cost=0.00..10.00 rows=1000 width=100) (actual time=0.015..2.100 rows=1000 loops=1)&#10;  Filter: (status = 'active'::text)&#10;Planning Time: 0.234 ms&#10;Execution Time: 2.456 ms"></textarea>
+                        <p class="pg-explain-field-hint" style="margin-bottom: 0.5rem;"><strong>Note:</strong> Run <code>EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) …</code> in your database client (JSON is required for this page). Max ~512 KB. Must be valid JSON (tree + metrics + SQL insights are driven from the JSON plan).</p>
+                        <!--
+                        <p class="pg-explain-field-hint">Max ~512 KB. Must be valid JSON (tree + metrics + SQL insights are driven from the JSON plan).</p>
+                        -->
+                        <textarea id="pgExplainPlan" class="pg-explain-textarea pg-explain-textarea--plan" rows="12" spellcheck="false" placeholder='Example: [ { &quot;Plan&quot;: { &quot;Node Type&quot;: &quot;Seq Scan&quot;, ... }, &quot;Planning Time&quot;: 0.1, &quot;Execution Time&quot;: 2.3 } ]'></textarea>
                     </div>
 
                     <div class="pg-explain-actions mt-2">
                         <button type="button" class="btn btn-accent" id="pgExplainBtnAnalyze"><i class="fa-solid fa-magnifying-glass-chart"></i> Analyze plan</button>
                         <button type="button" class="btn btn-outline text-accent" id="pgExplainBtnOptimize"><i class="fa-solid fa-wand-magic-sparkles"></i> Optimization report</button>
+                        <button type="button" class="btn btn-outline text-accent" id="pgExplainBtnIndexAdvisor" title="Uses JSON plan + SQL; connects to DB when a single Postgres instance is configured or you pass instance name via UI selection"><i class="fa-solid fa-compass-drafting"></i> Index advisor &amp; rewrites</button>
                     </div>
+                    <p class="pg-explain-field-hint" style="margin-top: 0.5rem; font-size: 0.85rem;"><strong>Tip:</strong> Use <strong>Analyze plan</strong> for findings + <strong>Plan map</strong> + <strong>Metrics</strong>. Use <strong>Optimization report</strong> for the narrative score. Use <strong>Index advisor &amp; rewrites</strong> for structured index DDL and query rewrite suggestions (requires <code>EXPLAIN (FORMAT JSON)</code> output and SQL text).</p>
                     <div id="pgExplainErr" class="alert alert-danger" style="display:none; font-size:0.82rem; margin:0;"></div>
                 </div>
             </div>
@@ -130,6 +132,150 @@ window.PgExplainView = function PgExplainView() {
         if (typeof node.id === 'number' && node.id > 0) return 'p' + String(node.id);
         var u = ensureNodeUID(node);
         return 'u' + String(u || 0);
+    }
+
+    /** Deep key normalize: PG "Node Type", camelCase, etc. → snake_case (matches backend normalizer). */
+    function pgJsonKeyToSnake(k) {
+        if (k === 'Plan') return 'plan';
+        if (k === 'Plans') return 'plans';
+        if (/\s/.test(k)) return k.replace(/\s+/g, '_').toLowerCase();
+        if (/_/.test(k)) return k.toLowerCase();
+        return k
+            .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+            .replace(/([A-Z])([A-Z][a-z])/g, '$1_$2')
+            .toLowerCase();
+    }
+
+    function normalizePgExplainObject(v) {
+        if (v === null || v === undefined) return v;
+        if (Array.isArray(v)) return v.map(normalizePgExplainObject);
+        if (typeof v !== 'object') return v;
+        var out = {};
+        Object.keys(v).forEach(function (k) {
+            var nk = pgJsonKeyToSnake(k);
+            if (Object.prototype.hasOwnProperty.call(out, nk)) return;
+            out[nk] = normalizePgExplainObject(v[k]);
+        });
+        return out;
+    }
+
+    /**
+     * Copy common EXPLAIN JSON key variants onto the snake_case fields the UI expects.
+     * Handles native PostgreSQL ("Node Type"), camelCase ("NodeType"), and mis-nested { Plan: {...} } children.
+     */
+    function hydratePlanTree(root) {
+        function h(n) {
+            if (!n || typeof n !== 'object') return;
+            if (n.node_type == null || n.node_type === '') {
+                if (n['Node Type'] != null && n['Node Type'] !== '') n.node_type = n['Node Type'];
+                else if (n.NodeType != null && n.NodeType !== '') n.node_type = n.NodeType;
+                else if (n.nodetype != null && n.nodetype !== '') n.node_type = n.nodetype;
+            }
+            if (n.relation_name == null && n['Relation Name'] != null) n.relation_name = n['Relation Name'];
+            if (n.relation_name == null && n.RelationName != null) n.relation_name = n.RelationName;
+            if (n.index_name == null && n['Index Name'] != null) n.index_name = n['Index Name'];
+            if (n.join_type == null && n['Join Type'] != null) n.join_type = n['Join Type'];
+            if (n.filter == null && n.Filter != null) n.filter = n.Filter;
+            if (n.plan_rows == null && n['Plan Rows'] != null) n.plan_rows = n['Plan Rows'];
+            if (n.plan_rows == null && n.PlanRows != null) n.plan_rows = n.PlanRows;
+            if (n.plan_width == null && n['Plan Width'] != null) n.plan_width = n['Plan Width'];
+            if (n.startup_cost == null && n['Startup Cost'] != null) n.startup_cost = Number(n['Startup Cost']);
+            if (n.startup_cost == null && n.StartupCost != null) n.startup_cost = Number(n.StartupCost);
+            if (n.total_cost == null && n['Total Cost'] != null) n.total_cost = Number(n['Total Cost']);
+            if (n.total_cost == null && n.TotalCost != null) n.total_cost = Number(n.TotalCost);
+            if (n.actual_rows == null && n['Actual Rows'] != null) n.actual_rows = n['Actual Rows'];
+            if (n.actual_loops == null && n['Actual Loops'] != null) n.actual_loops = n['Actual Loops'];
+            if (n.actual_startup_time == null && n['Actual Startup Time'] != null) n.actual_startup_time = Number(n['Actual Startup Time']);
+            if (n.actual_total_time == null && n['Actual Total Time'] != null) n.actual_total_time = Number(n['Actual Total Time']);
+            if ((!n.plans || !n.plans.length) && n.Plans && n.Plans.length) n.plans = n.Plans;
+            var kids = n.plans || [];
+            for (var i = 0; i < kids.length; i++) {
+                var ch = kids[i];
+                if (ch && typeof ch === 'object' && (ch['Plan'] || ch.Plan) && (ch.node_type == null || ch.node_type === '') && !ch.plans && !ch.Plans) {
+                    var inner = ch['Plan'] != null ? ch['Plan'] : ch.Plan;
+                    if (inner && typeof inner === 'object') {
+                        kids[i] = inner;
+                    }
+                }
+                h(kids[i]);
+            }
+        }
+        h(root);
+    }
+
+    function planTreeHasAnyNodeType(node) {
+        if (!node || typeof node !== 'object') return false;
+        if (node.node_type != null && String(node.node_type).trim() !== '') return true;
+        var kids = node.plans || [];
+        for (var i = 0; i < kids.length; i++) {
+            if (planTreeHasAnyNodeType(kids[i])) return true;
+        }
+        return false;
+    }
+
+    /** Rebuild a nested plan from API plan_graph (flat nodes + parent_id) when result.plan.plan lacks fields. */
+    function planGraphToRoot(graph) {
+        if (!graph || !graph.nodes || graph.nodes.length === 0) return null;
+        var list = graph.nodes;
+        var byGid = {};
+        for (var i = 0; i < list.length; i++) {
+            var gn = list[i];
+            var o = {
+                id: gn.planner_node_id != null ? gn.planner_node_id : 0,
+                node_type: gn.node_type || '',
+                relation_name: gn.relation_name || '',
+                alias: gn.alias || '',
+                index_name: gn.index_name || '',
+                total_cost: gn.total_cost != null ? Number(gn.total_cost) : 0,
+                plan_rows: gn.plan_rows != null ? Number(gn.plan_rows) : 0,
+                actual_rows: gn.actual_rows != null ? gn.actual_rows : null,
+                actual_total_time: gn.actual_total_time_ms != null ? Number(gn.actual_total_time_ms) : null,
+                exclusive_time: gn.exclusive_time_ms != null ? Number(gn.exclusive_time_ms) : null,
+                inclusive_time: gn.actual_total_time_ms != null ? Number(gn.actual_total_time_ms) : null,
+                filter: gn.filter || '',
+                plans: []
+            };
+            byGid[gn.id] = o;
+        }
+        var root = null;
+        for (var j = 0; j < list.length; j++) {
+            var g = list[j];
+            var node = byGid[g.id];
+            if (!node) continue;
+            var pid = g.parent_id;
+            if (pid == null || pid === '') {
+                root = node;
+            } else {
+                var p = byGid[pid];
+                if (p) p.plans.push(node);
+            }
+        }
+        return root;
+    }
+
+    function pickAnalyzePlanRoot(data) {
+        var r = data.result;
+        if (!r) return null;
+        var cand = [];
+        if (r.plan && r.plan.plan) cand.push(r.plan.plan);
+        if (r.plan_tree) cand.push(r.plan_tree);
+        for (var i = 0; i < cand.length; i++) {
+            var root = normalizePgExplainObject(cand[i]);
+            hydratePlanTree(root);
+            if (planTreeHasAnyNodeType(root)) return root;
+        }
+        var g = planGraphToRoot(data.plan_graph);
+        if (g) {
+            g = normalizePgExplainObject(g);
+            hydratePlanTree(g);
+            if (planTreeHasAnyNodeType(g)) return g;
+        }
+        if (cand.length) {
+            var fb = normalizePgExplainObject(cand[0]);
+            hydratePlanTree(fb);
+            return fb;
+        }
+        return g;
     }
 
     function flattenPlanRows(node, out) {
@@ -217,6 +363,15 @@ window.PgExplainView = function PgExplainView() {
         var nt = node.node_type || '';
         if (nt.indexOf('Seq Scan') >= 0 && (Number(node.exclusive_time) > 5 || (node.rows_removed_by_filter || 0) > 5000)) {
             add('slow scan', 'warn');
+        }
+        var tc = node.total_cost != null ? Number(node.total_cost) : 0;
+        if (tc >= 1000) {
+            add('high cost', 'warn');
+        }
+        var pr = node.plan_rows != null ? Number(node.plan_rows) : 0;
+        var ar = node.actual_rows != null ? Number(node.actual_rows) : 0;
+        if (pr > 0 && ar > 0 && (ar / pr >= 5 || pr / ar >= 5)) {
+            add('row est. ×5', 'info');
         }
         return out;
     }
@@ -635,6 +790,9 @@ window.PgExplainView = function PgExplainView() {
             return;
         }
 
+        planRoot = normalizePgExplainObject(planRoot);
+        hydratePlanTree(planRoot);
+
         var flat = [];
         flattenPlanRows(planRoot, flat);
         var idxById = {};
@@ -712,15 +870,16 @@ window.PgExplainView = function PgExplainView() {
             });
         }
 
-        function showTooltip(ev, pid) {
+        function showTooltip(ev, nodeKey) {
             var tip = treeHost.querySelector('#pgExplainGraphTooltip');
             if (!tip) return;
             var node = null;
             for (var i = 0; i < flat.length; i++) {
-                if (String(flat[i].id) === String(pid)) { node = flat[i]; break; }
+                if (String(nodeUIKey(flat[i])) === String(nodeKey)) { node = flat[i]; break; }
             }
             if (!node) return;
-            var fns = fnByNode[pid] || [];
+            var plannerId = (typeof node.id === 'number' && node.id > 0) ? node.id : null;
+            var fns = plannerId != null ? (fnByNode[plannerId] || []) : [];
             var head = '<div class="pg-explain-tip-title"><strong>' + esc(node.node_type || '?') + '</strong>' + (node.relation_name ? ' <span class="text-muted">· ' + esc(node.relation_name) + '</span>' : '') + '</div>';
             var body = '<div class="pg-explain-tip-grid">' +
                 '<div><span class="text-muted">Exclusive</span><br/><strong>' + esc(formatMsMaybe(node.exclusive_time)) + '</strong></div>' +
@@ -814,8 +973,28 @@ window.PgExplainView = function PgExplainView() {
         if (fullSql && fullSql.trim()) {
             sqlBlock = '<div class="mt-2"><strong class="pg-explain-field-label">Your SQL</strong><pre class="pg-explain-full-sql">' + esc(fullSql) + '</pre></div>';
         }
-        if (!sqlCtx || !sqlCtx.findings || !sqlCtx.findings.length) {
-            return sqlBlock + '<p class="text-muted mt-2">No SQL-linked insights yet. Paste a JSON plan with relation names and run Analyze / Optimization report to generate index and rewrite suggestions.</p>';
+        var heur = (sqlCtx && sqlCtx.heuristic_insights) ? sqlCtx.heuristic_insights : [];
+        var heurHtml = '';
+        if (heur.length) {
+            heurHtml = '<h3 class="pg-explain-field-label mt-2" style="font-size:0.88rem;">Plan-driven hints (JSON)</h3>' +
+                '<p class="text-muted" style="font-size:0.72rem;">From the execution plan tree (not the database rules engine).</p>' +
+                heur.map(function (h) {
+                    var sev = h.severity || 'info';
+                    return '<div class="glass-panel pg-explain-sql-card mb-2" style="padding:0.65rem 0.85rem;">' +
+                        '<div class="pg-explain-sql-card-hd"><span class="badge ' + severityClass(sev) + '">' + esc(sev) + '</span> ' +
+                        '<strong>' + esc(h.code || '') + '</strong> · ' + esc(h.title || '') + '</div>' +
+                        (h.message ? '<div class="mt-1" style="font-size:0.82rem;">' + esc(h.message) + '</div>' : '') +
+                        (h.suggested_index_sql ? '<div class="mt-2"><strong style="font-size:0.78rem;">Suggested index</strong><pre class="pg-explain-ddl">' + esc(h.suggested_index_sql) + '</pre></div>' : '') +
+                        (h.rewrite_hint ? '<div class="mt-2 text-muted" style="font-size:0.78rem;"><strong>Rewrite:</strong> ' + esc(h.rewrite_hint) + '</div>' : '') +
+                        '</div>';
+                }).join('');
+        }
+        if (!sqlCtx || (!sqlCtx.findings || !sqlCtx.findings.length)) {
+            if (!heur.length) {
+                return sqlBlock + '<p class="text-muted mt-2">No SQL-linked or plan-driven insights yet. Add SQL text and run <strong>Analyze plan</strong>.</p>';
+            }
+            var disc0 = '<div class="alert alert-info pg-explain-disclaimer" style="font-size:0.76rem;">' + esc(sqlCtx.disclaimer || '') + '</div>';
+            return disc0 + heurHtml + sqlBlock;
         }
         var disc = '<div class="alert alert-info pg-explain-disclaimer" style="font-size:0.76rem;">' + esc(sqlCtx.disclaimer || '') + '</div>';
         var cards = sqlCtx.findings.map(function (c) {
@@ -839,22 +1018,31 @@ window.PgExplainView = function PgExplainView() {
             }
             return '<div class="glass-panel pg-explain-sql-card mb-2" style="padding:0.65rem 0.85rem;">' + head + msg + loc + ddl + rh + '</div>';
         }).join('');
-        return disc + sqlBlock + '<div class="mt-3">' + cards + '</div>';
+        return disc + heurHtml + sqlBlock + '<div class="mt-3"><h3 class="pg-explain-field-label" style="font-size:0.88rem;">Analyzer-linked findings</h3>' + cards + '</div>';
     }
 
-    function tabBar(mode, hasSqlCtx, hasMetrics) {
-        var tabs = mode === 'optimize'
-            ? [
+    function tabBar(mode, showSqlTab, hasMetrics) {
+        var tabs;
+        if (mode === 'optimize') {
+            tabs = [
                 { id: 'report', label: 'Report', icon: 'fa-file-lines' },
                 { id: 'map', label: 'Plan map', icon: 'fa-border-all' },
                 ...(hasMetrics ? [{ id: 'table', label: 'Metrics', icon: 'fa-table' }] : [])
-            ]
-            : [
+            ];
+        } else if (mode === 'index') {
+            tabs = [
+                { id: 'index', label: 'Index & rewrites', icon: 'fa-compass-drafting' },
+                { id: 'map', label: 'Plan map', icon: 'fa-border-all' },
+                ...(hasMetrics ? [{ id: 'table', label: 'Metrics', icon: 'fa-table' }] : [])
+            ];
+        } else {
+            tabs = [
                 { id: 'findings', label: 'Findings', icon: 'fa-triangle-exclamation' },
                 { id: 'map', label: 'Plan map', icon: 'fa-border-all' },
                 ...(hasMetrics ? [{ id: 'table', label: 'Metrics', icon: 'fa-table' }] : [])
             ];
-        if (hasSqlCtx) {
+        }
+        if (showSqlTab) {
             tabs.push({ id: 'sql', label: 'SQL insights', icon: 'fa-code' });
         }
         return '<div class="pg-explain-tab-bar" role="tablist">' + tabs.map(function (t, i) {
@@ -878,9 +1066,11 @@ window.PgExplainView = function PgExplainView() {
     function mountResultsShell(mode, innerFindingsOrReport, planRoot, sqlCtx, fullSql, vizOpts) {
         vizOpts = vizOpts || {};
         var hasSql = !!(fullSql && String(fullSql).trim().length);
-        var hasMetrics = hasSql; // Metrics tab is only useful when we can show the SQL context.
-        var bar = tabBar(mode, hasSql, hasMetrics);
-        var firstPanel = mode === 'optimize' ? 'report' : 'findings';
+        var hasHeur = !!(sqlCtx && sqlCtx.heuristic_insights && sqlCtx.heuristic_insights.length);
+        var showSqlTab = hasSql || hasHeur;
+        var hasMetrics = !!(planRoot && typeof planRoot === 'object');
+        var bar = tabBar(mode, showSqlTab, hasMetrics);
+        var firstPanel = mode === 'optimize' ? 'report' : (mode === 'index' ? 'index' : 'findings');
         var findingsPanel = '<div class="pg-explain-tab-panel" data-panel="' + firstPanel + '">' + innerFindingsOrReport + '</div>';
         var mapPanel = '<div class="pg-explain-tab-panel" data-panel="map" style="display:none;">' +
             '<p class="text-muted pg-explain-map-intro">SSMS-style operator tiles: click an operator to view properties, buffers, filters, and analyzer findings.</p>' +
@@ -889,13 +1079,15 @@ window.PgExplainView = function PgExplainView() {
             '</div>';
         var tablePanel = hasMetrics
             ? '<div class="pg-explain-tab-panel" data-panel="table" style="display:none;">' +
-                '<div class="mt-2"><strong class="pg-explain-field-label">Your SQL</strong><pre class="pg-explain-full-sql">' + esc(String(fullSql || '')) + '</pre></div>' +
+                (hasSql
+                    ? '<div class="mt-2"><strong class="pg-explain-field-label">Your SQL</strong><pre class="pg-explain-full-sql">' + esc(String(fullSql || '')) + '</pre></div>'
+                    : '<p class="text-muted mt-2" style="font-size:0.78rem;">No SQL pasted — the table below uses timings and row estimates from the plan JSON only.</p>') +
                 '<div id="pgExplainDepeszHost" class="mt-2"></div></div>'
             : '';
-        var sqlPanel = '<div class="pg-explain-tab-panel" data-panel="sql" style="display:none;">' + sqlInsightsPanel(sqlCtx, fullSql) + '</div>';
+        var sqlPanel = '<div class="pg-explain-tab-panel" data-panel="sql" style="display:none;">' + sqlInsightsPanel(sqlCtx || {}, fullSql) + '</div>';
 
         host.innerHTML = '<div id="pgExplainResultsInner" class="glass-panel pg-explain-results-inner" style="padding:0.85rem 1rem;">' + bar +
-            findingsPanel + mapPanel + tablePanel + (hasSql ? sqlPanel : '') + '</div>';
+            findingsPanel + mapPanel + tablePanel + (showSqlTab ? sqlPanel : '') + '</div>';
         host.style.display = 'block';
         document.getElementById('pgExplainResultsInner').querySelectorAll('.pg-explain-tab').forEach(function (btn) {
             btn.addEventListener('click', function () {
@@ -917,6 +1109,36 @@ window.PgExplainView = function PgExplainView() {
         var findings = r.findings || [];
         var fc = sum.findings_count || {};
         var ctxList = (data.sql_context && data.sql_context.findings) ? data.sql_context.findings : [];
+
+        var planRoot = pickAnalyzePlanRoot(data);
+
+        // If summary numbers are missing but the plan tree has costs/times (variant JSON keys), fill gaps for display.
+        if (planRoot && typeof planRoot === 'object') {
+            hydratePlanTree(planRoot);
+            if ((sum.total_cost == null || sum.total_cost === '') && planRoot.total_cost != null && !Number.isNaN(Number(planRoot.total_cost))) {
+                sum.total_cost = Number(planRoot.total_cost);
+            }
+            if ((sum.execution_time_ms == null || sum.execution_time_ms === '') && r.plan && r.plan.execution_time != null && !Number.isNaN(Number(r.plan.execution_time))) {
+                sum.execution_time_ms = Number(r.plan.execution_time);
+            }
+            if ((sum.planning_time_ms == null || sum.planning_time_ms === '') && r.plan && r.plan.planning_time != null && !Number.isNaN(Number(r.plan.planning_time))) {
+                sum.planning_time_ms = Number(r.plan.planning_time);
+            }
+            var fc = 0;
+            var scanC = 0;
+            var joinC = 0;
+            (function walkSummary(n) {
+                if (!n || typeof n !== 'object') return;
+                fc += 1;
+                var t = String(n.node_type || '').toLowerCase();
+                if (t.indexOf('scan') >= 0) scanC += 1;
+                if (t.indexOf('join') >= 0 || t.indexOf('nested loop') >= 0) joinC += 1;
+                (n.plans || []).forEach(walkSummary);
+            })(planRoot);
+            if (sum.node_count == null || sum.node_count === '') sum.node_count = fc;
+            if (sum.scan_count == null || sum.scan_count === '') sum.scan_count = scanC;
+            if (sum.join_count == null || sum.join_count === '') sum.join_count = joinC;
+        }
 
         var findingsHtml = findings.map(function (f, i) {
             var ctx = ctxList[i];
@@ -955,7 +1177,6 @@ window.PgExplainView = function PgExplainView() {
             '</div>' +
             '<h3 style="font-size:0.9rem;">Findings</h3>' + (findingsHtml || '<p class="text-muted">No findings.</p>');
 
-        var planRoot = (r.plan && r.plan.plan) ? r.plan.plan : null;
         var planMeta = {};
         if (r.plan) {
             if (r.plan.planning_time != null) planMeta.planning_time_ms = r.plan.planning_time;
@@ -1064,17 +1285,19 @@ window.PgExplainView = function PgExplainView() {
         showErr('');
         const planRaw = (planEl && planEl.value) ? planEl.value.trim() : '';
         if (!planRaw) {
-            showErr('Paste a plan first.');
+            showErr('Paste a JSON plan first.');
             return;
         }
-        let planPayload = planRaw;
-        if (planRaw.startsWith('{') || planRaw.startsWith('[')) {
-            try {
-                planPayload = JSON.parse(planRaw);
-            } catch (e) {
-                showErr('Invalid JSON plan: ' + (e.message || String(e)));
-                return;
-            }
+        if (!planRaw.startsWith('{') && !planRaw.startsWith('[')) {
+            showErr('Only JSON plans are supported. Use EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) in your SQL client.');
+            return;
+        }
+        var planPayload;
+        try {
+            planPayload = JSON.parse(planRaw);
+        } catch (e) {
+            showErr('Invalid JSON plan: ' + (e.message || String(e)));
+            return;
         }
         host.innerHTML = '<div class="glass-panel p-3"><div class="spinner"></div> Analyzing…</div>';
         host.style.display = 'block';
@@ -1094,17 +1317,19 @@ window.PgExplainView = function PgExplainView() {
         showErr('');
         const planRaw = (planEl && planEl.value) ? planEl.value.trim() : '';
         if (!planRaw) {
-            showErr('Paste a plan first.');
+            showErr('Paste a JSON plan first.');
             return;
         }
-        let planPayload = planRaw;
-        if (planRaw.startsWith('{') || planRaw.startsWith('[')) {
-            try {
-                planPayload = JSON.parse(planRaw);
-            } catch (e) {
-                showErr('Invalid JSON plan: ' + (e.message || String(e)));
-                return;
-            }
+        if (!planRaw.startsWith('{') && !planRaw.startsWith('[')) {
+            showErr('Only JSON plans are supported. Use EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON).');
+            return;
+        }
+        var planPayload;
+        try {
+            planPayload = JSON.parse(planRaw);
+        } catch (e) {
+            showErr('Invalid JSON plan: ' + (e.message || String(e)));
+            return;
         }
         host.innerHTML = '<div class="glass-panel p-3"><div class="spinner"></div> Building report…</div>';
         host.style.display = 'block';
@@ -1114,6 +1339,152 @@ window.PgExplainView = function PgExplainView() {
                 plan: planPayload
             });
             renderOptimize(data);
+        } catch (e) {
+            host.style.display = 'none';
+            showErr(e.message || String(e));
+        }
+    };
+
+    function statusBadgeClass(status) {
+        var s = String(status || '').toLowerCase();
+        if (s === 'recommended') return 'badge-success';
+        if (s === 'not_recommended') return 'badge-warning';
+        if (s === 'error') return 'badge-danger';
+        return 'badge-secondary';
+    }
+
+    function shouldHideAdvisorReasonLine(s) {
+        var t = String(s || '').trim();
+        if (!t) return true;
+        return /^(heuristic estimate\b|estimated or measured cost improvement|execution plan shape changed|high confidence recommendation)/i.test(t);
+    }
+
+    /** Index advisor: DDL + non-boilerplate reasoning only (no confidence score / evidence grid). */
+    function renderIndexRecommendationCard(title, rec) {
+        if (!rec) return '';
+        var reasons = (rec.reasoning && rec.reasoning.length)
+            ? rec.reasoning.filter(function (x) { return !shouldHideAdvisorReasonLine(x); })
+            : [];
+        var reasonsHtml = reasons.length
+            ? '<ul class="mt-1 mb-0" style="font-size:0.78rem;">' + reasons.map(function (x) {
+                return '<li>' + esc(x) + '</li>';
+            }).join('') + '</ul>'
+            : '';
+        return '<div class="glass-panel mb-2" style="padding:0.65rem 0.75rem;">' +
+            '<strong style="font-size:0.85rem;">' + esc(title) + '</strong> ' +
+            '<span class="text-muted" style="font-size:0.72rem;">· ' + esc(rec.table || '') + ' · ' + esc(rec.index_method || '') + '</span>' +
+            reasonsHtml +
+            (rec.index_statement ? '<pre class="pg-explain-ddl mt-2" style="max-height:180px;">' + esc(rec.index_statement) + '</pre>' : '') +
+            '</div>';
+    }
+
+    function renderIndexAdvisor(data) {
+        var st = data.recommendation_status || '';
+        var dsnNote = '';
+        if (data.dsn_note) {
+            dsnNote = '<div class="alert alert-info" style="font-size:0.76rem;">' + esc(data.dsn_note) + '</div>';
+        } else if (data.dsn_resolved === false) {
+            dsnNote = '<div class="alert alert-info" style="font-size:0.76rem;">No Postgres DSN was resolved from config. Results use heuristics only. Configure one Postgres instance or pass <code>database_dsn</code> via API.</div>';
+        }
+        var diag = data.diagnostics || {};
+        var diagHtml = '<div class="glass-panel mb-2" style="padding:0.55rem 0.7rem; font-size:0.74rem;">' +
+            '<strong>Diagnostics</strong> ' +
+            '<span class="text-muted">· parsed SQL: ' + esc(diag.ParsedSQL ? 'yes' : 'no') +
+            ' · parsed plan: ' + esc(diag.ParsedPlan ? 'yes' : 'no') +
+            ' · query supported: ' + esc(diag.QuerySupported ? 'yes' : 'no') +
+            ' · HypoPG: ' + esc(diag.HypoPGAvailable ? 'yes' : 'no') +
+            '</span></div>';
+
+        var top = renderIndexRecommendationCard('Top recommendation', data.top_recommendation);
+        var alts = (data.alternatives || []).map(function (a, i) {
+            return renderIndexRecommendationCard('Alternative ' + (i + 1), a);
+        }).join('');
+
+        var rewrites = (data.query_rewrites || []).map(function (qr) {
+            var rules = (qr.applied_rules || []).join(', ');
+            return '<div class="glass-panel mb-2" style="padding:0.65rem 0.75rem;">' +
+                '<strong style="font-size:0.82rem;">Query rewrite</strong>' +
+                (rules ? '<div class="text-muted mt-1" style="font-size:0.72rem;">Rules: <code>' + esc(rules) + '</code></div>' : '') +
+                '<div class="mt-2"><span class="text-muted" style="font-size:0.72rem;">Original</span><pre class="pg-explain-sql-snippet">' + esc(qr.original_query || '') + '</pre></div>' +
+                '<div class="mt-1"><span class="text-muted" style="font-size:0.72rem;">Rewritten</span><pre class="pg-explain-ddl">' + esc(qr.rewritten_query || '') + '</pre></div>' +
+                '</div>';
+        }).join('');
+
+        var rejections = '';
+        if (data.rejections && data.rejections.length) {
+            rejections = '<h4 class="mt-3" style="font-size:0.85rem;">Rejected candidates</h4>' + data.rejections.map(function (r) {
+                return '<div class="glass-panel mb-2 text-muted" style="padding:0.5rem 0.65rem; font-size:0.74rem;">' +
+                    esc(r.rejection_reason || '') + '</div>';
+            }).join('');
+        }
+
+        var head =
+            '<div class="chart-card glass-panel mb-3" style="padding:0.75rem;">' +
+            '<div class="card-header"><h3 style="font-size:0.9rem; margin:0;">Index advisor</h3></div>' +
+            '<p style="font-size:0.82rem; margin:0.35rem 0 0 0;">' +
+            '<span class="badge ' + statusBadgeClass(st) + '">' + esc(st) + '</span>' +
+            ' <span class="text-muted" style="font-size:0.75rem;">Structured DDL and rewrites from the embedded advisor (review before applying).</span>' +
+            '</p></div>' +
+            dsnNote + diagHtml;
+
+        var body = (top || '<p class="text-muted">No top index recommendation (thresholds or plan may not warrant it).</p>') +
+            alts +
+            (rewrites ? '<h4 class="mt-3" style="font-size:0.85rem;">Query rewrites</h4>' + rewrites : '') +
+            rejections;
+
+        var planRoot = null;
+        try {
+            var raw = (planEl && planEl.value) ? planEl.value.trim() : '';
+            if (raw && (raw.startsWith('{') || raw.startsWith('['))) {
+                planRoot = JSON.parse(raw);
+                if (Array.isArray(planRoot) && planRoot.length === 1) planRoot = planRoot[0];
+                planRoot = normalizePgExplainObject(planRoot);
+                hydratePlanTree(planRoot);
+                if (planRoot && planRoot.plan && typeof planRoot.plan === 'object' && !planTreeHasAnyNodeType(planRoot)) {
+                    planRoot = planRoot.plan;
+                    hydratePlanTree(planRoot);
+                }
+            }
+        } catch (e2) { planRoot = null; }
+
+        mountResultsShell('index', head + body, planRoot, null, (queryEl && queryEl.value) ? queryEl.value : '', {
+            analyzerFindings: [],
+            planMeta: {}
+        });
+    }
+
+    document.getElementById('pgExplainBtnIndexAdvisor').onclick = async function () {
+        showErr('');
+        var q = (queryEl && queryEl.value) ? queryEl.value.trim() : '';
+        if (!q) {
+            showErr('Index advisor requires SQL text (paste your query above).');
+            return;
+        }
+        const planRaw = (planEl && planEl.value) ? planEl.value.trim() : '';
+        if (!planRaw) {
+            showErr('Paste a JSON execution plan first (EXPLAIN … FORMAT JSON).');
+            return;
+        }
+        if (!planRaw.startsWith('{') && !planRaw.startsWith('[')) {
+            showErr('Index advisor needs JSON plan output, not text. Re-run EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) … in your client.');
+            return;
+        }
+        var planPayload;
+        try {
+            planPayload = JSON.parse(planRaw);
+        } catch (e) {
+            showErr('Invalid JSON plan: ' + (e.message || String(e)));
+            return;
+        }
+        host.innerHTML = '<div class="glass-panel p-3"><div class="spinner"></div> Running index advisor…</div>';
+        host.style.display = 'block';
+        try {
+            var body = { query: q, plan: planPayload };
+            if (inst && String(inst.type || '').toLowerCase() === 'postgres' && inst.name) {
+                body.instance_name = inst.name;
+            }
+            const data = await postJSON('/api/postgres/explain/index-advisor', body);
+            renderIndexAdvisor(data);
         } catch (e) {
             host.style.display = 'none';
             showErr(e.message || String(e));

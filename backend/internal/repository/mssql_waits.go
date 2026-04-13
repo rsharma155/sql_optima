@@ -5,13 +5,28 @@ import (
 	"log"
 )
 
-// CollectWaitStats fetches wait statistics from sys.dm_os_wait_stats
+// CollectWaitStats returns current waits for user-database sessions only (Real-Time Diagnostics).
 func (c *MssqlRepository) CollectWaitStats(db *sql.DB) ([]map[string]interface{}, error) {
-	query := `SELECT wait_type, CAST(wait_time_ms AS FLOAT) FROM sys.dm_os_wait_stats WITH (NOLOCK) WHERE wait_type NOT IN ('DIRTY_PAGE_POLL', 'HADR_FILESTREAM_IOMGR_IOCOMPLETION', 'LAZYWRITER_SLEEP', 'LOGMGR_QUEUE', 'REQUEST_FOR_DEADLOCK_SEARCH', 'XE_DISPATCHER_WAIT', 'XE_TIMER_EVENT', 'SQLTRACE_BUFFER_FLUSH', 'SLEEP_TASK', 'BROKER_TO_FLUSH', 'SP_SERVER_DIAGNOSTICS_SLEEP') AND wait_time_ms > 0`
+	query := `
+		SELECT TOP 50
+			w.wait_type,
+			COUNT(*) AS waiting_tasks_count,
+			CAST(SUM(w.wait_duration_ms) AS FLOAT) AS wait_time_ms
+		FROM sys.dm_os_waiting_tasks w
+		INNER JOIN sys.dm_exec_sessions s ON w.session_id = s.session_id
+		WHERE s.is_user_process = 1
+		  AND s.database_id > 4
+		  AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
+		  AND s.session_id > 50
+		  AND w.wait_type NOT IN (N'CLR_SEMAPHORE', N'LAZYWRITER_SLEEP', N'RESOURCE_QUEUE', N'SLEEP_TASK', N'SLEEP_SYSTEMTASK', N'SQLTRACE_BUFFER_FLUSH', N'WAITFOR', N'XE_TIMER_EVENT', N'XE_DISPATCHER_WAIT')
+		GROUP BY w.wait_type
+		HAVING SUM(w.wait_duration_ms) > 0
+		ORDER BY SUM(w.wait_duration_ms) DESC
+	`
 
 	rows, err := db.Query(query)
 	if err != nil {
-		log.Printf("[MSSQL] Wait Stats Query Error: %v", err)
+		log.Printf("[MSSQL] Wait Stats (RTD) Query Error: %v", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -19,11 +34,13 @@ func (c *MssqlRepository) CollectWaitStats(db *sql.DB) ([]map[string]interface{}
 	var results []map[string]interface{}
 	for rows.Next() {
 		var waitType string
-		var waitTime sql.NullFloat64
-		if err := rows.Scan(&waitType, &waitTime); err == nil {
+		var taskCount int64
+		var waitMs float64
+		if err := rows.Scan(&waitType, &taskCount, &waitMs); err == nil {
 			results = append(results, map[string]interface{}{
-				"wait_type":    waitType,
-				"wait_time_ms": waitTime.Float64,
+				"wait_type":             waitType,
+				"waiting_tasks_count":   taskCount,
+				"wait_time_ms":          waitMs,
 			})
 		}
 	}

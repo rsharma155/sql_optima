@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/rsharma155/sql_optima/internal/explain"
-	"github.com/yourorg/pg_explain_analyze/analyzer"
-	"github.com/yourorg/pg_explain_analyze/parser"
-	"github.com/yourorg/pg_explain_analyze/types"
+	"github.com/rsharma155/sql_optima/internal/explain/analyzer"
+	"github.com/rsharma155/sql_optima/internal/explain/parser"
+	"github.com/rsharma155/sql_optima/internal/explain/types"
 )
 
 const maxExplainPlanBodyBytes = 512 * 1024
@@ -35,54 +35,49 @@ func writeExplainJSON(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-func parseExplainPlanInput(input any) (*types.Plan, string, error) {
-	switch p := input.(type) {
+// requireJSONPlanBytes normalizes EXPLAIN (FORMAT JSON) payloads and rejects text plans.
+func requireJSONPlanBytes(plan any) ([]byte, error) {
+	switch p := plan.(type) {
+	case nil:
+		return nil, fmt.Errorf("plan is required")
 	case string:
-		if len(p) == 0 {
-			return nil, "", fmt.Errorf("plan text is empty")
-		}
 		trim := strings.TrimSpace(p)
-		// If the user pasted JSON as a string, unwrap common Postgres FORMAT JSON shape: [ { ... } ]
-		if strings.HasPrefix(trim, "[") || strings.HasPrefix(trim, "{") {
-			normalized, nerr := normalizeExplainJSONPayload([]byte(trim))
-			if nerr == nil {
-				pl, err := parser.ParseJSON(string(normalized))
-				return pl, string(normalized), err
-			}
+		if trim == "" {
+			return nil, fmt.Errorf("plan is empty")
 		}
-		pl, err := parser.ParseText(p)
-		return pl, p, err
+		if !strings.HasPrefix(trim, "{") && !strings.HasPrefix(trim, "[") {
+			return nil, fmt.Errorf("only JSON execution plans are supported: use EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) and paste the JSON output, not the text tree")
+		}
+		return normalizeExplainJSONPayload([]byte(trim))
 	case map[string]interface{}:
-		planJSON, err := json.Marshal(p)
+		b, err := json.Marshal(p)
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
-		normalized, nerr := normalizeExplainJSONPayload(planJSON)
-		if nerr != nil {
-			return nil, "", nerr
-		}
-		s := string(normalized)
-		pl, err := parser.ParseJSON(s)
-		return pl, s, err
+		return normalizeExplainJSONPayload(b)
 	case []interface{}:
-		planJSON, err := json.Marshal(p)
+		b, err := json.Marshal(p)
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
-		normalized, nerr := normalizeExplainJSONPayload(planJSON)
-		if nerr != nil {
-			return nil, "", nerr
-		}
-		s := string(normalized)
-		pl, err := parser.ParseJSON(s)
-		return pl, s, err
+		return normalizeExplainJSONPayload(b)
 	default:
-		return nil, "", fmt.Errorf("plan must be a JSON string, object, or array")
+		return nil, fmt.Errorf("plan must be a JSON object or array")
 	}
 }
 
-// normalizeExplainJSONPayload unwraps common Postgres FORMAT JSON output:
-// EXPLAIN (FORMAT JSON) returns a top-level JSON array with a single object element.
+func parseExplainPlanInputJSON(input any) (*types.Plan, string, error) {
+	raw, err := requireJSONPlanBytes(input)
+	if err != nil {
+		return nil, "", err
+	}
+	s := string(raw)
+	pl, err := parser.ParseJSON(s)
+	return pl, s, err
+}
+
+// normalizeExplainJSONPayload unwraps a top-level single-element array from EXPLAIN (FORMAT JSON).
+// Other shapes (wrapped execution_plan_json, Title Case keys) are handled in parser.NormalizePostgresExplainJSON.
 func normalizeExplainJSONPayload(raw []byte) ([]byte, error) {
 	var asArray []any
 	if err := json.Unmarshal(raw, &asArray); err == nil {
@@ -99,7 +94,7 @@ func normalizeExplainJSONPayload(raw []byte) ([]byte, error) {
 	return raw, nil
 }
 
-// PgExplainAnalyze parses EXPLAIN output (text or JSON) and returns findings + summary.
+// PgExplainAnalyze parses EXPLAIN FORMAT JSON and returns findings + summary.
 func PgExplainAnalyze(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeExplainJSON(w, http.StatusMethodNotAllowed, map[string]any{"success": false, "error": "method not allowed"})
@@ -113,63 +108,34 @@ func PgExplainAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var result *types.AnalysisResult
-	var err error
-	switch plan := req.Plan.(type) {
-	case string:
-		result, err = pgExplainStdAnalyzer.AnalyzeFromText(plan)
-	case map[string]interface{}:
-		planJSON, jerr := json.Marshal(plan)
-		if jerr != nil {
-			writeExplainJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": jerr.Error()})
-			return
-		}
-		normalized, nerr := normalizeExplainJSONPayload(planJSON)
-		if nerr != nil {
-			writeExplainJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": nerr.Error()})
-			return
-		}
-		result, err = pgExplainStdAnalyzer.AnalyzeFromJSON(string(normalized))
-	case []interface{}:
-		planJSON, jerr := json.Marshal(plan)
-		if jerr != nil {
-			writeExplainJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": jerr.Error()})
-			return
-		}
-		normalized, nerr := normalizeExplainJSONPayload(planJSON)
-		if nerr != nil {
-			writeExplainJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": nerr.Error()})
-			return
-		}
-		result, err = pgExplainStdAnalyzer.AnalyzeFromJSON(string(normalized))
-	default:
-		writeExplainJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "plan must be a string, object, or array"})
-		return
-	}
+	plan, raw, err := parseExplainPlanInputJSON(req.Plan)
 	if err != nil {
 		writeExplainJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": err.Error()})
 		return
 	}
-
+	result := pgExplainStdAnalyzer.Analyze(plan)
 	flat := result.FlattenNodes()
-	result.Query = req.Query
-	if raw, ok := req.Plan.(string); ok {
-		result.RawPlan = raw
-	} else if req.Plan != nil {
-		if b, jerr := json.Marshal(req.Plan); jerr == nil {
-			result.RawPlan = string(b)
-		}
+	result.Plan.Plan = result.PlanTree
+	queryText := strings.TrimSpace(req.Query)
+	if queryText == "" {
+		queryText = strings.TrimSpace(result.Plan.Query)
 	}
+	result.Query = queryText
+	result.RawPlan = raw
 
 	g := explain.BuildPlanGraph(result.Plan.Plan)
+	bundle := explain.SQLContextBundle{Disclaimer: explain.SQLContextDisclaimer}
+	if queryText != "" {
+		bundle = explain.AugmentFindingsWithSQL(queryText, result.Findings, flat)
+	}
+	bundle.HeuristicInsights = explain.BuildHeuristicPlanInsights(&result.Plan.Plan, queryText)
+
 	resp := map[string]any{
 		"success":      true,
 		"result":       result,
 		"plan_graph":   g,
 		"plan_mermaid": explain.MermaidFlowchart(g),
-	}
-	if strings.TrimSpace(req.Query) != "" {
-		resp["sql_context"] = explain.AugmentFindingsWithSQL(req.Query, result.Findings, flat)
+		"sql_context":  bundle,
 	}
 
 	writeExplainJSON(w, http.StatusOK, resp)
@@ -177,6 +143,12 @@ func PgExplainAnalyze(w http.ResponseWriter, r *http.Request) {
 
 // PgExplainOptimize returns a structured optimization report for the given plan.
 func PgExplainOptimize(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if err := recover(); err != nil {
+			writeExplainJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": fmt.Sprintf("panic: %v", err)})
+		}
+	}()
+
 	if r.Method != http.MethodPost {
 		writeExplainJSON(w, http.StatusMethodNotAllowed, map[string]any{"success": false, "error": "method not allowed"})
 		return
@@ -189,34 +161,41 @@ func PgExplainOptimize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	plan, _, err := parseExplainPlanInput(req.Plan)
+	plan, _, err := parseExplainPlanInputJSON(req.Plan)
 	if err != nil {
 		writeExplainJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": err.Error()})
 		return
 	}
-	if req.Query != "" {
-		plan.Query = req.Query
+	queryText := strings.TrimSpace(req.Query)
+	if queryText == "" {
+		queryText = strings.TrimSpace(plan.Query)
 	}
+	plan.Query = queryText
 
 	aresult := pgExplainStdAnalyzer.Analyze(plan)
 	flat := aresult.FlattenNodes()
-	report := pgExplainOptAnalyzer.GenerateOptimizationReport(plan, aresult.Findings)
+	aresult.Plan.Plan = aresult.PlanTree
+	report := pgExplainOptAnalyzer.GenerateOptimizationReport(&aresult.Plan, aresult.Findings)
 
-	g := explain.BuildPlanGraph(plan.Plan)
+	g := explain.BuildPlanGraph(aresult.Plan.Plan)
+	bundle := explain.SQLContextBundle{Disclaimer: explain.SQLContextDisclaimer}
+	if queryText != "" {
+		bundle = explain.AugmentFindingsWithSQL(queryText, aresult.Findings, flat)
+	}
+	bundle.HeuristicInsights = explain.BuildHeuristicPlanInsights(&aresult.Plan.Plan, queryText)
+
 	resp := map[string]any{
 		"success":           true,
 		"report":            report,
-		"plan_root":         plan.Plan,
+		"plan_root":         aresult.Plan.Plan,
 		"plan_graph":        g,
 		"plan_mermaid":      explain.MermaidFlowchart(g),
 		"analyzer_findings": aresult.Findings,
 		"plan_meta": map[string]float64{
-			"planning_time_ms":  plan.PlanningTime,
-			"execution_time_ms": plan.ExecutionTime,
+			"planning_time_ms":  aresult.Plan.PlanningTime,
+			"execution_time_ms": aresult.Plan.ExecutionTime,
 		},
-	}
-	if strings.TrimSpace(req.Query) != "" {
-		resp["sql_context"] = explain.AugmentFindingsWithSQL(req.Query, aresult.Findings, flat)
+		"sql_context": bundle,
 	}
 
 	writeExplainJSON(w, http.StatusOK, resp)

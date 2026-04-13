@@ -1,4 +1,7 @@
-window.escapeHtml = function(unsafe) { return (!unsafe) ? '' : unsafe.toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); };
+window.escapeHtml = function(unsafe) {
+    if (unsafe === null || unsafe === undefined) return '';
+    return String(unsafe).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+};
 
 window.mssql_QueryDrilldown = async function() {
     window.scrollTo(0, 0);

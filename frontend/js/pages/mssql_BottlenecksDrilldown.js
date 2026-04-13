@@ -35,24 +35,108 @@ function syncBottlenecksAboutHints(showLogin, showApp) {
     if (liApp) liApp.style.display = showApp ? '' : 'none';
 }
 
+function bottleneckExecCount(q) {
+    return parseInt(q && (q.execution_count != null ? q.execution_count : (q.total_executions != null ? q.total_executions : q.executions)) || 0, 10) || 0;
+}
+
+function sortBottleneckQueries(rows, state) {
+    if (!rows || !rows.length) return [];
+    const key = (state && state.key) || 'total_cpu_ms';
+    const dir = (state && state.dir) === 'asc' ? 1 : -1;
+    const textKeys = { query_text: true, login_name: true, database_name: true, program_name: true };
+    return [...rows].sort((a, b) => {
+        if (textKeys[key]) {
+            const va = String((a && a[key]) || '').toLowerCase();
+            const vb = String((b && b[key]) || '').toLowerCase();
+            return dir * va.localeCompare(vb);
+        }
+        if (key === 'execution_count') {
+            const va = bottleneckExecCount(a);
+            const vb = bottleneckExecCount(b);
+            if (va === vb) return 0;
+            return dir * (va < vb ? -1 : 1);
+        }
+        const va = Number(a && a[key] != null ? a[key] : 0);
+        const vb = Number(b && b[key] != null ? b[key] : 0);
+        if (va === vb) return 0;
+        return dir * (va < vb ? -1 : 1);
+    });
+}
+
+function updateBottlenecksHeaderSortIndicators() {
+    const table = document.getElementById('bottlenecksTable');
+    if (!table) return;
+    const state = window.appState.bottlenecksGridSort || { key: 'total_cpu_ms', dir: 'desc' };
+    table.querySelectorAll('thead th[data-sort-key]').forEach((th) => {
+        const k = th.getAttribute('data-sort-key');
+        const icon = th.querySelector('.sort-icon');
+        if (!icon) return;
+        if (k === state.key) {
+            th.style.color = 'var(--accent, #3b82f6)';
+            icon.className = 'fa-solid sort-icon ' + (state.dir === 'asc' ? 'fa-sort-up' : 'fa-sort-down');
+        } else {
+            th.style.color = '';
+            icon.className = 'fa-solid fa-sort sort-icon';
+        }
+    });
+}
+
+window.onBottlenecksGridSortClick = function(ev) {
+    const th = ev.target.closest('th[data-sort-key]');
+    if (!th || !document.getElementById('bottlenecksTable') || !th.closest('#bottlenecksTable')) return;
+    ev.preventDefault();
+    const key = th.getAttribute('data-sort-key');
+    const state = Object.assign({}, window.appState.bottlenecksGridSort || { key: 'total_cpu_ms', dir: 'desc' });
+    if (state.key === key) {
+        state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+        state.key = key;
+        const textKeys = { query_text: true, login_name: true, database_name: true, program_name: true };
+        state.dir = textKeys[key] ? 'asc' : 'desc';
+    }
+    window.appState.bottlenecksGridSort = state;
+    if (window.bottlenecksLastRawQueries && window.bottlenecksLastRawQueries.length >= 0) {
+        window.renderBottlenecksTable(window.bottlenecksLastRawQueries);
+    }
+};
+
+function bindBottlenecksGridSort() {
+    const table = document.getElementById('bottlenecksTable');
+    if (!table || table.dataset.sortDelegateBound === '1') return;
+    table.dataset.sortDelegateBound = '1';
+    const thead = table.querySelector('thead');
+    if (thead) thead.addEventListener('click', window.onBottlenecksGridSortClick);
+}
+
 window.HistoricalBottlenecksView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...', type: 'sqlserver'};
     window.appState.currentInstanceName = inst.name;
-    window.appState.bottleneckCurrentRange = 'last_12_hours';
-    
+    window.appState.bottlenecksGridSort = window.appState.bottlenecksGridSort || { key: 'total_cpu_ms', dir: 'desc' };
+    const savedRange = window.appState.bottlenecksTimeRange || '1h';
+    const sel15 = savedRange === '15m' ? 'selected' : '';
+    const sel1h = savedRange === '1h' ? 'selected' : '';
+    const sel6 = savedRange === '6h' ? 'selected' : '';
+    const sel24 = savedRange === '24h' ? 'selected' : '';
+    const sel7 = savedRange === '7d' ? 'selected' : '';
+
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between">
-                <div>
-                    <h1>Historical Query Bottlenecks</h1>
-                    <p class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Query Store Analysis</p>
+                <div class="flex-between" style="align-items:center; gap:1rem; flex-wrap:wrap;">
+                    <button type="button" class="btn btn-sm btn-outline" style="padding:0.3rem 0.6rem;" onclick="window.appNavigate('dashboard')" title="Back to dashboard"><i class="fa-solid fa-arrow-left"></i> Back</button>
+                    <div>
+                        <h1 style="font-size:1.35rem; margin:0;">Historical Query Bottlenecks</h1>
+                        <p class="subtitle" style="margin:0.25rem 0 0 0;">Instance: ${window.escapeHtml(inst.name)} · Query Store · click column headers to sort</p>
+                    </div>
                 </div>
-                <div style="display: flex; align-items: center; gap: 0.75rem;">
-                    <select id="bottleneckTimeRange" class="custom-select" style="padding: 0.35rem 0.5rem; font-size: 0.8rem; min-width: 140px;">
-                        <option value="last_1_hour">Last 1 Hour</option>
-                        <option value="last_12_hours" selected>Last 12 Hours</option>
-                        <option value="last_24_hours">Last 24 Hours</option>
-                        <option value="last_7_days">Last 7 Days</option>
+                <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                    <label class="text-muted" style="font-size:0.75rem; margin:0;">Time range</label>
+                    <select id="bottleneckTimeRange" class="custom-select" style="padding: 0.35rem 0.5rem; font-size: 0.8rem; min-width: 160px;">
+                        <option value="15m" ${sel15}>Last 15 minutes</option>
+                        <option value="1h" ${sel1h}>Last 1 hour</option>
+                        <option value="6h" ${sel6}>Last 6 hours</option>
+                        <option value="24h" ${sel24}>Last 24 hours</option>
+                        <option value="7d" ${sel7}>Last 7 days</option>
                     </select>
                     <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshBottlenecks()">
                         <i class="fa-solid fa-refresh"></i> Refresh
@@ -73,15 +157,15 @@ window.HistoricalBottlenecksView = async function() {
                         <thead>
                             <tr>
                                 <th style="min-width: 40px;">#</th>
-                                <th style="min-width: 200px;">Query Text</th>
-                                <th id="bottlenecks-th-login" style="min-width: 80px; display: none;">Login</th>
-                                <th style="min-width: 80px;">Database</th>
-                                <th id="bottlenecks-th-app" style="min-width: 60px; display: none;">App</th>
-                                <th style="min-width: 80px;">Executions</th>
-                                <th style="min-width: 80px;">Avg CPU (ms)</th>
-                                <th style="min-width: 100px;">Avg Duration (ms)</th>
-                                <th style="min-width: 100px;">Avg Logical Reads</th>
-                                <th style="min-width: 80px;">Total CPU (ms)</th>
+                                <th data-sort-key="query_text" style="min-width: 200px; cursor:pointer; user-select:none;" title="Sort">Query Text <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.65rem;"></i></th>
+                                <th id="bottlenecks-th-login" data-sort-key="login_name" style="min-width: 80px; display: none; cursor:pointer; user-select:none;" title="Sort">Login <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.65rem;"></i></th>
+                                <th data-sort-key="database_name" style="min-width: 80px; cursor:pointer; user-select:none;" title="Sort">Database <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.65rem;"></i></th>
+                                <th id="bottlenecks-th-app" data-sort-key="program_name" style="min-width: 60px; display: none; cursor:pointer; user-select:none;" title="Sort">App <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.65rem;"></i></th>
+                                <th data-sort-key="execution_count" style="min-width: 80px; cursor:pointer; user-select:none;" title="Sort">Executions <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.65rem;"></i></th>
+                                <th data-sort-key="avg_cpu_ms" style="min-width: 80px; cursor:pointer; user-select:none;" title="Sort">Avg CPU (ms) <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.65rem;"></i></th>
+                                <th data-sort-key="avg_duration_ms" style="min-width: 100px; cursor:pointer; user-select:none;" title="Sort">Avg Duration (ms) <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.65rem;"></i></th>
+                                <th data-sort-key="avg_logical_reads" style="min-width: 100px; cursor:pointer; user-select:none;" title="Sort">Avg Logical Reads <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.65rem;"></i></th>
+                                <th data-sort-key="total_cpu_ms" style="min-width: 80px; cursor:pointer; user-select:none;" title="Sort">Total CPU (ms) <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.65rem;"></i></th>
                             </tr>
                         </thead>
                         <tbody id="bottlenecksBody">
@@ -112,7 +196,10 @@ window.HistoricalBottlenecksView = async function() {
         </div>
     `;
 
-    document.getElementById('bottleneckTimeRange').addEventListener('change', window.refreshBottlenecks);
+    document.getElementById('bottleneckTimeRange').addEventListener('change', function() {
+        window.appState.bottlenecksTimeRange = document.getElementById('bottleneckTimeRange').value;
+        window.refreshBottlenecks();
+    });
     
     await window.loadBottlenecks();
 };
@@ -124,8 +211,10 @@ window.loadBottlenecks = async function() {
         return;
     }
 
-    const timeRange = document.getElementById('bottleneckTimeRange').value;
-    const apiTimeRange = ({ last_1_hour: '1h', last_12_hours: '24h', last_24_hours: '24h', last_7_days: '7d' })[timeRange] || '1h';
+    const timeRangeEl = document.getElementById('bottleneckTimeRange');
+    const timeRange = timeRangeEl ? timeRangeEl.value : '1h';
+    window.appState.bottlenecksTimeRange = timeRange;
+    const apiTimeRange = timeRange;
     const dbQ = (typeof window.dashboardDatabaseQueryParam === 'function') ? window.dashboardDatabaseQueryParam() : '';
     
     try {
@@ -149,7 +238,7 @@ window.loadBottlenecks = async function() {
             console.log('[Bottlenecks] Query Store table is empty, falling back to live top queries');
             // Fallback to live top queries from dashboard
             const liveResponse = await window.apiClient.authenticatedFetch(
-                `/api/mssql/dashboard?instance=${encodeURIComponent(inst.name)}&source=live`
+                `/api/mssql/dashboard?instance=${encodeURIComponent(inst.name)}`
             );
             if (liveResponse.ok) {
                 const liveData = await liveResponse.json();
@@ -166,7 +255,7 @@ window.loadBottlenecks = async function() {
         // Final fallback - try live dashboard
         try {
             const liveResponse = await window.apiClient.authenticatedFetch(
-                `/api/mssql/dashboard?instance=${encodeURIComponent(inst.name)}&source=live`
+                `/api/mssql/dashboard?instance=${encodeURIComponent(inst.name)}`
             );
             if (liveResponse.ok) {
                 const liveData = await liveResponse.json();
@@ -186,20 +275,26 @@ window.loadBottlenecks = async function() {
 
 window.renderBottlenecksTable = function(queries) {
     const tbody = document.getElementById('bottlenecksBody');
-    const vis = bottleneckColumnVisibility(queries || []);
+    window.bottlenecksLastRawQueries = queries && queries.length ? [...queries] : [];
+    const vis = bottleneckColumnVisibility(window.bottlenecksLastRawQueries);
     window.bottlenecksSessionColumnVis = vis;
     syncBottlenecksTableHeaders(vis.showLogin, vis.showApp);
     syncBottlenecksAboutHints(vis.showLogin, vis.showApp);
+
+    const sortState = window.appState.bottlenecksGridSort || { key: 'total_cpu_ms', dir: 'desc' };
+    const sortedQueries = sortBottleneckQueries(window.bottlenecksLastRawQueries, sortState);
     
-    if (!queries || queries.length === 0) {
+    if (!sortedQueries || sortedQueries.length === 0) {
         tbody.innerHTML = `<tr><td colspan="${vis.colCount}" class="text-center text-muted"><i class="fa-solid fa-info-circle"></i> No query bottlenecks found in the selected time range. Query Store may not be enabled or no significant queries were captured.</td></tr>`;
+        updateBottlenecksHeaderSortIndicators();
+        bindBottlenecksGridSort();
         return;
     }
     
-    tbody.innerHTML = queries.map((q, idx) => {
+    tbody.innerHTML = sortedQueries.map((q, idx) => {
         const queryText = q.query_text || 'N/A';
         const truncatedText = queryText.length > 80 ? queryText.substring(0, 80) + '...' : queryText;
-        const executions = parseInt(q.execution_count || q.total_executions || 0, 10);
+        const executions = bottleneckExecCount(q);
         const avgCpu = parseFloat(q.avg_cpu_ms || 0);
         const avgDuration = parseFloat(q.avg_duration_ms || 0);
         const avgReads = parseFloat(q.avg_logical_reads || 0);
@@ -239,6 +334,16 @@ window.renderBottlenecksTable = function(queries) {
             </tr>
         `;
     }).join('');
+
+    updateBottlenecksHeaderSortIndicators();
+    bindBottlenecksGridSort();
+};
+
+window.showBottleneckDetail = function(idx) {
+    const q = window.bottleneckQueryData && window.bottleneckQueryData[idx];
+    if (!q) return;
+    const qt = q.query_text || '';
+    window.showBottleneckModal(qt, idx);
 };
 
 window.showBottleneckModal = function(queryText, queryIdx) {
@@ -330,7 +435,7 @@ window.showBottleneckModal = function(queryText, queryIdx) {
 window.refreshBottlenecks = async function() {
     const selectEl = document.getElementById('bottleneckTimeRange');
     if (selectEl) {
-        window.appState.bottleneckCurrentRange = selectEl.value;
+        window.appState.bottlenecksTimeRange = selectEl.value;
     }
     
     const tbody = document.getElementById('bottlenecksBody');

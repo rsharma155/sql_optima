@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yourorg/pg_explain_analyze/types"
+	"github.com/rsharma155/sql_optima/internal/explain/types"
 )
 
 // PlanGraphNode is a node for tree/flow visualizations (client renders Mermaid or HTML).

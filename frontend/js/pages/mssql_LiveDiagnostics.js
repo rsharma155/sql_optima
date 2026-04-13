@@ -21,7 +21,7 @@ window.LiveDiagnosticsView = async function() {
             </div>
 
             <div class="alert alert-info" style="background:rgba(59,130,246,0.1); border:1px solid var(--accent); margin-bottom:1rem; padding:0.5rem 1rem; font-size:0.8rem;">
-                <i class="fa-solid fa-info-circle"></i> <strong>Live Mode:</strong> Direct DMV queries (10s timeout). Data not persisted.
+                <i class="fa-solid fa-info-circle"></i> <strong>Live Mode:</strong> Direct DMV queries (10s timeout). Session-oriented panels filter to <strong>user workloads</strong>: <code>is_user_process = 1</code>, current database <code>database_id &gt; 4</code>, and exclude the <strong>distribution</strong> database. Instance-level KPIs (memory, batch requests/sec) are unchanged.
             </div>
 
             <div class="metrics-grid" style="display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem; margin-bottom:1rem;">

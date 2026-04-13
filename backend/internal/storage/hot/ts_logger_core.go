@@ -3,7 +3,9 @@ package hot
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,7 +24,6 @@ type TimescaleLogger struct {
 	prevWaitHistory     map[string]map[string]float64
 	prevQueryStoreStats       map[string]int64
 	prevSchedulerStats        map[string]uint64
-	prevTopQueries            map[string]map[string]int64
 	prevEnterpriseBatchHash   map[string]uint64
 	// Postgres Control Center dedup/delta state
 	prevPgWalBytesTotal       map[string]uint64
@@ -47,7 +48,6 @@ func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
 		prevWaitHistory:     make(map[string]map[string]float64),
 		prevQueryStoreStats:       make(map[string]int64),
 		prevSchedulerStats:        make(map[string]uint64),
-		prevTopQueries:            make(map[string]map[string]int64),
 		prevEnterpriseBatchHash:   make(map[string]uint64),
 		prevPgWalBytesTotal:       make(map[string]uint64),
 		prevPgControlCenterHash:   make(map[string]uint64),
@@ -400,5 +400,40 @@ func parseTimeRange(from, to string) (time.Time, time.Time, error) {
 		end = now
 	}
 
+	return start, end, nil
+}
+
+// parseRFC3339Flexible parses timestamps from browsers (Date.toISOString uses fractional seconds)
+// and plain RFC3339. time.RFC3339 alone rejects values like "...T07:15:00.000Z".
+func parseRFC3339Flexible(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, fmt.Errorf("empty timestamp")
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, s)
+}
+
+// parseTimeRangeRFC3339 parses non-empty from/to as RFC3339 (with optional subsecond precision).
+func parseTimeRangeRFC3339(from, to string) (time.Time, time.Time, error) {
+	from = strings.TrimSpace(from)
+	to = strings.TrimSpace(to)
+	if from == "" || to == "" {
+		return time.Time{}, time.Time{}, fmt.Errorf("from and to are required")
+	}
+	start, err := parseRFC3339Flexible(from)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("from: %w", err)
+	}
+	end, err := parseRFC3339Flexible(to)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("to: %w", err)
+	}
+	if end.Before(start) {
+		return time.Time{}, time.Time{}, fmt.Errorf("to is before from")
+	}
 	return start, end, nil
 }

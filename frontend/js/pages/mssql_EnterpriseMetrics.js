@@ -68,7 +68,11 @@ window.EnterpriseMetricsView = async function() {
                             'file_io_latency',
                             'spinlock_stats',
                             'memory_clerks',
-                            'tempdb_stats'
+                            'tempdb_stats',
+                            'plan_cache_health',
+                            'memory_grant_waiters',
+                            'tempdb_top_consumers',
+                            'wait_categories_15m'
                         ];
                         for (const k of keys) {
                             if (Array.isArray(data[k])) return data[k];
@@ -158,6 +162,9 @@ function updateEnterpriseDataSourceBadge(source) {
     if (source === 'timescale') {
         label = 'Source: Timescale snapshot';
         cls = 'badge badge-success';
+    } else if (source === 'timescale_error' || source === 'timescale_unavailable') {
+        label = 'Source: Timescale unavailable / error';
+        cls = 'badge badge-warning';
     } else if (source === 'live_dmv_fallback') {
         label = 'Source: Live DMV fallback';
         cls = 'badge badge-warning';
@@ -331,7 +338,7 @@ function renderEnterpriseMetrics(inst, metrics) {
                         <span class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Advanced Performance Monitoring</span>
                     </div>
                     <p class="text-muted enterprise-metrics-intro" style="margin:0.4rem 0 0 0; font-size:0.8rem; line-height:1.45; white-space:nowrap; overflow-x:auto; overflow-y:hidden; max-width:100%; -webkit-overflow-scrolling:touch;">
-                        This diagnostic view provides real-time visibility into the SQL Server database engine, highlighting active bottlenecks, memory pressure, storage performance, and query execution efficiency.
+                        Snapshots are read from <strong>TimescaleDB</strong> (collector) to avoid hammering SQL Server on each refresh. Use <strong>Real-Time Diagnostics</strong> for live DMV queries. Pass <code>?source=live</code> on API calls only if you intentionally need direct DMV data from this UI tier.
                     </p>
                 </div>
                 <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">

@@ -25,8 +25,22 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	if !sec.AuthRequired {
 		r.HandleFunc("/api/config", func(w http.ResponseWriter, req *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
+			statuses := map[string]string{}
+			if metricsSvc != nil {
+				statuses = metricsSvc.GetAllInstanceStatuses()
+			}
+			instances := make([]config.Instance, 0, len(cfg.Instances))
+			for _, inst := range cfg.Instances {
+				copyInst := inst
+				if status, ok := statuses[inst.Name]; ok {
+					copyInst.Available = status == "online"
+				} else {
+					copyInst.Available = true
+				}
+				instances = append(instances, copyInst)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"instances": cfg.Instances,
+				"instances": instances,
 			})
 		}).Methods("GET")
 	}
@@ -80,7 +94,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		// Strict: only auth endpoints stay public; config is moved behind JWT below.
 	} else {
 		registerMonitoringReadRoutes(openAPI, mon, rulesBP)
-		registerMonitoringElevatedRoutes(openAPI, mssqlH, handlers.PgExplainAnalyze, handlers.PgExplainOptimize)
+		registerMonitoringElevatedRoutes(openAPI, mssqlH, handlers.PgExplainAnalyze, handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
 		// Legacy: explain was public when auth is not required.
 	}
 
@@ -95,8 +109,22 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		configProtected.Use(middleware.RequireAnyRole("viewer", "dba", "admin"))
 		configProtected.HandleFunc("/config", func(w http.ResponseWriter, req *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
+			statuses := map[string]string{}
+			if metricsSvc != nil {
+				statuses = metricsSvc.GetAllInstanceStatuses()
+			}
+			instances := make([]config.Instance, 0, len(cfg.Instances))
+			for _, inst := range cfg.Instances {
+				copyInst := inst
+				if status, ok := statuses[inst.Name]; ok {
+					copyInst.Available = status == "online"
+				} else {
+					copyInst.Available = true
+				}
+				instances = append(instances, copyInst)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"instances": cfg.Instances,
+				"instances": instances,
 			})
 		}).Methods("GET")
 
@@ -108,7 +136,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		dbaAPI := r.PathPrefix("/api").Subrouter()
 		dbaAPI.Use(middleware.RequireAuth(""))
 		dbaAPI.Use(middleware.RequireAnyRole("dba", "admin"))
-		registerMonitoringElevatedRoutes(dbaAPI, mssqlH, handlers.PgExplainAnalyze, handlers.PgExplainOptimize)
+		registerMonitoringElevatedRoutes(dbaAPI, mssqlH, handlers.PgExplainAnalyze, handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
 		registerPostgresDBAMutations(dbaAPI, postgresH)
 		registerDashboardWidgetRoutes(dbaAPI, dashboardH)
 	}

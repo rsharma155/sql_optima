@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/yourorg/pg_explain_analyze/types"
+	"github.com/rsharma155/sql_optima/internal/explain/types"
 )
 
 // SQLContextMeta documents limitations of heuristic SQL linking.
@@ -32,8 +32,9 @@ type FindingSQLContext struct {
 
 // SQLContextBundle is attached to analyze/optimize responses when query is non-empty.
 type SQLContextBundle struct {
-	Disclaimer string              `json:"disclaimer"`
-	Findings   []FindingSQLContext `json:"findings"`
+	Disclaimer        string                 `json:"disclaimer"`
+	Findings          []FindingSQLContext    `json:"findings"`
+	HeuristicInsights []PlanHeuristicInsight `json:"heuristic_insights,omitempty"`
 }
 
 // nodeByPlannerID maps flattened planner-assigned node IDs after analysis.

@@ -1,5 +1,13 @@
 window.escapeHtml = function(unsafe) { return (!unsafe) ? '' : unsafe.toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); };
 
+/** Convert datetime-local value to RFC3339 for Timescale APIs */
+window.cpuDrilldownLocalToRFC3339 = function(localDt) {
+    if (!localDt) return '';
+    const d = new Date(localDt);
+    if (isNaN(d.getTime())) return '';
+    return d.toISOString();
+};
+
 window.CpuDrilldown = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...', type: 'sqlserver'};
     
@@ -33,8 +41,16 @@ window.CpuDrilldown = async function() {
             </div>
 
             <div class="table-card glass-panel mt-4">
-                <div class="card-header flex-between">
-                    <h3>Top Queries by CPU Time</h3>
+                <div class="card-header flex-between" style="flex-wrap: wrap; gap: 0.5rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <h3>Top Queries</h3>
+                        <select id="queryMetricSelect" class="custom-select" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onchange="window.changeQueryMetric()">
+                            <option value="cpu">CPU Time</option>
+                            <option value="duration">Duration</option>
+                            <option value="reads">Logical Reads</option>
+                            <option value="executions">Executions</option>
+                        </select>
+                    </div>
                     <span id="queryCount" class="badge badge-info">0 queries</span>
                 </div>
                 <div style="font-size: 0.75rem; color: var(--text-muted); margin: 0.5rem 0; padding: 0.5rem; background: rgba(0,0,0,0.2); border-radius: 4px;">
@@ -48,8 +64,8 @@ window.CpuDrilldown = async function() {
                                 <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(1)">Time</th>
                                 <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(2)">Database <i class="fa-solid fa-sort"></i></th>
                                 <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e);">Query Text</th>
-                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(4)">Total CPU (ms) <i class="fa-solid fa-sort"></i></th>
-                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(5)">Avg CPU (ms) <i class="fa-solid fa-sort"></i></th>
+                                <th id="cpuDrillMetricTotalTh" style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(4)">Total CPU (ms) <i class="fa-solid fa-sort"></i></th>
+                                <th id="cpuDrillMetricAvgTh" style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(5)">Avg CPU (ms) <i class="fa-solid fa-sort"></i></th>
                                 <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(6)">Execs <i class="fa-solid fa-sort"></i></th>
                                 <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(7)">Login <i class="fa-solid fa-sort"></i></th>
                                 <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(8)">Client App <i class="fa-solid fa-sort"></i></th>
@@ -76,14 +92,177 @@ window.CpuDrilldown = async function() {
     document.getElementById('cpuDrillTo').value = `${yyyy}-${mm}-${dd}T${hh}:${min}`;
 
     window.appState.cpuQueriesTableData = [];
-    await window.loadCpuDrilldownData(inst.name);
+    window.appState.currentQueryMetric = 'cpu';
+    window.updateCpuDrillMetricHeaders();
+    const fromVal = document.getElementById('cpuDrillFrom').value;
+    const toVal = document.getElementById('cpuDrillTo').value;
+    await Promise.all([
+        window.loadCpuDrilldownChartOnly(inst.name, fromVal, toVal),
+        window.loadQueryStatsWithMetric(inst.name, 'cpu', '1h', fromVal, toVal)
+    ]);
+};
+
+window.updateCpuDrillMetricHeaders = function() {
+    const m = window.appState.currentQueryMetric || 'cpu';
+    const totalTh = document.getElementById('cpuDrillMetricTotalTh');
+    const avgTh = document.getElementById('cpuDrillMetricAvgTh');
+    const labels = {
+        cpu: ['Total CPU (ms)', 'Avg CPU (ms)'],
+        duration: ['Total Duration (ms)', 'Avg Duration (ms)'],
+        reads: ['Logical Reads', 'Avg Reads / exec'],
+        executions: ['Executions', 'Avg CPU (ms)']
+    };
+    const pair = labels[m] || labels.cpu;
+    if (totalTh) {
+        totalTh.innerHTML = pair[0] + ' <i class="fa-solid fa-sort"></i>';
+        totalTh.onclick = function() { window.sortCpuTable(4); };
+    }
+    if (avgTh) {
+        avgTh.innerHTML = pair[1] + ' <i class="fa-solid fa-sort"></i>';
+        avgTh.onclick = function() { window.sortCpuTable(5); };
+    }
+};
+
+window.changeQueryMetric = async function() {
+    const metricSelect = document.getElementById('queryMetricSelect');
+    if (!metricSelect) return;
+    window.appState.currentQueryMetric = metricSelect.value;
+    window.updateCpuDrillMetricHeaders();
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+    if (!inst) return;
+    const fromInput = document.getElementById('cpuDrillFrom');
+    const toInput = document.getElementById('cpuDrillTo');
+    await window.loadQueryStatsWithMetric(inst.name, metricSelect.value, '1h',
+        fromInput ? fromInput.value : '', toInput ? toInput.value : '');
+};
+
+window.loadQueryStatsWithMetric = async function(instanceName, metric, timeRange, fromLocal, toLocal) {
+    if (!metric) metric = window.appState.currentQueryMetric || 'cpu';
+    if (!timeRange) timeRange = '1h';
+    const rangeErr = window.getDatetimeLocalRangeError && window.getDatetimeLocalRangeError(fromLocal, toLocal);
+    if (rangeErr) {
+        window.showDateRangeValidationError(rangeErr);
+        return;
+    }
+    const fromISO = window.cpuDrilldownLocalToRFC3339(fromLocal);
+    const toISO = window.cpuDrilldownLocalToRFC3339(toLocal);
+    const tbodyLoading = document.getElementById('cpuQueriesBody');
+    if (tbodyLoading) {
+        tbodyLoading.innerHTML = '<tr><td colspan="9" class="text-center"><div class="spinner"></div> Loading queries…</td></tr>';
+    }
+    try {
+        let apiUrl = `/api/timescale/mssql/query-stats-dashboard?instance=${encodeURIComponent(instanceName)}&metric=${encodeURIComponent(metric)}&time_range=${encodeURIComponent(timeRange)}&dimension=query&limit=50`;
+        if (fromISO && toISO) {
+            apiUrl += `&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`;
+        }
+        const res = await window.apiClient.authenticatedFetch(apiUrl);
+        if (!res.ok) throw new Error('query-stats-dashboard failed');
+        const data = await res.json();
+        const queries = data.results || [];
+        // query-stats-dashboard reads sqlserver_query_stats_interval; collectors often only populate
+        // sqlserver_top_queries first. Empty results here is normal — use Timescale range / latest / DMV.
+        if (queries.length === 0) {
+            appDebug('query-stats-dashboard returned 0 rows; loading sqlserver_top_queries via cpu-drilldown');
+            await window.loadCpuDrilldownDataLegacy(instanceName, fromLocal, toLocal);
+            return;
+        }
+        const countEl = document.getElementById('queryCount');
+        if (countEl) countEl.textContent = queries.length + ' queries';
+        window.appState.cpuQueriesTableData = queries;
+        window.renderCpuDrilldownTable(queries, fromLocal, toLocal);
+    } catch (e) {
+        appDebug('Failed to load query stats, using Timescale top queries / DMV fallback:', e);
+        await window.loadCpuDrilldownDataLegacy(instanceName, fromLocal, toLocal);
+    }
+};
+
+window.loadCpuDrilldownDataLegacy = async function(instanceName, fromLocal, toLocal) {
+    const rangeErr = window.getDatetimeLocalRangeError && window.getDatetimeLocalRangeError(fromLocal, toLocal);
+    if (rangeErr) {
+        window.showDateRangeValidationError(rangeErr);
+        return;
+    }
+    try {
+        let queriesUrl = `/api/mssql/cpu-drilldown?instance=${encodeURIComponent(instanceName)}&limit=200`;
+        const fromISO = window.cpuDrilldownLocalToRFC3339(fromLocal);
+        const toISO = window.cpuDrilldownLocalToRFC3339(toLocal);
+        if (fromISO && toISO) {
+            queriesUrl += `&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`;
+        }
+        const res = await window.apiClient.authenticatedFetch(queriesUrl);
+        if (!res.ok) throw new Error('cpu-drilldown failed');
+        const topData = await res.json();
+        const queries = topData.queries || topData.top_queries || [];
+        const countEl = document.getElementById('queryCount');
+        if (countEl) countEl.textContent = queries.length + ' queries';
+        window.appState.cpuQueriesTableData = queries;
+        window.renderCpuDrilldownTable(queries, fromLocal, toLocal);
+    } catch (e) {
+        appDebug('Failed to load legacy CPU drilldown queries:', e);
+        const tbody = document.getElementById('cpuQueriesBody');
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="9" class="text-center text-danger">Failed to load queries: ${window.escapeHtml(e.message)}</td></tr>`;
+        }
+    }
+};
+
+window.loadCpuDrilldownChartOnly = async function(instanceName, fromLocal, toLocal) {
+    const rangeErr = window.getDatetimeLocalRangeError && window.getDatetimeLocalRangeError(fromLocal, toLocal);
+    if (rangeErr) {
+        window.showDateRangeValidationError(rangeErr);
+        return;
+    }
+    if (window.setChartOverlayState) window.setChartOverlayState('cpuHistoryChart', 'loading', 'Loading CPU history…');
+    try {
+        const fromISO = window.cpuDrilldownLocalToRFC3339(fromLocal);
+        const toISO = window.cpuDrilldownLocalToRFC3339(toLocal);
+        let cpuHistory = [];
+        let strictRange = false;
+
+        if (fromISO && toISO) {
+            const tsRes = await window.apiClient.authenticatedFetch(
+                `/api/timescale/mssql/cpu-history?instance=${encodeURIComponent(instanceName)}&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`
+            );
+            if (tsRes.ok) {
+                const tsData = await tsRes.json();
+                cpuHistory = tsData.points || [];
+                strictRange = true;
+            } else {
+                cpuHistory = [];
+                strictRange = true;
+            }
+        } else {
+            const dashRes = await window.apiClient.authenticatedFetch(`/api/mssql/dashboard?instance=${encodeURIComponent(instanceName)}`);
+            if (dashRes.ok) {
+                const dashData = await dashRes.json();
+                if (dashData.cpu_history) {
+                    cpuHistory = dashData.cpu_history;
+                } else if (dashData.metrics) {
+                    cpuHistory = dashData.metrics.map(m => ({
+                        event_time: m.capture_timestamp,
+                        capture_timestamp: m.capture_timestamp,
+                        sql_process: m.avg_cpu_load || 0,
+                        system_idle: 100 - (m.avg_cpu_load || 0),
+                        other_process: 0
+                    }));
+                }
+            }
+            strictRange = false;
+        }
+
+        window.appState.cpuDrilldownHistory = cpuHistory;
+        window.renderCpuDrilldownCharts(cpuHistory, fromLocal, toLocal, { strictRange });
+        window.updateCpuDrilldownTimestamp();
+    } catch (e) {
+        appDebug('CPU chart load failed:', e);
+        if (window.setChartOverlayState) window.setChartOverlayState('cpuHistoryChart', 'empty', 'Could not load chart.');
+    }
 };
 
 window.loadCpuDrilldownData = async function(instanceName, fromTime, toTime) {
     try {
         let cpuUrl = `/api/timescale/mssql/cpu-history?instance=${encodeURIComponent(instanceName)}`;
-        // Prefer live CPU drilldown endpoint (works without Timescale collectors).
-        // Timescale top-queries endpoint may not be CPU-sorted depending on collector configuration.
+        // Top queries: API prefers TimescaleDB (/api/mssql/cpu-drilldown); use Real-Time Diagnostics for live DMV.
         let queriesUrl = `/api/mssql/cpu-drilldown?instance=${encodeURIComponent(instanceName)}&limit=200`;
         
         if (fromTime && toTime) {
@@ -92,7 +271,7 @@ window.loadCpuDrilldownData = async function(instanceName, fromTime, toTime) {
         }
         
         const [dashRes, topQueriesRes] = await Promise.all([
-            window.apiClient.authenticatedFetch(`/api/mssql/dashboard?instance=${encodeURIComponent(instanceName)}&source=live`),
+            window.apiClient.authenticatedFetch(`/api/mssql/dashboard?instance=${encodeURIComponent(instanceName)}`),
             window.apiClient.authenticatedFetch(queriesUrl)
         ]);
 
@@ -134,35 +313,59 @@ window.loadCpuDrilldownData = async function(instanceName, fromTime, toTime) {
     }
 };
 
-window.renderCpuDrilldownCharts = function(cpuHistory, fromTime, toTime) {
-    if (!cpuHistory || cpuHistory.length === 0) return;
-    
+window.renderCpuDrilldownCharts = function(cpuHistory, fromTime, toTime, opts) {
+    const strictRange = opts && opts.strictRange;
+
+    if (!cpuHistory || cpuHistory.length === 0) {
+        if (window.cpuDrilldownChart) {
+            window.cpuDrilldownChart.destroy();
+            window.cpuDrilldownChart = null;
+        }
+        if (window.setChartOverlayState) {
+            window.setChartOverlayState('cpuHistoryChart', 'empty', strictRange ? 'No CPU samples in this range.' : 'No CPU history yet.');
+        }
+        return;
+    }
+
     let filtered = cpuHistory;
-    
-    if (fromTime && toTime) {
+
+    if (fromTime && toTime && !strictRange) {
         const fromMs = new Date(fromTime).getTime();
         const toMs = new Date(toTime).getTime();
         filtered = cpuHistory.filter(t => {
             if (!t.event_time && !t.capture_timestamp) return false;
             const ts = t.event_time || t.capture_timestamp;
-            const d = new Date(ts.replace(' ', 'T')).getTime();
+            const d = new Date(String(ts).replace(' ', 'T')).getTime();
             return d >= fromMs && d <= toMs;
         });
     }
-    
-    if (filtered.length === 0) {
+
+    if (filtered.length === 0 && !strictRange) {
         filtered = cpuHistory;
     }
+
+    if (filtered.length === 0) {
+        if (window.cpuDrilldownChart) {
+            window.cpuDrilldownChart.destroy();
+            window.cpuDrilldownChart = null;
+        }
+        if (window.setChartOverlayState) {
+            window.setChartOverlayState('cpuHistoryChart', 'empty', strictRange ? 'No CPU samples in this range.' : 'No data for the selected window.');
+        }
+        return;
+    }
+
+    if (window.clearChartOverlay) window.clearChartOverlay('cpuHistoryChart');
     
-    const sorted = filtered.slice(-120).sort((a, b) => {
-        const ta = a.event_time ? new Date(a.event_time.replace(' ','T')).getTime() : (a.capture_timestamp ? new Date(a.capture_timestamp).getTime() : 0);
-        const tb = b.event_time ? new Date(b.event_time.replace(' ','T')).getTime() : (b.capture_timestamp ? new Date(b.capture_timestamp).getTime() : 0);
+    const sorted = filtered.slice(-500).sort((a, b) => {
+        const ta = a.event_time ? new Date(String(a.event_time).replace(' ', 'T')).getTime() : (a.capture_timestamp ? new Date(a.capture_timestamp).getTime() : 0);
+        const tb = b.event_time ? new Date(String(b.event_time).replace(' ', 'T')).getTime() : (b.capture_timestamp ? new Date(b.capture_timestamp).getTime() : 0);
         return ta - tb;
     });
     const labels = sorted.map(t => {
         const ts = t.event_time || t.capture_timestamp;
         if (!ts) return '';
-        const d = new Date(ts.replace(' ', 'T'));
+        const d = new Date(String(ts).replace(' ', 'T'));
         if (isNaN(d.getTime())) return '';
         return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
     });
@@ -237,6 +440,11 @@ window.renderCpuDrilldownTable = function(queries, fromTime, toTime) {
     if (!queries || queries.length === 0) {
         document.getElementById('queryCount').textContent = '0 queries';
         tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted"><i class="fa-solid fa-info-circle"></i> No queries captured yet. Queries will appear here as they execute.</td></tr>';
+        return;
+    }
+
+    if (queries[0] && Object.prototype.hasOwnProperty.call(queries[0], 'metric_value')) {
+        window.renderCpuDrilldownDashboardTable(queries, fromTime, toTime);
         return;
     }
 
@@ -341,6 +549,71 @@ window.renderCpuDrilldownTable = function(queries, fromTime, toTime) {
     }).join('');
 };
 
+window.renderCpuDrilldownDashboardTable = function(queries, fromTime, toTime) {
+    const tbody = document.getElementById('cpuQueriesBody');
+    if (!tbody) return;
+    const metric = window.appState.currentQueryMetric || 'cpu';
+
+    let filtered = queries;
+    if (fromTime && toTime) {
+        const fromMs = new Date(fromTime).getTime();
+        const toMs = new Date(toTime).getTime();
+        filtered = queries.filter(q => {
+            const ts = q.capture_timestamp || q.last_capture || '';
+            if (!ts) return true;
+            const d = new Date(ts).getTime();
+            return d >= fromMs && d <= toMs;
+        });
+    }
+
+    const excludedDbs = ['master', 'model', 'msdb', 'distribution'];
+    filtered = filtered.filter(q => {
+        const dbName = (q.database_name || q.Database_Name || '').toLowerCase();
+        return !excludedDbs.includes(dbName);
+    });
+
+    const sorted = [...filtered].sort((a, b) => (parseFloat(b.metric_value) || 0) - (parseFloat(a.metric_value) || 0));
+    document.getElementById('queryCount').textContent = sorted.length + ' queries';
+
+    window.appState.queryCache = {};
+    tbody.innerHTML = sorted.map((q, idx) => {
+        const rawText = q.query_text || '';
+        const dbName = q.database_name || '—';
+        const loginName = q.login_name || 'Unknown/Disconnected';
+        const programName = q.client_app || 'Unknown/Disconnected';
+        const totalMetric = parseFloat(q.metric_value) || 0;
+        const execs = parseInt(q.total_executions, 10) || 0;
+        let avgCol = 0;
+        if (metric === 'cpu') avgCol = parseFloat(q.avg_cpu_ms) || 0;
+        else if (metric === 'duration') avgCol = parseFloat(q.avg_duration_ms) || 0;
+        else if (metric === 'reads') avgCol = parseFloat(q.avg_reads) || 0;
+        else if (metric === 'executions') avgCol = parseFloat(q.avg_cpu_ms) || 0;
+
+        const truncatedText = rawText.length > 80 ? rawText.substring(0, 80) + '...' : rawText;
+        window.appState.queryCache['q' + idx] = rawText;
+
+        return `
+            <tr>
+                <td>${idx + 1}</td>
+                <td><span class="badge badge-outline">—</span></td>
+                <td><span class="badge badge-info">${window.escapeHtml(dbName)}</span></td>
+                <td style="max-width: 350px;">
+                    <span class="code-snippet" style="cursor: pointer; display: inline-block; max-width: 330px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;"
+                          title="${window.escapeHtml(rawText)}"
+                          onclick="window.showQueryModalDirect(window.appState.queryCache['q${idx}'])">
+                        ${window.escapeHtml(truncatedText)}
+                    </span>
+                </td>
+                <td><strong>${totalMetric.toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong></td>
+                <td>${avgCol.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                <td>${execs.toLocaleString()}</td>
+                <td style="font-size:0.7rem; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${window.escapeHtml(loginName)}">${window.escapeHtml(loginName)}</td>
+                <td style="font-size:0.7rem; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${window.escapeHtml(programName)}">${window.escapeHtml(programName)}</td>
+            </tr>
+        `;
+    }).join('');
+};
+
 window.updateCpuDrilldownTimestamp = function() {
     const el = document.getElementById('cpuDrilldownLastUpdate');
     if (el) {
@@ -350,9 +623,15 @@ window.updateCpuDrilldownTimestamp = function() {
 
 window.refreshCpuDrilldown = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
-    if (inst) {
-        await window.loadCpuDrilldownData(inst.name);
-    }
+    if (!inst) return;
+    const fromInput = document.getElementById('cpuDrillFrom');
+    const toInput = document.getElementById('cpuDrillTo');
+    const fromVal = fromInput ? fromInput.value : '';
+    const toVal = toInput ? toInput.value : '';
+    await Promise.all([
+        window.loadCpuDrilldownChartOnly(inst.name, fromVal, toVal),
+        window.loadQueryStatsWithMetric(inst.name, window.appState.currentQueryMetric || 'cpu', '1h', fromVal, toVal)
+    ]);
 };
 
 window.applyCpuDrilldownRange = async function() {
@@ -363,16 +642,18 @@ window.applyCpuDrilldownRange = async function() {
     
     const fromTime = fromInput.value;
     const toTime = toInput.value;
-    
-    const cpuHistory = window.appState.cpuDrilldownHistory || [];
-    
-    if (fromTime && toTime) {
-        window.renderCpuDrilldownCharts(cpuHistory, fromTime, toTime);
+    const err = window.getDatetimeLocalRangeError && window.getDatetimeLocalRangeError(fromTime, toTime);
+    if (err) {
+        window.showDateRangeValidationError(err);
+        return;
     }
-    
+
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
     if (inst) {
-        await window.loadCpuDrilldownData(inst.name);
+        await Promise.all([
+            window.loadCpuDrilldownChartOnly(inst.name, fromTime, toTime),
+            window.loadQueryStatsWithMetric(inst.name, window.appState.currentQueryMetric || 'cpu', '1h', fromTime, toTime)
+        ]);
     }
 };
 

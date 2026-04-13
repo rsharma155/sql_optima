@@ -112,6 +112,8 @@ func (c *MssqlRepository) CollectLiveRunningQueries(ctx context.Context, db *sql
 		JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
 		CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
 		WHERE r.session_id > 50 AND s.is_user_process = 1
+		AND s.database_id > 4
+		AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
 		AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
 		AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
 		ORDER BY r.total_elapsed_time DESC`
@@ -150,52 +152,61 @@ func (c *MssqlRepository) CollectLiveRunningQueries(ctx context.Context, db *sql
 	return results, nil
 }
 
-// CollectTopQueries fetches top CPU-consuming queries from sys.dm_exec_query_stats
+// CollectTopQueries fetches a full snapshot of top CPU queries from sys.dm_exec_query_stats
+// for the Timescale query-stats staging pipeline (change-only snapshots + interval deltas).
 func (c *MssqlRepository) CollectTopQueries(db *sql.DB, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
-		limit = 20
+		limit = 200
+	}
+	if limit > 500 {
+		limit = 500
 	}
 
 	query := fmt.Sprintf(`
-		SELECT TOP %d
-			ISNULL(DB_NAME(pa.dbid), ISNULL(DB_NAME(qt.dbid), 'Unknown')) AS Database_Name,
-			ISNULL(s.login_name, 'Unknown/Disconnected') AS Login_Name,
-			ISNULL(s.program_name, 'Unknown/Disconnected') AS Client_App,
-			qs.execution_count AS Total_Executions,
-			qs.total_worker_time / 1000.0 AS Total_CPU_ms,
-			qs.total_logical_reads AS Total_Logical_Reads,
-			qs.total_elapsed_time / 1000.0 AS Total_Elapsed_Time_ms,
+		SELECT
+			DB_NAME(COALESCE(pa.dbid, st.dbid)) AS database_name,
+			ISNULL(s.login_name, 'Unknown') AS login_name,
+			ISNULL(s.program_name, 'Unknown') AS client_app,
+			qs.execution_count AS total_executions,
+			qs.total_worker_time / 1000 AS total_cpu_ms,
+			qs.total_elapsed_time / 1000 AS total_elapsed_ms,
+			qs.total_logical_reads AS total_logical_reads,
+			qs.total_physical_reads AS total_physical_reads,
+			qs.total_rows AS total_rows,
 			CASE 
-				WHEN qt.objectid IS NOT NULL AND OBJECT_NAME(qt.objectid, qt.dbid) IS NOT NULL 
-				THEN 'EXEC ' + QUOTENAME(ISNULL(OBJECT_SCHEMA_NAME(qt.objectid, qt.dbid), 'dbo')) + '.' + QUOTENAME(OBJECT_NAME(qt.objectid, qt.dbid))
-				ELSE SUBSTRING(qt.text, (qs.statement_start_offset/2) + 1,
-					((CASE qs.statement_end_offset 
-						WHEN -1 THEN DATALENGTH(qt.text) 
-						ELSE qs.statement_end_offset 
-					END - qs.statement_start_offset)/2) + 1)
-			END AS Query_Text,
-			CONVERT(VARCHAR(64), qs.query_hash, 1) AS Query_Hash
+				WHEN st.objectid IS NOT NULL
+				THEN 'EXEC ' + QUOTENAME(OBJECT_SCHEMA_NAME(st.objectid, COALESCE(pa.dbid, st.dbid)))
+					 + '.' + QUOTENAME(OBJECT_NAME(st.objectid, COALESCE(pa.dbid, st.dbid)))
+				ELSE SUBSTRING(st.text,
+					(qs.statement_start_offset/2)+1,
+					((CASE qs.statement_end_offset
+						WHEN -1 THEN DATALENGTH(st.text)
+						ELSE qs.statement_end_offset END
+					 - qs.statement_start_offset)/2) + 1)
+			END AS query_text,
+			CONVERT(VARCHAR(64), qs.query_hash, 1) AS query_hash
 		FROM sys.dm_exec_query_stats qs
-		CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) qt
+		CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
 		OUTER APPLY (
-			SELECT CAST(value AS INT) AS dbid 
-			FROM sys.dm_exec_plan_attributes(qs.plan_handle) 
-			WHERE attribute = 'dbid'
+			SELECT CONVERT(INT,value) dbid
+			FROM sys.dm_exec_plan_attributes(qs.plan_handle)
+			WHERE attribute = N'dbid'
 		) pa
 		OUTER APPLY (
-			SELECT TOP 1 ses.login_name, ses.program_name
-			FROM sys.dm_exec_connections con
-			INNER JOIN sys.dm_exec_sessions ses ON con.session_id = ses.session_id
+			SELECT TOP 1 ses.original_login_name login_name, ses.program_name
+			FROM sys.dm_exec_sessions ses
+			JOIN sys.dm_exec_connections con ON ses.session_id = con.session_id
 			WHERE con.most_recent_sql_handle = qs.sql_handle
 		) s
-		WHERE qt.text IS NOT NULL
-		  AND qt.text NOT LIKE '%%sys.dm_exec_query_stats%%'
-		  AND qt.text NOT LIKE '%%SQLOptima%%'
-		  AND qt.text NOT LIKE '%%DeltaCollector%%'
+		WHERE COALESCE(pa.dbid, st.dbid) > 4
+		  AND LOWER(ISNULL(DB_NAME(COALESCE(pa.dbid, st.dbid)), '')) <> 'distribution'
+		  AND st.text IS NOT NULL
+		  AND st.text NOT LIKE '%%sys.dm_exec_query_stats%%'
+		  AND st.text NOT LIKE '%%SQLOptima%%'
+		  AND st.text NOT LIKE '%%DeltaCollector%%'
 		  AND qs.query_hash IS NOT NULL
-		AND qs.last_execution_time >= DATEADD(minute, -5, GETDATE())
-		  AND (pa.dbid > 4 OR qt.dbid > 4)
-		ORDER BY qs.total_worker_time DESC`, limit)
+		ORDER BY qs.total_worker_time DESC
+		OFFSET 0 ROWS FETCH NEXT %d ROWS ONLY`, limit)
 
 	rows, err := db.Query(query)
 	if err != nil {

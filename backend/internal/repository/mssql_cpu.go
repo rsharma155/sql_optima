@@ -12,7 +12,13 @@ import (
 func (c *MssqlRepository) CollectKPIs(ctx context.Context, db *sql.DB) (map[string]interface{}, error) {
 	query := `
 		SELECT 
-			(SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE status='running') AS active_sessions,
+			(SELECT COUNT(*) FROM sys.dm_exec_sessions s
+			 WHERE s.status = 'running'
+			   AND s.is_user_process = 1
+			   AND s.database_id > 4
+			   AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
+			   AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+			   AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')) AS active_sessions,
 			(SELECT total_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS total_memory_mb,
 			(SELECT available_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS available_memory_mb,
 			(SELECT ISNULL(cntr_value, 0) FROM sys.dm_os_performance_counters WHERE counter_name='Batch Requests/sec') AS batch_requests_sec

@@ -2,15 +2,11 @@
 
 A production-grade, highly scalable, dual-engine (PostgreSQL & SQL Server) database monitoring Single Page Application (SPA). This system has been explicitly architected around Domain-Driven Design (DDD) to be 100% platform-independent, natively supporting **Windows**, **macOS**, and **Linux** identically.
 
+It now includes a PostgreSQL EXPLAIN plan analyzer with optimization and index advisor workflows, plus live SQL Server diagnostics and TimescaleDB-backed historical dashboards.
+
 ---
 
 ## 🖥️ UI Preview (Screenshots)
-Add these screenshots before publishing to GitHub (recommended size: 1400–2000px wide):
-
-- **SQL Server main dashboard**: `docs/screenshots/sqlserver-dashboard.png`
-- **PostgreSQL main dashboard**: `docs/screenshots/postgres-dashboard.png`
-
-After adding, this README will render them here:
 
 ![SQL Server dashboard](docs/screenshots/sqlserver-dashboard.png)
 
@@ -231,9 +227,10 @@ Copy-Item .\\dist\\sql-optima.exe $env:USERPROFILE\\bin\\sql-optima.exe
 
 ## ✨ Recent UI enhancements
 - **EXPLAIN Plan analyzer**: SSMS-style horizontal plan map, hover tooltips, per-edge thickness by row flow, and modal node details.
+- **Postgres index advisor**: new JSON plan + SQL workflow with HypoPG-aware recommendations, query rewrites, and index DDL suggestions.
+- **Live SQL Server diagnostics**: new `source=live` override support for direct DMV/live data when inspecting MSSQL dashboards and drilldowns.
 - **SQL Insights**: always shows provided SQL; improved index DDL suggestions (schema-qualified tables + more condition sources).
 - **Optimization report**: now summarizes SQL-linked hints (matched excerpts + index DDL counts).
-- **Postgres Control Center**: added **DB Size + growth/hr** strip metric.
 - **SQL Server Performance Debt**: de-duplicated “latest per finding” so repeated recommendations don’t show twice.
 - **Postgres Advanced Enterprise Monitor**: BGWriter/Checkpoint dedupe + compact trend chart with a smaller table.
 

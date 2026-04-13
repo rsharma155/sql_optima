@@ -46,20 +46,21 @@ func (c *MssqlRepository) CollectDatabaseThroughput(db *sql.DB) ([]map[string]in
 	return results, nil
 }
 
-// CollectConnectionStats fetches connection statistics by application
+// CollectConnectionStats fetches connection statistics by application (Real-Time Diagnostics: user DB workloads only).
 func (c *MssqlRepository) CollectConnectionStats(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		SELECT TOP 20
 			ISNULL(program_name, 'Unknown') AS program_name,
-			ISNULL(login_name, 'Unknown') AS login_name,
-			COUNT(*) AS session_count,
-			SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS active_sessions
-		FROM sys.dm_exec_sessions
-		WHERE is_user_process = 1
-		  AND login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-		GROUP BY program_name, login_name
-		ORDER BY session_count DESC
+			COUNT(*) AS connection_count,
+			COUNT(DISTINCT login_name) AS unique_logins
+		FROM sys.dm_exec_sessions s
+		WHERE s.is_user_process = 1
+		  AND s.database_id > 4
+		  AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
+		  AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+		GROUP BY program_name
+		ORDER BY connection_count DESC
 	`
 
 	rows, err := db.Query(query)

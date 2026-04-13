@@ -241,10 +241,10 @@ window.AlertsView = async function() {
                         <div class="table-card glass-panel" style="padding:1rem;">
                             <h3 style="font-size:0.85rem; margin:0 0 1rem 0; color:var(--text-muted);"><i class="fa-solid fa-chart-line text-accent"></i> Metrics Summary</h3>
                             <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
-                                <div class="glass-panel" style="padding:0.75rem; text-align:center;">
+                                <div class="glass-panel" style="padding:0.75rem; text-align:center; cursor:pointer;" role="button" tabindex="0" title="Open CPU drilldown" onclick="window.appNavigate('drilldown-cpu')">
                                     <i class="fa-solid fa-microchip text-accent" style="font-size:1.5rem; margin-bottom:0.5rem;"></i>
                                     <div style="font-size:1.5rem; font-weight:bold;">${(metrics.avg_cpu_load || 0).toFixed(1)}%</div>
-                                    <div style="font-size:0.7rem; color:var(--text-muted);">CPU Usage</div>
+                                    <div style="font-size:0.7rem; color:var(--text-muted);">CPU Usage <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.6rem; opacity:0.7;"></i></div>
                                     <div style="height:4px; background:var(--bg-tertiary); border-radius:2px; margin-top:0.5rem;">
                                         <div style="height:100%; width:${Math.min(metrics.avg_cpu_load || 0, 100)}%; background:${metrics.avg_cpu_load > 90 ? 'var(--danger)' : (metrics.avg_cpu_load > 75 ? 'var(--warning)' : 'var(--success)')}; border-radius:2px;"></div>
                                     </div>
@@ -264,10 +264,10 @@ window.AlertsView = async function() {
                                     <div style="font-size:1.5rem; font-weight:bold; color:${metrics.deadlocks > 0 ? 'var(--danger)' : 'inherit'};">${metrics.deadlocks || 0}</div>
                                     <div style="font-size:0.7rem; color:var(--text-muted);">Deadlocks</div>
                                 </div>
-                                <div class="glass-panel" style="padding:0.75rem; text-align:center;">
+                                <div class="glass-panel" style="padding:0.75rem; text-align:center; cursor:pointer;" role="button" tabindex="0" title="Open Memory drilldown" onclick="window.appNavigate('drilldown-memory')">
                                     <i class="fa-solid fa-memory text-info" style="font-size:1.5rem; margin-bottom:0.5rem;"></i>
                                     <div style="font-size:1.5rem; font-weight:bold;">${(metrics.memory_usage || 0).toFixed(1)}%</div>
-                                    <div style="font-size:0.7rem; color:var(--text-muted);">Memory Usage</div>
+                                    <div style="font-size:0.7rem; color:var(--text-muted);">Memory Usage <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.6rem; opacity:0.7;"></i></div>
                                 </div>
                                 <div class="glass-panel" style="padding:0.75rem; text-align:center;">
                                     <i class="fa-solid fa-database text-accent" style="font-size:1.5rem; margin-bottom:0.5rem;"></i>
@@ -421,8 +421,8 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
             title: 'Severe Blocking Chain',
             description: `${activeBlocks} sessions currently blocked - major performance impact`,
             timestamp: now,
-            action: "window.appNavigate('drilldown-deadlocks')",
-            actionText: 'View Blocking Analysis'
+            action: "window.appNavigate('drilldown-locks')",
+            actionText: 'View Blocking & Waits'
         });
         anomalies.healthScore -= 20;
     } else if (activeBlocks > 5) {
@@ -430,8 +430,8 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
             title: 'Active Blocking Detected',
             description: `${activeBlocks} sessions currently blocked`,
             timestamp: now,
-            action: "window.appNavigate('drilldown-deadlocks')",
-            actionText: 'View Blocking Details'
+            action: "window.appNavigate('drilldown-locks')",
+            actionText: 'View Blocking & Waits'
         });
         anomalies.healthScore -= 10;
     }
@@ -444,7 +444,7 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
             title: 'High Lock Count',
             description: `${totalLocks} active locks - potential performance bottleneck`,
             timestamp: now,
-            action: "window.appNavigate('drilldown-deadlocks')",
+            action: "window.appNavigate('drilldown-locks')",
             actionText: 'View Lock Analysis'
         });
         anomalies.healthScore -= 5;
@@ -500,6 +500,69 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
 
     return anomalies;
 }
+
+window.analyzeMssqlAnomalies = analyzeAnomalies;
+
+window.dismissSqlDashboardAlertBanner = function(hours) {
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+    if (!inst || !inst.name) return;
+    const h = Number(hours) > 0 ? Number(hours) : 1;
+    localStorage.setItem('sql_dashboard_alert_snooze_' + inst.name, String(Date.now() + h * 3600000));
+    const el = document.getElementById('sql-dashboard-alert-banner');
+    if (el) {
+        el.style.display = 'none';
+        el.innerHTML = '';
+    }
+};
+
+/** In-page banner on SQL dashboard when analyzeMssqlAnomalies finds issues (sidebar badge alone is easy to miss). */
+window.updateSqlDashboardAlertBanner = function() {
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+    const el = document.getElementById('sql-dashboard-alert-banner');
+    if (!el || !inst || inst.type !== 'sqlserver') return;
+    if (typeof window.analyzeMssqlAnomalies !== 'function') return;
+
+    const lm = window.appState.liveMetrics || {};
+    const anomalies = window.analyzeMssqlAnomalies(lm, inst, []);
+    const nCrit = anomalies.critical.length;
+    const nWarn = anomalies.warning.length;
+    const nInfo = anomalies.info.length;
+    const total = nCrit + nWarn + nInfo;
+
+    if (total === 0) {
+        el.style.display = 'none';
+        el.innerHTML = '';
+        return;
+    }
+
+    const snoozeUntil = parseInt(localStorage.getItem('sql_dashboard_alert_snooze_' + inst.name) || '0', 10);
+    if (Date.now() < snoozeUntil) {
+        el.style.display = 'none';
+        return;
+    }
+
+    const border = nCrit > 0 ? 'var(--danger)' : (nWarn > 0 ? 'var(--warning)' : 'var(--info)');
+    const parts = [];
+    if (nCrit) parts.push(nCrit + ' critical');
+    if (nWarn) parts.push(nWarn + ' warning' + (nWarn === 1 ? '' : 's'));
+    if (nInfo) parts.push(nInfo + ' insight' + (nInfo === 1 ? '' : 's'));
+
+    el.style.display = 'block';
+    el.innerHTML = `
+        <div class="glass-panel" style="border-left:4px solid ${border}; padding:0.75rem 1rem; margin:0 0 0.75rem 0; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:0.75rem;">
+            <div style="display:flex; align-items:flex-start; gap:0.75rem; flex:1; min-width:220px;">
+                <i class="fa-solid fa-bell" style="margin-top:0.2rem; color:${border};"></i>
+                <div>
+                    <strong>${total} active alert${total === 1 ? '' : 's'}</strong>
+                    <div class="text-muted" style="font-size:0.78rem; margin-top:0.25rem;">${window.escapeHtml(parts.join(' · '))}</div>
+                </div>
+            </div>
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+                <button type="button" class="btn btn-sm btn-accent" onclick="window.appNavigate('alerts')"><i class="fa-solid fa-arrow-right"></i> Open alerts</button>
+                <button type="button" class="btn btn-sm btn-outline" onclick="window.dismissSqlDashboardAlertBanner(1)" title="Hide this banner for 1 hour">Dismiss 1h</button>
+            </div>
+        </div>`;
+};
 
 function getHealthColor(score) {
     if (score >= 80) return 'var(--success)';

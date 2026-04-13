@@ -38,7 +38,8 @@ func (c *MssqlRepository) HasConnection(instanceName string) bool {
 
 func NewMssqlRepository(cfg *config.Config) *MssqlRepository {
 	c := &MssqlRepository{
-		conns: make(map[string]*sql.DB),
+		conns:  make(map[string]*sql.DB),
+		status: make(map[string]string),
 	}
 
 	for i, inst := range cfg.Instances {
@@ -76,6 +77,7 @@ func NewMssqlRepository(cfg *config.Config) *MssqlRepository {
 
 			db, err := sql.Open("sqlserver", connStr)
 			if err != nil {
+				c.status[inst.Name] = "offline"
 				log.Printf("[MSSQL] DSN Parse Error %s: %v", inst.Name, err)
 				continue
 			}
@@ -83,6 +85,13 @@ func NewMssqlRepository(cfg *config.Config) *MssqlRepository {
 			db.SetMaxOpenConns(5)
 			db.SetMaxIdleConns(2)
 			db.SetConnMaxLifetime(time.Minute * 10)
+
+			if err := db.Ping(); err != nil {
+				c.status[inst.Name] = "offline"
+				log.Printf("[MSSQL] Connection ping failure %s: %v", inst.Name, err)
+			} else {
+				c.status[inst.Name] = "online"
+			}
 
 			c.conns[inst.Name] = db
 
@@ -115,11 +124,15 @@ func (c *MssqlRepository) PingAll() {
 		go func(n string, connection *sql.DB) {
 			defer wg.Done()
 			err := connection.Ping()
+			c.mutex.Lock()
 			if err != nil {
+				c.status[n] = "offline"
 				log.Printf("[MSSQL] Handshake warning to %s: %v", n, err)
 			} else {
+				c.status[n] = "online"
 				log.Printf("[MSSQL] Success with %s", n)
 			}
+			c.mutex.Unlock()
 		}(name, db)
 	}
 	wg.Wait()
@@ -131,6 +144,44 @@ func (c *MssqlRepository) GetConn(instanceName string) (*sql.DB, bool) {
 	defer c.mutex.RUnlock()
 	db, ok := c.conns[instanceName]
 	return db, ok
+}
+
+func (c *MssqlRepository) GetInstanceStatus(instanceName string) string {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	if status, ok := c.status[instanceName]; ok {
+		return status
+	}
+	return "unknown"
+}
+
+func (c *MssqlRepository) GetAllInstanceStatuses() map[string]string {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	statuses := make(map[string]string, len(c.status))
+	for name, status := range c.status {
+		statuses[name] = status
+	}
+	return statuses
+}
+
+func (c *MssqlRepository) UpdateInstanceStatus(instanceName string) {
+	c.mutex.RLock()
+	db, ok := c.conns[instanceName]
+	c.mutex.RUnlock()
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	if !ok || db == nil {
+		c.status[instanceName] = "offline"
+		return
+	}
+
+	if err := db.Ping(); err != nil {
+		c.status[instanceName] = "offline"
+	} else {
+		c.status[instanceName] = "online"
+	}
 }
 
 // GetGlobalMetric executes explicit raw DMVs mapped to physical host limits resolving CPU / RAM
@@ -271,12 +322,13 @@ func (c *MssqlRepository) FetchLongRunningQueries(instanceName string, minDurati
 	for rows.Next() {
 		var s LongRunningQueryStats
 		var qhash sql.NullString
+		var waitType sql.NullString
 		var cpuTime, totalElapsed, reads, writes, grantedMemory, rowCount sql.NullInt64
 		var blockingSessionID sql.NullInt64
 
 		if err := rows.Scan(
 			&s.SessionID, &s.RequestID, &s.DatabaseName, &s.LoginName,
-			&s.HostName, &s.ProgramName, &qhash, &s.QueryText, &s.WaitType,
+			&s.HostName, &s.ProgramName, &qhash, &s.QueryText, &waitType,
 			&blockingSessionID, &s.Status, &cpuTime, &totalElapsed,
 			&reads, &writes, &grantedMemory, &rowCount,
 		); err != nil {
@@ -284,6 +336,9 @@ func (c *MssqlRepository) FetchLongRunningQueries(instanceName string, minDurati
 			continue
 		}
 
+		if waitType.Valid {
+			s.WaitType = waitType.String
+		}
 		if qhash.Valid {
 			s.QueryHash = qhash.String
 		}
@@ -322,6 +377,34 @@ func sqlServerQuoteBracket(ident string) string {
 	return "[" + strings.ReplaceAll(ident, "]", "]]") + "]"
 }
 
+// queryStoreStatsSelectSQL returns a Query Store aggregate query scoped to a database.
+// dbPrefix must be a bracket-quoted database name (e.g. [MyDb]) so we avoid USE on a pooled
+// connection (which would race other collectors on the same *sql.DB).
+func queryStoreStatsSelectSQL(dbPrefix string) string {
+	return fmt.Sprintf(`
+		SELECT TOP 50
+			CONVERT(VARCHAR(40), q.query_hash) AS query_hash,
+			LEFT(qt.query_sql_text, 500) AS query_text,
+			ISNULL(rs.count_executions, 0) AS executions,
+			ISNULL(rs.avg_duration, 0) / 1000.0 AS avg_duration_ms,
+			ISNULL(rs.avg_cpu_time, 0) / 1000.0 AS avg_cpu_ms,
+			ISNULL(rs.avg_logical_io_reads, 0) AS avg_logical_reads,
+			(ISNULL(rs.avg_cpu_time, 0) * ISNULL(rs.count_executions, 1)) / 1000.0 AS total_cpu_ms
+		FROM %s.sys.query_store_query q
+		INNER JOIN %s.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+		INNER JOIN %s.sys.query_store_plan p ON q.query_id = p.query_id
+		INNER JOIN %s.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+		LEFT JOIN %s.sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
+		WHERE q.is_internal_query = 0
+		  AND ISNULL(rs.count_executions, 0) > 0
+		  AND (
+			rs.last_execution_time >= DATEADD(day, -7, SYSDATETIMEOFFSET())
+			OR rsi.end_time >= DATEADD(day, -7, GETDATE())
+		  )
+		ORDER BY (ISNULL(rs.avg_cpu_time, 0) * ISNULL(rs.count_executions, 0)) DESC
+	`, dbPrefix, dbPrefix, dbPrefix, dbPrefix, dbPrefix)
+}
+
 // FetchQueryStoreStats fetches aggregated Query Store statistics from each user database
 // where Query Store is available. Query Store does not record login or application name;
 // those exist only on session DMVs (see long-running / top-queries collectors).
@@ -333,37 +416,14 @@ func (c *MssqlRepository) FetchQueryStoreStats(instanceName string) ([]QueryStor
 
 	dbNames, err := c.listUserDatabaseNamesForQueryStore(db)
 	if err != nil || len(dbNames) == 0 {
-		log.Printf("[MSSQL] FetchQueryStoreStats: no user DBs or list error for %s: %v — trying current database only", instanceName, err)
+		log.Printf("[MSSQL] FetchQueryStoreStats: no user DBs with Query Store or list error for %s: %v — trying current database only", instanceName, err)
 		return c.fetchQueryStoreStatsSingleDB(db, "")
 	}
 
-	query := `
-		SELECT TOP 50
-			CONVERT(VARCHAR(64), q.query_hash, 1) AS query_hash,
-			LEFT(qt.query_sql_text, 500) AS query_text,
-			ISNULL(rs.count_executions, 0) AS executions,
-			ISNULL(rs.avg_duration, 0) / 1000.0 AS avg_duration_ms,
-			ISNULL(rs.avg_cpu_time, 0) / 1000.0 AS avg_cpu_ms,
-			ISNULL(rs.avg_logical_io_reads, 0) AS avg_logical_reads,
-			(ISNULL(rs.avg_cpu_time, 0) * ISNULL(rs.count_executions, 1)) / 1000.0 AS total_cpu_ms
-		FROM sys.query_store_query q
-		INNER JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-		INNER JOIN sys.query_store_plan p ON q.query_id = p.query_id
-		INNER JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-		INNER JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
-		WHERE rsi.end_time >= DATEADD(minute, -16, GETDATE())
-		  AND q.is_internal_query = 0
-		  AND ISNULL(rs.count_executions, 0) > 0
-		ORDER BY (rs.avg_cpu_time * rs.count_executions) DESC
-	`
-
 	var merged []QueryStoreStats
 	for _, dbn := range dbNames {
-		useSQL := "USE " + sqlServerQuoteBracket(dbn)
-		if _, err := db.Exec(useSQL); err != nil {
-			log.Printf("[MSSQL] FetchQueryStoreStats USE %s: %v", dbn, err)
-			continue
-		}
+		qb := sqlServerQuoteBracket(dbn)
+		query := queryStoreStatsSelectSQL(qb)
 		rows, err := db.Query(query)
 		if err != nil {
 			log.Printf("[MSSQL] FetchQueryStoreStats query in %s: %v", dbn, err)
@@ -401,7 +461,13 @@ func (c *MssqlRepository) FetchQueryStoreStats(instanceName string) ([]QueryStor
 }
 
 func (c *MssqlRepository) listUserDatabaseNamesForQueryStore(db *sql.DB) ([]string, error) {
-	q := `SELECT name FROM sys.databases WHERE database_id > 4 AND state = 0 ORDER BY name`
+	q := `
+		SELECT d.name
+		FROM sys.databases d
+		WHERE d.database_id > 4
+		  AND d.state = 0
+		  AND d.is_query_store_on = 1
+		ORDER BY d.name`
 	rows, err := db.Query(q)
 	if err != nil {
 		return nil, err
@@ -421,7 +487,7 @@ func (c *MssqlRepository) listUserDatabaseNamesForQueryStore(db *sql.DB) ([]stri
 func (c *MssqlRepository) fetchQueryStoreStatsSingleDB(db *sql.DB, labelDB string) ([]QueryStoreStats, error) {
 	query := `
 		SELECT TOP 50
-			CONVERT(VARCHAR(64), q.query_hash, 1) AS query_hash,
+			CONVERT(VARCHAR(40), q.query_hash) AS query_hash,
 			LEFT(qt.query_sql_text, 500) AS query_text,
 			ISNULL(rs.count_executions, 0) AS executions,
 			ISNULL(rs.avg_duration, 0) / 1000.0 AS avg_duration_ms,
@@ -432,11 +498,14 @@ func (c *MssqlRepository) fetchQueryStoreStatsSingleDB(db *sql.DB, labelDB strin
 		INNER JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
 		INNER JOIN sys.query_store_plan p ON q.query_id = p.query_id
 		INNER JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-		INNER JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
-		WHERE rsi.end_time >= DATEADD(minute, -16, GETDATE())
-		  AND q.is_internal_query = 0
+		LEFT JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
+		WHERE q.is_internal_query = 0
 		  AND ISNULL(rs.count_executions, 0) > 0
-		ORDER BY (rs.avg_cpu_time * rs.count_executions) DESC
+		  AND (
+			rs.last_execution_time >= DATEADD(day, -7, SYSDATETIMEOFFSET())
+			OR rsi.end_time >= DATEADD(day, -7, GETDATE())
+		  )
+		ORDER BY (ISNULL(rs.avg_cpu_time, 0) * ISNULL(rs.count_executions, 0)) DESC
 	`
 	rows, err := db.Query(query)
 	if err != nil {

@@ -1,4 +1,7 @@
-window.escapeHtml = function(unsafe) { return (!unsafe) ? '' : unsafe.toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); };
+window.escapeHtml = function(unsafe) {
+    if (unsafe === null || unsafe === undefined) return '';
+    return String(unsafe).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+};
 
 window.DashboardView = async function() {
     appDebug('[Dashboard] Starting - config:', window.appState.config ? 'loaded' : 'not loaded');
@@ -51,10 +54,8 @@ window.DashboardView = async function() {
         </div>
     `;
 
-    // Defaults for DBA widgets
-    window.appState.topOffendersRange = window.appState.topOffendersRange || '1h';
-    window.appState.topOffendersSort = window.appState.topOffendersSort || 'total_cpu_ms';
-    window.appState.topOffendersMode = window.appState.topOffendersMode || 'cpu';
+    // Top Offenders grid: column sort (dashboard snapshot is always last 1h; change range in drilldown)
+    window.appState.topOffendersGridSort = window.appState.topOffendersGridSort || { key: 'total_cpu_ms', dir: 'desc' };
 
     try {
         appDebug('[Dashboard] About to fetch dashboard data');
@@ -137,8 +138,9 @@ window.DashboardView = async function() {
         renderDashboard(inst, metrics);
         // keep badge updated after full render (renderDashboard re-creates header)
         updateDataSourceBadge(res.headers.get('X-Data-Source'));
-        bindTopOffendersControls(inst.name);
+        bindTopOffendersControls();
         if (window.updateAlertsBadge) window.updateAlertsBadge();
+        if (window.updateSqlDashboardAlertBanner) window.updateSqlDashboardAlertBanner();
         startTimescalePolling(inst.name);
     } catch(error) {
         console.error("Dashboard fetch error:", error);
@@ -209,6 +211,109 @@ function dashboardDatabaseQueryParam() {
 }
 window.dashboardDatabaseQueryParam = dashboardDatabaseQueryParam;
 
+/** Execution count for Query Store / bottleneck rows (field names differ by source). */
+function topOffenderExecCount(q) {
+    if (!q) return 0;
+    const v = q.execution_count != null ? q.execution_count : (q.total_executions != null ? q.total_executions : q.executions);
+    return Number(v || 0);
+}
+
+function sortQueryStoreOffenderRows(rows, state) {
+    if (!rows || !rows.length) return [];
+    const key = (state && state.key) || 'total_cpu_ms';
+    const dir = (state && state.dir) === 'asc' ? 1 : -1;
+    const textKeys = { database_name: true, query_text: true };
+    return [...rows].sort((a, b) => {
+        if (textKeys[key]) {
+            const va = String((a && a[key]) || '').toLowerCase();
+            const vb = String((b && b[key]) || '').toLowerCase();
+            return dir * va.localeCompare(vb);
+        }
+        let va;
+        let vb;
+        if (key === 'execution_count') {
+            va = topOffenderExecCount(a);
+            vb = topOffenderExecCount(b);
+        } else {
+            va = Number(a && a[key] != null ? a[key] : 0);
+            vb = Number(b && b[key] != null ? b[key] : 0);
+        }
+        if (va === vb) return 0;
+        return dir * (va < vb ? -1 : 1);
+    });
+}
+
+function renderTopOffendersRowsHtml(sortedRows) {
+    window.appState.queryCache = window.appState.queryCache || {};
+    return sortedRows.map((q, idx) => {
+        const qt = (q.query_text || 'Unknown');
+        window.appState.queryCache['qs' + idx] = qt;
+        const short = qt.length > 60 ? qt.substring(0, 60) + '…' : qt;
+        const avgDur = Number(q.avg_duration_ms || 0);
+        const avgCpu = Number(q.avg_cpu_ms || 0);
+        const avgReads = Number(q.avg_logical_reads || 0);
+        const totalCpu = Number(q.total_cpu_ms || 0);
+        const execs = topOffenderExecCount(q);
+        const dbn = (q.database_name != null && q.database_name !== '') ? String(q.database_name) : '—';
+        return `<tr>
+            <td><strong>${idx + 1}</strong></td>
+            <td title="${window.escapeHtml(dbn)}">${window.escapeHtml(dbn.length > 24 ? dbn.substring(0, 24) + '…' : dbn)}</td>
+            <td style="max-width:480px;">
+                <span class="code-snippet" style="cursor:pointer" onclick="window.showQueryModalDirect(window.appState.queryCache['qs${idx}'])" title="${window.escapeHtml(qt)}">${window.escapeHtml(short)}</span>
+            </td>
+            <td><span class="badge badge-outline">${execs.toLocaleString()}</span></td>
+            <td>${avgCpu.toFixed(1)}</td>
+            <td>${avgDur.toFixed(1)}</td>
+            <td>${avgReads.toFixed(0)}</td>
+            <td>${totalCpu.toFixed(1)}</td>
+        </tr>`;
+    }).join('');
+}
+
+function updateTopOffendersHeaderSortIndicators() {
+    const table = document.getElementById('topOffendersGrid');
+    if (!table) return;
+    const state = window.appState.topOffendersGridSort || { key: 'total_cpu_ms', dir: 'desc' };
+    table.querySelectorAll('thead th[data-sort-key]').forEach((th) => {
+        const k = th.getAttribute('data-sort-key');
+        const icon = th.querySelector('.sort-icon');
+        if (!icon) return;
+        if (k === state.key) {
+            th.classList.add('th-sort-active');
+            th.style.color = 'var(--accent, #3b82f6)';
+            icon.className = 'fa-solid sort-icon ' + (state.dir === 'asc' ? 'fa-sort-up' : 'fa-sort-down');
+        } else {
+            th.classList.remove('th-sort-active');
+            th.style.color = '';
+            icon.className = 'fa-solid fa-sort sort-icon';
+        }
+    });
+}
+
+window.onTopOffendersGridSortClick = function(ev) {
+    const th = ev.target.closest('th[data-sort-key]');
+    if (!th || !document.getElementById('topOffendersGrid') || !th.closest('#topOffendersGrid')) return;
+    ev.preventDefault();
+    const key = th.getAttribute('data-sort-key');
+    const state = Object.assign({}, window.appState.topOffendersGridSort || { key: 'total_cpu_ms', dir: 'desc' });
+    if (state.key === key) {
+        state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+        state.key = key;
+        state.dir = (key === 'database_name' || key === 'query_text') ? 'asc' : 'desc';
+    }
+    window.appState.topOffendersGridSort = state;
+    updateTopOffendersTable();
+};
+
+function bindTopOffendersGridSort() {
+    const table = document.getElementById('topOffendersGrid');
+    if (!table || table.dataset.sortDelegateBound === '1') return;
+    table.dataset.sortDelegateBound = '1';
+    const thead = table.querySelector('thead');
+    if (thead) thead.addEventListener('click', window.onTopOffendersGridSortClick);
+}
+
 async function fetchTimescaleMetrics(instanceName) {
     try {
         // Add a guard to prevent duplicate fetches
@@ -217,15 +322,19 @@ async function fetchTimescaleMetrics(instanceName) {
             return;
         }
         window.appState.fetchingMetrics = true;
-        
-        const range = window.appState.topOffendersRange || '1h';
+        window.appState.metricsRefreshInProgress = true;
+        if (window.appState.activeViewId === 'dashboard') {
+            updateDashboardCharts();
+        }
+
         const dbQ = dashboardDatabaseQueryParam();
+        const topOffendersSnapshotRange = '1h';
         const [mssqlRes, dbRes, topQueriesRes, longRunningRes, bottlenecksRes, liveDashRes] = await Promise.all([
             window.apiClient.authenticatedFetch(`/api/timescale/mssql/metrics?instance=${encodeURIComponent(instanceName)}`),
             window.apiClient.authenticatedFetch(`/api/mssql/db-throughput?instance=${encodeURIComponent(instanceName)}`),
             window.apiClient.authenticatedFetch(`/api/timescale/mssql/top-queries?instance=${encodeURIComponent(instanceName)}`),
             window.apiClient.authenticatedFetch(`/api/timescale/mssql/long-running-queries?instance=${encodeURIComponent(instanceName)}${dbQ}`),
-            window.apiClient.authenticatedFetch(`/api/queries/bottlenecks?instance=${encodeURIComponent(instanceName)}&time_range=${encodeURIComponent(range)}&limit=20${dbQ}`),
+            window.apiClient.authenticatedFetch(`/api/queries/bottlenecks?instance=${encodeURIComponent(instanceName)}&time_range=${encodeURIComponent(topOffendersSnapshotRange)}&limit=20${dbQ}`),
             window.apiClient.authenticatedFetch(`/api/mssql/dashboard/v2?instance=${encodeURIComponent(instanceName)}`)
         ]).finally(() => {
             window.appState.fetchingMetrics = false;
@@ -277,11 +386,16 @@ async function fetchTimescaleMetrics(instanceName) {
         }
         window.appState.lastUpdate = new Date();
         updateLastRefreshTime();
+        if (window.appState.activeViewId === 'dashboard' && window.updateSqlDashboardAlertBanner) {
+            window.updateSqlDashboardAlertBanner();
+        }
     } catch (e) { 
         appDebug("Failed to fetch metrics:", e); 
         // Still try to update time even on error
         window.appState.lastUpdate = new Date();
         updateLastRefreshTime();
+    } finally {
+        window.appState.metricsRefreshInProgress = false;
     }
 }
 
@@ -321,6 +435,8 @@ async function updateDashboardCharts() {
     }
     
     appDebug('[Dashboard] Updating charts - cpu:', cpu, 'mem:', memory, 'tps:', tps, 'liveData keys:', Object.keys(liveData));
+
+    const metricsRefreshing = !!window.appState.metricsRefreshInProgress;
     
     const cpuEl = document.getElementById('metric-cpu');
     const memEl = document.getElementById('metric-memory');
@@ -332,7 +448,11 @@ async function updateDashboardCharts() {
             const loading = parent.querySelector('.metric-loading');
             if (loading) loading.remove();
         }
-        cpuEl.textContent = cpu >= 0 ? cpu.toFixed(1) + '%' : 'N/A';
+        if (metricsRefreshing && cpu < 0) {
+            cpuEl.innerHTML = '<span style="font-size:0.75rem;color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Loading</span>';
+        } else {
+            cpuEl.textContent = cpu >= 0 ? cpu.toFixed(1) + '%' : 'N/A';
+        }
         const card = cpuEl.closest('.metric-card');
         if (card) card.className = 'metric-card glass-panel ' + (cpu > 85 ? 'status-danger' : (cpu > 60 ? 'status-warning' : 'status-healthy'));
     }
@@ -344,7 +464,11 @@ async function updateDashboardCharts() {
             const loading = parent.querySelector('.metric-loading');
             if (loading) loading.remove();
         }
-        memEl.textContent = memory >= 0 ? memory.toFixed(1) + '%' : 'N/A';
+        if (metricsRefreshing && memory < 0) {
+            memEl.innerHTML = '<span style="font-size:0.75rem;color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Loading</span>';
+        } else {
+            memEl.textContent = memory >= 0 ? memory.toFixed(1) + '%' : 'N/A';
+        }
         const card = memEl.closest('.metric-card');
         if (card) card.className = 'metric-card glass-panel ' + (memory > 95 ? 'status-danger' : (memory > 85 ? 'status-warning' : 'status-healthy'));
     }
@@ -359,13 +483,18 @@ async function updateDashboardCharts() {
         }
         const active = (liveData.active_users !== undefined && liveData.active_users !== null) ? liveData.active_users : 
                        (liveData.ActiveUsers !== undefined && liveData.ActiveUsers !== null) ? liveData.ActiveUsers : -1;
-        activeEl.textContent = active >= 0 ? active : 'N/A';
+        if (metricsRefreshing && active < 0) {
+            activeEl.innerHTML = '<span style="font-size:0.75rem;color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i></span>';
+        } else {
+            activeEl.textContent = active >= 0 ? active : 'N/A';
+        }
     }
     
-    // Update blocked count
+    // Update blocked count using active block sessions from DMV live data.
     const blockedEl = document.getElementById('metric-blocked');
     if (blockedEl) {
-        const blocked = liveData.total_locks || liveData.TotalLocks || 0;
+        const blocked = Array.isArray(liveData.active_blocks) ? liveData.active_blocks.length :
+            (Array.isArray(liveData.ActiveBlocks) ? liveData.ActiveBlocks.length : 0);
         blockedEl.textContent = blocked;
     }
     
@@ -376,7 +505,11 @@ async function updateDashboardCharts() {
         if (tpsEl) {
             const loading = tpsEl.querySelector('.metric-loading');
             if (loading) loading.remove();
-            tpsEl.textContent = tps > 0 ? tps.toFixed(1) : 'N/A';
+            if (metricsRefreshing && tps <= 0) {
+                tpsEl.innerHTML = '<span style="font-size:0.75rem;color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Loading</span>';
+            } else {
+                tpsEl.textContent = tps > 0 ? tps.toFixed(1) : 'N/A';
+            }
         }
     }
     
@@ -417,6 +550,7 @@ async function updateDashboardCharts() {
     updateLongRunningQueriesTable();
     
     updateLastRefreshTime();
+    if (window.updateSqlDashboardAlertBanner) window.updateSqlDashboardAlertBanner();
 }
 
 function updateTopOffendersTable() {
@@ -425,52 +559,32 @@ function updateTopOffendersTable() {
 
     let qsOffenders = window.appState.queryStoreBottlenecks || [];
     if (window.appState.fetchingMetrics) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner"></div> Loading Query Store offenders...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center"><div class="spinner"></div> Loading Query Store offenders...</td></tr>';
         return;
     }
     if (!qsOffenders || qsOffenders.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No Query Store offenders for this scope. Enable Query Store per database, ensure the collector runs, or try &quot;All databases&quot;.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No Query Store offenders for this scope. Enable Query Store per database, ensure the collector runs, or try &quot;All databases&quot;.</td></tr>';
+        updateTopOffendersHeaderSortIndicators();
         return;
     }
 
-    const sortKey = (window.appState.topOffendersSort || 'total_cpu_ms').toString();
-    qsOffenders = [...qsOffenders].sort((a, b) => Number(b?.[sortKey] || 0) - Number(a?.[sortKey] || 0));
-
-    window.appState.queryCache = window.appState.queryCache || {};
-    tbody.innerHTML = qsOffenders.map((q, idx) => {
-        const qt = (q.query_text || 'Unknown');
-        window.appState.queryCache['qs' + idx] = qt;
-        const short = qt.length > 60 ? qt.substring(0, 60) + '…' : qt;
-        const avgDur = Number(q.avg_duration_ms || 0);
-        const avgCpu = Number(q.avg_cpu_ms || 0);
-        const avgReads = Number(q.avg_logical_reads || 0);
-        const execs = Number(q.execution_count || q.total_executions || q.executions || 0);
-        const dbn = (q.database_name != null && q.database_name !== '') ? String(q.database_name) : '—';
-        return `<tr>
-            <td><strong>${idx + 1}</strong></td>
-            <td title="${window.escapeHtml(dbn)}">${window.escapeHtml(dbn.length > 24 ? dbn.substring(0, 24) + '…' : dbn)}</td>
-            <td style="max-width:480px;">
-                <span class="code-snippet" style="cursor:pointer" onclick="window.showQueryModalDirect(window.appState.queryCache['qs${idx}'])" title="${window.escapeHtml(qt)}">${window.escapeHtml(short)}</span>
-            </td>
-            <td><span class="badge badge-outline">${execs.toLocaleString()}</span></td>
-            <td>${avgCpu.toFixed(1)}</td>
-            <td>${avgDur.toFixed(1)}</td>
-            <td>${avgReads.toFixed(0)}</td>
-        </tr>`;
-    }).join('');
+    const state = window.appState.topOffendersGridSort || { key: 'total_cpu_ms', dir: 'desc' };
+    const sorted = sortQueryStoreOffenderRows(qsOffenders, state);
+    tbody.innerHTML = renderTopOffendersRowsHtml(sorted);
+    updateTopOffendersHeaderSortIndicators();
+    bindTopOffendersGridSort();
 }
 
 async function refreshTopOffenders(instanceName) {
     const tbody = document.getElementById('top-offenders-body');
     if (tbody) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner"></div> Loading Query Store offenders...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center"><div class="spinner"></div> Loading Query Store offenders...</td></tr>';
     }
 
-    const range = window.appState.topOffendersRange || '1h';
     const dbQ = dashboardDatabaseQueryParam();
     try {
         const res = await window.apiClient.authenticatedFetch(
-            `/api/queries/bottlenecks?instance=${encodeURIComponent(instanceName)}&time_range=${encodeURIComponent(range)}&limit=20${dbQ}`
+            `/api/queries/bottlenecks?instance=${encodeURIComponent(instanceName)}&time_range=1h&limit=20${dbQ}`
         );
         if (res.ok) {
             const data = await res.json();
@@ -484,56 +598,9 @@ async function refreshTopOffenders(instanceName) {
     updateTopOffendersTable();
 }
 
-function bindTopOffendersControls(instanceName) {
-    const rangeSel = document.getElementById('topOffendersRange');
-    const sortSel = document.getElementById('topOffendersSort');
-    const viewCpuBtn = document.getElementById('topOffendersViewCpu');
-    const viewDurBtn = document.getElementById('topOffendersViewDur');
-    const viewReadsBtn = document.getElementById('topOffendersViewReads');
-    if (!rangeSel || !sortSel) return;
-
-    rangeSel.value = window.appState.topOffendersRange || '1h';
-    sortSel.value = window.appState.topOffendersSort || 'total_cpu_ms';
-
-    function syncViewButtons() {
-        const mode = (window.appState.topOffendersMode || 'cpu').toLowerCase();
-        const activeCls = 'btn btn-xs btn-outline text-accent';
-        const idleCls = 'btn btn-xs btn-outline';
-        if (viewCpuBtn) viewCpuBtn.className = (mode === 'cpu') ? activeCls : idleCls;
-        if (viewDurBtn) viewDurBtn.className = (mode === 'duration') ? activeCls : idleCls;
-        if (viewReadsBtn) viewReadsBtn.className = (mode === 'reads') ? activeCls : idleCls;
-    }
-    syncViewButtons();
-
-    if (!rangeSel.__bound) {
-        rangeSel.__bound = true;
-        rangeSel.addEventListener('change', async () => {
-            window.appState.topOffendersRange = rangeSel.value;
-            await refreshTopOffenders(instanceName);
-        });
-    }
-    if (!sortSel.__bound) {
-        sortSel.__bound = true;
-        sortSel.addEventListener('change', () => {
-            window.appState.topOffendersSort = sortSel.value;
-            updateTopOffendersTable();
-        });
-    }
-
-    function bindView(btn, mode, sortKey) {
-        if (!btn || btn.__bound) return;
-        btn.__bound = true;
-        btn.addEventListener('click', () => {
-            window.appState.topOffendersMode = mode;
-            window.appState.topOffendersSort = sortKey;
-            if (sortSel) sortSel.value = sortKey;
-            syncViewButtons();
-            updateTopOffendersTable();
-        });
-    }
-    bindView(viewCpuBtn, 'cpu', 'total_cpu_ms');
-    bindView(viewDurBtn, 'duration', 'avg_duration_ms');
-    bindView(viewReadsBtn, 'reads', 'avg_logical_reads');
+function bindTopOffendersControls() {
+    bindTopOffendersGridSort();
+    updateTopOffendersHeaderSortIndicators();
 }
 
 function updateActiveSessionsTable() {
@@ -810,30 +877,13 @@ function renderDashboard(inst, metrics) {
     // Batch Requests/sec trend (1h) from v2
     const batchTrend = (window.appState.dashboardV2?.root_cause?.batch_requests_trend_1h) || [];
 
-    // Query Store Top Offenders (Timescale-backed via /api/queries/bottlenecks)
+    // Query Store Top Offenders — dashboard uses fixed 1h snapshot; change range in drilldown
     const qsOffenders = window.appState.queryStoreBottlenecks || [];
-    const topOffendersRange = window.appState.topOffendersRange || '1h';
-    const offendersHtml = (qsOffenders && qsOffenders.length > 0) ? qsOffenders.map((q, idx) => {
-        const qt = (q.query_text || 'Unknown');
-        window.appState.queryCache['qs' + idx] = qt;
-        const short = qt.length > 60 ? qt.substring(0, 60) + '…' : qt;
-        const avgDur = Number(q.avg_duration_ms || 0);
-        const avgCpu = Number(q.avg_cpu_ms || 0);
-        const avgReads = Number(q.avg_logical_reads || 0);
-        const execs = Number(q.execution_count || q.total_executions || q.executions || 0);
-        const dbn = (q.database_name != null && q.database_name !== '') ? String(q.database_name) : '—';
-        return `<tr>
-            <td><strong>${idx + 1}</strong></td>
-            <td title="${window.escapeHtml(dbn)}">${window.escapeHtml(dbn.length > 24 ? dbn.substring(0, 24) + '…' : dbn)}</td>
-            <td style="max-width:480px;">
-                <span class="code-snippet" style="cursor:pointer" onclick="window.showQueryModalDirect(window.appState.queryCache['qs${idx}'])" title="${window.escapeHtml(qt)}">${window.escapeHtml(short)}</span>
-            </td>
-            <td><span class="badge badge-outline">${execs.toLocaleString()}</span></td>
-            <td>${avgCpu.toFixed(1)}</td>
-            <td>${avgDur.toFixed(1)}</td>
-            <td>${avgReads.toFixed(0)}</td>
-        </tr>`;
-    }).join('') : '';
+    const toGridSort = window.appState.topOffendersGridSort || { key: 'total_cpu_ms', dir: 'desc' };
+    const qsSortedForGrid = sortQueryStoreOffenderRows(qsOffenders, toGridSort);
+    const offendersHtml = (qsSortedForGrid && qsSortedForGrid.length > 0)
+        ? renderTopOffendersRowsHtml(qsSortedForGrid)
+        : '';
 
     const overall = computeOverallStatus(metrics);
     const overallCls = overall === 'CRITICAL' ? 'badge badge-danger' : (overall === 'WARNING' ? 'badge badge-warning' : 'badge badge-success');
@@ -875,7 +925,8 @@ function renderDashboard(inst, metrics) {
                     <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshDashboardData()"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
-            <div class="top-strips dashboard-top-strips">
+            <div id="sql-dashboard-alert-banner" style="display:none;"></div>
+            <div class="top-strips dashboard-top-strips" style="grid-template-columns: 1fr 1fr;">
                 <div class="glass-panel dashboard-strip-panel">
                     <div class="dashboard-strip-header">
                         <h4>
@@ -885,6 +936,7 @@ function renderDashboard(inst, metrics) {
                                 <i class="fa-solid fa-database" title="SQL Engine"></i>
                             </span>
                             Host, Hardware, Engine, &amp; Workload
+                            <span class="dashboard-strip-header-tooltip" title="Shows CPU, memory, disk, TPS, active sessions and blocking activity sourced from the monitored SQL Server instance."><i class="fa-solid fa-circle-info"></i></span>
                         </h4>
                     </div>
                     <div class="dashboard-strip-metrics-row--6">
@@ -892,7 +944,7 @@ function renderDashboard(inst, metrics) {
                             <div class="strip-metric-label">CPU</div>
                             <div class="strip-metric-value"><span id="metric-cpu" class="${cpuIsDanger ? 'text-danger fw-bold' : (cpuIsWarning ? 'text-warning fw-bold' : '')}">${avgCpuLoad >= 0 ? avgCpuLoad.toFixed(1) + '%' : ''}</span>${avgCpuLoad < 0 ? '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>' : ''}</div>
                         </div>
-                        <div class="strip-metric-cell ${memIsDanger ? 'strip-metric-cell--accent-bad' : (memIsWarning ? 'strip-metric-cell--accent-warn' : '')}">
+                        <div class="strip-metric-cell ${memIsDanger ? 'strip-metric-cell--accent-bad' : (memIsWarning ? 'strip-metric-cell--accent-warn' : '')}" style="cursor:pointer;" onclick="window.appNavigate('drilldown-memory')" title="Open Memory Drilldown (Timescale range)">
                             <div class="strip-metric-label">Memory</div>
                             <div class="strip-metric-value"><span id="metric-memory" class="${memIsDanger ? 'text-danger fw-bold' : (memIsWarning ? 'text-warning fw-bold' : '')}">${memoryUsage >= 0 ? memoryUsage.toFixed(1) + '%' : ''}</span>${memoryUsage < 0 ? '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>' : ''}</div>
                         </div>
@@ -909,7 +961,7 @@ function renderDashboard(inst, metrics) {
                             <div class="strip-metric-value" style="color:var(--success,#22c55e);"><span id="metric-active">${activeUsers >= 0 ? activeUsers : '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>'}</span></div>
                         </div>
                         <div class="strip-metric-cell ${blockedIsDanger ? 'strip-metric-cell--accent-warn' : ''}">
-                            <div class="strip-metric-label" style="display:flex; justify-content:space-between; align-items:center; gap:0.35rem;">Blocked${(blocking != null && blocking > 0) ? '<a href="#" onclick="window.appNavigate(\'drilldown-locks\'); return false;" style="font-size:0.65rem; color:var(--accent);" title="Drill down to Locks"><i class="fa-solid fa-arrow-right"></i></a>' : ''}</div>
+                            <div class="strip-metric-label" title="Count of active blocked sessions from live blocking activity, not total lock count." style="display:flex; justify-content:space-between; align-items:center; gap:0.35rem;">Blocked${(blocking != null && blocking > 0) ? '<a href="#" onclick="window.appNavigate(\'drilldown-locks\'); return false;" style="font-size:0.65rem; color:var(--accent);" title="Drill down to Locks"><i class="fa-solid fa-arrow-right"></i></a>' : ''}</div>
                             <div class="strip-metric-value"><span id="metric-blocked">${blocking != null ? blocking : 0}</span></div>
                         </div>
                     </div>
@@ -917,8 +969,12 @@ function renderDashboard(inst, metrics) {
 
                 <div class="glass-panel dashboard-strip-panel">
                     <div class="dashboard-strip-header">
-                        <h4><i class="fa-solid fa-heart-pulse text-accent"></i> Health & Risk (Snapshot)</h4>
-                        <span class="${hsBadgeCls}" style="font-size:0.65rem; white-space:nowrap;">Health Score: ${hsScore != null ? hsScore : '--'} • ${window.escapeHtml(hsLabel)}</span>
+                        <h4>
+                            <i class="fa-solid fa-heart-pulse text-accent"></i>
+                            Health & Risk (Snapshot)
+                            <span class="dashboard-strip-header-tooltip" title="Snapshot risk signals for SQL Server: blocking sessions, PLE, memory grants, login failures, TempDB and log pressure."><i class="fa-solid fa-circle-info"></i></span>
+                            <span class="dashboard-strip-header-meta ${hsBadgeCls}">Health Score: ${hsScore != null ? hsScore : '--'} • ${window.escapeHtml(hsLabel)}</span>
+                        </h4>
                     </div>
                     <div class="dashboard-strip-metrics-row--6">
                         <div class="strip-metric-cell ${memGrants != null && memGrants > 0 ? 'strip-metric-cell--accent-warn' : ''}">
@@ -938,7 +994,7 @@ function renderDashboard(inst, metrics) {
                             <div class="strip-metric-value">${logPct != null ? logPct.toFixed(0) + '%' : '--'}</div>
                             <div class="text-muted sub" title="${window.escapeHtml(logDb)}">${window.escapeHtml(logDb || '')}</div>
                         </div>
-                        <div class="strip-metric-cell">
+                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('drilldown-memory')" title="Open Memory Drilldown (PLE history)">
                             <div class="strip-metric-label">PLE</div>
                             <div class="strip-metric-value">${risk.ple != null ? Number(risk.ple).toFixed(0) : '--'}</div>
                         </div>
@@ -956,41 +1012,33 @@ function renderDashboard(inst, metrics) {
                 <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Disk I/O Latency</h3></div><div class="chart-container"><canvas id="dashIoChart"></canvas></div></div>
             </div>
             <div class="charts-grid dashboard-charts-row mt-2" data-cols="3">
-                <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Page Life Expectancy</h3></div><div class="chart-container"><canvas id="dashPleChart"></canvas></div></div>
+                <div class="chart-card glass-panel" style="padding:0.6rem; cursor:pointer;" onclick="window.appNavigate('drilldown-memory')" title="Memory drilldown (PLE &amp; Timescale)"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Page Life Expectancy</h3></div><div class="chart-container"><canvas id="dashPleChart"></canvas></div></div>
                 <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Buffer Cache Hit % (1h)</h3></div><div class="chart-container"><canvas id="dashBchrChart"></canvas></div></div>
                 <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Wait Categories (15m)</h3></div><div class="chart-container"><canvas id="dashWaitCategoriesDonut"></canvas></div></div>
             </div>
             <div class="tables-grid mt-3" style="display:grid; grid-template-columns:1fr; gap:0.75rem;">
                 <div class="table-card glass-panel">
                     <div class="card-header">
-                        <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-bolt text-accent"></i> Top Offenders (Query Store) <span style="font-size:0.65rem; font-weight:normal; color:var(--text-muted);">(last ${window.escapeHtml(topOffendersRange)})</span> <span style="font-size:0.6rem; font-weight:normal; color:var(--text-muted);">${dbFilter === 'all' ? '· all user DBs' : '· ' + window.escapeHtml(dbFilter)}</span></h3>
+                        <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-bolt text-accent"></i> Top Offenders (Query Store) <span style="font-size:0.6rem; font-weight:normal; color:var(--text-muted);">${dbFilter === 'all' ? '· all user DBs' : '· ' + window.escapeHtml(dbFilter)}</span></h3>
                         <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
-                            <div style="display:flex; gap:0.25rem; align-items:center;">
-                                <button id="topOffendersViewCpu" class="btn btn-xs btn-outline">CPU</button>
-                                <button id="topOffendersViewDur" class="btn btn-xs btn-outline">Duration</button>
-                                <button id="topOffendersViewReads" class="btn btn-xs btn-outline">Reads</button>
-                            </div>
-                            <select id="topOffendersRange" class="custom-select" style="font-size:0.7rem; padding:0.15rem 0.35rem;">
-                                <option value="15m">15m</option>
-                                <option value="1h">1h</option>
-                                <option value="6h">6h</option>
-                                <option value="24h">24h</option>
-                                <option value="7d">7d</option>
-                            </select>
-                            <select id="topOffendersSort" class="custom-select" style="font-size:0.7rem; padding:0.15rem 0.35rem;">
-                                <option value="total_cpu_ms">Sort: total CPU</option>
-                                <option value="avg_duration_ms">Sort: avg duration</option>
-                                <option value="avg_cpu_ms">Sort: avg CPU</option>
-                                <option value="avg_logical_reads">Sort: avg reads</option>
-                            </select>
+                            <span class="text-muted" style="font-size:0.65rem;">1h snapshot · click column headers to sort</span>
                             <span class="badge badge-info">${qsOffenders.length}</span>
-                            <a href="#" onclick="window.appNavigate('drilldown-bottlenecks'); return false;" style="font-size:0.7rem; color:var(--accent);" title="Drill down to Bottlenecks"><i class="fa-solid fa-arrow-right"></i></a>
+                            <a href="#" onclick="window.appNavigate('drilldown-bottlenecks'); return false;" class="btn btn-xs btn-outline text-accent" style="font-size:0.7rem;" title="Open full Query Store view (time range &amp; details)"><i class="fa-solid fa-arrow-right"></i> Drill down</a>
                         </div>
                     </div>
                     <div class="table-responsive" style="max-height:220px; overflow-y:auto;">
-                        <table class="data-table" style="font-size:0.7rem;">
-                            <thead><tr><th>#</th><th>database</th><th>sql_text</th><th>exec</th><th>avg_cpu(ms)</th><th>avg_dur(ms)</th><th>avg_reads</th></tr></thead>
-                            <tbody id="top-offenders-body">${offendersHtml || '<tr><td colspan="7" class="text-center text-muted">No Query Store offenders yet (Query Store may be disabled or not collected).</td></tr>'}</tbody>
+                        <table class="data-table" id="topOffendersGrid" style="font-size:0.7rem;">
+                            <thead><tr>
+                                <th>#</th>
+                                <th data-sort-key="database_name" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">database <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
+                                <th data-sort-key="query_text" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">sql_text <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
+                                <th data-sort-key="execution_count" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">exec <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
+                                <th data-sort-key="avg_cpu_ms" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">avg_cpu(ms) <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
+                                <th data-sort-key="avg_duration_ms" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">avg_dur(ms) <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
+                                <th data-sort-key="avg_logical_reads" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">avg_reads <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
+                                <th data-sort-key="total_cpu_ms" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">total_cpu(ms) <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
+                            </tr></thead>
+                            <tbody id="top-offenders-body">${offendersHtml || '<tr><td colspan="8" class="text-center text-muted">No Query Store offenders yet (Query Store may be disabled or not collected).</td></tr>'}</tbody>
                         </table>
                     </div>
                 </div>
@@ -1018,7 +1066,7 @@ function renderDashboard(inst, metrics) {
             </div>
         </div>`;
     updateLastRefreshTime();
-    bindTopOffendersControls(inst.name);
+    bindTopOffendersControls();
     setTimeout(() => initDashboardCharts(metrics), 25);
 }
 
@@ -1121,8 +1169,11 @@ window.updateBchrChart = function() {
     const existingMsg = container.querySelector('.chart-message');
     if (existingMsg) existingMsg.remove();
 
+    const bchrRefreshing = !!window.appState.metricsRefreshInProgress;
     if (!Array.isArray(trend) || trend.length === 0) {
-        container.innerHTML += '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">Waiting for data collection...</div>';
+        container.innerHTML += bchrRefreshing
+            ? '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;text-align:center;"><div class="spinner" style="width:18px;height:18px;margin:0 auto 6px;"></div>Loading metrics…</div>'
+            : '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">Waiting for data collection...</div>';
         return;
     }
 
@@ -1132,7 +1183,9 @@ window.updateBchrChart = function() {
     })).filter(p => p.ts && isFinite(p.v));
 
     if (pts.length === 0) {
-        container.innerHTML += '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">No cache data detected</div>';
+        container.innerHTML += bchrRefreshing
+            ? '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;text-align:center;"><div class="spinner" style="width:18px;height:18px;margin:0 auto 6px;"></div>Loading metrics…</div>'
+            : '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">No cache data detected</div>';
         return;
     }
 
@@ -1176,8 +1229,11 @@ window.updateBatchChart = function() {
     const existingMsg = container.querySelector('.chart-message');
     if (existingMsg) existingMsg.remove();
 
+    const batchRefreshing = !!window.appState.metricsRefreshInProgress;
     if (!Array.isArray(trend) || trend.length === 0) {
-        container.innerHTML += '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">Waiting for data collection...</div>';
+        container.innerHTML += batchRefreshing
+            ? '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;text-align:center;"><div class="spinner" style="width:18px;height:18px;margin:0 auto 6px;"></div>Loading metrics…</div>'
+            : '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">Waiting for data collection...</div>';
         return;
     }
 
@@ -1187,7 +1243,9 @@ window.updateBatchChart = function() {
     })).filter(p => p.ts && isFinite(p.v));
 
     if (pts.length === 0) {
-        container.innerHTML += '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">No workload activity detected</div>';
+        container.innerHTML += batchRefreshing
+            ? '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;text-align:center;"><div class="spinner" style="width:18px;height:18px;margin:0 auto 6px;"></div>Loading metrics…</div>'
+            : '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">No workload activity detected</div>';
         return;
     }
 
@@ -1272,14 +1330,19 @@ window.updateIoChart = function() {
     }
     
     const ioChartContainer = document.getElementById('dashIoChart')?.parentElement;
+    const ioRefreshing = !!window.appState.metricsRefreshInProgress;
     if (ioChartContainer) {
         const existingMsg = ioChartContainer.querySelector('.chart-message');
         if (existingMsg) existingMsg.remove();
         // Show message based on data state
         if (fHist.length === 0) {
-            ioChartContainer.innerHTML += '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">Waiting for data collection...</div>';
+            ioChartContainer.innerHTML += ioRefreshing
+                ? '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;text-align:center;"><div class="spinner" style="width:18px;height:18px;margin:0 auto 6px;"></div>Loading metrics…</div>'
+                : '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">Waiting for data collection...</div>';
         } else if (!hasData) {
-            ioChartContainer.innerHTML += '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">No I/O activity detected</div>';
+            ioChartContainer.innerHTML += ioRefreshing
+                ? '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;text-align:center;"><div class="spinner" style="width:18px;height:18px;margin:0 auto 6px;"></div>Loading metrics…</div>'
+                : '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">No I/O activity detected</div>';
         }
     }
     
@@ -1354,12 +1417,18 @@ window.updatePleChart = function() {
     }
     
     const pleChartContainer = document.getElementById('dashPleChart')?.parentElement;
+    const pleRefreshing = !!window.appState.metricsRefreshInProgress;
     if (pleChartContainer) {
         const existingMsg = pleChartContainer.querySelector('.chart-message');
         if (existingMsg) existingMsg.remove();
-        // Only show loading if we have history but no data yet
-        if (pleHist.length > 0 && !hasData) {
-            pleChartContainer.innerHTML += '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">Collecting data...</div>';
+        if (pleHist.length === 0) {
+            pleChartContainer.innerHTML += pleRefreshing
+                ? '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;text-align:center;"><div class="spinner" style="width:18px;height:18px;margin:0 auto 6px;"></div>Loading metrics…</div>'
+                : '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">Waiting for data collection...</div>';
+        } else if (!hasData) {
+            pleChartContainer.innerHTML += pleRefreshing
+                ? '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;text-align:center;"><div class="spinner" style="width:18px;height:18px;margin:0 auto 6px;"></div>Loading metrics…</div>'
+                : '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">Collecting data...</div>';
         }
     }
     
@@ -1442,8 +1511,11 @@ window.updateWaitCategoriesDonut = function() {
     const existingMsg = container.querySelector('.chart-message');
     if (existingMsg) existingMsg.remove();
 
+    const waitRefreshing = !!window.appState.metricsRefreshInProgress;
     if (!Array.isArray(agg) || agg.length === 0) {
-        container.innerHTML += '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">Waiting for data collection...</div>';
+        container.innerHTML += waitRefreshing
+            ? '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;text-align:center;"><div class="spinner" style="width:18px;height:18px;margin:0 auto 6px;"></div>Loading metrics…</div>'
+            : '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">Waiting for data collection...</div>';
         return;
     }
 
@@ -1451,7 +1523,9 @@ window.updateWaitCategoriesDonut = function() {
     const values = agg.map(r => Number(r.wait_time_ms || 0));
     const total = values.reduce((s, v) => s + (isFinite(v) ? v : 0), 0);
     if (!isFinite(total) || total <= 0) {
-        container.innerHTML += '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">No wait activity detected</div>';
+        container.innerHTML += waitRefreshing
+            ? '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;text-align:center;"><div class="spinner" style="width:18px;height:18px;margin:0 auto 6px;"></div>Loading metrics…</div>'
+            : '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">No wait activity detected</div>';
         return;
     }
 
