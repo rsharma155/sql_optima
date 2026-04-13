@@ -1162,7 +1162,7 @@ func (c *MssqlRepository) FetchLiveIOLatency(instanceName string) ([]map[string]
 	if !ok || db == nil {
 		return nil, fmt.Errorf("no connection")
 	}
-	return c.CollectFileIOLatency(db)
+	return c.CollectFileIOLatencyForRTD(db)
 }
 
 func (c *MssqlRepository) FetchLiveTempDBUsage(instanceName string) (map[string]interface{}, error) {

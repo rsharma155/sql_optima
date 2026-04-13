@@ -9,8 +9,9 @@ Except where noted, endpoints require `Authorization: Bearer <JWT>` from `POST /
 |--------|------|-------------|
 | POST | `/api/login` | Returns `{ "token": "<jwt>", "user_id", "username", "role" }`. Rate-limited per client IP (`LOGIN_RATE_LIMIT_PER_MIN`, default 20/min). |
 | POST | `/api/auth/login` | Same handler and limits as `/api/login` (REST-style alias; both paths share the same rate-limit counter per IP). |
-| POST | `/api/postgres/explain/analyze` | Body `{ "query"?, "plan": string \| object }`. Parses EXPLAIN text or JSON; returns `result` (findings, summary). Max body ~512 KiB. |
-| POST | `/api/postgres/explain/optimize` | Same body; returns `report` (performance score, executive summary, recommendations). |
+| POST | `/api/postgres/explain/analyze` | Body `{ "query"?, "plan": object \| array \| JSON string }`. **JSON plan only** (`EXPLAIN … FORMAT JSON`). Returns `result`, `sql_context` (findings + `heuristic_insights` from the plan tree). Max body ~512 KiB. |
+| POST | `/api/postgres/explain/optimize` | Same body (JSON plan only); returns `report` and `sql_context` with `heuristic_insights`. |
+| POST | `/api/postgres/explain/index-advisor` | Body `{ "query", "plan": object, "instance_name"?, "database_dsn"?, "query_params"?, "options"? }`. JSON plan only; embeds **pg_missing_index** for index DDL + query rewrites. Resolves DSN from `instance_name` or the sole configured Postgres instance. Returns `recommendation_status`, `top_recommendation`, `query_rewrites`, `diagnostics`, etc. |
 | GET | `/api/health` | Liveness: process is up (JSON `{ "status": "ok", "timestamp": "..." }`). |
 | GET | `/api/health/ready` | Readiness: config has instances; if `HEALTH_STRICT=1`, `queries.yml` must have loaded. |
 

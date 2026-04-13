@@ -5,32 +5,33 @@ import (
 	"log"
 )
 
-// CollectBlockingChains fetches blocking session chains from sys.dm_exec_requests
+// CollectBlockingChains returns aggregated blockers for Real-Time Diagnostics (user databases only; matches UI shape).
 func (c *MssqlRepository) CollectBlockingChains(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
+		WITH BlockingTree AS (
+			SELECT r.session_id AS Blocked_SPID,
+				r.blocking_session_id AS Blocking_SPID,
+				r.wait_time
+			FROM sys.dm_exec_requests r
+			INNER JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
+			WHERE r.blocking_session_id > 0
+			  AND r.session_id > 50
+			  AND s.is_user_process = 1
+			  AND s.database_id > 4
+			  AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
+			  AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+			  AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+		)
 		SELECT TOP 50
-			r.session_id,
-			r.blocking_session_id,
-			ISNULL(DB_NAME(r.database_id), 'Unknown') AS database_name,
-			r.status,
-			r.wait_type,
-			r.wait_time,
-			r.cpu_time,
-			r.total_elapsed_time,
-			r.reads,
-			r.writes,
-			SUBSTRING(t.text, 1, 500) AS query_text,
-			ISNULL(s.login_name, 'Unknown') AS login_name,
-			ISNULL(s.host_name, 'Unknown') AS host_name,
-			ISNULL(s.program_name, 'Unknown') AS program_name
-		FROM sys.dm_exec_requests r
-		INNER JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
-		CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
-		WHERE r.session_id > 50
-		  AND r.blocking_session_id > 0
-		  AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-		ORDER BY r.total_elapsed_time DESC
+			b.Blocking_SPID AS Lead_Blocker,
+			ISNULL(s.login_name, 'Unknown') AS Blocker_Login,
+			ISNULL(s.program_name, 'Unknown') AS Blocker_App,
+			COUNT(b.Blocked_SPID) AS Total_Victims,
+			MAX(b.wait_time) AS Max_Wait_Time_ms
+		FROM BlockingTree b
+		INNER JOIN sys.dm_exec_sessions s ON b.Blocking_SPID = s.session_id
+		GROUP BY b.Blocking_SPID, s.login_name, s.program_name
+		ORDER BY Max_Wait_Time_ms DESC
 	`
 
 	rows, err := db.Query(query)

@@ -162,7 +162,7 @@ function loadAGHealthData(instanceName) {
             html += `
                 </div>
                 <div class="table-footer" style="margin-top: 1.5rem;">
-                    <small class="text-muted"><i class="fa-solid fa-clock-rotate-left"></i> Real-time Replica States | Showing ${agStats.length} Replica Database(s)</small>
+                    <small class="text-muted"><i class="fa-solid fa-clock-rotate-left"></i> Replica health from Timescale (last hour) when available, else live DMVs | Showing ${agStats.length} Replica Database(s)</small>
                 </div>
             `;
 
@@ -235,7 +235,7 @@ function loadDBThroughputData(instanceName) {
                     </tbody>
                 </table>
                 <div class="table-footer">
-                    <small class="text-muted">Showing ${dbStats.length} database(s) | Last 1 hour aggregated data</small>
+                    <small class="text-muted">Showing ${dbStats.length} database(s) | Throughput from Timescale (last hour) when available, else live snapshot</small>
                 </div>
             `;
 

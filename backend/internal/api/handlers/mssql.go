@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/config"
@@ -18,6 +19,12 @@ type MssqlHandlers struct {
 
 func NewMssqlHandlers(metricsSvc *service.MetricsService, cfg *config.Config) *MssqlHandlers {
 	return &MssqlHandlers{metricsSvc: metricsSvc, cfg: cfg}
+}
+
+// mssqlPreferLiveSource is true when the client requests direct DMV/live SQL Server data (e.g. emergency override).
+// Default is TimescaleDB-first for all non–Real-Time Diagnostics pages.
+func mssqlPreferLiveSource(r *http.Request) bool {
+	return strings.EqualFold(r.URL.Query().Get("source"), "live")
 }
 
 func (h *MssqlHandlers) Overview(w http.ResponseWriter, r *http.Request) {
@@ -59,9 +66,17 @@ func (h *MssqlHandlers) Dashboard(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	if source == "" || source == "live" {
+	cached := h.metricsSvc.GetCachedDashboard(instance)
+
+	if source == "live" {
 		w.Header().Set("X-Data-Source", "live_cache")
-		json.NewEncoder(w).Encode(h.metricsSvc.GetCachedDashboard(instance))
+		json.NewEncoder(w).Encode(cached)
+		return
+	}
+
+	if !h.metricsSvc.IsTimescaleConnected() {
+		w.Header().Set("X-Data-Source", "timescale_unavailable")
+		json.NewEncoder(w).Encode(cached)
 		return
 	}
 
@@ -69,12 +84,38 @@ func (h *MssqlHandlers) Dashboard(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("[Router] TimescaleDB fetch failed for %s, falling back to cache: %v", instance, err)
 		w.Header().Set("X-Data-Source", "live_cache_fallback")
-		json.NewEncoder(w).Encode(h.metricsSvc.GetCachedDashboard(instance))
+		json.NewEncoder(w).Encode(cached)
+		return
+	}
+
+	merged, err := mergeDashboardCacheWithTimescale(cached, tsData)
+	if err != nil {
+		log.Printf("[Router] Failed to merge Timescale dashboard data for %s: %v", instance, err)
+		w.Header().Set("X-Data-Source", "live_cache_fallback")
+		json.NewEncoder(w).Encode(cached)
 		return
 	}
 
 	w.Header().Set("X-Data-Source", "timescale")
-	json.NewEncoder(w).Encode(tsData)
+	json.NewEncoder(w).Encode(merged)
+}
+
+func mergeDashboardCacheWithTimescale(cached interface{}, tsData map[string]interface{}) (map[string]interface{}, error) {
+	payload, err := json.Marshal(cached)
+	if err != nil {
+		return nil, err
+	}
+
+	var merged map[string]interface{}
+	if err := json.Unmarshal(payload, &merged); err != nil {
+		return nil, err
+	}
+
+	for k, v := range tsData {
+		merged[k] = v
+	}
+
+	return merged, nil
 }
 
 // DashboardV2 returns the Phase-1 DBA homepage payload.
@@ -271,14 +312,57 @@ func (h *MssqlHandlers) CPUDrilldown(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	fromQ := strings.TrimSpace(r.URL.Query().Get("from"))
+	toQ := strings.TrimSpace(r.URL.Query().Get("to"))
+
+	normalizeTopQueryTimestamps := func(queries []map[string]interface{}) {
+		for _, q := range queries {
+			if q == nil {
+				continue
+			}
+			if _, ok := q["capture_timestamp"]; !ok {
+				if ts, ok2 := q["timestamp"]; ok2 {
+					q["capture_timestamp"] = ts
+				}
+			}
+		}
+	}
+
+	if !preferLive && h.metricsSvc.IsTimescaleConnected() && fromQ != "" && toQ != "" {
+		queries, err := h.metricsSvc.GetTimescaleSQLServerTopQueries(instance, limit, fromQ, toQ)
+		if err == nil {
+			normalizeTopQueryTimestamps(queries)
+			w.Header().Set("X-Data-Source", "timescale")
+			json.NewEncoder(w).Encode(map[string]interface{}{"queries": queries, "count": len(queries)})
+			return
+		}
+		log.Printf("[Router] Timescale top queries (range) failed for %s, falling back: %v", instance, err)
+	}
+
+	if !preferLive && h.metricsSvc.IsTimescaleConnected() {
+		queries, err := h.metricsSvc.GetTimescaleSQLServerTopQueriesLatest(instance, limit)
+		if err == nil {
+			normalizeTopQueryTimestamps(queries)
+			w.Header().Set("X-Data-Source", "timescale")
+			json.NewEncoder(w).Encode(map[string]interface{}{"queries": queries, "count": len(queries)})
+			return
+		}
+		log.Printf("[Router] Timescale top queries failed for %s, using live DMV: %v", instance, err)
+	}
+
 	queries, err := h.metricsSvc.MsRepo.FetchTopCPUQueries(instance, limit)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
+	if preferLive {
+		w.Header().Set("X-Data-Source", "live_dmv")
+	} else {
+		w.Header().Set("X-Data-Source", "live_dmv_fallback")
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"queries": queries, "count": len(queries)})
 }
 
@@ -303,23 +387,43 @@ func (h *MssqlHandlers) AGHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	ctx := r.Context()
+
+	if !preferLive && h.metricsSvc.IsTimescaleConnected() {
+		stats, err := h.metricsSvc.GetTimescaleAGHealthSummary(ctx, instance, 100)
+		if err == nil {
+			w.Header().Set("X-Data-Source", "timescale")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"hadr_enabled": len(stats) > 0,
+				"ag_health":    stats,
+				"ag_stats":     stats,
+			})
+			return
+		}
+		log.Printf("[Router] Timescale AG health failed for %s, using live DMV: %v", instance, err)
+	}
+
 	stats, err := h.metricsSvc.MsRepo.FetchAGHealthStats(instance)
 	if err != nil {
 		log.Printf("[Router] AG Health error: %v", err)
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"hadr_enabled": false,
 			"ag_health":    []interface{}{},
-			"ag_stats":     []interface{}{}, // backward/forward compat with frontend
+			"ag_stats":     []interface{}{},
 		})
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
+	if preferLive {
+		w.Header().Set("X-Data-Source", "live_dmv")
+	} else {
+		w.Header().Set("X-Data-Source", "live_dmv_fallback")
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"hadr_enabled": len(stats) > 0,
 		"ag_health":    stats,
-		"ag_stats":     stats, // backward/forward compat with frontend
+		"ag_stats":     stats,
 	})
 }
 
@@ -338,21 +442,40 @@ func (h *MssqlHandlers) DBThroughput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	ctx := r.Context()
+
+	if !preferLive && h.metricsSvc.IsTimescaleConnected() {
+		stats, err := h.metricsSvc.GetTimescaleDatabaseThroughputSummary(ctx, instance, 100)
+		if err == nil {
+			w.Header().Set("X-Data-Source", "timescale")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"db_throughput": stats,
+				"db_stats":      stats,
+			})
+			return
+		}
+		log.Printf("[Router] Timescale DB throughput failed for %s, using live DMV: %v", instance, err)
+	}
+
 	stats, err := h.metricsSvc.MsRepo.FetchDatabaseThroughput(instance)
 	if err != nil {
 		log.Printf("[Router] DB Throughput error: %v", err)
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"db_throughput": []interface{}{},
-			"db_stats":      []interface{}{}, // compat with frontend
+			"db_stats":      []interface{}{},
 		})
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
+	if preferLive {
+		w.Header().Set("X-Data-Source", "live_dmv")
+	} else {
+		w.Header().Set("X-Data-Source", "live_dmv_fallback")
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"db_throughput": stats,
-		"db_stats":      stats, // compat with frontend
+		"db_stats":      stats,
 	})
 }
 
@@ -372,12 +495,27 @@ func (h *MssqlHandlers) LatchStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	if preferLive {
+		stats, err := h.metricsSvc.MsRepo.FetchLatchStats(instance)
+		if err != nil {
+			log.Printf("[Router] Latch stats error: %v", err)
+			w.Header().Set("X-Data-Source", "live_dmv_error")
+			json.NewEncoder(w).Encode(map[string]interface{}{"latch_stats": []interface{}{}})
+			return
+		}
+		w.Header().Set("X-Data-Source", "live_dmv")
+		json.NewEncoder(w).Encode(map[string]interface{}{"latch_stats": stats})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
-		if stats, err := h.metricsSvc.GetTimescaleLatchWaits(r.Context(), instance, 50); err == nil && stats != nil {
+		stats, err := h.metricsSvc.GetTimescaleLatchWaits(r.Context(), instance, 50)
+		if err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
 			json.NewEncoder(w).Encode(map[string]interface{}{"latch_stats": stats})
 			return
 		}
+		log.Printf("[Router] Timescale latch stats failed for %s: %v", instance, err)
 	}
 	stats, err := h.metricsSvc.MsRepo.FetchLatchStats(instance)
 	if err != nil {
@@ -406,12 +544,27 @@ func (h *MssqlHandlers) WaitingTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	if preferLive {
+		stats, err := h.metricsSvc.MsRepo.FetchWaitingTasks(instance)
+		if err != nil {
+			log.Printf("[Router] Waiting tasks error: %v", err)
+			w.Header().Set("X-Data-Source", "live_dmv_error")
+			json.NewEncoder(w).Encode(map[string]interface{}{"waiting_tasks": []interface{}{}})
+			return
+		}
+		w.Header().Set("X-Data-Source", "live_dmv")
+		json.NewEncoder(w).Encode(map[string]interface{}{"waiting_tasks": stats})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
-		if stats, err := h.metricsSvc.GetTimescaleWaitingTasks(r.Context(), instance, 50); err == nil && stats != nil {
+		stats, err := h.metricsSvc.GetTimescaleWaitingTasks(r.Context(), instance, 50)
+		if err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
 			json.NewEncoder(w).Encode(map[string]interface{}{"waiting_tasks": stats})
 			return
 		}
+		log.Printf("[Router] Timescale waiting tasks failed for %s: %v", instance, err)
 	}
 	stats, err := h.metricsSvc.MsRepo.FetchWaitingTasks(instance)
 	if err != nil {
@@ -440,12 +593,27 @@ func (h *MssqlHandlers) MemoryGrants(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	if preferLive {
+		stats, err := h.metricsSvc.MsRepo.FetchMemoryGrants(instance)
+		if err != nil {
+			log.Printf("[Router] Memory grants error: %v", err)
+			w.Header().Set("X-Data-Source", "live_dmv_error")
+			json.NewEncoder(w).Encode(map[string]interface{}{"memory_grants": []interface{}{}})
+			return
+		}
+		w.Header().Set("X-Data-Source", "live_dmv")
+		json.NewEncoder(w).Encode(map[string]interface{}{"memory_grants": stats})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
-		if stats, err := h.metricsSvc.GetTimescaleMemoryGrants(r.Context(), instance, 50); err == nil && stats != nil {
+		stats, err := h.metricsSvc.GetTimescaleMemoryGrants(r.Context(), instance, 50)
+		if err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
 			json.NewEncoder(w).Encode(map[string]interface{}{"memory_grants": stats})
 			return
 		}
+		log.Printf("[Router] Timescale memory grants failed for %s: %v", instance, err)
 	}
 	stats, err := h.metricsSvc.MsRepo.FetchMemoryGrants(instance)
 	if err != nil {
@@ -474,16 +642,36 @@ func (h *MssqlHandlers) SchedulerWorkers(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	if preferLive {
+		stats, err := h.metricsSvc.MsRepo.FetchSchedulerWG(instance)
+		if err != nil {
+			log.Printf("[Router] Scheduler worker stats error: %v", err)
+			w.Header().Set("X-Data-Source", "live_dmv_error")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"scheduler_wg":      []interface{}{},
+				"scheduler_workers": []interface{}{},
+			})
+			return
+		}
+		w.Header().Set("X-Data-Source", "live_dmv")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"scheduler_wg":      stats,
+			"scheduler_workers": stats,
+		})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
-		if stats, err := h.metricsSvc.GetTimescaleSchedulerWG(r.Context(), instance, 50); err == nil && stats != nil {
+		stats, err := h.metricsSvc.GetTimescaleSchedulerWG(r.Context(), instance, 50)
+		if err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
-			// Return both keys for compatibility.
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"scheduler_wg":      stats,
 				"scheduler_workers": stats,
 			})
 			return
 		}
+		log.Printf("[Router] Timescale scheduler WG failed for %s: %v", instance, err)
 	}
 
 	stats, err := h.metricsSvc.MsRepo.FetchSchedulerWG(instance)
@@ -520,12 +708,27 @@ func (h *MssqlHandlers) ProcedureStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	if preferLive {
+		stats, err := h.metricsSvc.MsRepo.FetchProcedureStats(instance)
+		if err != nil {
+			log.Printf("[Router] Procedure stats error: %v", err)
+			w.Header().Set("X-Data-Source", "live_dmv_error")
+			json.NewEncoder(w).Encode(map[string]interface{}{"procedure_stats": []interface{}{}})
+			return
+		}
+		w.Header().Set("X-Data-Source", "live_dmv")
+		json.NewEncoder(w).Encode(map[string]interface{}{"procedure_stats": stats})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
-		if stats, err := h.metricsSvc.GetTimescaleProcedureStats(r.Context(), instance, 50); err == nil && stats != nil {
+		stats, err := h.metricsSvc.GetTimescaleProcedureStats(r.Context(), instance, 50)
+		if err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
 			json.NewEncoder(w).Encode(map[string]interface{}{"procedure_stats": stats})
 			return
 		}
+		log.Printf("[Router] Timescale procedure stats failed for %s: %v", instance, err)
 	}
 	stats, err := h.metricsSvc.MsRepo.FetchProcedureStats(instance)
 	if err != nil {
@@ -554,12 +757,27 @@ func (h *MssqlHandlers) FileIOLatency(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	if preferLive {
+		stats, err := h.metricsSvc.MsRepo.FetchFileIOLatency(instance)
+		if err != nil {
+			log.Printf("[Router] File IO latency error: %v", err)
+			w.Header().Set("X-Data-Source", "live_dmv_error")
+			json.NewEncoder(w).Encode(map[string]interface{}{"file_io_latency": []interface{}{}})
+			return
+		}
+		w.Header().Set("X-Data-Source", "live_dmv")
+		json.NewEncoder(w).Encode(map[string]interface{}{"file_io_latency": stats})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
-		if stats, err := h.metricsSvc.GetTimescaleFileIOLatency(r.Context(), instance, 50); err == nil && stats != nil {
+		stats, err := h.metricsSvc.GetTimescaleFileIOLatency(r.Context(), instance, 50)
+		if err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
 			json.NewEncoder(w).Encode(map[string]interface{}{"file_io_latency": stats})
 			return
 		}
+		log.Printf("[Router] Timescale file IO latency failed for %s: %v", instance, err)
 	}
 	stats, err := h.metricsSvc.MsRepo.FetchFileIOLatency(instance)
 	if err != nil {
@@ -588,12 +806,27 @@ func (h *MssqlHandlers) SpinlockStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	if preferLive {
+		stats, err := h.metricsSvc.MsRepo.FetchSpinlockStats(instance)
+		if err != nil {
+			log.Printf("[Router] Spinlock stats error: %v", err)
+			w.Header().Set("X-Data-Source", "live_dmv_error")
+			json.NewEncoder(w).Encode(map[string]interface{}{"spinlock_stats": []interface{}{}})
+			return
+		}
+		w.Header().Set("X-Data-Source", "live_dmv")
+		json.NewEncoder(w).Encode(map[string]interface{}{"spinlock_stats": stats})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
-		if stats, err := h.metricsSvc.GetTimescaleSpinlockStats(r.Context(), instance, 50); err == nil && stats != nil {
+		stats, err := h.metricsSvc.GetTimescaleSpinlockStats(r.Context(), instance, 50)
+		if err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
 			json.NewEncoder(w).Encode(map[string]interface{}{"spinlock_stats": stats})
 			return
 		}
+		log.Printf("[Router] Timescale spinlock stats failed for %s: %v", instance, err)
 	}
 	stats, err := h.metricsSvc.MsRepo.FetchSpinlockStats(instance)
 	if err != nil {
@@ -622,12 +855,27 @@ func (h *MssqlHandlers) MemoryClerks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	if preferLive {
+		stats, err := h.metricsSvc.MsRepo.FetchMemoryClerks(instance)
+		if err != nil {
+			log.Printf("[Router] Memory clerks error: %v", err)
+			w.Header().Set("X-Data-Source", "live_dmv_error")
+			json.NewEncoder(w).Encode(map[string]interface{}{"memory_clerks": []interface{}{}})
+			return
+		}
+		w.Header().Set("X-Data-Source", "live_dmv")
+		json.NewEncoder(w).Encode(map[string]interface{}{"memory_clerks": stats})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
-		if stats, err := h.metricsSvc.GetTimescaleMemoryClerks(r.Context(), instance, 50); err == nil && stats != nil {
+		stats, err := h.metricsSvc.GetTimescaleMemoryClerks(r.Context(), instance, 50)
+		if err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
 			json.NewEncoder(w).Encode(map[string]interface{}{"memory_clerks": stats})
 			return
 		}
+		log.Printf("[Router] Timescale memory clerks failed for %s: %v", instance, err)
 	}
 	stats, err := h.metricsSvc.MsRepo.FetchMemoryClerks(instance)
 	if err != nil {
@@ -656,13 +904,27 @@ func (h *MssqlHandlers) TempdbStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	// This endpoint returns file-level stats; prefer TimescaleDB-backed snapshots when available.
+	preferLive := mssqlPreferLiveSource(r)
+	if preferLive {
+		stats, err := h.metricsSvc.MsRepo.FetchTempdbStats(instance)
+		if err != nil {
+			log.Printf("[Router] Tempdb stats error: %v", err)
+			w.Header().Set("X-Data-Source", "live_dmv_error")
+			json.NewEncoder(w).Encode(map[string]interface{}{"tempdb_stats": []interface{}{}})
+			return
+		}
+		w.Header().Set("X-Data-Source", "live_dmv")
+		json.NewEncoder(w).Encode(map[string]interface{}{"tempdb_stats": stats})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
-		if stats, err := h.metricsSvc.GetTimescaleTempdbFiles(r.Context(), instance, 50); err == nil && stats != nil {
+		stats, err := h.metricsSvc.GetTimescaleTempdbFiles(r.Context(), instance, 50)
+		if err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
 			json.NewEncoder(w).Encode(map[string]interface{}{"tempdb_stats": stats})
 			return
 		}
+		log.Printf("[Router] Timescale tempdb files failed for %s: %v", instance, err)
 	}
 	stats, err := h.metricsSvc.MsRepo.FetchTempdbStats(instance)
 	if err != nil {
@@ -689,6 +951,18 @@ func (h *MssqlHandlers) PlanCacheHealth(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	if preferLive {
+		row, err := h.metricsSvc.MsRepo.FetchPlanCacheHealth(instance)
+		if err == nil && row != nil && len(row) > 0 {
+			w.Header().Set("X-Data-Source", "live_dmv")
+			json.NewEncoder(w).Encode(map[string]any{"plan_cache_health": []any{row}})
+			return
+		}
+		w.Header().Set("X-Data-Source", "live_dmv_error")
+		json.NewEncoder(w).Encode(map[string]any{"plan_cache_health": []any{}})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
 		if rows, err := h.metricsSvc.GetTimescalePlanCacheHealth(r.Context(), instance, 60); err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
@@ -715,6 +989,18 @@ func (h *MssqlHandlers) MemoryGrantWaiters(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	if preferLive {
+		rows, err := h.metricsSvc.MsRepo.FetchMemoryGrantWaiters(instance)
+		if err != nil {
+			w.Header().Set("X-Data-Source", "live_dmv_error")
+			json.NewEncoder(w).Encode(map[string]any{"memory_grant_waiters": []any{}})
+			return
+		}
+		w.Header().Set("X-Data-Source", "live_dmv")
+		json.NewEncoder(w).Encode(map[string]any{"memory_grant_waiters": rows})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
 		if rows, err := h.metricsSvc.GetTimescaleMemoryGrantWaiters(r.Context(), instance, 50); err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
@@ -741,6 +1027,18 @@ func (h *MssqlHandlers) TempdbTopConsumers(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	preferLive := mssqlPreferLiveSource(r)
+	if preferLive {
+		rows, err := h.metricsSvc.MsRepo.FetchTempdbTopConsumers(instance)
+		if err != nil {
+			w.Header().Set("X-Data-Source", "live_dmv_error")
+			json.NewEncoder(w).Encode(map[string]any{"tempdb_top_consumers": []any{}})
+			return
+		}
+		w.Header().Set("X-Data-Source", "live_dmv")
+		json.NewEncoder(w).Encode(map[string]any{"tempdb_top_consumers": rows})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
 		if rows, err := h.metricsSvc.GetTimescaleTempdbTopConsumers(r.Context(), instance, 50); err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
@@ -767,6 +1065,12 @@ func (h *MssqlHandlers) WaitCategories(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	if mssqlPreferLiveSource(r) {
+		// Wait categories are derived from Timescale wait deltas; no cheap live DMV equivalent.
+		w.Header().Set("X-Data-Source", "live_unsupported")
+		json.NewEncoder(w).Encode(map[string]any{"wait_categories_15m": []any{}})
+		return
+	}
 	if h.metricsSvc.IsTimescaleConnected() {
 		if rows, err := h.metricsSvc.GetTimescaleWaitCategoryAgg(r.Context(), instance, 15); err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
@@ -796,11 +1100,14 @@ func (h *MssqlHandlers) CPUSchedulerStats(w http.ResponseWriter, r *http.Request
 	stats, err := h.metricsSvc.GetTimescaleCPUSchedulerStats(instance, 50)
 	if err != nil {
 		log.Printf("[Router] CPU Scheduler stats error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Data-Source", "timescale_unavailable")
 		json.NewEncoder(w).Encode(map[string]interface{}{"cpu_scheduler_stats": []interface{}{}})
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Data-Source", "timescale")
 	json.NewEncoder(w).Encode(map[string]interface{}{"cpu_scheduler_stats": stats})
 }
 
@@ -822,10 +1129,13 @@ func (h *MssqlHandlers) ServerProperties(w http.ResponseWriter, r *http.Request)
 	props, err := h.metricsSvc.GetTimescaleServerProperties(instance)
 	if err != nil {
 		log.Printf("[Router] Server properties error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Data-Source", "timescale_unavailable")
 		json.NewEncoder(w).Encode(map[string]interface{}{"server_properties": nil})
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Data-Source", "timescale")
 	json.NewEncoder(w).Encode(map[string]interface{}{"server_properties": props})
 }

@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -314,6 +315,24 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 		}
 	}
 
+	db, ok := s.MsRepo.GetConn(instanceName)
+	if ok && db != nil {
+		statsRows, err := s.MsRepo.CollectTopQueries(db, 200)
+		if err != nil {
+			log.Printf("[Collector] WARNING: CollectTopQueries (query stats pipeline) failed for %s: %v", instanceName, err)
+		} else if len(statsRows) > 0 {
+			if err := s.tsLogger.LogQueryStatsStaging(ctx, instanceName, statsRows); err != nil {
+				log.Printf("[Collector] WARNING: LogQueryStatsStaging failed: %v", err)
+			} else if err := s.tsLogger.ProcessQueryStatsSnapshot(ctx, instanceName); err != nil {
+				log.Printf("[Collector] WARNING: ProcessQueryStatsSnapshot failed: %v", err)
+			} else if err := s.tsLogger.ProcessQueryStatsDelta(ctx, instanceName); err != nil {
+				log.Printf("[Collector] WARNING: ProcessQueryStatsDelta failed: %v", err)
+			} else {
+				log.Printf("[Collector] Query stats pipeline OK for %s (%d staging rows → snapshot + delta)", instanceName, len(statsRows))
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -431,10 +450,14 @@ func (s *MetricsService) fetchAndLogQueryStoreStatsWithContext(ctx context.Conte
 
 	rows := make([]hot.QueryStoreStatsRow, 0, len(stats))
 	for _, qs := range stats {
+		dbn := strings.TrimSpace(qs.DatabaseName)
+		if dbn == "" {
+			dbn = "unknown"
+		}
 		rows = append(rows, hot.QueryStoreStatsRow{
 			CaptureTimestamp: timestamp,
 			ServerName:       instanceName,
-			DatabaseName:     "master",
+			DatabaseName:     dbn,
 			QueryHash:        qs.QueryHash,
 			QueryText:        qs.QueryText,
 			Executions:       qs.Executions,

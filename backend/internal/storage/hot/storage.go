@@ -699,6 +699,62 @@ func (s *HotStorage) RunMigrations(ctx context.Context) error {
 			query_text TEXT,
 			inserted_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
+		`CREATE TABLE IF NOT EXISTS sqlserver_query_stats_staging (
+			capture_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			server_instance_name TEXT NOT NULL,
+			database_name TEXT,
+			login_name TEXT,
+			client_app TEXT,
+			query_hash TEXT,
+			query_text TEXT,
+			total_executions BIGINT DEFAULT 0,
+			total_cpu_ms BIGINT DEFAULT 0,
+			total_elapsed_ms BIGINT DEFAULT 0,
+			total_logical_reads BIGINT DEFAULT 0,
+			total_physical_reads BIGINT DEFAULT 0,
+			total_rows BIGINT DEFAULT 0,
+			inserted_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS sqlserver_query_stats_snapshot (
+			capture_time TIMESTAMPTZ NOT NULL,
+			server_instance_name TEXT NOT NULL,
+			database_name TEXT,
+			login_name TEXT,
+			client_app TEXT,
+			query_hash TEXT,
+			query_text TEXT,
+			total_executions BIGINT DEFAULT 0,
+			total_cpu_ms BIGINT DEFAULT 0,
+			total_elapsed_ms BIGINT DEFAULT 0,
+			total_logical_reads BIGINT DEFAULT 0,
+			total_physical_reads BIGINT DEFAULT 0,
+			total_rows BIGINT DEFAULT 0,
+			row_fingerprint TEXT,
+			inserted_at TIMESTAMPTZ DEFAULT NOW(),
+			PRIMARY KEY (server_instance_name, query_hash, database_name, login_name, client_app, capture_time)
+		)`,
+		`CREATE TABLE IF NOT EXISTS sqlserver_query_stats_interval (
+			bucket_start TIMESTAMPTZ NOT NULL,
+			bucket_end TIMESTAMPTZ NOT NULL,
+			server_instance_name TEXT NOT NULL,
+			database_name TEXT,
+			login_name TEXT,
+			client_app TEXT,
+			query_hash TEXT,
+			query_text TEXT,
+			executions BIGINT DEFAULT 0,
+			cpu_ms BIGINT DEFAULT 0,
+			duration_ms BIGINT DEFAULT 0,
+			logical_reads BIGINT DEFAULT 0,
+			physical_reads BIGINT DEFAULT 0,
+			rows BIGINT DEFAULT 0,
+			avg_cpu_ms NUMERIC DEFAULT 0,
+			avg_duration_ms NUMERIC DEFAULT 0,
+			avg_reads NUMERIC DEFAULT 0,
+			is_reset BOOLEAN DEFAULT FALSE,
+			inserted_at TIMESTAMPTZ DEFAULT NOW(),
+			PRIMARY KEY (bucket_end, query_hash, database_name, login_name, client_app, server_instance_name)
+		)`,
 	}
 
 	for i, migration := range migrations {
@@ -759,6 +815,8 @@ func (s *HotStorage) createHypertables(ctx context.Context) error {
 		{"sqlserver_plan_cache_health", "capture_timestamp"},
 		{"sqlserver_memory_grant_waiters", "capture_timestamp"},
 		{"sqlserver_tempdb_top_consumers", "capture_timestamp"},
+		{"sqlserver_query_stats_snapshot", "capture_time"},
+		{"sqlserver_query_stats_interval", "bucket_end"},
 	}
 
 	for _, ht := range hypertableMigrations {

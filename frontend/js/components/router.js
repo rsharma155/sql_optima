@@ -5,8 +5,8 @@ if (!window.routerOutlet) {
 }
 window.getCSSVar = function(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); };
 window.escapeHtml = function(unsafe) {
-    if(!unsafe) return '';
-    return unsafe.toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    if (unsafe === null || unsafe === undefined) return '';
+    return String(unsafe).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 };
 
 // Sidebar navigation is re-rendered dynamically; use event delegation so new `li`s keep working.
@@ -143,6 +143,7 @@ window.appNavigate = function(route, skipHistory = false) {
             waitForDashboard();
             break;
         case 'drilldown-cpu': window.CpuDrilldown(); break;
+        case 'drilldown-memory': if (window.MemoryDrilldown) window.MemoryDrilldown(); break;
         case 'mssql-cpu-dashboard': window.MssqlCpuDashboardView(); break;
         case 'instance-health': 
             appDebug('[Router] instance-health route triggered');
@@ -393,6 +394,7 @@ window.router = {
             sidebarNav.innerHTML = `
                 <li data-route="dashboard" id="nav-dashboard"><i class="fa-solid fa-gauge-high"></i> Instance Dashboard</li>
                 <li data-route="mssql-cpu-dashboard"><i class="fa-solid fa-microchip"></i> CPU Dashboard</li>
+                <li data-route="drilldown-memory"><i class="fa-solid fa-memory"></i> Memory Drilldown</li>
                 <li data-route="live-diagnostics"><i class="fa-solid fa-bolt text-warning"></i> Real-Time Diagnostics</li>
                 <!-- Query Bottlenecks is now treated as a drilldown from Top Offenders -->
                 <li data-route="drilldown-ha"><i class="fa-solid fa-server"></i> HA/AG Monitor</li>

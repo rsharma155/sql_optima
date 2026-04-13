@@ -24,6 +24,7 @@ type Instance struct {
 	User      string   `yaml:"user,omitempty" json:"-"`
 	Password  string   `yaml:"password,omitempty" json:"-"`
 	Databases []string `yaml:"databases,omitempty" json:"databases,omitempty"`
+	Available bool     `yaml:"available,omitempty" json:"available,omitempty"`
 
 	// Security Additions
 	TrustServerCertificate bool   `yaml:"trust_server_certificate,omitempty" json:"trust_server_certificate,omitempty"` // MSSQL
@@ -92,6 +93,46 @@ func LoadConfigWithSecurity(path string, sec Security) (*Config, error) {
 	}
 
 	cfg.Instances = validInstances
+	if cfg.Instances == nil {
+		cfg.Instances = []Instance{}
+	}
 
 	return &cfg, nil
+}
+
+// PostgresInstanceByName returns a PostgreSQL instance by its configured name (case-insensitive).
+func (c *Config) PostgresInstanceByName(name string) (Instance, bool) {
+	if c == nil {
+		return Instance{}, false
+	}
+	want := strings.TrimSpace(name)
+	if want == "" {
+		return Instance{}, false
+	}
+	for _, inst := range c.Instances {
+		if strings.ToLower(inst.Type) != "postgres" {
+			continue
+		}
+		if strings.EqualFold(inst.Name, want) {
+			return inst, true
+		}
+	}
+	return Instance{}, false
+}
+
+// DefaultPostgresInstance returns the sole PostgreSQL instance when exactly one is configured.
+func (c *Config) DefaultPostgresInstance() (Instance, bool) {
+	if c == nil {
+		return Instance{}, false
+	}
+	var found []Instance
+	for _, inst := range c.Instances {
+		if strings.ToLower(inst.Type) == "postgres" {
+			found = append(found, inst)
+		}
+	}
+	if len(found) == 1 {
+		return found[0], true
+	}
+	return Instance{}, false
 }

@@ -76,6 +76,21 @@ func (s *MetricsService) IsTimescaleConnected() bool {
 	return s.tsLogger != nil && s.tsHotStorage != nil
 }
 
+func (s *MetricsService) GetAllInstanceStatuses() map[string]string {
+	statuses := make(map[string]string)
+	if s.MsRepo != nil {
+		for name, status := range s.MsRepo.GetAllInstanceStatuses() {
+			statuses[name] = status
+		}
+	}
+	if s.PgRepo != nil {
+		for name, status := range s.PgRepo.GetAllInstanceStatuses() {
+			statuses[name] = status
+		}
+	}
+	return statuses
+}
+
 // TimescalePing checks connectivity to TimescaleDB when configured (for readiness probes).
 func (s *MetricsService) TimescalePing(ctx context.Context) error {
 	if s == nil || s.tsHotStorage == nil {
@@ -611,6 +626,98 @@ func (s *MetricsService) GetTimescaleSQLServerTopQueries(instanceName string, li
 	return s.tsLogger.GetSQLServerTopQueriesWithRange(context.Background(), instanceName, limit, from, to)
 }
 
+// GetTimescaleSQLServerTopQueriesLatest returns recent top-query rows (includes query_text) for CPU drilldown and similar UIs.
+func (s *MetricsService) GetTimescaleSQLServerTopQueriesLatest(instanceName string, limit int) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetSQLServerTopQueries(context.Background(), instanceName, limit)
+}
+
+// GetTimescaleSQLServerConnectionStats returns latest per-database connection snapshots from Timescale.
+func (s *MetricsService) GetTimescaleSQLServerConnectionStats(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetLatestSQLServerConnectionSnapshots(ctx, instanceName, limit)
+}
+
+// GetTimescaleAGHealthSummary wraps Timescale AG health rollup (last hour).
+func (s *MetricsService) GetTimescaleAGHealthSummary(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetAGHealthSummary(ctx, instanceName, limit)
+}
+
+// GetTimescaleDatabaseThroughputSummary wraps Timescale DB throughput rollup (last hour).
+func (s *MetricsService) GetTimescaleDatabaseThroughputSummary(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetDatabaseThroughputSummary(ctx, instanceName, limit)
+}
+
+func (s *MetricsService) GetQueryStatsDashboard(instanceName, metric, timeRange, dimension string, limit int, from, to string) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	params := hot.QueryStatsDashboardParams{
+		InstanceName: instanceName,
+		Metric:       metric,
+		TimeRange:    timeRange,
+		Dimension:    dimension,
+		Limit:        limit,
+		From:         from,
+		To:           to,
+	}
+	return s.tsLogger.GetQueryStatsDashboard(context.Background(), params)
+}
+
+// GetTimescaleSQLServerCPUHistory returns sqlserver_cpu_history points for the given RFC3339 window.
+func (s *MetricsService) GetTimescaleSQLServerCPUHistory(instanceName, from, to string, limit int) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetSQLServerCPUHistory(context.Background(), instanceName, from, to, limit)
+}
+
+// GetTimescaleSQLServerMemoryDrilldown returns memory_usage (sqlserver_metrics), PLE (sqlserver_memory_history),
+// and OS memory fields from sqlserver_cpu_scheduler_stats for the same RFC3339 window as CPU drilldown.
+func (s *MetricsService) GetTimescaleSQLServerMemoryDrilldown(instanceName, from, to string, limit int) (map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	ctx := context.Background()
+	metrics, err := s.tsLogger.GetSQLServerMetricsRange(ctx, instanceName, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	ple, err := s.tsLogger.GetSQLServerMemoryHistoryRange(ctx, instanceName, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	sched, err := s.tsLogger.GetSQLServerSchedulerMemoryRange(ctx, instanceName, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"instance":          instanceName,
+		"from":              from,
+		"to":                to,
+		"sqlserver_metrics": metrics,
+		"memory_history":    ple,
+		"scheduler_memory":  sched,
+	}, nil
+}
+
+func (s *MetricsService) GetQueryStatsTimeSeries(instanceName, metric, timeRange string) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetQueryStatsTimeSeries(context.Background(), instanceName, metric, timeRange)
+}
+
 func (s *MetricsService) GetTimescaleSQLServerLongRunningQueries(instanceName string, limit int, from, to string, database string) ([]map[string]interface{}, error) {
 	if s.tsLogger == nil {
 		return nil, fmt.Errorf("TimescaleDB not connected")
@@ -635,16 +742,17 @@ func (s *MetricsService) GetDashboardFromTimescale(instanceName string) (map[str
 		topQueries = []map[string]interface{}{}
 	}
 
-	connStats, err := s.tsLogger.GetPostgresConnections(ctx, instanceName, 10)
+	connStats, err := s.tsLogger.GetLatestSQLServerConnectionSnapshots(ctx, instanceName, 100)
 	if err != nil {
-		connStats = []hot.PostgresConnectionRow{}
+		connStats = []map[string]interface{}{}
 	}
 
 	result := map[string]interface{}{
-		"metrics":       metrics,
-		"top_queries":   topQueries,
-		"connections":   connStats,
-		"instance_name": instanceName,
+		"metrics":           metrics,
+		"top_queries":       topQueries,
+		"connection_stats":  connStats,
+		"connections":       connStats, // legacy key for older clients
+		"instance_name":     instanceName,
 	}
 
 	return result, nil

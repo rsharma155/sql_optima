@@ -151,18 +151,23 @@ func CollectLongRunningQueries(ctx context.Context, db *sql.DB) ([]models.LongRu
 	var results []models.LongRunningQuery
 	for rows.Next() {
 		var q models.LongRunningQuery
+		var waitType sql.NullString
 		var cpuTime, totalElapsed, reads, writes, grantedMemory, rowCount sql.NullInt64
 		var blockingSessionID sql.NullInt64
 
 		err := rows.Scan(
 			&q.SessionID, &q.RequestID, &q.DatabaseName, &q.LoginName,
-			&q.HostName, &q.ProgramName, &q.QueryText, &q.WaitType,
+			&q.HostName, &q.ProgramName, &q.QueryText, &waitType,
 			&blockingSessionID, &q.Status, &cpuTime, &totalElapsed,
 			&reads, &writes, &grantedMemory, &rowCount,
 		)
 		if err != nil {
 			log.Printf("[Collector] CollectLongRunningQueries Scan Error: %v", err)
 			continue
+		}
+
+		if waitType.Valid {
+			q.WaitType = waitType.String
 		}
 
 		if cpuTime.Valid {

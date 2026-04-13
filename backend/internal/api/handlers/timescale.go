@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/rsharma155/sql_optima/internal/config"
@@ -97,6 +98,7 @@ func (h *TimescaleHandlers) PostgresConnections(w http.ResponseWriter, r *http.R
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Data-Source", "timescale")
 	json.NewEncoder(w).Encode(map[string]interface{}{"connections": stats})
 }
 
@@ -125,6 +127,203 @@ func (h *TimescaleHandlers) MssqlTopQueries(w http.ResponseWriter, r *http.Reque
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"top_queries": queries})
+}
+
+func (h *TimescaleHandlers) MssqlQueryStatsDashboard(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if !instanceInConfig(h.cfg, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+
+	metric := r.URL.Query().Get("metric")
+	timeRange := r.URL.Query().Get("time_range")
+	dimension := r.URL.Query().Get("dimension")
+	limit := 20
+	if ls := strings.TrimSpace(r.URL.Query().Get("limit")); ls != "" {
+		if n, err := strconv.Atoi(ls); err == nil && n > 0 {
+			limit = n
+			if limit > 200 {
+				limit = 200
+			}
+		}
+	}
+
+	if metric == "" {
+		metric = "cpu"
+	}
+	if timeRange == "" {
+		timeRange = "1h"
+	}
+	if dimension == "" {
+		dimension = "query"
+	}
+
+	from := strings.TrimSpace(r.URL.Query().Get("from"))
+	to := strings.TrimSpace(r.URL.Query().Get("to"))
+
+	results, err := h.metricsSvc.GetQueryStatsDashboard(instance, metric, timeRange, dimension, limit, from, to)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"results":    results,
+		"instance":   instance,
+		"metric":     metric,
+		"time_range": timeRange,
+		"dimension":  dimension,
+		"from":       from,
+		"to":         to,
+	})
+}
+
+func (h *TimescaleHandlers) MssqlCPUHistory(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if !instanceInConfig(h.cfg, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+
+	from := strings.TrimSpace(r.URL.Query().Get("from"))
+	to := strings.TrimSpace(r.URL.Query().Get("to"))
+	if from == "" || to == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "from and to (RFC3339) are required"})
+		return
+	}
+
+	limit := 2000
+	if ls := strings.TrimSpace(r.URL.Query().Get("limit")); ls != "" {
+		if n, err := strconv.Atoi(ls); err == nil && n > 0 {
+			limit = n
+			if limit > 10000 {
+				limit = 10000
+			}
+		}
+	}
+
+	points, err := h.metricsSvc.GetTimescaleSQLServerCPUHistory(instance, from, to, limit)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"points":   points,
+		"instance": instance,
+		"from":     from,
+		"to":       to,
+	})
+}
+
+func (h *TimescaleHandlers) MssqlMemoryDrilldown(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if !instanceInConfig(h.cfg, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+
+	if !instanceType(h.cfg, instance, "sqlserver") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
+		return
+	}
+
+	from := strings.TrimSpace(r.URL.Query().Get("from"))
+	to := strings.TrimSpace(r.URL.Query().Get("to"))
+	if from == "" || to == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "from and to (RFC3339) are required"})
+		return
+	}
+
+	limit := 2000
+	if ls := strings.TrimSpace(r.URL.Query().Get("limit")); ls != "" {
+		if n, err := strconv.Atoi(ls); err == nil && n > 0 {
+			limit = n
+			if limit > 10000 {
+				limit = 10000
+			}
+		}
+	}
+
+	payload, err := h.metricsSvc.GetTimescaleSQLServerMemoryDrilldown(instance, from, to, limit)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Data-Source", "timescale")
+	json.NewEncoder(w).Encode(payload)
+}
+
+func (h *TimescaleHandlers) MssqlQueryStatsTimeSeries(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if !instanceInConfig(h.cfg, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+
+	metric := r.URL.Query().Get("metric")
+	timeRange := r.URL.Query().Get("time_range")
+
+	if metric == "" {
+		metric = "cpu"
+	}
+	if timeRange == "" {
+		timeRange = "1h"
+	}
+
+	results, err := h.metricsSvc.GetQueryStatsTimeSeries(instance, metric, timeRange)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"timeseries": results,
+		"instance":   instance,
+		"metric":     metric,
+		"time_range": timeRange,
+	})
 }
 
 func (h *TimescaleHandlers) MssqlLongRunningQueries(w http.ResponseWriter, r *http.Request) {

@@ -65,3 +65,72 @@ window.updateSourceBadge = function updateSourceBadge(badgeId, sourceHeaderValue
 
     el.style.display = 'inline-block';
 };
+
+function _escOverlay(s) {
+    const t = String(s ?? '');
+    if (typeof window.escapeHtml === 'function') return window.escapeHtml(t);
+    return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** True if both values are set and From is strictly before To (datetime-local strings). */
+window.isDatetimeLocalRangeValid = function(fromVal, toVal) {
+    if (fromVal == null || toVal == null || fromVal === '' || toVal === '') return true;
+    const a = new Date(fromVal).getTime();
+    const b = new Date(toVal).getTime();
+    if (isNaN(a) || isNaN(b)) return false;
+    return a < b;
+};
+
+/** Empty string if OK; otherwise a short validation message. */
+window.getDatetimeLocalRangeError = function(fromVal, toVal) {
+    if (!fromVal || !toVal) return '';
+    if (!window.isDatetimeLocalRangeValid(fromVal, toVal)) return 'From must be earlier than To.';
+    return '';
+};
+
+window.showDateRangeValidationError = function(message) {
+    const m = message || 'Invalid date range.';
+    if (typeof window.optimaAlert === 'function') {
+        window.optimaAlert(m);
+        return;
+    }
+    alert(m);
+};
+
+window.clearChartOverlay = function(canvasId) {
+    const canvas = typeof canvasId === 'string' ? document.getElementById(canvasId) : canvasId;
+    if (!canvas) return;
+    const host = canvas.closest && canvas.closest('.chart-container');
+    const parent = host || canvas.parentElement;
+    if (!parent) return;
+    parent.querySelectorAll('.chart-overlay-state').forEach(function(el) { el.remove(); });
+};
+
+/**
+ * @param {string} canvasId
+ * @param {'loading'|'empty'|'clear'} kind
+ * @param {string} [message]
+ */
+window.setChartOverlayState = function(canvasId, kind, message) {
+    if (kind === 'clear') {
+        window.clearChartOverlay(canvasId);
+        return;
+    }
+    window.clearChartOverlay(canvasId);
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const host = canvas.closest('.chart-container') || canvas.parentElement;
+    if (!host) return;
+    const pos = window.getComputedStyle(host).position;
+    if (!pos || pos === 'static') host.style.position = 'relative';
+    const div = document.createElement('div');
+    div.className = 'chart-overlay-state';
+    div.setAttribute('role', 'status');
+    div.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0.5rem;background:rgba(15,23,42,0.55);z-index:3;font-size:0.82rem;color:var(--text-muted);text-align:center;padding:0.5rem;';
+    if (kind === 'loading') {
+        div.innerHTML = '<div class="spinner"></div><span>' + _escOverlay(message || 'Loading…') + '</span>';
+    } else {
+        div.innerHTML = '<span>' + _escOverlay(message || 'No data') + '</span>';
+    }
+    host.appendChild(div);
+};

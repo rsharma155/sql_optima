@@ -34,6 +34,30 @@ async function initPgQueries() {
         };
     }
 
+    function updatePgQueriesRangeHint() {
+        const hint = document.getElementById('pgQueriesRangeHint');
+        if (!hint || !fromEl || !toEl) return;
+        if (!fromEl.value || !toEl.value) {
+            hint.style.display = 'none';
+            hint.textContent = '';
+            return;
+        }
+        const err = typeof window.getDatetimeLocalRangeError === 'function'
+            ? window.getDatetimeLocalRangeError(fromEl.value, toEl.value) : '';
+        if (err) {
+            hint.textContent = err;
+            hint.style.display = 'block';
+        } else {
+            hint.style.display = 'none';
+            hint.textContent = '';
+        }
+    }
+    if (fromEl && toEl && !fromEl.dataset.pgRangeListeners) {
+        fromEl.dataset.pgRangeListeners = '1';
+        fromEl.addEventListener('change', updatePgQueriesRangeHint);
+        toEl.addEventListener('change', updatePgQueriesRangeHint);
+    }
+
     try {
         const instEl = document.getElementById('pgQueriesInstance');
         const dbEl = document.getElementById('pgQueriesDatabase');
@@ -63,6 +87,31 @@ async function loadPgQueriesPageData() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || { name: '' };
     const fromEl = document.getElementById('pgQueriesFrom');
     const toEl = document.getElementById('pgQueriesTo');
+
+    if (fromEl && toEl && fromEl.value && toEl.value) {
+        const rangeErr = typeof window.getDatetimeLocalRangeError === 'function'
+            ? window.getDatetimeLocalRangeError(fromEl.value, toEl.value) : '';
+        if (rangeErr) {
+            if (typeof window.showDateRangeValidationError === 'function') {
+                window.showDateRangeValidationError(rangeErr);
+            }
+            const hint = document.getElementById('pgQueriesRangeHint');
+            if (hint) {
+                hint.textContent = rangeErr;
+                hint.style.display = 'block';
+            }
+            return;
+        }
+    }
+
+    const tbody = document.getElementById('pg-queries-tbody');
+    if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner"></div> Loading query stats…</td></tr>';
+    }
+    if (typeof window.setChartOverlayState === 'function') {
+        window.setChartOverlayState('pgQryDistChart', 'loading', 'Loading chart…');
+        window.setChartOverlayState('pgQrySlowChart', 'loading', 'Loading chart…');
+    }
 
     let url = `/api/postgres/queries?instance=${encodeURIComponent(inst.name)}`;
     if (fromEl && toEl && fromEl.value && toEl.value) {
@@ -138,6 +187,11 @@ async function loadPgQueriesPageData() {
         warningEl.style.display = 'none';
     }
 
+    if (typeof window.clearChartOverlay === 'function') {
+        window.clearChartOverlay('pgQryDistChart');
+        window.clearChartOverlay('pgQrySlowChart');
+    }
+
     window._pgQueriesData = queries;
     window._pgQueriesCollectedAt = collectedAt;
     window._pgQuerySqlById = {};
@@ -186,6 +240,9 @@ async function loadPgQueriesPageData() {
             },
             options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
         });
+        if (typeof window.setChartOverlayState === 'function') {
+            window.setChartOverlayState('pgQryDistChart', 'empty', 'No query rows in this range.');
+        }
     }
 
     const slowCtx = document.getElementById('pgQrySlowChart');
@@ -220,11 +277,14 @@ async function loadPgQueriesPageData() {
         window.currentCharts.pgQrySlow = new Chart(slowCtx.getContext('2d'), {
             type: 'line',
             data: {
-                labels: ['No data'],
+                labels: ['—'],
                 datasets: [{ label: 'p99 (ms)', data: [0], borderColor: window.getCSSVar('--danger') }, { label: 'p95 (ms)', data: [0], borderColor: window.getCSSVar('--warning') }]
             },
             options: { responsive: true, maintainAspectRatio: false }
         });
+        if (typeof window.setChartOverlayState === 'function') {
+            window.setChartOverlayState('pgQrySlowChart', 'empty', 'No query rows in this range.');
+        }
     }
 }
 
@@ -233,7 +293,7 @@ function renderQueriesTable(queries, sortBy) {
     if (!tbody) return;
 
     if (!queries || queries.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No query data for this range. pg_stat_statements may be off, or there may be no snapshots yet (Timescale + enterprise collector).</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No query data for this range (load finished). pg_stat_statements may be off, or there may be no snapshots yet (Timescale + enterprise collector).</td></tr>';
         return;
     }
 

@@ -94,7 +94,11 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/mssql/wait-categories", m.WaitCategories).Methods("GET")
 	sr.HandleFunc("/timescale/status", ts.Status).Methods("GET")
 	sr.HandleFunc("/timescale/mssql/metrics", ts.MssqlMetrics).Methods("GET")
+	sr.HandleFunc("/timescale/mssql/cpu-history", ts.MssqlCPUHistory).Methods("GET")
+	sr.HandleFunc("/timescale/mssql/memory-drilldown", ts.MssqlMemoryDrilldown).Methods("GET")
 	sr.HandleFunc("/timescale/mssql/top-queries", ts.MssqlTopQueries).Methods("GET")
+	sr.HandleFunc("/timescale/mssql/query-stats-dashboard", ts.MssqlQueryStatsDashboard).Methods("GET")
+	sr.HandleFunc("/timescale/mssql/query-stats-timeseries", ts.MssqlQueryStatsTimeSeries).Methods("GET")
 	sr.HandleFunc("/timescale/mssql/long-running-queries", ts.MssqlLongRunningQueries).Methods("GET")
 	sr.HandleFunc("/timescale/postgres/throughput", ts.PostgresThroughput).Methods("GET")
 	sr.HandleFunc("/timescale/postgres/connections", ts.PostgresConnections).Methods("GET")
@@ -116,9 +120,10 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 }
 
 // registerMonitoringElevatedRoutes attaches diagnostics that should be limited to dba or admin.
-func registerMonitoringElevatedRoutes(sr *mux.Router, m *handlers.MssqlHandlers, explainAnalyze, explainOptimize http.HandlerFunc) {
+func registerMonitoringElevatedRoutes(sr *mux.Router, m *handlers.MssqlHandlers, explainAnalyze, explainOptimize, explainIndexAdvisor http.HandlerFunc) {
 	sr.HandleFunc("/postgres/explain/analyze", explainAnalyze).Methods("POST")
 	sr.HandleFunc("/postgres/explain/optimize", explainOptimize).Methods("POST")
+	sr.HandleFunc("/postgres/explain/index-advisor", explainIndexAdvisor).Methods("POST")
 	sr.HandleFunc("/mssql/xevents", m.XEvents).Methods("GET")
 }
 
