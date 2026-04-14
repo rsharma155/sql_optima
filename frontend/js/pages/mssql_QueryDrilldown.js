@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Query drilldown page with top queries by CPU, reads, and duration.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.escapeHtml = function(unsafe) {
     if (unsafe === null || unsafe === undefined) return '';
     return String(unsafe).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");

@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL Server file I/O latency and throughput metrics.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (
@@ -67,12 +74,16 @@ func (c *MssqlRepository) CollectFileIOLatency(db *sql.DB) ([]map[string]interfa
 			CAST(vfs.num_of_writes AS BIGINT) AS num_of_writes,
 			CAST(vfs.io_stall_read_ms AS BIGINT) AS io_stall_read_ms,
 			CAST(vfs.io_stall_write_ms AS BIGINT) AS io_stall_write_ms,
+			CAST(vfs.io_stall_read_ms AS FLOAT) / NULLIF(vfs.num_of_reads, 0) AS read_latency_ms,
+			CAST(vfs.io_stall_write_ms AS FLOAT) / NULLIF(vfs.num_of_writes, 0) AS write_latency_ms,
 			CAST(vfs.io_stall_read_ms AS FLOAT) / NULLIF(vfs.num_of_reads, 0) AS avg_read_latency_ms,
 			CAST(vfs.io_stall_write_ms AS FLOAT) / NULLIF(vfs.num_of_writes, 0) AS avg_write_latency_ms,
 			mf.size * 8 / 1024 AS size_mb
 		FROM sys.dm_io_virtual_file_stats(NULL, NULL) vfs
 		INNER JOIN sys.master_files mf ON vfs.database_id = mf.database_id AND vfs.file_id = mf.file_id
 		WHERE mf.type_desc IN ('DATA', 'LOG')
+		  AND vfs.database_id > 4
+		  AND LOWER(ISNULL(DB_NAME(vfs.database_id), N'')) <> N'distribution'
 		ORDER BY database_name, file_type
 	`
 

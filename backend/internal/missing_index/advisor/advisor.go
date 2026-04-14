@@ -1,5 +1,12 @@
 // Package advisor exposes index recommendations and query rewrites for embedding in other Go modules.
 // It wraps the internal engine without leaking internal packages across module boundaries.
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Missing index advisor core logic for index recommendation generation.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package advisor
 
 import (

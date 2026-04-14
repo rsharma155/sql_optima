@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL parser for query analysis.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package sqlparse
 
 import (

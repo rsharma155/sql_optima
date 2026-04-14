@@ -1,8 +1,16 @@
 // Package repository provides data access layer for database operations.
 // It handles connections and queries for both PostgreSQL and SQL Server databases.
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: PostgreSQL statistics collector for query performance and statement statistics.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -33,6 +41,14 @@ type PgRepository struct {
 	// Lightweight in-memory cache for size deltas (growth estimation).
 	lastDbSizeBytes map[string]int64
 	lastDbSizeAt    map[string]time.Time
+}
+
+// GetConn returns a live PostgreSQL connection for an instance name.
+func (c *PgRepository) GetConn(instanceName string) (*sql.DB, bool) {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	db, ok := c.conns[instanceName]
+	return db, ok
 }
 
 // HasConnection returns true if the instance has an active connection in the pool.
@@ -268,6 +284,88 @@ func (c *PgRepository) reconnectInstance(instanceName string) bool {
 
 	log.Printf("[POSTGRES] Successfully reconnected to %s", instanceName)
 	return true
+}
+
+// OpenConnForDatabase creates a short-lived connection to a specific database on a configured instance.
+// This is used for per-database collectors (e.g. pg_stat_user_* is scoped to the connected database).
+func (c *PgRepository) OpenConnForDatabase(ctx context.Context, instanceName, dbName string) (*sql.DB, error) {
+	if c == nil || c.cfg == nil {
+		return nil, fmt.Errorf("postgres repo not configured")
+	}
+	dbName = strings.TrimSpace(dbName)
+	if dbName == "" {
+		return nil, fmt.Errorf("dbName is required")
+	}
+
+	var inst config.Instance
+	found := false
+	for _, instance := range c.cfg.Instances {
+		if instance.Name == instanceName {
+			inst = instance
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("instance not found: %s", instanceName)
+	}
+
+	port := inst.Port
+	if port == 0 {
+		port = 5432
+	}
+
+	user := inst.User
+	password := inst.Password
+	envPrefix := fmt.Sprintf("DB_%s", strings.ToUpper(strings.ReplaceAll(inst.Name, "-", "_")))
+	if user == "" {
+		user = os.Getenv(envPrefix + "_USER")
+	}
+	if password == "" {
+		password = os.Getenv(envPrefix + "_PASSWORD")
+	}
+	if user == "" {
+		user = "postgres"
+	}
+
+	sslmode := inst.SSLMode
+	if sslmode == "" {
+		sslmode = "disable"
+	}
+
+	connStr := fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=%s", inst.Host, port, user, dbName, sslmode)
+	if password != "" {
+		connStr += fmt.Sprintf(" password=%s", password)
+	}
+	if inst.SSLCert != "" && inst.SSLKey != "" {
+		connStr += fmt.Sprintf(" sslcert=%s sslkey=%s", inst.SSLCert, inst.SSLKey)
+	}
+	if inst.SSLRootCert != "" {
+		connStr += fmt.Sprintf(" sslrootcert=%s", inst.SSLRootCert)
+	}
+
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	// Keep per-db connects from hanging the collector tick.
+	pingCtx := ctx
+	var cancel context.CancelFunc
+	if pingCtx == nil {
+		pingCtx = context.Background()
+	}
+	pingCtx, cancel = context.WithTimeout(pingCtx, 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(pingCtx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
 }
 
 // GetInstanceStatus returns the current connection status of a PostgreSQL instance.

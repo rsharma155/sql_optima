@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Lock monitoring page for both SQL Server and PostgreSQL.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.PgLocksView = async function() {
     window.routerOutlet.innerHTML = await window.loadTemplate('/pages/locks.html');
     setTimeout(initPgLocks, 50);

@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Viper-based config merging for optional server.yaml, security.yaml, collectors.yaml with environment variable binding.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package config
 
 import (

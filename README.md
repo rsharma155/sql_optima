@@ -229,12 +229,40 @@ Copy-Item .\\dist\\sql-optima.exe $env:USERPROFILE\\bin\\sql-optima.exe
 - **EXPLAIN Plan analyzer**: SSMS-style horizontal plan map, hover tooltips, per-edge thickness by row flow, and modal node details.
 - **Postgres index advisor**: new JSON plan + SQL workflow with HypoPG-aware recommendations, query rewrites, and index DDL suggestions.
 - **Live SQL Server diagnostics**: new `source=live` override support for direct DMV/live data when inspecting MSSQL dashboards and drilldowns.
+- **Storage & Index Health (Timescale-backed)**: cross-engine dashboard for index usage deltas, scan hotspots, unused-index candidates, duplicate-index candidates, and table/index growth trends with time-range + db/schema/table filters.
 - **SQL Insights**: always shows provided SQL; improved index DDL suggestions (schema-qualified tables + more condition sources).
 - **Optimization report**: now summarizes SQL-linked hints (matched excerpts + index DDL counts).
 - **SQL Server Performance Debt**: de-duplicated “latest per finding” so repeated recommendations don’t show twice.
 - **Postgres Advanced Enterprise Monitor**: BGWriter/Checkpoint dedupe + compact trend chart with a smaller table.
 
 ---
+
+## 📊 Storage & Index Health (Timescale-backed)
+The **Storage & Index Health** dashboard is a cross-engine page (`storage-index-health`) that reads historical snapshots from TimescaleDB and surfaces:
+
+- **Index usage deltas** (seeks/scans/lookups/updates) and “unused index” candidates
+- **High-scan tables** (scan-to-seek ratios) and scan hotspots
+- **Largest tables / indexes** by size
+- **Growth trends** (table + index) with simple projections
+- **Duplicate index candidates** (requires index-definition snapshots)
+
+### Backend endpoints
+All endpoints are **Timescale reads** and require `engine` and `instance` query parameters.
+
+- `GET /api/timescale/storage-index-health/filters`
+- `GET /api/timescale/storage-index-health/dashboard`
+- `GET /api/timescale/storage-index-health/index-usage`
+- `GET /api/timescale/storage-index-health/table-usage`
+- `GET /api/timescale/storage-index-health/growth`
+
+### Timescale tables/hypertables
+These are created by `infrastructure/sql_scripts/00_timescale_schema.sql`:
+
+- `monitor.index_usage_stats`
+- `monitor.table_usage_stats`
+- `monitor.table_size_history`
+
+> Note: Right after first deploy, it’s normal for the page to be empty until the historical collector has run a few ticks (index/table usage snapshots are on a ~15 min cadence; growth snapshots are coarser).
 
 ## 🛡️ Target Database Setup Scripts
 In order for DB Monitor Pro to capture system telemetry efficiently, you must provision specialized system-level monitoring roles. Setup scripts have been shipped for this explicitly.

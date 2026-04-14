@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Implements the sessions dashboard view.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.PgSessionsView = async function() {
     window.routerOutlet.innerHTML = await window.loadTemplate('/pages/sessions.html');
     setTimeout(initPgSessions, 50);

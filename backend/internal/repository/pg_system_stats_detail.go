@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Detailed system statistics for PostgreSQL server resources.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (

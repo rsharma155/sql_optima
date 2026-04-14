@@ -1,5 +1,12 @@
 //go:build windows
 
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Windows filesystem statistics for PostgreSQL disk monitoring.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package service
 
 import (

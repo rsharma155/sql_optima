@@ -1,5 +1,12 @@
 // Package models defines domain entities and data structures.
 // It contains all the data models used throughout the application.
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Core dashboard data models including DashboardMetrics, DiskStat, LockStat, QueryStat, MemoryStat, WaitStat, and BlockingNode structures.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package models
 
 // DashboardMetrics precisely caches all Prometheus-styled queries

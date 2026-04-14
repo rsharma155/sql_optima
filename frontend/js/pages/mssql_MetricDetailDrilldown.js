@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Detailed metric analysis with historical trends.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.escapeHtml = function(unsafe) { return (!unsafe) ? '' : unsafe.toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); };
 
 window.mssql_MetricDetailDrilldown = async function() {

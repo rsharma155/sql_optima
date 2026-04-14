@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Deadlock dashboard with deadlock graph and history.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.mssql_DeadlockDashboard = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...', type: 'sqlserver'};
 

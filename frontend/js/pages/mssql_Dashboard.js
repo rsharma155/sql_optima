@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Main SQL Server dashboard view displaying key performance metrics (CPU, memory, PLE, waits, locks).
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.escapeHtml = function(unsafe) {
     if (unsafe === null || unsafe === undefined) return '';
     return String(unsafe).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
@@ -246,20 +256,28 @@ function sortQueryStoreOffenderRows(rows, state) {
 function renderTopOffendersRowsHtml(sortedRows) {
     window.appState.queryCache = window.appState.queryCache || {};
     return sortedRows.map((q, idx) => {
-        const qt = (q.query_text || 'Unknown');
-        window.appState.queryCache['qs' + idx] = qt;
-        const short = qt.length > 60 ? qt.substring(0, 60) + '…' : qt;
+        const rawText = String(q.query_text || q.Query_Text || q.queryText || q.QueryText || '').trim();
+        const fallbackHash = q.query_hash || q.queryHash || '';
+        const qt = rawText || (fallbackHash ? `Query hash: ${fallbackHash}` : 'No query text available');
+        const dbn = (q.database_name != null && q.database_name !== '') ? String(q.database_name) : '—';
+        window.appState.queryCache['qs' + idx] = {
+            text: qt,
+            query_hash: fallbackHash,
+            database_name: dbn
+        };
+        const short = rawText
+            ? (rawText.length > 60 ? rawText.substring(0, 60) + '…' : rawText)
+            : (fallbackHash ? `Hash: ${fallbackHash.substring(0, 12)}` : 'No query text');
         const avgDur = Number(q.avg_duration_ms || 0);
         const avgCpu = Number(q.avg_cpu_ms || 0);
         const avgReads = Number(q.avg_logical_reads || 0);
         const totalCpu = Number(q.total_cpu_ms || 0);
         const execs = topOffenderExecCount(q);
-        const dbn = (q.database_name != null && q.database_name !== '') ? String(q.database_name) : '—';
         return `<tr>
             <td><strong>${idx + 1}</strong></td>
             <td title="${window.escapeHtml(dbn)}">${window.escapeHtml(dbn.length > 24 ? dbn.substring(0, 24) + '…' : dbn)}</td>
             <td style="max-width:480px;">
-                <span class="code-snippet" style="cursor:pointer" onclick="window.showQueryModalDirect(window.appState.queryCache['qs${idx}'])" title="${window.escapeHtml(qt)}">${window.escapeHtml(short)}</span>
+                <span class="code-snippet" style="cursor:pointer" onclick="window.showQueryStoreQueryModal(window.appState.queryCache['qs${idx}'])" title="${window.escapeHtml(qt)}">${window.escapeHtml(short)}</span>
             </td>
             <td><span class="badge badge-outline">${execs.toLocaleString()}</span></td>
             <td>${avgCpu.toFixed(1)}</td>
@@ -269,6 +287,34 @@ function renderTopOffendersRowsHtml(sortedRows) {
         </tr>`;
     }).join('');
 }
+
+// Drill-down for Query Store rows: fetch full SQL text on demand.
+window.showQueryStoreQueryModal = async function(qs) {
+    const safe = (qs && typeof qs === 'object') ? qs : { text: String(qs || '') };
+    const instance = window.appState.currentInstanceName || '';
+    const database = String(safe.database_name || '').trim();
+    const queryHash = String(safe.query_hash || '').trim();
+    const previewText = String(safe.text || 'No query available');
+
+    // Show preview immediately.
+    window.showQueryModalDirect(previewText);
+
+    // Only attempt fetch when we have enough identity to look it up.
+    if (!instance || !database || database === '—' || !queryHash) return;
+
+    // Fetch full text and swap into the existing modal.
+    try {
+        const res = await window.apiClient.authenticatedFetch(
+            `/api/queries/query-store/sql-text?instance=${encodeURIComponent(instance)}&database=${encodeURIComponent(database)}&query_hash=${encodeURIComponent(queryHash)}`
+        );
+        if (!res.ok) return;
+        const data = await res.json().catch(() => null);
+        const full = data && data.query_text ? String(data.query_text) : '';
+        if (!full || full.trim() === '' || full === previewText) return;
+        const pre = document.querySelector('#query-modal pre');
+        if (pre) pre.textContent = full;
+    } catch (e) {}
+};
 
 function updateTopOffendersHeaderSortIndicators() {
     const table = document.getElementById('topOffendersGrid');
@@ -374,10 +420,13 @@ async function fetchTimescaleMetrics(instanceName) {
             // Prefer v2 disk latency trend (Timescale-backed) when present.
             const ioTrend = (v2 && v2.root_cause && Array.isArray(v2.root_cause.disk_latency_trend_1h)) ? v2.root_cause.disk_latency_trend_1h : null;
             if (ioTrend && ioTrend.length > 0) {
+                // Must match DashboardView + updateIoChart: timestamp + files[] (not flat capture_time / p.ts).
                 window.appState.fileHistory = ioTrend.map(p => ({
-                    capture_time: p.ts,
-                    read_latency_ms: p.read_latency_ms,
-                    write_latency_ms: p.write_latency_ms
+                    timestamp: (p.timestamp ? new Date(p.timestamp).toISOString() : ''),
+                    files: [{
+                        read_latency_ms: Number(p.read_latency_ms ?? 0),
+                        write_latency_ms: Number(p.write_latency_ms ?? 0)
+                    }]
                 }));
             } else {
                 window.appState.fileHistory = ld.file_history || ld.FileHistory || window.appState.fileHistory || [];
@@ -401,10 +450,20 @@ async function fetchTimescaleMetrics(instanceName) {
 
 function startTimescalePolling(instanceName) {
     if (window.appState.dashboardPollingInterval) clearInterval(window.appState.dashboardPollingInterval);
+
+    const fetchAndUpdate = async () => {
+        await fetchTimescaleMetrics(instanceName);
+        if (window.appState.activeViewId === 'dashboard') {
+            updateDashboardCharts();
+        }
+    };
+
+    // Fetch immediately and then poll on interval.
+    fetchAndUpdate().catch((err) => appDebug('[Dashboard] Timescale polling error:', err));
+
     window.appState.dashboardPollingInterval = setInterval(async () => {
         if (window.appState.activeViewId === 'dashboard') {
-            await fetchTimescaleMetrics(instanceName);
-            updateDashboardCharts();
+            await fetchAndUpdate();
         }
     }, 30000); // Increased to 30 seconds to reduce API calls
 }
@@ -437,6 +496,7 @@ async function updateDashboardCharts() {
     appDebug('[Dashboard] Updating charts - cpu:', cpu, 'mem:', memory, 'tps:', tps, 'liveData keys:', Object.keys(liveData));
 
     const metricsRefreshing = !!window.appState.metricsRefreshInProgress;
+    updateChartLoadingOverlays(metricsRefreshing && (!window.appState.timescaleMetrics.sqlserver || window.appState.timescaleMetrics.sqlserver.length === 0));
     
     const cpuEl = document.getElementById('metric-cpu');
     const memEl = document.getElementById('metric-memory');
@@ -551,6 +611,29 @@ async function updateDashboardCharts() {
     
     updateLastRefreshTime();
     if (window.updateSqlDashboardAlertBanner) window.updateSqlDashboardAlertBanner();
+}
+
+function updateChartLoadingOverlays(show) {
+    const chartIds = ['dashResourcesChart', 'dashBatchChart', 'dashIoChart', 'dashPleChart', 'dashBchrChart', 'dashWaitCategoriesDonut'];
+    chartIds.forEach((chartId) => {
+        const canvas = document.getElementById(chartId);
+        if (!canvas) return;
+        const parent = canvas.parentElement;
+        if (!parent) return;
+        parent.style.position = parent.style.position || 'relative';
+        let overlay = parent.querySelector('.dashboard-chart-loading-overlay');
+        if (show) {
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.className = 'dashboard-chart-loading-overlay';
+                overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.75);color:var(--text-muted, #6b7280);font-size:0.85rem;z-index:2;padding:0.5rem;';
+                overlay.innerHTML = '<div style="text-align:center;"><div class="spinner"></div><div style="margin-top:0.5rem;">Loading chart data...</div></div>';
+                parent.appendChild(overlay);
+            }
+        } else if (overlay) {
+            overlay.remove();
+        }
+    });
 }
 
 function updateTopOffendersTable() {
@@ -680,7 +763,7 @@ function updateLongRunningQueriesTable() {
         return;
     }
 
-    window.appState.queryCache = {};
+    window.appState.queryCache = window.appState.queryCache || {};
     const longRunningData = window.appState.timescaleMetrics.longRunningQueries || [];
     const dbFilter = window.appState.currentDatabase || 'all';
     const filteredData = groupLongRunningQueriesForDisplay(longRunningData, dbFilter);
@@ -925,6 +1008,15 @@ function renderDashboard(inst, metrics) {
                     <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshDashboardData()"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
+            <!--
+            <div class="glass-panel mt-2" style="padding:0.55rem 0.75rem; border-left:3px solid var(--accent-blue,#3b82f6);">
+                <div style="font-size:0.78rem; color:var(--text-muted); line-height:1.45;">
+                    <strong style="color:var(--text);">Related collectors:</strong>
+                    <strong>Storage &amp; Index Health</strong> (separate page) — index samples ~every <strong>15 min</strong>; logs <code style="font-size:0.72rem;">[Collector][SIH]</code>; Timescale required; <code style="font-size:0.72rem;">Instances[].databases</code> optional (auto-discovers user DBs if empty).
+                    <strong>Disk I/O Latency</strong> below — Timescale trend from file stats; this dashboard load triggers a snapshot write when Timescale is connected (plus the Enterprise metrics collector, ~2 min, <code style="font-size:0.72rem;">ENTERPRISE_METRICS_INTERVAL_SEC</code>). See chart <i class="fa-solid fa-circle-info"></i> tooltip.
+                </div>
+            </div>
+            -->
             <div id="sql-dashboard-alert-banner" style="display:none;"></div>
             <div class="top-strips dashboard-top-strips" style="grid-template-columns: 1fr 1fr;">
                 <div class="glass-panel dashboard-strip-panel">
@@ -1009,7 +1101,7 @@ function renderDashboard(inst, metrics) {
             <div class="charts-grid dashboard-charts-row mt-3" data-cols="3">
                 <div class="chart-card glass-panel" style="padding:0.6rem; cursor:pointer;" onclick="window.appNavigate('drilldown-cpu')" title="Drilldown into System Resources"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">System Resources</h3></div><div class="chart-container"><canvas id="dashResourcesChart"></canvas></div></div>
                 <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Batch Requests/sec (1h)</h3></div><div class="chart-container"><canvas id="dashBatchChart"></canvas></div></div>
-                <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Disk I/O Latency</h3></div><div class="chart-container"><canvas id="dashIoChart"></canvas></div></div>
+                <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Disk I/O Latency <span class="dashboard-strip-header-tooltip" title="Trend uses Timescale (sqlserver_file_io_latency). Each dashboard load records one snapshot when Timescale is connected; the Enterprise metrics collector also writes on a timer (default ~2 min, ENTERPRISE_METRICS_INTERVAL_SEC). Check logs for WarmFileIOLatency / EnterpriseMetricsCollector / insert errors. Latency can read as 0 ms with no I/O or very fast storage."><i class="fa-solid fa-circle-info"></i></span></h3></div><div class="chart-container"><canvas id="dashIoChart"></canvas></div></div>
             </div>
             <div class="charts-grid dashboard-charts-row mt-2" data-cols="3">
                 <div class="chart-card glass-panel" style="padding:0.6rem; cursor:pointer;" onclick="window.appNavigate('drilldown-memory')" title="Memory drilldown (PLE &amp; Timescale)"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Page Life Expectancy</h3></div><div class="chart-container"><canvas id="dashPleChart"></canvas></div></div>
@@ -1282,18 +1374,26 @@ window.updateBatchChart = function() {
 
 window.updateIoChart = function() {
     if(window.currentCharts && window.currentCharts.dashIo) window.currentCharts.dashIo.destroy();
-    let fHist = window.appState.fileHistory || []; 
-    
+    let fHist = window.appState.fileHistory || [];
+
+    const ioSnapFiles = (snap) => {
+        if (!snap || typeof snap !== 'object') return [];
+        if (Array.isArray(snap.files) && snap.files.length > 0) return snap.files;
+        if (snap.read_latency_ms != null || snap.write_latency_ms != null) {
+            return [{ read_latency_ms: snap.read_latency_ms, write_latency_ms: snap.write_latency_ms }];
+        }
+        return [];
+    };
+    const ioSnapTime = (snap) => (snap && (snap.timestamp || snap.capture_time)) || '';
+
     appDebug('[Dashboard] IO Chart - fileHistory:', JSON.stringify(fHist).substring(0, 500));
     appDebug('[Dashboard] IO Chart - fileHistory length:', fHist.length, 'type:', fHist.length > 0 ? typeof fHist[0] : 'empty', 'first:', fHist.length > 0 ? JSON.stringify(fHist[0]).substring(0, 200) : 'empty');
-    
-    // Check data more flexibly - handle different data formats
+
     let hasData = false;
     let fData = [];
     let labels = [];
-    
+
     if (fHist.length > 0) {
-        // Check if first element is a number (standalone IO) or object (snapshots)
         if (typeof fHist[0] === 'number') {
             hasData = fHist.some(v => v > 0);
             if (hasData) {
@@ -1301,29 +1401,32 @@ window.updateIoChart = function() {
                 labels = fData.map((_, i) => '-' + (fData.length - 1 - i) + 'm');
             }
         } else {
-            // Object format with files - check each snapshot
             for (let i = 0; i < fHist.length; i++) {
                 const snap = fHist[i];
-                if (snap && snap.files && Array.isArray(snap.files)) {
-                    for (let j = 0; j < snap.files.length; j++) {
-                        const f = snap.files[j];
-                        if (f && ((f.read_latency_ms && f.read_latency_ms > 0) || (f.write_latency_ms && f.write_latency_ms > 0))) {
-                            hasData = true;
-                            break;
-                        }
+                const files = ioSnapFiles(snap);
+                for (let j = 0; j < files.length; j++) {
+                    const f = files[j];
+                    const r = Number(f.read_latency_ms);
+                    const w = Number(f.write_latency_ms);
+                    if (Number.isFinite(r) || Number.isFinite(w)) {
+                        hasData = true;
+                        break;
                     }
                 }
                 if (hasData) break;
             }
             if (hasData) {
-                if(fHist.length > 60) fHist = fHist.slice(-60);
+                if (fHist.length > 60) fHist = fHist.slice(-60);
                 fData = fHist;
-                labels = fHist.map(snap => { 
-                    if(snap && snap.timestamp) { 
-                        const d = new Date(snap.timestamp.replace(' ','T')); 
-                        return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`; 
-                    } 
-                    return '-'; 
+                labels = fHist.map(snap => {
+                    const t = ioSnapTime(snap);
+                    if (t) {
+                        const d = new Date(String(t).replace(' ', 'T'));
+                        if (!isNaN(d.getTime())) {
+                            return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+                        }
+                    }
+                    return '-';
                 });
             }
         }
@@ -1348,13 +1451,19 @@ window.updateIoChart = function() {
     
     if (!hasData) return;
     
-    const rLat = fData.map(snap => { 
-        if (typeof snap === 'number') return snap; 
-        let r=0,c=0; (snap.files||[]).forEach(f=>{r+=f.read_latency_ms||0; c++;}); return c>0?r/c:0; 
+    const rLat = fData.map(snap => {
+        if (typeof snap === 'number') return snap;
+        const files = ioSnapFiles(snap);
+        let r = 0, c = 0;
+        files.forEach(f => { r += Number(f.read_latency_ms) || 0; c++; });
+        return c > 0 ? r / c : 0;
     });
-    const wLat = fData.map(snap => { 
-        if (typeof snap === 'number') return 0; 
-        let w=0,c=0; (snap.files||[]).forEach(f=>{w+=f.write_latency_ms||0; c++;}); return c>0?w/c:0; 
+    const wLat = fData.map(snap => {
+        if (typeof snap === 'number') return 0;
+        const files = ioSnapFiles(snap);
+        let w = 0, c = 0;
+        files.forEach(f => { w += Number(f.write_latency_ms) || 0; c++; });
+        return c > 0 ? w / c : 0;
     });
     const ctxIo = document.getElementById('dashIoChart')?.getContext('2d');
     if(ctxIo) {

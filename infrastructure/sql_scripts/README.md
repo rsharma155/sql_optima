@@ -10,6 +10,7 @@ This directory contains the unified SQL scripts for the SQL Optima monitoring to
 | `01_seed_data.sql` | Default users, widgets, and collection schedules |
 | `02_additional_sqlserver_metrics.sql` | Extended SQL Server metrics (from Eric Darling's Performance Monitor) |
 | `SST.sql` | System Setup Test - sanity check script |
+| `00_query_stats_migration.sql` | (Deprecated) Query stats tables are now included in `00_timescale_schema.sql` |
 
 ## Usage
 
@@ -60,6 +61,11 @@ volumes:
 ### PostgreSQL Metrics (14 hypertables)
 - Core: throughput_metrics, connection_stats, replication_stats, system_stats, database_stats, session_stats, lock_stats, table_stats, index_stats, query_stats, config_settings, long_running_queries
 - Enterprise: bgwriter_stats, archiver_stats
+
+### Cross-Engine Storage & Index Health (3 hypertables)
+- monitor.index_usage_stats
+- monitor.table_usage_stats
+- monitor.table_size_history
 
 ### Application Tables (13 regular tables)
 - optima_users, optima_ui_widgets, user_dashboards, dashboard_widgets

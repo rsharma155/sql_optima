@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: CPU utilization dashboard with scheduler statistics and CPU history.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.MssqlCpuDashboardView = async function() {
     appDebug('[CPU Dashboard] Starting');
     if (!window.appState.config || !window.appState.config.instances || window.appState.config.instances.length === 0) {

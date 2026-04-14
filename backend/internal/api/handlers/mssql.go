@@ -1,6 +1,14 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: HTTP handlers for SQL Server dashboard endpoints including overview, CPU drilldown, memory, waits, jobs, and performance debt metrics.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -134,6 +142,20 @@ func (h *MssqlHandlers) DashboardV2(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	// On-demand refresh: live dashboard cache is updated only at startup by default.
+	// Refreshing here ensures charts like PLE and Disk I/O Latency are not blank when users load the page.
+	{
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		h.metricsSvc.RunLiveCollectorForInstance(ctx, instance)
+		cancel()
+	}
+	// Disk I/O Latency chart reads sqlserver_file_io_latency; record one snapshot per dashboard load
+	// so the trend is not empty when the Enterprise metrics interval has not fired yet.
+	if h.metricsSvc.IsTimescaleConnected() {
+		ctxIO, cancelIO := context.WithTimeout(context.Background(), 5*time.Second)
+		h.metricsSvc.WarmFileIOLatencyToTimescale(ctxIO, instance)
+		cancelIO()
+	}
 	out, src := h.metricsSvc.GetDashboardHomepageV2WithSource(instance)
 	w.Header().Set("X-Data-Source", src)
 	json.NewEncoder(w).Encode(out)

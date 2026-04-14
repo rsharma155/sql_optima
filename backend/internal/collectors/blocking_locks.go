@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Blocking and lock collector for deadlock prevention analysis.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package collectors
 
 import (
@@ -35,6 +42,8 @@ func CollectBlockingLocks(ctx context.Context, db *sql.DB) ([]models.BlockingNod
 		CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
 		WHERE r.session_id > 50
 		  AND r.blocking_session_id > 0
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		UNION ALL
 		SELECT TOP 50
 			s.session_id,
@@ -56,6 +65,8 @@ func CollectBlockingLocks(ctx context.Context, db *sql.DB) ([]models.BlockingNod
 		WHERE s.status = 'idle_in_transaction'
 		  AND s.session_id > 50
 		  AND s.session_id <> @@SPID
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		ORDER BY level DESC, wait_time_ms DESC`
 
 	rows, err := db.QueryContext(ctx, query)

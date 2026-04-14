@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Background collector daemon for historical storage, query store, long-running queries, and AG health stats.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package service
 
 import (
@@ -10,38 +17,47 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rsharma155/sql_optima/internal/collectors"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
 const (
-	LiveInterval       = 15 * time.Second
 	HistoricalInterval = 60 * time.Second
 )
 
+func (s *MetricsService) sihDue(m map[string]time.Time, instanceName string, now time.Time, interval time.Duration) bool {
+	s.sihMu.Lock()
+	defer s.sihMu.Unlock()
+	last, ok := m[instanceName]
+	if !ok || now.Sub(last) >= interval {
+		m[instanceName] = now
+		return true
+	}
+	return false
+}
+
 func (s *MetricsService) StartBackgroundCollector(ctx context.Context) {
 	log.Printf("[Collector] Split-Speed Background Daemon starting...")
-	log.Printf("[Collector]   - Live Diagnostics ticker: every %v", LiveInterval)
 	log.Printf("[Collector]   - Historical Storage ticker: every %v", HistoricalInterval)
 	log.Printf("[Collector]   - Long Running Queries: every 60s (within historical)")
 	log.Printf("[Collector]   - Top CPU Queries: every 60s (within historical)")
+	log.Printf("[Collector]   - Live Diagnostics ticker: DISABLED (RTD is on-demand only)")
 
 	s.dashboardCache = make(map[string]models.DashboardMetrics)
 	s.pgDashboardCache = make(map[string]models.PgCoreDashboardCache)
 
-	liveTicker := time.NewTicker(LiveInterval)
 	historyTicker := time.NewTicker(HistoricalInterval)
-	defer liveTicker.Stop()
 	defer historyTicker.Stop()
+
+	// Run one live scrape on startup only (warm cache), then rely on on-demand RTD endpoints.
+	s.runLiveDiagnosticsWithContext(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			log.Printf("[Collector] Background daemon shutting down")
 			return
-
-		case <-liveTicker.C:
-			s.runLiveDiagnosticsWithContext(ctx)
 
 		case <-historyTicker.C:
 			s.runHistoricalStorageWithContext(ctx)
@@ -105,6 +121,63 @@ func (s *MetricsService) runLiveDiagnosticsWithContext(ctx context.Context) {
 	}
 
 	wg.Wait()
+}
+
+func (s *MetricsService) runLiveDiagnosticsForInstance(ctx context.Context, instanceName string) {
+	var instanceType string
+	for _, inst := range s.Config.Instances {
+		if inst.Name == instanceName {
+			instanceType = inst.Type
+			break
+		}
+	}
+	if instanceType == "" {
+		return
+	}
+
+	t0 := time.Now()
+	if instanceType == "postgres" && !s.PgRepo.HasConnection(instanceName) {
+		return
+	}
+	if instanceType == "sqlserver" && !s.MsRepo.HasConnection(instanceName) {
+		return
+	}
+
+	if instanceType == "sqlserver" {
+		s.cacheMutex.RLock()
+		prevMsTick := s.dashboardCache[instanceName]
+		s.cacheMutex.RUnlock()
+
+		currentMs := s.MsRepo.FetchLiveTelemetry(instanceName, prevMsTick)
+		currentMs.Timestamp = time.Now().Format("15:04:05")
+
+		s.cacheMutex.Lock()
+		s.dashboardCache[instanceName] = currentMs
+		s.cacheMutex.Unlock()
+		slog.Info("collector_live_scrape",
+			"instance", instanceName,
+			"engine", instanceType,
+			"duration_ms", time.Since(t0).Milliseconds(),
+		)
+		return
+	}
+
+	// postgres
+	s.cacheMutex.RLock()
+	prevPgTick := s.pgDashboardCache[instanceName]
+	s.cacheMutex.RUnlock()
+
+	currentPg := s.PgRepo.FetchPgCoreThroughputTelemetry(instanceName, prevPgTick)
+	currentPg.Timestamp = time.Now().Format("15:04:05")
+
+	s.cacheMutex.Lock()
+	s.pgDashboardCache[instanceName] = currentPg
+	s.cacheMutex.Unlock()
+	slog.Info("collector_live_scrape",
+		"instance", instanceName,
+		"engine", instanceType,
+		"duration_ms", time.Since(t0).Milliseconds(),
+	)
 }
 
 func (s *MetricsService) runHistoricalStorage() {
@@ -333,6 +406,108 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 		}
 	}
 
+	// Storage & Index Health (delta stats)
+	if ok && db != nil {
+		capture := time.Now().UTC()
+		now := capture
+		due15mIndex := s.sihDue(s.sihLastIndex15m, instanceName, now, 15*time.Minute)
+		due15mTable := s.sihDue(s.sihLastTable15m, instanceName, now, 15*time.Minute)
+		due6hGrowth := s.sihDue(s.sihLastGrowth6h, instanceName, now, 6*time.Hour)
+		dueDailyDefs := s.sihDue(s.sihLastDefsDaily, instanceName, now, 24*time.Hour)
+
+		// For each user DB configured, switch context and collect.
+		// We intentionally scope to configured DB list to avoid accidental access to system DBs.
+		var dbs []string
+		for _, inst := range s.Config.Instances {
+			if inst.Name == instanceName && inst.Type == "sqlserver" {
+				dbs = inst.Databases
+				break
+			}
+		}
+		if len(dbs) == 0 {
+			discovered, derr := s.MsRepo.ListSQLServerUserDatabases(instanceName)
+			if derr != nil {
+				log.Printf("[Collector][SIH] instance %q: Instances[].databases empty and auto-discover failed: %v", instanceName, derr)
+			} else {
+				dbs = discovered
+				const maxAutoDB = 64
+				if len(dbs) > maxAutoDB {
+					log.Printf("[Collector][SIH] instance %q: auto-discovered %d databases; capping to first %d for SIH tick", instanceName, len(dbs), maxAutoDB)
+					dbs = dbs[:maxAutoDB]
+				}
+				if len(dbs) > 0 {
+					log.Printf("[Collector][SIH] instance %q: Instances[].databases empty; auto-discovered %d user database(s) for SIH", instanceName, len(dbs))
+				}
+			}
+		}
+		if len(dbs) == 0 && (due15mIndex || due15mTable || due6hGrowth || dueDailyDefs) {
+			log.Printf("[Collector][SIH] instance %q: no databases to scan (set Instances[].databases or grant access to user DBs)", instanceName)
+		}
+		for _, dbName := range dbs {
+			if strings.TrimSpace(dbName) == "" {
+				continue
+			}
+			conn, err := db.Conn(ctx)
+			if err != nil {
+				continue
+			}
+			// Bracket identifier; double any closing bracket inside the name.
+			useSQL := "USE [" + strings.ReplaceAll(dbName, "]", "]]") + "]"
+			if _, err := conn.ExecContext(ctx, useSQL); err != nil {
+				_ = conn.Close()
+				log.Printf("[Collector][SIH] USE database failed for %s db=%q: %v", instanceName, dbName, err)
+				continue
+			}
+
+			if due15mIndex {
+				idxRows, err := collectors.CollectSQLServerIndexUsage(ctx, conn)
+				if err != nil {
+					log.Printf("[Collector][SIH] CollectSQLServerIndexUsage failed for %s db=%s: %v", instanceName, dbName, err)
+				} else if len(idxRows) == 0 {
+					log.Printf("[Collector][SIH] CollectSQLServerIndexUsage returned 0 rows for %s db=%s", instanceName, dbName)
+				} else if n, perr := collectors.PersistSQLServerIndexUsageDeltas(ctx, s.tsLogger, instanceName, dbName, idxRows, capture); perr != nil {
+					log.Printf("[Collector][SIH] PersistSQLServerIndexUsageDeltas failed for %s db=%s: %v", instanceName, dbName, perr)
+				} else {
+					log.Printf("[Collector][SIH] index usage persisted for %s db=%s rows=%d inserted=%d", instanceName, dbName, len(idxRows), n)
+				}
+			}
+
+			// Table size snapshot query powers both 15m table usage and 6h growth history; collect once if either is due.
+			if due15mTable || due6hGrowth {
+				tblRows, err := collectors.CollectSQLServerTableSizeSnapshot(ctx, conn)
+				if err == nil && len(tblRows) > 0 {
+					if due15mTable {
+						// table_usage_stats (sizes snapshot; scan counters are 0 for SQL Server)
+						_, _ = collectors.PersistSQLServerTableUsageDeltas(ctx, s.tsLogger, instanceName, tblRows, capture)
+					}
+					if due6hGrowth {
+						// table_size_history (growth snapshot)
+						_, _ = collectors.PersistSQLServerTableGrowthHistory(ctx, s.tsLogger, instanceName, tblRows, capture)
+					}
+				}
+			}
+
+			// Index definitions snapshot (daily cadence).
+			if dueDailyDefs {
+				dayBucket := time.Date(capture.Year(), capture.Month(), capture.Day(), 0, 0, 0, 0, time.UTC)
+				defRows, err := collectors.CollectSQLServerIndexDefinitions(ctx, conn)
+				if err == nil && len(defRows) > 0 {
+					_, _ = collectors.PersistSQLServerIndexDefinitions(ctx, s.tsLogger, instanceName, defRows, dayBucket)
+				}
+			}
+			_ = conn.Close()
+		}
+
+		// Daily unused-index snapshot: once per instance (not per database).
+		if dueDailyDefs && s.tsLogger != nil {
+			if n, err := s.tsLogger.RefreshIndexUnusedCandidatesDaily(ctx, "sqlserver", instanceName, capture, 100); err != nil {
+				log.Printf("[Collector][SIH] Daily unused index snapshot failed for %s: %v", instanceName, err)
+			} else {
+				log.Printf("[Collector][SIH] Daily unused index snapshot rows for %s: %d", instanceName, n)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -423,6 +598,8 @@ func (s *MetricsService) logPostgresMetricsToTimescaleWithContext(ctx context.Co
 			log.Printf("[Collector] ERROR: LogPostgresReplicationStats failed for %s: %v", instanceName, err)
 		}
 	}
+
+	s.runPostgresStorageIndexHealthTick(ctx, instanceName)
 
 	return nil
 }

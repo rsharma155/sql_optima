@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Enterprise-tier SQL Server metrics including additional performance indicators.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (
@@ -68,11 +75,12 @@ func (c *MssqlRepository) FetchMemoryGrantWaiters(instanceName string) ([]map[st
 }
 
 func (c *MssqlRepository) CollectMemoryGrantWaiters(db *sql.DB) ([]map[string]interface{}, error) {
+	// User databases only (database_id > 4), user sessions, exclude typical system sp_/xp_ batches.
 	q := `
 		SELECT TOP 20
 			mg.session_id,
 			mg.request_id,
-			DB_NAME(r.database_id) AS database_name,
+			DB_NAME(ISNULL(r.database_id, s.database_id)) AS database_name,
 			s.login_name,
 			mg.requested_memory_kb,
 			mg.granted_memory_kb,
@@ -81,12 +89,23 @@ func (c *MssqlRepository) CollectMemoryGrantWaiters(db *sql.DB) ([]map[string]in
 			ISNULL(r.dop, 1) AS dop,
 			SUBSTRING(txt.text, 1, 4000) AS query_text
 		FROM sys.dm_exec_query_memory_grants mg WITH (NOLOCK)
+		INNER JOIN sys.dm_exec_sessions s WITH (NOLOCK)
+			ON mg.session_id = s.session_id
 		LEFT JOIN sys.dm_exec_requests r WITH (NOLOCK)
 			ON mg.session_id = r.session_id AND mg.request_id = r.request_id
-		LEFT JOIN sys.dm_exec_sessions s WITH (NOLOCK)
-			ON mg.session_id = s.session_id
 		OUTER APPLY sys.dm_exec_sql_text(mg.sql_handle) txt
 		WHERE mg.grant_time IS NULL
+		  AND s.is_user_process = 1
+		  AND ISNULL(r.database_id, s.database_id) > 4
+		  AND LOWER(ISNULL(DB_NAME(ISNULL(r.database_id, s.database_id)), N'')) <> N'distribution'
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND (
+			txt.text IS NULL OR (
+				LTRIM(txt.text) NOT LIKE N'sp\_%' ESCAPE '\'
+				AND LTRIM(txt.text) NOT LIKE N'xp\_%' ESCAPE '\'
+			)
+		  )
 		ORDER BY mg.wait_time_ms DESC;
 	`
 	rows, err := db.Query(q)
@@ -157,6 +176,17 @@ func (c *MssqlRepository) CollectTempdbTopConsumers(db *sql.DB) ([]map[string]in
 		OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) txt
 		WHERE (u.user_pages + u.internal_pages) > 0
 		  AND u.session_id > 50
+		  AND s.is_user_process = 1
+		  AND ISNULL(r.database_id, s.database_id) > 4
+		  AND LOWER(ISNULL(DB_NAME(ISNULL(r.database_id, s.database_id)), N'')) <> N'distribution'
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND (
+			txt.text IS NULL OR (
+				LTRIM(txt.text) NOT LIKE N'sp\_%' ESCAPE '\'
+				AND LTRIM(txt.text) NOT LIKE N'xp\_%' ESCAPE '\'
+			)
+		  )
 		ORDER BY tempdb_mb DESC;
 	`
 	rows, err := db.Query(q)

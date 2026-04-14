@@ -1,6 +1,13 @@
 // Package config manages application configuration from YAML and environment variables.
 // It supports both SQL Server and PostgreSQL databases with various authentication
 // methods including integrated security, certificates, and environment variable-based credentials.
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Main configuration loader managing database instances (SQL Server and PostgreSQL), credentials, SSL settings, and environment variable overrides.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package config
 
 import (

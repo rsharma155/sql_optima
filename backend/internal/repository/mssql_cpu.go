@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL Server CPU utilization metrics from ring buffer and scheduler monitoring.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (
@@ -17,8 +24,8 @@ func (c *MssqlRepository) CollectKPIs(ctx context.Context, db *sql.DB) (map[stri
 			   AND s.is_user_process = 1
 			   AND s.database_id > 4
 			   AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
-			   AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-			   AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')) AS active_sessions,
+			   AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+			   AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')) AS active_sessions,
 			(SELECT total_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS total_memory_mb,
 			(SELECT available_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS available_memory_mb,
 			(SELECT ISNULL(cntr_value, 0) FROM sys.dm_os_performance_counters WHERE counter_name='Batch Requests/sec') AS batch_requests_sec
@@ -94,7 +101,7 @@ func (c *MssqlRepository) CollectCPUMetrics(db *sql.DB) ([]models.CPUTick, float
 
 // CollectActiveSessions counts currently running user sessions
 func (c *MssqlRepository) CollectActiveSessions(db *sql.DB) (int, error) {
-	sessionQuery := `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND login_name NOT IN ('dbmonitor_user', 'go-mssqldb') AND program_name NOT IN ('dbmonitor_user', 'go-mssqldb')`
+	sessionQuery := `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
 	var count int
 	err := db.QueryRow(sessionQuery).Scan(&count)
 	return count, err

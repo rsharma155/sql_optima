@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: HTTP handlers for PostgreSQL dashboard including replication, sessions, locks, backups, vacuum progress, and configuration drift.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package handlers
 
 import (

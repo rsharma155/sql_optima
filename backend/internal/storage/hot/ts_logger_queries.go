@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Query statistics logger for TimescaleDB with delta computation.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package hot
 
 import (
@@ -678,24 +685,24 @@ func (tl *TimescaleLogger) ProcessQueryStatsDelta(ctx context.Context, instanceN
 			 executions, cpu_ms, duration_ms, logical_reads, physical_reads, rows,
 			 avg_cpu_ms, avg_duration_ms, avg_reads, is_reset)
 		SELECT
-			prev.capture_time,
-			curr.capture_time,
-			curr.server_instance_name,
-			curr.database_name,
-			curr.login_name,
-			curr.client_app,
-			curr.query_hash,
-			curr.query_text,
-			CASE WHEN reset THEN 0 ELSE exec_delta END,
-			CASE WHEN reset THEN 0 ELSE cpu_delta END,
-			CASE WHEN reset THEN 0 ELSE dur_delta END,
-			CASE WHEN reset THEN 0 ELSE reads_delta END,
-			CASE WHEN reset THEN 0 ELSE phys_delta END,
-			CASE WHEN reset THEN 0 ELSE rows_delta END,
-			cpu_delta / NULLIF(exec_delta, 0)::numeric,
-			dur_delta / NULLIF(exec_delta, 0)::numeric,
-			reads_delta / NULLIF(exec_delta, 0)::numeric,
-			reset
+			t.prev_time,
+			t.capture_time,
+			t.server_instance_name,
+			t.database_name,
+			t.login_name,
+			t.client_app,
+			t.query_hash,
+			t.query_text,
+			CASE WHEN t.reset THEN 0 ELSE t.exec_delta END,
+			CASE WHEN t.reset THEN 0 ELSE t.cpu_delta END,
+			CASE WHEN t.reset THEN 0 ELSE t.dur_delta END,
+			CASE WHEN t.reset THEN 0 ELSE t.reads_delta END,
+			CASE WHEN t.reset THEN 0 ELSE t.phys_delta END,
+			CASE WHEN t.reset THEN 0 ELSE t.rows_delta END,
+			CASE WHEN t.reset THEN 0 ELSE (t.cpu_delta / NULLIF(t.exec_delta, 0)::numeric) END,
+			CASE WHEN t.reset THEN 0 ELSE (t.dur_delta / NULLIF(t.exec_delta, 0)::numeric) END,
+			CASE WHEN t.reset THEN 0 ELSE (t.reads_delta / NULLIF(t.exec_delta, 0)::numeric) END,
+			t.reset
 		FROM (
 			SELECT
 				curr.*,

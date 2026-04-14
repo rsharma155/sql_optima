@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Query performance data from plan cache and query stats.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (
@@ -54,8 +61,8 @@ func (c *MssqlRepository) CollectLongRunningQueries(ctx context.Context, db *sql
 		WHERE r.session_id <> @@SPID AND r.session_id > 50
 		AND r.total_elapsed_time >= %d
 		AND s.is_user_process = 1
-		AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-		AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+		AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		ORDER BY r.total_elapsed_time DESC`, minDurationMs)
 
 	rows, err := db.QueryContext(ctx, query)
@@ -114,8 +121,8 @@ func (c *MssqlRepository) CollectLiveRunningQueries(ctx context.Context, db *sql
 		WHERE r.session_id > 50 AND s.is_user_process = 1
 		AND s.database_id > 4
 		AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
-		AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-		AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+		AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		ORDER BY r.total_elapsed_time DESC`
 
 	rows, err := db.QueryContext(ctx, query)
@@ -204,6 +211,8 @@ func (c *MssqlRepository) CollectTopQueries(db *sql.DB, limit int) ([]map[string
 		  AND st.text NOT LIKE '%%sys.dm_exec_query_stats%%'
 		  AND st.text NOT LIKE '%%SQLOptima%%'
 		  AND st.text NOT LIKE '%%DeltaCollector%%'
+		  AND (s.login_name IS NULL OR LOWER(s.login_name) NOT IN ('dbmonitor_user', 'go-mssqldb'))
+		  AND (s.program_name IS NULL OR LOWER(s.program_name) NOT IN ('dbmonitor_user', 'go-mssqldb'))
 		  AND qs.query_hash IS NOT NULL
 		ORDER BY qs.total_worker_time DESC
 		OFFSET 0 ROWS FETCH NEXT %d ROWS ONLY`, limit)
@@ -247,18 +256,21 @@ func (c *MssqlRepository) CollectTopQueries(db *sql.DB, limit int) ([]map[string
 func (c *MssqlRepository) CollectProcedureStats(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		SELECT TOP 20 
-			DB_NAME(database_id) AS database_name,
-			OBJECT_SCHEMA_NAME(object_id, database_id) AS schema_name,
-			OBJECT_NAME(object_id, database_id) AS object_name,
-			SUM(execution_count) AS execution_count,
-			SUM(total_worker_time) / 1000.0 AS total_worker_time_ms,
-			SUM(total_elapsed_time) / 1000.0 AS total_elapsed_time_ms,
-			SUM(total_logical_reads) AS total_logical_reads,
-			SUM(total_physical_reads) AS total_physical_reads
-		FROM sys.dm_exec_procedure_stats
-		WHERE database_id > 4 AND object_id > 0
-		GROUP BY object_id, database_id
-		ORDER BY SUM(total_worker_time) DESC
+			DB_NAME(ps.database_id) AS database_name,
+			OBJECT_SCHEMA_NAME(ps.object_id, ps.database_id) AS schema_name,
+			OBJECT_NAME(ps.object_id, ps.database_id) AS object_name,
+			SUM(ps.execution_count) AS execution_count,
+			SUM(ps.total_worker_time) / 1000.0 AS total_worker_time_ms,
+			SUM(ps.total_elapsed_time) / 1000.0 AS total_elapsed_time_ms,
+			SUM(ps.total_logical_reads) AS total_logical_reads,
+			SUM(ps.total_physical_reads) AS total_physical_reads
+		FROM sys.dm_exec_procedure_stats ps
+		WHERE ps.database_id > 4 AND ps.object_id > 0
+		  AND LOWER(ISNULL(DB_NAME(ps.database_id), N'')) <> N'distribution'
+		  AND OBJECT_NAME(ps.object_id, ps.database_id) NOT LIKE N'sp[_]%' ESCAPE '\'
+		  AND OBJECT_NAME(ps.object_id, ps.database_id) NOT LIKE N'xp[_]%' ESCAPE '\'
+		GROUP BY ps.object_id, ps.database_id
+		ORDER BY SUM(ps.total_worker_time) DESC
 	`
 
 	rows, err := db.Query(query)

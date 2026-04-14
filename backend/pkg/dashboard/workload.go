@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Workload capacity calculation for dashboard metrics.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package dashboard
 
 // CompilationRatio computes compilations/batch requests as a ratio (0..1).

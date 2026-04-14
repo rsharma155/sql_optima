@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: PostgreSQL log viewer and analysis.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.PgLogsView = async function PgLogsView() {
   const inst = window.appState?.config?.instances?.[window.appState.currentInstanceIdx];
   const instanceName = inst?.name;

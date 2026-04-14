@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: PostgreSQL configuration parameter management.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.PgConfigView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...'};
 

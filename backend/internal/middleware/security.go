@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Security headers middleware adding X-Frame-Options, X-Content-Type-Options, CSP, and Referrer-Policy.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package middleware
 
 import "net/http"

@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Instance overview page with key metrics summary.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.PgDashboardView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...'};
     const dbName = window.appState.currentDatabase !== 'all' ? window.appState.currentDatabase : 'Cluster / System Check';

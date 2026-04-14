@@ -1,5 +1,12 @@
 // Package api provides HTTP API endpoints for the monitoring dashboard.
 // It handles routing, authentication, and response formatting for all REST endpoints.
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Defines API handlers and routes for all monitoring endpoints. Registers health routes, authentication, and monitoring handlers for both MSSQL and PostgreSQL databases.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package api
 
 import (
@@ -52,13 +59,14 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	postgresH := handlers.NewPostgresHandlers(metricsSvc, cfg)
 	liveH := handlers.NewLiveHandlers(metricsSvc, cfg)
 	timescaleH := handlers.NewTimescaleHandlers(metricsSvc, cfg)
+	sihH := handlers.NewStorageIndexHealthTimescaleHandlers(metricsSvc)
 	healthH := handlers.NewHealthHandlers(metricsSvc, cfg)
 	dashboardH := handlers.NewDashboardHandlers(metricsSvc, cfg)
 	queryH := handlers.NewQueryHandlers(metricsSvc, cfg)
 
 	mon := &monitoringHandlers{
 		Mssql: mssqlH, Postgres: postgresH, Live: liveH, Timescale: timescaleH,
-		Health: healthH, Dashboard: dashboardH, Query: queryH,
+		Health: healthH, Dashboard: dashboardH, Query: queryH, SIH: sihH,
 	}
 
 	var rulesH *handlers.RulesHandler

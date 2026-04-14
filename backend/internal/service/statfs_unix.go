@@ -1,5 +1,12 @@
 //go:build darwin || linux
 
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Unix filesystem statistics for PostgreSQL disk monitoring.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package service
 
 import (

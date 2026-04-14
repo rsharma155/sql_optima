@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: PostgreSQL CPU utilization dashboard.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.PgCpuView = async function() {
     window.routerOutlet.innerHTML = await window.loadTemplate('/pages/pg_cpu.html');
     setTimeout(initPgCpu, 50);

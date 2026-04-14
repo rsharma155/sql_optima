@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Client-side routing and navigation manager between dashboard views. Handles URL routing and view rendering.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 // js/components/router.js - DOM Routing Abstraction Layer
 window.routerOutlet = document.getElementById('router-outlet');
 if (!window.routerOutlet) {
@@ -216,6 +226,26 @@ window.appNavigate = function(route, skipHistory = false) {
                 setTimeout(() => window.appNavigate('performance-debt'), 200);
             }
             break;
+        case 'storage-index-health': {
+            const sihInst = window.appState.config?.instances?.[window.appState.currentInstanceIdx];
+            const runPg = () => {
+                if (typeof window.PgStorageIndexHealthView === 'function') window.PgStorageIndexHealthView();
+                else {
+                    window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Index & Table Health…</h3></div>';
+                    setTimeout(() => window.appNavigate('storage-index-health'), 200);
+                }
+            };
+            const runMs = () => {
+                if (typeof window.MssqlStorageIndexHealthView === 'function') window.MssqlStorageIndexHealthView();
+                else {
+                    window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Storage & Index Health…</h3></div>';
+                    setTimeout(() => window.appNavigate('storage-index-health'), 200);
+                }
+            };
+            if (sihInst && String(sihInst.type || '').toLowerCase() === 'postgres') runPg();
+            else runMs();
+            break;
+        }
         case 'jobs': window.JobsView(); break;
         case 'alerts': window.AlertsView(); break;
         case 'incidents':
@@ -383,6 +413,7 @@ window.router = {
                 <li data-route="pg-queries"><i class="fa-solid fa-bolt"></i> Query Performance</li>
                 <li data-route="pg-explain"><i class="fa-solid fa-diagram-project"></i> EXPLAIN Analyzer</li>
                 <li data-route="pg-storage"><i class="fa-solid fa-hard-drive"></i> Storage & Vacuum</li>
+                <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Index & Table Health</li>
                 <li data-route="pg-replication"><i class="fa-solid fa-clone"></i> Replication, HA & Cluster</li>
                 <li data-route="pg-best-practices"><i class="fa-solid fa-shield-halved"></i> Best Practices</li>
                 <li data-route="pg-cpu"><i class="fa-solid fa-microchip"></i> CPU Usage</li>
@@ -394,11 +425,12 @@ window.router = {
             sidebarNav.innerHTML = `
                 <li data-route="dashboard" id="nav-dashboard"><i class="fa-solid fa-gauge-high"></i> Instance Dashboard</li>
                 <li data-route="mssql-cpu-dashboard"><i class="fa-solid fa-microchip"></i> CPU Dashboard</li>
-                <li data-route="drilldown-memory"><i class="fa-solid fa-memory"></i> Memory Drilldown</li>
+                <li data-route="drilldown-memory"><i class="fa-solid fa-memory"></i> Memory Analyzer</li>
                 <li data-route="live-diagnostics"><i class="fa-solid fa-bolt text-warning"></i> Real-Time Diagnostics</li>
                 <!-- Query Bottlenecks is now treated as a drilldown from Top Offenders -->
                 <li data-route="drilldown-ha"><i class="fa-solid fa-server"></i> HA/AG Monitor</li>
                 <li data-route="enterprise-metrics"><i class="fa-solid fa-chart-line"></i> Enterprise Metrics</li>
+                <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Storage & Index Health</li>
                 <li data-route="performance-debt"><i class="fa-solid fa-screwdriver-wrench"></i> Performance Debt</li>
                 <li data-route="jobs" id="nav-agent-jobs"><i class="fa-solid fa-briefcase"></i> SQL Agent Jobs</li>
                 <li data-route="alerts"><i class="fa-solid fa-triangle-exclamation"></i> Alerts <span id="alerts-badge" class="badge badge-danger">0</span></li>
@@ -424,9 +456,10 @@ document.getElementById('instance-select').addEventListener('change', (e) => {
         window.appNavigate(inst.type === 'postgres' ? 'pg-dashboard' : 'dashboard');
     } else {
         const isCurrentRoutePG = window.appState.activeViewId.startsWith('pg-');
+        const isSharedEngineRoute = window.appState.activeViewId === 'storage-index-health';
         const root = inst.type === 'postgres' ? 'pg-dashboard' : 'dashboard';
         
-        if(inst.type === 'postgres' && !isCurrentRoutePG) {
+        if(inst.type === 'postgres' && !isCurrentRoutePG && !isSharedEngineRoute) {
             window.appNavigate(root);
         } else if(inst.type === 'sqlserver' && isCurrentRoutePG) {
             window.appNavigate(root);

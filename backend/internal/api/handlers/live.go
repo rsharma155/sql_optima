@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Real-Time Diagnostics (RTD) handlers for live KPI queries, running queries, blocking chains, I/O latency, and wait statistics.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package handlers
 
 import (

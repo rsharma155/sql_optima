@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Redis-backed Asynq queue for scheduling collector tasks with Redis scheduler integration.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package queue
 
 import (
@@ -11,9 +18,9 @@ import (
 func StartScheduler(redisAddr string) (*asynq.Scheduler, error) {
 	opt := asynq.RedisClientOpt{Addr: redisAddr}
 	sch := asynq.NewScheduler(opt, &asynq.SchedulerOpts{})
-	if _, err := sch.Register("@every 15s", asynq.NewTask(TypeLive, nil)); err != nil {
-		return nil, err
-	}
+	// Live/RTD collector is intentionally NOT scheduled.
+	// Live endpoints should run only when the user opens the RTD page (frontend polling),
+	// plus one optional warm-up scrape on API startup.
 	if _, err := sch.Register("@every 1m", asynq.NewTask(TypeHistorical, nil)); err != nil {
 		return nil, err
 	}

@@ -1,8 +1,16 @@
 // Package appserver wires HTTP server, background jobs, and observability (shared by cmd/server and cmd/api).
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Wires HTTP server, background jobs, and observability (shared by cmd/server and cmd/api). Initializes config, repositories, TimescaleDB, telemetry, and routes.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
@@ -174,6 +182,14 @@ func Main() {
 	r.PathPrefix("/pages/").Handler(http.StripPrefix("/pages/", http.FileServer(http.Dir(filepath.Join(frontendDir, "pages")))))
 
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// If an /api/* path reaches the SPA fallback, it means the API route wasn't registered
+		// in this running server binary. Return a JSON 404 to avoid confusing "200 HTML" responses.
+		if strings.HasPrefix(req.URL.Path, "/api/") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "api route not found (server may be outdated; restart after rebuild)"})
+			return
+		}
 		http.ServeFile(w, req, filepath.Join(frontendDir, "index.html"))
 	})
 

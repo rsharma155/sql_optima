@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Detailed deadlock analysis with blocking chains.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.DeadlockDrilldown = function() {
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">

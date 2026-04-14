@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Database growth analysis page with size trend tracking.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.GrowthDrilldown = function() {
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">

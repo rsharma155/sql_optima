@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL Server blocking chain detection and lock analysis.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (
@@ -19,8 +26,8 @@ func (c *MssqlRepository) CollectBlockingChains(db *sql.DB) ([]map[string]interf
 			  AND s.is_user_process = 1
 			  AND s.database_id > 4
 			  AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
-			  AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-			  AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		)
 		SELECT TOP 50
 			b.Blocking_SPID AS Lead_Blocker,

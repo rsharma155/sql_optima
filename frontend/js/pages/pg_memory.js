@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: PostgreSQL memory usage dashboard.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.PgMemoryView = async function() {
     window.routerOutlet.innerHTML = await window.loadTemplate('/pages/pg_memory.html');
     setTimeout(initPgMemory, 50);

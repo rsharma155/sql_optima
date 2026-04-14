@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Replication monitoring for PostgreSQL and SQL Server.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.PgReplicationView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...'};
     const database = window.appState.currentDatabase || 'all';

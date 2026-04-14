@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Query bottleneck analysis handlers providing query performance issues and recommendations.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package handlers
 
 import (
@@ -79,6 +86,44 @@ func (h *QueryHandlers) Bottlenecks(w http.ResponseWriter, r *http.Request) {
 		"bottlenecks": bottlenecks,
 		"count":       len(bottlenecks),
 		"time_range":  timeRange,
+	})
+}
+
+// QueryStoreSQLText returns the full query text for a Query Store row (drill-down).
+func (h *QueryHandlers) QueryStoreSQLText(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	database := strings.TrimSpace(r.URL.Query().Get("database"))
+	queryHash := strings.TrimSpace(r.URL.Query().Get("query_hash"))
+
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceInConfig(h.cfg, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+	if database == "" || queryHash == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "database and query_hash are required"})
+		return
+	}
+
+	txt, err := h.metricsSvc.GetMssqlQueryStoreSQLText(r.Context(), instance, database, queryHash)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance":    instance,
+		"database":    database,
+		"query_hash":  queryHash,
+		"query_text":  txt,
+		"text_length": len(txt),
 	})
 }
 

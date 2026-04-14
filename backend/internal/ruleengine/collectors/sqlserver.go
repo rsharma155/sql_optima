@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL Server rule collector for configuration checking.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package collectors
 
 import (
@@ -9,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/microsoft/go-mssqldb"
 	"github.com/rsharma155/sql_optima/internal/security/sqlsandbox"
+	"github.com/rsharma155/sql_optima/internal/sqlserver"
 )
 
 type SQLServerCollector struct {
@@ -19,9 +26,9 @@ type SQLServerCollector struct {
 }
 
 func NewSQLServerCollector(connStr string) (*SQLServerCollector, error) {
-	db, err := sql.Open("mssql", connStr)
+	db, err := sqlserver.OpenMetricsPool(connStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open mssql connection: %w", err)
+		return nil, fmt.Errorf("failed to open mssql metrics pool: %w", err)
 	}
 
 	db.SetMaxOpenConns(5)

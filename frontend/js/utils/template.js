@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Template utilities for HTML rendering and string interpolation.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.loadTemplate = async function(url) {
     // Templates change frequently during development; avoid stale in-memory cache.
     // We still keep a best-effort cache, but always re-fetch and overwrite it.

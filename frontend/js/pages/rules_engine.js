@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Rules engine page for best practices evaluation.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.RulesEngineView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
     if (!inst) {

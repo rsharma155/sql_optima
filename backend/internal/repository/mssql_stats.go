@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: General SQL Server statistics and performance counters.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (
@@ -12,8 +19,7 @@ import (
 
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/models"
-
-	_ "github.com/microsoft/go-mssqldb" // MSSQL Driver
+	"github.com/rsharma155/sql_optima/internal/sqlserver"
 )
 
 type MssqlRepository struct {
@@ -34,6 +40,40 @@ func (c *MssqlRepository) HasConnection(instanceName string) bool {
 	_, ok := c.conns[instanceName]
 	c.mutex.RUnlock()
 	return ok
+}
+
+// ListSQLServerUserDatabases returns ONLINE databases with database_id > 4 that the login can access.
+// Used when Instances[].databases is empty so Storage & Index Health collection still runs.
+func (c *MssqlRepository) ListSQLServerUserDatabases(instanceName string) ([]string, error) {
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return nil, fmt.Errorf("connection not found")
+	}
+	const q = `
+		SELECT d.name
+		FROM sys.databases d
+		WHERE d.database_id > 4
+		  AND d.state = 0
+		  AND LOWER(d.name) <> N'distribution'
+		ORDER BY d.name
+	`
+	rows, err := db.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			continue
+		}
+		n = strings.TrimSpace(n)
+		if n != "" {
+			names = append(names, n)
+		}
+	}
+	return names, rows.Err()
 }
 
 func NewMssqlRepository(cfg *config.Config) *MssqlRepository {
@@ -75,7 +115,7 @@ func NewMssqlRepository(cfg *config.Config) *MssqlRepository {
 				connStr += "TrustServerCertificate=true;"
 			}
 
-			db, err := sql.Open("sqlserver", connStr)
+			db, err := sqlserver.OpenMetricsPool(connStr)
 			if err != nil {
 				c.status[inst.Name] = "offline"
 				log.Printf("[MSSQL] DSN Parse Error %s: %v", inst.Name, err)
@@ -307,8 +347,8 @@ func (c *MssqlRepository) FetchLongRunningQueries(instanceName string, minDurati
 		WHERE r.session_id <> @@SPID AND r.session_id > 50
 		AND r.total_elapsed_time >= 5000
 		AND s.is_user_process = 1
-		AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-		AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+		AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		ORDER BY r.total_elapsed_time DESC`
 
 	rows, err := db.Query(query)
@@ -375,6 +415,45 @@ func sqlServerQuoteBracket(ident string) string {
 		return "[]"
 	}
 	return "[" + strings.ReplaceAll(ident, "]", "]]") + "]"
+}
+
+// FetchQueryStoreSQLText returns the full Query Store SQL text (nvarchar(max)) for a query hash.
+// This is used for UI drill-down so list payloads can keep shorter snippets.
+func (c *MssqlRepository) FetchQueryStoreSQLText(instanceName, databaseName, queryHash string) (string, error) {
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return "", fmt.Errorf("no connection for instance: %s", instanceName)
+	}
+	databaseName = strings.TrimSpace(databaseName)
+	if databaseName == "" {
+		return "", fmt.Errorf("database is required")
+	}
+	queryHash = strings.TrimSpace(queryHash)
+	if queryHash == "" {
+		return "", fmt.Errorf("query_hash is required")
+	}
+
+	dbPrefix := sqlServerQuoteBracket(databaseName)
+	q := fmt.Sprintf(`
+		SELECT TOP 1
+			qt.query_sql_text
+		FROM %s.sys.query_store_query q
+		INNER JOIN %s.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+		INNER JOIN %s.sys.query_store_plan p ON q.query_id = p.query_id
+		INNER JOIN %s.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+		WHERE q.is_internal_query = 0
+		  AND CONVERT(VARCHAR(40), q.query_hash) = @p1
+		ORDER BY rs.last_execution_time DESC;
+	`, dbPrefix, dbPrefix, dbPrefix, dbPrefix)
+
+	var sqlText sql.NullString
+	if err := db.QueryRow(q, queryHash).Scan(&sqlText); err != nil {
+		return "", err
+	}
+	if !sqlText.Valid {
+		return "", nil
+	}
+	return sqlText.String, nil
 }
 
 // queryStoreStatsSelectSQL returns a Query Store aggregate query scoped to a database.
