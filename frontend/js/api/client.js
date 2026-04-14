@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: HTTP client implementation for communicating with backend API endpoints. Handles authentication, token management, and authenticated fetch requests.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 // js/api/client.js - Application context and asynchronous fetch handler
 window.appState = {
     config: null,

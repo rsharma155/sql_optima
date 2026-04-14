@@ -1,5 +1,12 @@
 // Package middleware provides HTTP middleware for authentication and security.
 // It includes JWT authentication with role-based access control.
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: JWT authentication middleware with token generation, validation, and role-based access control.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package middleware
 
 import (

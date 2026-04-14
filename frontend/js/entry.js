@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Main entry point and bootstrap for the SQL Optima frontend SPA. Wires shared state and API client onto window for legacy page scripts.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * ES module entry: wires shared state and API client onto window for legacy page scripts.
  */

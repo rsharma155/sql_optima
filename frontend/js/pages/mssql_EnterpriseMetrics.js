@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Enterprise metrics dashboard with advanced SQL Server indicators.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.EnterpriseMetricsView = async function() {
     appDebug('[EnterpriseMetrics] Starting');
     if (!window.appState.config || !window.appState.config.instances || window.appState.config.instances.length === 0) {
@@ -177,6 +187,29 @@ function updateEnterpriseDataSourceBadge(source) {
     el.style.display = 'inline-flex';
 }
 
+(function ensureEnterpriseQueryModal() {
+    if (typeof window.showQueryModalDirect === 'function') return;
+    window.showQueryModalDirect = function(queryText) {
+        if (!queryText) queryText = 'No query available';
+        const existing = document.getElementById('query-modal');
+        if (existing) existing.remove();
+        const modal = document.createElement('div');
+        modal.id = 'query-modal';
+        modal.style.cssText = 'display:flex; position:fixed; z-index:99999; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.8); align-items:center; justify-content:center;';
+        modal.innerHTML = `<div style="background:var(--bg-surface); margin:2%; padding:20px; border:1px solid var(--border-color,#333); border-radius:12px; width:95%; max-width:1000px; max-height:90vh; overflow-y:auto; color:var(--text-primary,#e0e0e0);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+                <h3 style="margin:0; color:var(--accent,#3b82f6);">Query Details</h3>
+                <button type="button" onclick="document.getElementById('query-modal').remove()" style="background:transparent; border:1px solid #555; color:#e0e0e0; font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
+            </div>
+            <div style="background:var(--bg-base); padding:1rem; border-radius:8px; max-height:60vh; overflow:auto; border:1px solid var(--border-color,#333);">
+                <pre style="margin:0; white-space:pre-wrap; font-family:monospace; font-size:0.85rem;">${window.escapeHtml(queryText)}</pre>
+            </div>
+        </div>`;
+        document.body.appendChild(modal);
+        modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    };
+})();
+
 function renderEnterpriseMetrics(inst, metrics) {
     // Defensive: ensure metrics is defined
     if (!metrics || typeof metrics !== 'object') {
@@ -184,6 +217,8 @@ function renderEnterpriseMetrics(inst, metrics) {
         window.routerOutlet.innerHTML = `<div class="page-view active dashboard-sky-theme"><h3 class="text-danger">Error: No metrics data available</h3></div>`;
         return;
     }
+
+    const emQueryCache = {};
     
     const latchData = (metrics?.latchStats != null) ? metrics.latchStats : [];
     const waitingData = (metrics?.waitingTasks != null) ? metrics.waitingTasks : [];
@@ -300,27 +335,45 @@ function renderEnterpriseMetrics(inst, metrics) {
         <tr><td>Proc</td><td>${(planCacheLatest.proc_cache_mb || 0).toFixed(1)} MB</td></tr>
     ` : '';
 
-    const memGrantWaiterRows = memoryGrantWaitersData.slice(0, 15).map(m => `
+    const memGrantWaiterRows = memoryGrantWaitersData.slice(0, 15).map((m, idx) => {
+        const qKey = 'em_mgw_' + idx;
+        const fullQ = (m.query_text != null && m.query_text !== '') ? String(m.query_text) : '';
+        emQueryCache[qKey] = fullQ;
+        const shortQ = fullQ ? (fullQ.length > 72 ? fullQ.slice(0, 72) + '…' : fullQ) : '(no text)';
+        const qCell = fullQ
+            ? `<span class="code-snippet" style="cursor:pointer; max-width:320px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="View full query" onclick="window.showQueryModalDirect(window.appState.emQueryCache['${qKey}'])">${window.escapeHtml(shortQ)}</span>`
+            : `<span class="text-muted">${window.escapeHtml(shortQ)}</span>`;
+        return `
         <tr>
             <td>${m.session_id || 'N/A'}</td>
             <td>${window.escapeHtml(m.database_name || 'N/A')}</td>
             <td>${window.escapeHtml(m.login_name || 'N/A')}</td>
             <td>${((m.requested_memory_kb || 0) / 1024).toFixed(1)} MB</td>
             <td>${(m.wait_time_ms || 0).toLocaleString()}</td>
-            <td style="max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${window.escapeHtml(m.query_text || '')}</td>
-        </tr>
-    `).join('');
+            <td style="max-width:340px;">${qCell}</td>
+        </tr>`;
+    }).join('');
 
-    const tempdbConsumerRows = tempdbTopConsumersData.slice(0, 15).map(t => `
+    const tempdbConsumerRows = tempdbTopConsumersData.slice(0, 15).map((t, idx) => {
+        const qKey = 'em_tdc_' + idx;
+        const fullQ = (t.query_text != null && t.query_text !== '') ? String(t.query_text) : '';
+        emQueryCache[qKey] = fullQ;
+        const shortQ = fullQ ? (fullQ.length > 72 ? fullQ.slice(0, 72) + '…' : fullQ) : '(no text)';
+        const qCell = fullQ
+            ? `<span class="code-snippet" style="cursor:pointer; max-width:320px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="View full query" onclick="window.showQueryModalDirect(window.appState.emQueryCache['${qKey}'])">${window.escapeHtml(shortQ)}</span>`
+            : `<span class="text-muted">${window.escapeHtml(shortQ)}</span>`;
+        return `
         <tr>
             <td>${t.session_id || 'N/A'}</td>
             <td>${window.escapeHtml(t.database_name || 'N/A')}</td>
             <td>${(t.tempdb_mb || 0).toFixed(1)} MB</td>
             <td>${(t.user_objects_mb || 0).toFixed(1)} MB</td>
             <td>${(t.internal_objects_mb || 0).toFixed(1)} MB</td>
-            <td style="max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${window.escapeHtml(t.query_text || '')}</td>
-        </tr>
-    `).join('');
+            <td style="max-width:340px;">${qCell}</td>
+        </tr>`;
+    }).join('');
+
+    window.appState.emQueryCache = emQueryCache;
 
     const waitCatRows = waitCategoriesData.slice(0, 12).map(w => `
         <tr>
@@ -337,8 +390,9 @@ function renderEnterpriseMetrics(inst, metrics) {
                         <h1>Enterprise Metrics</h1>
                         <span class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Advanced Performance Monitoring</span>
                     </div>
-                    <p class="text-muted enterprise-metrics-intro" style="margin:0.4rem 0 0 0; font-size:0.8rem; line-height:1.45; white-space:nowrap; overflow-x:auto; overflow-y:hidden; max-width:100%; -webkit-overflow-scrolling:touch;">
+                    <p class="text-muted enterprise-metrics-intro" style="margin:0.4rem 0 0 0; font-size:0.8rem; line-height:1.45; max-width:100%;">
                         Snapshots are read from <strong>TimescaleDB</strong> (collector) to avoid hammering SQL Server on each refresh. Use <strong>Real-Time Diagnostics</strong> for live DMV queries. Pass <code>?source=live</code> on API calls only if you intentionally need direct DMV data from this UI tier.
+                        <span style="display:block; margin-top:0.35rem;">Where a database applies, metrics are limited to <strong>user databases</strong> (<code>database_id &gt; 4</code>), exclude replication <code>distribution</code>, and omit typical <code>sp_%</code> / <code>xp_%</code> batches and user-process-only sessions. Instance-wide panels (latches, spinlocks, memory clerks, plan cache, wait categories, TempDB file space) are unchanged.</span>
                     </p>
                 </div>
                 <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">

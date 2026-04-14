@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: PostgreSQL backup status and history page.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.PgBackupsView = async function PgBackupsView() {
   const inst = window.appState?.config?.instances?.[window.appState.currentInstanceIdx];
   const instanceName = inst?.name;

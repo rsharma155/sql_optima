@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Settings page for dashboard configuration.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.SettingsView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'N/A'};
     const userId = window.appState.user?.id || 1;

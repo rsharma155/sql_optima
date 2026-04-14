@@ -1,5 +1,12 @@
 // Package repository handles all database connections and queries.
 // It provides data access layer for both SQL Server and PostgreSQL databases.
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL Server live and historical telemetry fetcher including CPU, memory, PLE, waits, and file I/O metrics.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (
@@ -33,6 +40,11 @@ func (c *MssqlRepository) FetchLiveTelemetry(instanceName string, prev models.Da
 
 	metrics.MemHistory = prev.MemHistory
 	metrics.PLEHistory = prev.PLEHistory
+	// Preserve slower-moving histories computed on the historical ticker.
+	// The live ticker runs more frequently and would otherwise wipe these fields
+	// from the shared dashboard cache, causing charts (e.g. Disk I/O Latency) to appear empty.
+	metrics.WaitHistory = prev.WaitHistory
+	metrics.FileHistory = prev.FileHistory
 	for k, v := range prev.PrevWaitStats {
 		metrics.PrevWaitStats[k] = v
 	}
@@ -81,7 +93,7 @@ func (c *MssqlRepository) FetchLiveTelemetry(instanceName string, prev models.Da
 		}
 	}
 
-	sessionQuery := `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND login_name NOT IN ('dbmonitor_user', 'go-mssqldb') AND program_name NOT IN ('dbmonitor_user', 'go-mssqldb')`
+	sessionQuery := `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
 	db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
 
 	connQuery := `
@@ -92,8 +104,8 @@ func (c *MssqlRepository) FetchLiveTelemetry(instanceName string, prev models.Da
 			SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as active_requests
 		FROM sys.dm_exec_sessions s WITH (NOLOCK)
 		WHERE is_user_process = 1
-		  AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		GROUP BY s.login_name, s.database_id
 	`
 	connRows, _ := db.Query(connQuery)
@@ -146,8 +158,8 @@ func (c *MssqlRepository) FetchLiveTelemetry(instanceName string, prev models.Da
 		JOIN sys.dm_exec_sessions s WITH (NOLOCK) ON r.session_id = s.session_id
 		CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
 		WHERE r.session_id > 50 AND r.session_id <> @@SPID
-		  AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 	`
 	blockRows, errBlk := db.Query(blockDetQuery)
 	if errBlk == nil {
@@ -249,6 +261,8 @@ func (c *MssqlRepository) FetchLiveTelemetry(instanceName string, prev models.Da
 		WHERE s.is_user_process = 1
 		  AND r.session_id <> @@SPID
 		  AND (r.cpu_time > 50 OR r.total_elapsed_time > 5000000 OR r.logical_reads > 5000)
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		ORDER BY r.total_elapsed_time DESC
 	`
 	rows, err := db.Query(runningSQL)
@@ -529,7 +543,7 @@ func (c *MssqlRepository) FetchDashboardTelemetry(instanceName string, prev mode
 	}
 
 	// 2. Active Sessions (mssql_active_sessions_by_status)
-	sessionQuery := `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND login_name NOT IN ('dbmonitor_user', 'go-mssqldb') AND program_name NOT IN ('dbmonitor_user', 'go-mssqldb')`
+	sessionQuery := `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
 	db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
 
 	// 2b. Connections grouping natively over physically bounded user target logical pools
@@ -541,8 +555,8 @@ func (c *MssqlRepository) FetchDashboardTelemetry(instanceName string, prev mode
 			SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as active_requests
 		FROM sys.dm_exec_sessions s WITH (NOLOCK)
 		WHERE is_user_process = 1
-		  AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		GROUP BY s.login_name, s.database_id
 	`
 	connRows, _ := db.Query(connQuery)
@@ -597,8 +611,8 @@ func (c *MssqlRepository) FetchDashboardTelemetry(instanceName string, prev mode
 		JOIN sys.dm_exec_sessions s WITH (NOLOCK) ON r.session_id = s.session_id
 		CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
 		WHERE r.session_id > 50 AND r.session_id <> @@SPID
-		  AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 	`
 	blockRows, errBlk := db.Query(blockDetQuery)
 	if errBlk == nil {

@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Global application state manager for configuration, instance selection, authentication status, and navigation.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 /** Shared application state (ES module). Legacy views still access `window.appState` from entry.js. */
 export const appState = {
     config: null,

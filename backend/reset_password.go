@@ -1,5 +1,12 @@
 // Run this to reset the admin password
 // Usage: go run reset_password.go
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Standalone utility for password reset functionality, likely CLI tool for administrator password management.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package main
 
 import (

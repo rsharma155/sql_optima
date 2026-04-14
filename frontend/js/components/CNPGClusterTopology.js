@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Cloud Native PostgreSQL cluster topology visualization component.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
 
 interface ReplicaStat {

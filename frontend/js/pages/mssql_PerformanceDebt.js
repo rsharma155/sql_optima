@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Performance debt tracking and accumulation analysis.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 (function () {
     function sevKey(sev) { return String(sev || 'INFO').toUpperCase(); }
     function bySeverityRank(sev) {

@@ -1,8 +1,8 @@
 -- ============================================================================
 -- SQL Optima: Unified TimescaleDB Schema
 -- Consolidated from: init-scripts, sql_scripts, and migrations
--- Version: 1.0.0
--- Last Updated: 2026-04-04
+-- Version: 1.0.1
+-- Last Updated: 2026-04-13
 -- 
 -- This is the SINGLE SOURCE OF TRUTH for all TimescaleDB tables.
 -- All tables are idempotent (IF NOT EXISTS) and safe to run multiple times.
@@ -266,6 +266,112 @@ ALTER TABLE sqlserver_top_queries SET (
 );
 SELECT add_compression_policy('sqlserver_top_queries', INTERVAL '7 days', if_not_exists => TRUE);
 COMMENT ON TABLE sqlserver_top_queries IS 'Tracks CPU-intensive queries with delta metrics. Login/Client App may show Unknown/Disconnected for quick background queries.';
+
+-- --------------------------------------------------------------------------
+-- SQL SERVER - Query Stats Delta Pipeline (staging -> snapshot -> interval)
+-- --------------------------------------------------------------------------
+-- These tables back `ProcessQueryStatsDelta` (ON CONFLICT upserts) and must have a matching PK/unique constraint.
+
+CREATE TABLE IF NOT EXISTS sqlserver_query_stats_staging (
+    capture_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    server_instance_name TEXT NOT NULL,
+    database_name TEXT,
+    login_name TEXT,
+    client_app TEXT,
+    query_hash TEXT,
+    query_text TEXT,
+    total_executions BIGINT DEFAULT 0,
+    total_cpu_ms BIGINT DEFAULT 0,
+    total_elapsed_ms BIGINT DEFAULT 0,
+    total_logical_reads BIGINT DEFAULT 0,
+    total_physical_reads BIGINT DEFAULT 0,
+    total_rows BIGINT DEFAULT 0,
+    inserted_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS sqlserver_query_stats_snapshot (
+    capture_time TIMESTAMPTZ NOT NULL,
+    server_instance_name TEXT NOT NULL,
+    database_name TEXT,
+    login_name TEXT,
+    client_app TEXT,
+    query_hash TEXT,
+    query_text TEXT,
+    total_executions BIGINT DEFAULT 0,
+    total_cpu_ms BIGINT DEFAULT 0,
+    total_elapsed_ms BIGINT DEFAULT 0,
+    total_logical_reads BIGINT DEFAULT 0,
+    total_physical_reads BIGINT DEFAULT 0,
+    total_rows BIGINT DEFAULT 0,
+    row_fingerprint TEXT,
+    inserted_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (server_instance_name, query_hash, database_name, login_name, client_app, capture_time)
+);
+SELECT create_hypertable('sqlserver_query_stats_snapshot', 'capture_time', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_query_stats_snapshot_hash ON sqlserver_query_stats_snapshot (query_hash);
+CREATE INDEX IF NOT EXISTS idx_query_stats_snapshot_time ON sqlserver_query_stats_snapshot (capture_time DESC);
+ALTER TABLE sqlserver_query_stats_snapshot SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'server_instance_name,query_hash',
+    timescaledb.compress_orderby = 'capture_time DESC'
+);
+SELECT add_retention_policy('sqlserver_query_stats_snapshot', INTERVAL '7 days', if_not_exists => TRUE);
+
+CREATE TABLE IF NOT EXISTS sqlserver_query_stats_interval (
+    bucket_start TIMESTAMPTZ NOT NULL,
+    bucket_end TIMESTAMPTZ NOT NULL,
+    server_instance_name TEXT NOT NULL,
+    database_name TEXT,
+    login_name TEXT,
+    client_app TEXT,
+    query_hash TEXT,
+    query_text TEXT,
+    executions BIGINT DEFAULT 0,
+    cpu_ms BIGINT DEFAULT 0,
+    duration_ms BIGINT DEFAULT 0,
+    logical_reads BIGINT DEFAULT 0,
+    physical_reads BIGINT DEFAULT 0,
+    rows BIGINT DEFAULT 0,
+    avg_cpu_ms NUMERIC DEFAULT 0,
+    avg_duration_ms NUMERIC DEFAULT 0,
+    avg_reads NUMERIC DEFAULT 0,
+    is_reset BOOLEAN DEFAULT FALSE,
+    inserted_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (bucket_end, query_hash, database_name, login_name, client_app, server_instance_name)
+);
+SELECT create_hypertable('sqlserver_query_stats_interval', 'bucket_end', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_query_stats_interval_hash ON sqlserver_query_stats_interval (query_hash);
+CREATE INDEX IF NOT EXISTS idx_query_stats_interval_time ON sqlserver_query_stats_interval (bucket_end DESC);
+CREATE INDEX IF NOT EXISTS idx_query_stats_interval_server ON sqlserver_query_stats_interval (server_instance_name, bucket_end DESC);
+ALTER TABLE sqlserver_query_stats_interval SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'server_instance_name,query_hash',
+    timescaledb.compress_orderby = 'bucket_end DESC'
+);
+SELECT add_compression_policy('sqlserver_query_stats_interval', INTERVAL '7 days', if_not_exists => TRUE);
+
+-- Safety: older installs may have created sqlserver_query_stats_interval without the required PK/unique,
+-- causing ON CONFLICT errors (SQLSTATE 42P10). Add the PK if missing.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'sqlserver_query_stats_interval') THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = 'sqlserver_query_stats_interval'::regclass
+              AND contype IN ('p','u')
+              AND conname = 'sqlserver_query_stats_interval_pkey'
+        ) THEN
+            BEGIN
+                ALTER TABLE sqlserver_query_stats_interval
+                ADD CONSTRAINT sqlserver_query_stats_interval_pkey
+                PRIMARY KEY (bucket_end, query_hash, database_name, login_name, client_app, server_instance_name);
+            EXCEPTION WHEN OTHERS THEN
+                NULL;
+            END;
+        END IF;
+    END IF;
+END $$;
 
 -- Query Store Stats (legacy table name)
 CREATE TABLE IF NOT EXISTS query_store_stats (
@@ -766,6 +872,72 @@ ALTER TABLE sqlserver_latch_waits SET (
 );
 SELECT add_compression_policy('sqlserver_latch_waits', INTERVAL '7 days', if_not_exists => TRUE);
 COMMENT ON TABLE sqlserver_latch_waits IS 'Tracks latch wait statistics for internal synchronization objects';
+
+-- --------------------------------------------------------------------------
+-- SQL SERVER - Memory Performance Analyzer (Timescale-backed)
+-- --------------------------------------------------------------------------
+
+-- Memory Metrics (single-row per scrape; must-have production signals)
+CREATE TABLE IF NOT EXISTS sqlserver_memory_metrics (
+    capture_timestamp TIMESTAMPTZ NOT NULL,
+    server_instance_name TEXT NOT NULL,
+    -- OS & SQL overview
+    sql_memory_used_mb BIGINT DEFAULT 0,
+    sql_memory_target_mb BIGINT DEFAULT 0,
+    os_total_memory_mb BIGINT DEFAULT 0,
+    os_available_memory_mb BIGINT DEFAULT 0,
+    process_physical_low BOOLEAN DEFAULT false,
+    process_virtual_low BOOLEAN DEFAULT false,
+    -- Memory grants / workspace
+    memory_grants_pending INTEGER DEFAULT 0,
+    active_memory_grants INTEGER DEFAULT 0,
+    waiting_memory_grants INTEGER DEFAULT 0,
+    granted_workspace_mb BIGINT DEFAULT 0,
+    requested_workspace_mb BIGINT DEFAULT 0,
+    -- Buffer pool health
+    ple_seconds BIGINT DEFAULT 0,
+    -- Plan cache
+    plan_cache_mb BIGINT DEFAULT 0,
+    -- Spill indicators (cumulative perf counters)
+    sort_warnings_total BIGINT DEFAULT 0,
+    hash_warnings_total BIGINT DEFAULT 0,
+    -- Spill indicators (rates computed from counter deltas)
+    sort_warnings_per_sec DOUBLE PRECISION DEFAULT 0,
+    hash_warnings_per_sec DOUBLE PRECISION DEFAULT 0,
+    inserted_at TIMESTAMPTZ DEFAULT NOW()
+);
+SELECT create_hypertable('sqlserver_memory_metrics', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_memory_metrics_server_time ON sqlserver_memory_metrics (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_memory_metrics SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'server_instance_name',
+    timescaledb.compress_orderby = 'capture_timestamp DESC'
+);
+SELECT add_compression_policy('sqlserver_memory_metrics', INTERVAL '14 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_memory_metrics IS 'Memory Performance Analyzer: SQL vs target, OS pressure, workspace grants, PLE, plan cache, and spill indicators';
+
+ALTER TABLE sqlserver_memory_metrics ADD COLUMN IF NOT EXISTS waiting_memory_grants INTEGER DEFAULT 0;
+ALTER TABLE sqlserver_memory_metrics ADD COLUMN IF NOT EXISTS sort_warnings_per_sec DOUBLE PRECISION DEFAULT 0;
+ALTER TABLE sqlserver_memory_metrics ADD COLUMN IF NOT EXISTS hash_warnings_per_sec DOUBLE PRECISION DEFAULT 0;
+
+-- Buffer Pool by Database (multi-row per scrape)
+CREATE TABLE IF NOT EXISTS sqlserver_buffer_pool_db (
+    capture_timestamp TIMESTAMPTZ NOT NULL,
+    server_instance_name TEXT NOT NULL,
+    database_name TEXT,
+    buffer_mb BIGINT DEFAULT 0,
+    inserted_at TIMESTAMPTZ DEFAULT NOW()
+);
+SELECT create_hypertable('sqlserver_buffer_pool_db', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_buffer_pool_db_server_time ON sqlserver_buffer_pool_db (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_buffer_pool_db_db_time ON sqlserver_buffer_pool_db (server_instance_name, database_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_buffer_pool_db SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'server_instance_name,database_name',
+    timescaledb.compress_orderby = 'capture_timestamp DESC'
+);
+SELECT add_compression_policy('sqlserver_buffer_pool_db', INTERVAL '14 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_buffer_pool_db IS 'Memory Performance Analyzer: buffer pool usage by database (MB) per scrape';
 
 -- Memory Clerks Detailed
 CREATE TABLE IF NOT EXISTS sqlserver_memory_clerks (
@@ -2043,9 +2215,209 @@ CREATE INDEX IF NOT EXISTS idx_collection_log_time ON sqlserver_collection_log (
 CREATE INDEX IF NOT EXISTS idx_collection_log_collector ON sqlserver_collection_log (collector_name, collection_time DESC);
 
 -- ============================================================================
+-- SECTION 3.3: STORAGE & INDEX HEALTH (Cross-engine, unified)
+-- ============================================================================
+
+-- Keep these objects in a dedicated schema to avoid name collisions with legacy tables.
+CREATE SCHEMA IF NOT EXISTS monitor;
+
+-- 3.3.1: Index usage stats (delta snapshot)
+CREATE TABLE IF NOT EXISTS monitor.index_usage_stats (
+    time TIMESTAMPTZ NOT NULL,
+    engine TEXT NOT NULL, -- 'sqlserver' | 'postgres'
+    server_id TEXT NOT NULL,
+    db_name TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    index_name TEXT NOT NULL,
+    seeks BIGINT,
+    scans BIGINT,
+    lookups BIGINT,
+    updates BIGINT,
+    index_size_mb NUMERIC,
+    is_unique BOOLEAN,
+    is_pk BOOLEAN,
+    fillfactor INT,
+    PRIMARY KEY (time, engine, server_id, db_name, schema_name, table_name, index_name)
+);
+-- MIGRATION: add last seek/scan/lookup timestamps (SQL Server DMV)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='monitor' AND table_name='index_usage_stats' AND column_name='last_user_seek'
+    ) THEN
+        ALTER TABLE monitor.index_usage_stats ADD COLUMN last_user_seek TIMESTAMPTZ;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='monitor' AND table_name='index_usage_stats' AND column_name='last_user_scan'
+    ) THEN
+        ALTER TABLE monitor.index_usage_stats ADD COLUMN last_user_scan TIMESTAMPTZ;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='monitor' AND table_name='index_usage_stats' AND column_name='last_user_lookup'
+    ) THEN
+        ALTER TABLE monitor.index_usage_stats ADD COLUMN last_user_lookup TIMESTAMPTZ;
+    END IF;
+END $$;
+SELECT create_hypertable('monitor.index_usage_stats', 'time', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_index_usage_stats_lookup ON monitor.index_usage_stats (engine, server_id, db_name, schema_name, table_name, index_name, time DESC);
+ALTER TABLE monitor.index_usage_stats SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'engine,server_id,db_name,schema_name,table_name,index_name',
+    timescaledb.compress_orderby = 'time DESC'
+);
+DO $$
+BEGIN
+    CALL remove_compression_policy('monitor.index_usage_stats', if_exists => TRUE);
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
+SELECT add_compression_policy('monitor.index_usage_stats', INTERVAL '7 days', if_not_exists => TRUE);
+
+-- 3.3.5: Index definitions snapshot (for duplicate/overlap analysis; daily cadence)
+CREATE TABLE IF NOT EXISTS monitor.index_definitions (
+    time TIMESTAMPTZ NOT NULL,
+    engine TEXT NOT NULL,
+    server_id TEXT NOT NULL,
+    db_name TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    index_name TEXT NOT NULL,
+    key_columns TEXT,
+    include_columns TEXT,
+    filter_definition TEXT,
+    is_unique BOOLEAN,
+    is_pk BOOLEAN,
+    index_type TEXT,
+    PRIMARY KEY (time, engine, server_id, db_name, schema_name, table_name, index_name)
+);
+SELECT create_hypertable('monitor.index_definitions', 'time', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_index_definitions_lookup ON monitor.index_definitions (engine, server_id, db_name, schema_name, table_name, time DESC);
+ALTER TABLE monitor.index_definitions SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'engine,server_id,db_name,schema_name,table_name',
+    timescaledb.compress_orderby = 'time DESC'
+);
+SELECT add_compression_policy('monitor.index_definitions', INTERVAL '30 days', if_not_exists => TRUE);
+
+-- 3.3.6: Daily unused-index analysis snapshot (for alerts / UI; one refresh per instance per UTC day)
+CREATE TABLE IF NOT EXISTS monitor.index_unused_candidates_daily (
+    run_at TIMESTAMPTZ NOT NULL,
+    engine TEXT NOT NULL,
+    server_id TEXT NOT NULL,
+    db_name TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    index_name TEXT NOT NULL,
+    updates_24h BIGINT NOT NULL DEFAULT 0,
+    index_size_mb NUMERIC,
+    last_user_seek TIMESTAMPTZ,
+    rank SMALLINT,
+    PRIMARY KEY (run_at, engine, server_id, db_name, schema_name, table_name, index_name)
+);
+SELECT create_hypertable('monitor.index_unused_candidates_daily', 'run_at', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_index_unused_daily_lookup ON monitor.index_unused_candidates_daily (engine, server_id, run_at DESC);
+
+-- 3.3.2: Table usage + size (delta snapshot)
+CREATE TABLE IF NOT EXISTS monitor.table_usage_stats (
+    time TIMESTAMPTZ NOT NULL,
+    engine TEXT NOT NULL, -- 'sqlserver' | 'postgres'
+    server_id TEXT NOT NULL,
+    db_name TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    seq_scans BIGINT,
+    idx_scans BIGINT,
+    rows_read BIGINT,
+    rows_modified BIGINT,
+    table_size_mb NUMERIC,
+    index_size_mb NUMERIC,
+    row_count BIGINT,
+    PRIMARY KEY (time, engine, server_id, db_name, schema_name, table_name)
+);
+SELECT create_hypertable('monitor.table_usage_stats', 'time', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_table_usage_stats_lookup ON monitor.table_usage_stats (engine, server_id, db_name, schema_name, table_name, time DESC);
+ALTER TABLE monitor.table_usage_stats SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'engine,server_id,db_name,schema_name,table_name',
+    timescaledb.compress_orderby = 'time DESC'
+);
+DO $$
+BEGIN
+    CALL remove_compression_policy('monitor.table_usage_stats', if_exists => TRUE);
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
+SELECT add_compression_policy('monitor.table_usage_stats', INTERVAL '7 days', if_not_exists => TRUE);
+
+-- 3.3.3: Table + index growth history (size snapshot; typically 6h cadence)
+CREATE TABLE IF NOT EXISTS monitor.table_size_history (
+    time TIMESTAMPTZ NOT NULL,
+    engine TEXT NOT NULL, -- 'sqlserver' | 'postgres'
+    server_id TEXT NOT NULL,
+    db_name TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    table_size_mb NUMERIC,
+    index_size_mb NUMERIC,
+    row_count BIGINT,
+    PRIMARY KEY (time, engine, server_id, db_name, schema_name, table_name)
+);
+SELECT create_hypertable('monitor.table_size_history', 'time', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_table_size_history_lookup ON monitor.table_size_history (engine, server_id, db_name, schema_name, table_name, time DESC);
+ALTER TABLE monitor.table_size_history SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'engine,server_id,db_name,schema_name,table_name',
+    timescaledb.compress_orderby = 'time DESC'
+);
+DO $$
+BEGIN
+    CALL remove_compression_policy('monitor.table_size_history', if_exists => TRUE);
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
+SELECT add_compression_policy('monitor.table_size_history', INTERVAL '30 days', if_not_exists => TRUE);
+
+-- 3.3.4: Persistent cumulative state tables (to compute deltas across API restarts)
+-- These tables store the last observed *cumulative* counters from source engines.
+-- Hypertables above store delta snapshots for trending.
+CREATE TABLE IF NOT EXISTS monitor.index_usage_state (
+    engine TEXT NOT NULL,
+    server_id TEXT NOT NULL,
+    db_name TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    index_name TEXT NOT NULL,
+    seeks_total BIGINT NOT NULL DEFAULT 0,
+    scans_total BIGINT NOT NULL DEFAULT 0,
+    lookups_total BIGINT NOT NULL DEFAULT 0,
+    updates_total BIGINT NOT NULL DEFAULT 0,
+    last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (engine, server_id, db_name, schema_name, table_name, index_name)
+);
+
+CREATE TABLE IF NOT EXISTS monitor.table_usage_state (
+    engine TEXT NOT NULL,
+    server_id TEXT NOT NULL,
+    db_name TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    seq_scans_total BIGINT NOT NULL DEFAULT 0,
+    idx_scans_total BIGINT NOT NULL DEFAULT 0,
+    rows_read_total BIGINT NOT NULL DEFAULT 0,
+    rows_modified_total BIGINT NOT NULL DEFAULT 0,
+    last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (engine, server_id, db_name, schema_name, table_name)
+);
+
+-- ============================================================================
 -- SECTION 4: GRANT PERMISSIONS
 -- ============================================================================
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO PUBLIC;
+GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA monitor TO PUBLIC;
 
 DO $$
 DECLARE

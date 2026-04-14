@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Core TimescaleDB logger for SQL Server metrics including CPU, memory, connections, locks.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package hot
 
 import (
@@ -35,6 +42,8 @@ type TimescaleLogger struct {
 	prevPgWaitEventsHash      map[string]uint64
 	prevPgDbIOHash            map[string]uint64
 	prevPgSettingsHash        map[string]uint64
+	// SQL Server Memory Analyzer delta state
+	prevSpillByInstance       map[string]spillDeltaState
 }
 
 func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
@@ -58,6 +67,7 @@ func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
 		prevPgWaitEventsHash:      make(map[string]uint64),
 		prevPgDbIOHash:            make(map[string]uint64),
 		prevPgSettingsHash:        make(map[string]uint64),
+		prevSpillByInstance:       make(map[string]spillDeltaState),
 	}
 }
 

@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Query Store statistics collection and persistence worker.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package service
 
 import (
@@ -195,6 +202,14 @@ func (s *MetricsService) collectAdvancedEnterpriseMetricsForInstance(instanceNam
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
+	// Memory analyzer (Timescale-backed drilldown)
+	if row, err := s.MsRepo.FetchMemoryAnalyzerSnapshot(ctx, instanceName); err == nil {
+		_ = s.tsLogger.LogSQLServerMemoryMetrics(ctx, instanceName, row)
+	}
+	if rows, err := s.MsRepo.FetchBufferPoolByDB(ctx, instanceName, 20); err == nil {
+		_ = s.tsLogger.LogSQLServerBufferPoolByDB(ctx, instanceName, rows)
+	}
+
 	if rows, err := s.MsRepo.FetchLatchStats(instanceName); err == nil {
 		_ = s.tsLogger.LogLatchWaits(ctx, instanceName, rows)
 	}
@@ -213,8 +228,10 @@ func (s *MetricsService) collectAdvancedEnterpriseMetricsForInstance(instanceNam
 	if rows, err := s.MsRepo.FetchProcedureStats(instanceName); err == nil {
 		_ = s.tsLogger.LogProcedureStats(ctx, instanceName, rows)
 	}
-	if rows, err := s.MsRepo.FetchFileIOLatency(instanceName); err == nil {
-		_ = s.tsLogger.LogFileIOLatency(ctx, instanceName, rows)
+	if rows, err := s.MsRepo.FetchFileIOLatency(instanceName); err != nil {
+		log.Printf("[EnterpriseMetricsCollector] FetchFileIOLatency failed for %s: %v", instanceName, err)
+	} else if err := s.tsLogger.LogFileIOLatency(ctx, instanceName, rows); err != nil {
+		log.Printf("[EnterpriseMetricsCollector] LogFileIOLatency failed for %s: %v", instanceName, err)
 	}
 	if rows, err := s.MsRepo.FetchSpinlockStats(instanceName); err == nil {
 		_ = s.tsLogger.LogSpinlockStats(ctx, instanceName, rows)

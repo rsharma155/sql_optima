@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL Server memory metrics including clerk usage, memory grants, and buffer pool.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (
@@ -86,21 +93,38 @@ func (c *MssqlRepository) CollectMemoryClerks(db *sql.DB) ([]map[string]interfac
 
 // CollectMemoryGrants fetches memory grant information
 func (c *MssqlRepository) CollectMemoryGrants(db *sql.DB) ([]map[string]interface{}, error) {
+	// Shape matches Timescale LogMemoryGrants: user DBs only (database_id > 4), user sessions.
 	query := `
 		SELECT TOP 20
-			session_id,
-			request_id,
-			grant_time,
-			requested_memory_kb,
-			granted_memory_kb,
-			ideal_memory_kb,
-			max_used_memory_kb,
-			queue_id,
-			wait_order,
-			is_next_candidate
-		FROM sys.dm_exec_query_memory_grants
-		WHERE granted_memory_kb > 0
-		ORDER BY granted_memory_kb DESC
+			mg.session_id,
+			mg.request_id,
+			DB_NAME(ISNULL(r.database_id, s.database_id)) AS database_name,
+			s.login_name,
+			mg.granted_memory_kb,
+			ISNULL(COALESCE(mg.used_memory_kb, mg.max_used_memory_kb), 0) AS used_memory_kb,
+			ISNULL(r.dop, 1) AS dop,
+			CASE WHEN r.start_time IS NOT NULL
+				THEN DATEDIFF(SECOND, r.start_time, SYSDATETIME())
+				ELSE 0 END AS query_duration_sec
+		FROM sys.dm_exec_query_memory_grants mg WITH (NOLOCK)
+		INNER JOIN sys.dm_exec_sessions s WITH (NOLOCK)
+			ON mg.session_id = s.session_id
+		LEFT JOIN sys.dm_exec_requests r WITH (NOLOCK)
+			ON mg.session_id = r.session_id AND mg.request_id = r.request_id
+		OUTER APPLY sys.dm_exec_sql_text(mg.sql_handle) txt
+		WHERE mg.granted_memory_kb > 0
+		  AND s.is_user_process = 1
+		  AND ISNULL(r.database_id, s.database_id) > 4
+		  AND LOWER(ISNULL(DB_NAME(ISNULL(r.database_id, s.database_id)), N'')) <> N'distribution'
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND (
+			txt.text IS NULL OR (
+				LTRIM(txt.text) NOT LIKE N'sp\_%' ESCAPE '\'
+				AND LTRIM(txt.text) NOT LIKE N'xp\_%' ESCAPE '\'
+			)
+		  )
+		ORDER BY mg.granted_memory_kb DESC
 	`
 
 	rows, err := db.Query(query)

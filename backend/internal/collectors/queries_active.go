@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Active query collector for real-time query monitoring.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package collectors
 
 import (
@@ -39,6 +46,8 @@ func CollectActiveQueries(ctx context.Context, db *sql.DB) ([]models.ActiveQuery
 		WHERE r.session_id > 50
 		  AND r.session_id <> @@SPID
 		  AND r.status IN ('running', 'runnable', 'suspended')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		ORDER BY r.cpu_time DESC`
 
 	rows, err := db.QueryContext(ctx, query)

@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL Server wait statistics categorization and history.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (
@@ -18,6 +25,8 @@ func (c *MssqlRepository) CollectWaitStats(db *sql.DB) ([]map[string]interface{}
 		  AND s.database_id > 4
 		  AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
 		  AND s.session_id > 50
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		  AND w.wait_type NOT IN (N'CLR_SEMAPHORE', N'LAZYWRITER_SLEEP', N'RESOURCE_QUEUE', N'SLEEP_TASK', N'SLEEP_SYSTEMTASK', N'SQLTRACE_BUFFER_FLUSH', N'WAITFOR', N'XE_TIMER_EVENT', N'XE_DISPATCHER_WAIT')
 		GROUP BY w.wait_type
 		HAVING SUM(w.wait_duration_ms) > 0
@@ -56,7 +65,13 @@ func (c *MssqlRepository) CollectWaitingTasks(db *sql.DB) ([]map[string]interfac
 			t.wait_type,
 			t.resource_description
 		FROM sys.dm_os_waiting_tasks t
+		INNER JOIN sys.dm_exec_sessions s ON t.session_id = s.session_id
 		WHERE t.session_id > 50
+		  AND s.is_user_process = 1
+		  AND s.database_id > 4
+		  AND LOWER(ISNULL(DB_NAME(s.database_id), N'')) <> N'distribution'
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		ORDER BY t.wait_duration_ms DESC
 	`
 

@@ -1,4 +1,11 @@
 // Package repository handles best practices configuration auditing for SQL Server
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL Server best practices configuration validation.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (

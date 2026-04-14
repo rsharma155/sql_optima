@@ -1,5 +1,12 @@
 // Worker process: runs Asynq consumers for Redis-scheduled collector tasks.
 // Requires REDIS_ADDR. Run the API with the same REDIS_ADDR to enqueue via the embedded scheduler, or use this binary alone if another process schedules tasks.
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Background worker process that runs Asynq consumers for Redis-scheduled collector tasks. Requires REDIS_ADDR environment variable for task queue management.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package main
 
 import (

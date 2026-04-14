@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Reporting page for database performance reports.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.JobsView = function() {
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">

@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: High Availability dashboard for Always On Availability Groups.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.HADashboardView = function() {
     const instance = window.appState.config.instances[window.appState.currentInstanceIdx];
     if (!instance) { alert('Select an instance first.'); return; }

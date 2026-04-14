@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Extended Events models for SQL Server trace event capture and parsing.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package models
 
 // SqlServerXeEvent represents one row/event parsed from sys.fn_xe_file_target_read_file output.

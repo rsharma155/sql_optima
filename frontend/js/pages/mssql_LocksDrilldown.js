@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Lock analysis page for lock contention and blocking sessions.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.LocksDrilldown = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
     if (!inst || inst.type !== 'sqlserver') {

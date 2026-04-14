@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL Server enterprise metrics logger for advanced monitoring.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package hot
 
 import (
@@ -297,12 +304,8 @@ func (tl *TimescaleLogger) LogFileIOLatency(ctx context.Context, instanceName st
 	if len(rows) == 0 {
 		return nil
 	}
-	sig := fingerprintMapRows(instanceName, enterpriseKindFileIO, rows,
-		[]string{"database_name", "file_name", "file_type"},
-		[]string{"read_latency_ms", "write_latency_ms", "read_bytes_per_sec", "write_bytes_per_sec"})
-	if tl.enterpriseSnapshotUnchanged(instanceName, enterpriseKindFileIO, sig) {
-		return nil
-	}
+	// Do not apply enterprise batch dedup here: DMV averages often stay identical between scrapes,
+	// which would suppress inserts and leave disk_latency_trend_1h empty in Timescale.
 	now := time.Now().UTC()
 	batch := &pgx.Batch{}
 	for _, r := range rows {
@@ -328,7 +331,6 @@ func (tl *TimescaleLogger) LogFileIOLatency(ctx context.Context, instanceName st
 			return fmt.Errorf("file io latency insert failed at row %d: %w", i, err)
 		}
 	}
-	tl.rememberEnterpriseSnapshot(instanceName, enterpriseKindFileIO, sig)
 	return nil
 }
 
@@ -517,7 +519,7 @@ func (tl *TimescaleLogger) GetMemoryClerks(ctx context.Context, instanceName str
 		limit = 50
 	}
 	q := `
-		SELECT clerk_type, memory_node, pages_mb, virtual_memory_reserved_mb, virtual_memory_committed_mb, awe_memory_mb
+		SELECT capture_timestamp, clerk_type, memory_node, pages_mb, virtual_memory_reserved_mb, virtual_memory_committed_mb, awe_memory_mb
 		FROM sqlserver_memory_clerks
 		WHERE server_instance_name = $1
 		ORDER BY capture_timestamp DESC
@@ -530,13 +532,16 @@ func (tl *TimescaleLogger) GetMemoryClerks(ctx context.Context, instanceName str
 	defer rows.Close()
 	out := make([]map[string]interface{}, 0, limit)
 	for rows.Next() {
+		var ts time.Time
 		var ct string
 		var node int16
 		var pages, rsv, com, awe float64
-		if err := rows.Scan(&ct, &node, &pages, &rsv, &com, &awe); err != nil {
+		if err := rows.Scan(&ts, &ct, &node, &pages, &rsv, &com, &awe); err != nil {
 			continue
 		}
 		out = append(out, map[string]interface{}{
+			"capture_timestamp":          ts,
+			"event_time":                ts.Format(time.RFC3339),
 			"clerk_type":                 ct,
 			"memory_node":                node,
 			"pages_mb":                   pages,

@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Instance health dashboard with health score and risk indicators.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 // DBA War Room - Instance Health Dashboard
 appDebug('[InstanceHealthDashboard] Script is loading...');
 window.InstanceHealthDashboardView = async function() {

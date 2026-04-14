@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Best practices configuration audit page.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * PostgreSQL Best Practices: prefers Rule Engine results (Timescale) when available;
  * otherwise pg_settings DBA audit (/api/postgres/best-practices), with optional Timescale snapshot overlay.

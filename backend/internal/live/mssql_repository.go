@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Live SQL Server repository for real-time query monitoring and KPI calculations.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package live
 
 import (
@@ -51,6 +58,8 @@ func (r *MsSQLLiveRepository) GetRunningQueries(ctx context.Context, instanceNam
 		INNER JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
 		CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
 		WHERE s.is_user_process = 1 AND r.session_id <> @@SPID
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		ORDER BY r.cpu_time DESC 
 		OPTION (RECOMPILE)`
 
@@ -61,7 +70,12 @@ func (r *MsSQLLiveRepository) GetBlockingChains(ctx context.Context, instanceNam
 	query := `
 		WITH BlockingTree AS (
 			SELECT r.session_id AS Blocked_SPID, r.blocking_session_id AS Blocking_SPID, r.wait_type, r.wait_time
-			FROM sys.dm_exec_requests r WHERE r.blocking_session_id <> 0
+			FROM sys.dm_exec_requests r
+			INNER JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
+			WHERE r.blocking_session_id <> 0
+			  AND s.is_user_process = 1
+			  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+			  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		)
 		SELECT 
 			b.Blocking_SPID AS Lead_Blocker, 
@@ -122,7 +136,9 @@ func (r *MsSQLLiveRepository) GetConnectionsByApp(ctx context.Context, instanceN
 			COUNT(*) AS connection_count,
 			COUNT(DISTINCT login_name) AS unique_logins
 		FROM sys.dm_exec_sessions 
-		WHERE is_user_process = 1 
+		WHERE is_user_process = 1
+		  AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		GROUP BY program_name 
 		ORDER BY connection_count DESC
 		OPTION (RECOMPILE)`

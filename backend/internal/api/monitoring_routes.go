@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Defines monitoring handlers for database-specific metrics including CPU, memory, waits, connections, locks, and query statistics.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package api
 
 import (
@@ -16,6 +23,7 @@ type monitoringHandlers struct {
 	Health    *handlers.HealthHandlers
 	Dashboard *handlers.DashboardHandlers
 	Query     *handlers.QueryHandlers
+	SIH       *handlers.StorageIndexHealthTimescaleHandlers
 }
 
 // registerMonitoringReadRoutes attaches read-only monitoring endpoints (viewer, dba, or admin).
@@ -26,6 +34,7 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	ts := h.Timescale
 	he := h.Health
 	q := h.Query
+	sih := h.SIH
 
 	sr.HandleFunc("/mssql/dashboard", m.Dashboard).Methods("GET")
 	sr.HandleFunc("/mssql/dashboard/v2", m.DashboardV2).Methods("GET")
@@ -102,6 +111,13 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/timescale/mssql/long-running-queries", ts.MssqlLongRunningQueries).Methods("GET")
 	sr.HandleFunc("/timescale/postgres/throughput", ts.PostgresThroughput).Methods("GET")
 	sr.HandleFunc("/timescale/postgres/connections", ts.PostgresConnections).Methods("GET")
+	if sih != nil {
+		sr.HandleFunc("/timescale/storage-index-health/index-usage", sih.IndexUsage).Methods("GET")
+		sr.HandleFunc("/timescale/storage-index-health/table-usage", sih.TableUsage).Methods("GET")
+		sr.HandleFunc("/timescale/storage-index-health/growth", sih.Growth).Methods("GET")
+		sr.HandleFunc("/timescale/storage-index-health/dashboard", sih.Dashboard).Methods("GET")
+		sr.HandleFunc("/timescale/storage-index-health/filters", sih.Filters).Methods("GET")
+	}
 	sr.HandleFunc("/live/kpis", l.KPIs).Methods("GET")
 	sr.HandleFunc("/live/running-queries", l.RunningQueries).Methods("GET")
 	sr.HandleFunc("/live/blocking", l.Blocking).Methods("GET")
@@ -116,6 +132,7 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/health/metrics-history", he.MetricsHistory).Methods("GET")
 	sr.HandleFunc("/incidents/timeline", he.IncidentsTimeline).Methods("GET")
 	sr.HandleFunc("/queries/bottlenecks", q.Bottlenecks).Methods("GET")
+	sr.HandleFunc("/queries/query-store/sql-text", q.QueryStoreSQLText).Methods("GET")
 	sr.HandleFunc("/rules/best-practices", rulesBestPractices).Methods("GET")
 }
 

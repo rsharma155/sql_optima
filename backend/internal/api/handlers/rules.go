@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Rule engine handlers for best practices evaluation and configuration compliance checking.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package handlers
 
 import (
@@ -14,10 +21,10 @@ import (
 	"github.com/expr-lang/expr"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	_ "github.com/microsoft/go-mssqldb"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/ruleengine/models"
 	"github.com/rsharma155/sql_optima/internal/security/sqlsandbox"
+	"github.com/rsharma155/sql_optima/internal/sqlserver"
 )
 
 type RulesHandler struct {
@@ -492,7 +499,10 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 
 	var db *sql.DB
 	if instanceType == "sqlserver" {
-		db, err = sql.Open("mssql", connStr)
+		db, err = sqlserver.OpenMetricsPool(connStr)
+		if err != nil {
+			return fmt.Errorf("failed to open sql server metrics pool: %w", err)
+		}
 	} else {
 		db, err = sql.Open("postgres", connStr)
 	}

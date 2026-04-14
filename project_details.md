@@ -24,6 +24,10 @@ Browser → SecurityHeadersMiddleware → CORS (if enabled) → mux routes
 - **`/api/config`** — Returns instance list from config (host/port/names/types). Does not include passwords.
 - **`POST /api/postgres/explain/analyze`** — Body `{ "query"?, "plan": string | object }`; returns `result`, `plan_graph`, `plan_mermaid`, and optional `sql_context` (heuristic SQL line excerpts + `CREATE INDEX` drafts when `query` is set). Max body ~512 KiB.
 - **`POST /api/postgres/explain/optimize`** — Same body; returns `report`, `plan_root`, `plan_graph`, `plan_mermaid`, optional `sql_context`.
+- **`GET /api/timescale/storage-index-health/*`** — Timescale-backed Storage & Index Health reads. Query requires `engine=sqlserver|postgres` and `instance=<name>`:
+  - `/filters` → distinct `db/schema/table` options for the selected time range
+  - `/dashboard` → pre-aggregated payload (KPIs, hotspots, growth, unused/duplicate candidates)
+  - `/index-usage`, `/table-usage`, `/growth` → raw point series for charts
 - **Instance parameter** — Most handlers take `?instance=<name>`. Names are validated with `^[a-zA-Z0-9_-]+$` (max length capped) to reduce injection-style abuse in query construction.
 - **Rules / best practices** — `GET /api/rules/best-practices` drives the generic rules engine UI; PostgreSQL-specific checks also use `GET /api/postgres/best-practices` where wired in the PG best-practices view.
 
@@ -62,6 +66,7 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 | `drilldown-pg-enterprise` | `PgEnterpriseDashboardView` | |
 | `enterprise-metrics` | `EnterpriseMetricsView` | Requires instance |
 | `performance-debt` | `mssql_PerformanceDebtDashboard` | |
+| `storage-index-health` | `MssqlStorageIndexHealthView` / `PgStorageIndexHealthView` | Cross-engine Timescale-backed Storage & Index Health dashboard; the router dispatches based on current instance type |
 | `jobs` | `JobsView` | |
 | `alerts` | `AlertsView` | |
 | `incidents` | `AlertsView` | **Alias** (e.g. from Reports actions) |

@@ -1,4 +1,11 @@
 // Package sqlsandbox enforces read-only, bounded SQL for rules, widgets, and ad-hoc execution paths.
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL query sandbox for safe query execution with security boundaries.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package sqlsandbox
 
 import (

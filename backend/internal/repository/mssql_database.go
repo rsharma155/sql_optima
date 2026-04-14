@@ -1,3 +1,10 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL Server database-level metrics and configuration.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package repository
 
 import (
@@ -57,8 +64,8 @@ func (c *MssqlRepository) CollectConnectionStats(db *sql.DB) ([]map[string]inter
 		WHERE s.is_user_process = 1
 		  AND s.database_id > 4
 		  AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
-		  AND s.login_name NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND s.program_name NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		GROUP BY program_name
 		ORDER BY connection_count DESC
 	`

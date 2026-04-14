@@ -1,5 +1,12 @@
 // Package service implements business logic for metric collection and caching.
 // It provides a unified interface for both SQL Server and PostgreSQL monitoring data.
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Metrics service orchestration including TimescaleDB persistence and cache management.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package service
 
 import (
@@ -32,6 +39,15 @@ type MetricsService struct {
 	xeSqlitePath     string
 	tsLogger         *hot.TimescaleLogger
 	tsHotStorage     *hot.HotStorage
+
+	// Storage & Index Health collection scheduling.
+	// We collect raw engine counters frequently, but persist certain Timescale snapshots
+	// on coarser cadences to avoid unnecessary storage growth.
+	sihMu            sync.Mutex
+	sihLastIndex15m  map[string]time.Time
+	sihLastTable15m  map[string]time.Time
+	sihLastGrowth6h  map[string]time.Time
+	sihLastDefsDaily map[string]time.Time
 }
 
 func NewMetricsService(pg *repository.PgRepository, ms *repository.MssqlRepository, cfg *config.Config, tsStorage *hot.HotStorage) *MetricsService {
@@ -61,6 +77,11 @@ func NewMetricsService(pg *repository.PgRepository, ms *repository.MssqlReposito
 		pgDashboardCache: make(map[string]models.PgCoreDashboardCache),
 		tsLogger:         tsLogger,
 		tsHotStorage:     tsStorage,
+
+		sihLastIndex15m:  make(map[string]time.Time),
+		sihLastTable15m:  make(map[string]time.Time),
+		sihLastGrowth6h:  make(map[string]time.Time),
+		sihLastDefsDaily: make(map[string]time.Time),
 	}
 }
 
@@ -74,6 +95,47 @@ func (s *MetricsService) GetTimescaleDBPool() *pgxpool.Pool {
 
 func (s *MetricsService) IsTimescaleConnected() bool {
 	return s.tsLogger != nil && s.tsHotStorage != nil
+}
+
+// =============================================================================
+// Timescale-backed Storage & Index Health reads
+// =============================================================================
+
+func (s *MetricsService) TimescaleStorageIndexHealthIndexUsage(ctx context.Context, engine, instance, from, to string, limit int) ([]models.IndexUsageStat, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not configured")
+	}
+	return s.tsLogger.QueryStorageIndexHealthIndexUsage(ctx, engine, instance, from, to, limit)
+}
+
+func (s *MetricsService) TimescaleStorageIndexHealthTableUsage(ctx context.Context, engine, instance, from, to string, limit int) ([]models.TableUsageStat, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not configured")
+	}
+	return s.tsLogger.QueryStorageIndexHealthTableUsage(ctx, engine, instance, from, to, limit)
+}
+
+func (s *MetricsService) TimescaleStorageIndexHealthGrowth(ctx context.Context, engine, instance, from, to string, limit int) ([]models.TableSizeHistory, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not configured")
+	}
+	return s.tsLogger.QueryStorageIndexHealthTableGrowth(ctx, engine, instance, from, to, limit)
+}
+
+func (s *MetricsService) TimescaleStorageIndexHealthDashboard(ctx context.Context, engine, instance, from, to string, dbNames, schemaNames []string, tableLike string) (*hot.StorageIndexHealthDashboard, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not configured")
+	}
+	return s.tsLogger.QueryStorageIndexHealthDashboard(ctx, engine, instance, from, to, hot.SIHFilters{
+		DBNames: dbNames, SchemaNames: schemaNames, TableLike: tableLike,
+	})
+}
+
+func (s *MetricsService) TimescaleStorageIndexHealthFilterOptions(ctx context.Context, engine, instance, from, to string, dbName, schemaName string) (*hot.SIHFilterOptions, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not configured")
+	}
+	return s.tsLogger.QueryStorageIndexHealthFilterOptions(ctx, engine, instance, from, to, dbName, schemaName)
 }
 
 func (s *MetricsService) GetAllInstanceStatuses() map[string]string {
@@ -182,6 +244,26 @@ func (s *MetricsService) GetTimescaleFileIOLatency(ctx context.Context, instance
 		return nil, nil
 	}
 	return s.tsLogger.GetFileIOLatency(ctx, instanceName, limit)
+}
+
+// WarmFileIOLatencyToTimescale appends one DMV snapshot to Timescale so the dashboard disk-latency
+// trend can render on page load instead of waiting only for the Enterprise metrics ticker.
+func (s *MetricsService) WarmFileIOLatencyToTimescale(ctx context.Context, instanceName string) {
+	if s == nil || s.tsLogger == nil {
+		return
+	}
+	rows, err := s.MsRepo.FetchFileIOLatency(instanceName)
+	if err != nil {
+		log.Printf("[MetricsService] WarmFileIOLatency fetch failed for %s: %v", instanceName, err)
+		return
+	}
+	if len(rows) == 0 {
+		log.Printf("[MetricsService] WarmFileIOLatency: DMV returned no file rows for %s", instanceName)
+		return
+	}
+	if err := s.tsLogger.LogFileIOLatency(ctx, instanceName, rows); err != nil {
+		log.Printf("[MetricsService] WarmFileIOLatency Timescale write failed for %s: %v", instanceName, err)
+	}
 }
 
 func (s *MetricsService) GetTimescaleSpinlockStats(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
@@ -701,6 +783,73 @@ func (s *MetricsService) GetTimescaleSQLServerMemoryDrilldown(instanceName, from
 	if err != nil {
 		return nil, err
 	}
+	mem, err := s.tsLogger.GetSQLServerMemoryMetricsRange(ctx, instanceName, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := s.tsLogger.GetPlanCacheHealthRange(ctx, instanceName, from, to, limit)
+	if err != nil {
+		plan = []map[string]interface{}{}
+	}
+	clerks, err := s.tsLogger.GetMemoryClerks(ctx, instanceName, 200)
+	if err != nil {
+		clerks = []map[string]interface{}{}
+	}
+	bpdb, err := s.tsLogger.GetSQLServerBufferPoolByDBRange(ctx, instanceName, from, to, 8000)
+	if err != nil {
+		bpdb = []map[string]interface{}{}
+	}
+
+	// Track per-section sources so UI can display "Timescale" vs "Live fallback".
+	source := map[string]any{
+		"sqlserver_metrics": "timescale",
+		"memory_history":    "timescale",
+		"scheduler_memory":  "timescale",
+		"memory_metrics":    "timescale",
+		"plan_cache_health": "timescale",
+		"memory_clerks":     "timescale",
+		"buffer_pool_by_db": "timescale",
+	}
+
+	// Fallback: when Timescale tables are empty (fresh install / collector warming up),
+	// return at least one live snapshot so charts don't render blank.
+	// This keeps the "Timescale drilldown" page usable even before the first scrape lands.
+	if len(mem) == 0 && s.MsRepo != nil {
+		if row, err := s.MsRepo.FetchMemoryAnalyzerSnapshot(ctx, instanceName); err == nil && row != nil {
+			now := time.Now().UTC()
+			row["capture_timestamp"] = now
+			row["event_time"] = now.Format(time.RFC3339)
+			mem = append(mem, row)
+			source["memory_metrics"] = "live_fallback"
+
+			// Also backfill PLE series for the window UI if empty.
+			if len(ple) == 0 {
+				if v, ok := row["ple_seconds"]; ok {
+					ple = append(ple, map[string]interface{}{
+						"capture_timestamp":            now,
+						"event_time":                   now.Format(time.RFC3339),
+						"page_life_expectancy_seconds": v,
+						"page_life_expectancy":         v,
+					})
+					source["memory_history"] = "live_fallback"
+				}
+			}
+		}
+	}
+	if len(bpdb) == 0 && s.MsRepo != nil {
+		if rows, err := s.MsRepo.FetchBufferPoolByDB(ctx, instanceName, 20); err == nil && len(rows) > 0 {
+			now := time.Now().UTC()
+			for _, r := range rows {
+				bpdb = append(bpdb, map[string]interface{}{
+					"capture_timestamp": now,
+					"event_time":        now.Format(time.RFC3339),
+					"database_name":     r["database_name"],
+					"buffer_mb":         r["buffer_mb"],
+				})
+			}
+			source["buffer_pool_by_db"] = "live_fallback"
+		}
+	}
 	return map[string]interface{}{
 		"instance":          instanceName,
 		"from":              from,
@@ -708,6 +857,11 @@ func (s *MetricsService) GetTimescaleSQLServerMemoryDrilldown(instanceName, from
 		"sqlserver_metrics": metrics,
 		"memory_history":    ple,
 		"scheduler_memory":  sched,
+		"memory_metrics":    mem,
+		"plan_cache_health": plan,
+		"memory_clerks":     clerks,
+		"buffer_pool_by_db": bpdb,
+		"data_source":       source,
 	}, nil
 }
 
@@ -1026,6 +1180,13 @@ func (s *MetricsService) GetQueryBottlenecks(instanceName string, limit int) ([]
 
 func (s *MetricsService) GetQueryBottlenecksWithRange(instanceName, timeRange string, limit int, database string) ([]map[string]interface{}, error) {
 	return s.GetQueryStoreBottlenecks(context.Background(), instanceName, timeRange, limit, database)
+}
+
+func (s *MetricsService) GetMssqlQueryStoreSQLText(ctx context.Context, instanceName, databaseName, queryHash string) (string, error) {
+	if s.MsRepo == nil {
+		return "", fmt.Errorf("MsRepo not configured")
+	}
+	return s.MsRepo.FetchQueryStoreSQLText(instanceName, databaseName, queryHash)
 }
 
 func pgQueryDeltaToStat(d hot.PostgresQueryStatsDelta) repository.PgQueryStat {

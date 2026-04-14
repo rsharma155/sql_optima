@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: PostgreSQL EXPLAIN ANALYZE execution and visualization.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * PostgreSQL EXPLAIN plan analyzer — analyze/optimize APIs + plan graph + SQL-linked hints (heuristic).
  */

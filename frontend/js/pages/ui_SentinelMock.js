@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Sentinel mock UI for testing and development.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * Visual-only mock (no API). Not loaded in index.html by default — see project_details.md ("Optional Sentinel mock").
  * Route: window.appNavigate('sentinel-mock') after adding this script to index.html (after router.js).

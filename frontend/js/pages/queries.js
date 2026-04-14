@@ -1,3 +1,13 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Query analysis page with performance metrics.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
 window.PgQueriesView = async function() {
     window.routerOutlet.innerHTML = await window.loadTemplate('/pages/queries.html');
     setTimeout(initPgQueries, 50);
