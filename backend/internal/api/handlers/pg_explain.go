@@ -16,6 +16,7 @@ import (
 	"github.com/rsharma155/sql_optima/internal/explain"
 	"github.com/rsharma155/sql_optima/internal/explain/analyzer"
 	"github.com/rsharma155/sql_optima/internal/explain/parser"
+	"github.com/rsharma155/sql_optima/internal/explain/pg_reportgenerator"
 	"github.com/rsharma155/sql_optima/internal/explain/types"
 )
 
@@ -130,6 +131,9 @@ func PgExplainAnalyze(w http.ResponseWriter, r *http.Request) {
 	result.Query = queryText
 	result.RawPlan = raw
 
+	// Enhanced deterministic performance report (enhance_analyze.md).
+	perfReport := pg_reportgenerator.Generate(plan, pg_reportgenerator.DefaultOptions())
+
 	g := explain.BuildPlanGraph(result.Plan.Plan)
 	bundle := explain.SQLContextBundle{Disclaimer: explain.SQLContextDisclaimer}
 	if queryText != "" {
@@ -140,6 +144,7 @@ func PgExplainAnalyze(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"success":      true,
 		"result":       result,
+		"performance_report": perfReport,
 		"plan_graph":   g,
 		"plan_mermaid": explain.MermaidFlowchart(g),
 		"sql_context":  bundle,

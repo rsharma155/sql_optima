@@ -52,7 +52,16 @@ h1, h2, h3, h4 { font-weight: 600; } p { color: var(--text-secondary); line-heig
 
 /* Layout Shell */
 .app-container { display: flex; height: 100vh; width: 100vw; }
-.sidebar { width: 260px; background-color: var(--sidebar-bg); border-right: 1px solid var(--border-color); display: flex; flex-direction: column; z-index: 10; }
+.sidebar {
+    width: 260px;
+    background-color: var(--sidebar-bg);
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    z-index: 10;
+    min-height: 0;
+    overflow: hidden;
+}
 .sidebar-header { padding: 1.5rem; display: flex; align-items: center; gap: 0.75rem; border-bottom: 1px solid var(--border-color); }
 .logo-icon { font-size: 1.5rem; color: var(--accent-blue); text-shadow: 0 0 10px var(--accent-glow); }
 .custom-select-group { display: flex; flex-direction: column; gap: 0.5rem; }
@@ -156,7 +165,14 @@ h1, h2, h3, h4 { font-weight: 600; } p { color: var(--text-secondary); line-heig
     margin-bottom: 1rem;
     font-size: 0.9rem;
 }
-.nav-links { list-style: none; padding: 1.5rem 0.75rem; flex: 1; }
+.nav-links {
+    list-style: none;
+    padding: 1.5rem 0.75rem;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
 .nav-links li { padding: 0.75rem 1rem; margin-bottom: 0.25rem; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 0.875rem; color: var(--text-secondary); transition: all 0.2s ease; font-weight: 500; font-size: 0.95rem; }
 .nav-links li:hover { background-color: var(--bg-surface-hover); color: var(--text-primary); transform: translateX(4px); }
 .nav-links li.active { background: linear-gradient(90deg, rgba(59, 130, 246, 0.1) 0%, transparent 100%); color: var(--accent-blue); border-left: 3px solid var(--accent-blue); }
@@ -181,9 +197,14 @@ input:checked + .slider { background-color: var(--accent-blue); } input:checked 
 
 /* Sidebar collapse (manual + laptop friendly) */
 body.sidebar-collapsed .sidebar { width: 72px; }
-body.sidebar-collapsed .sidebar-header { justify-content: center; padding: 1rem 0.5rem; }
+body.sidebar-collapsed .sidebar-header {
+    justify-content: center;
+    padding: 1rem 0.5rem;
+    flex-direction: column;
+    gap: 0.35rem;
+}
 body.sidebar-collapsed .sidebar-header h2 { display: none; }
-body.sidebar-collapsed .sidebar-header .sidebar-inline-toggle { display: none; }
+body.sidebar-collapsed .sidebar-inline-toggle { margin-left: 0 !important; }
 body.sidebar-collapsed .db-selector-wrapper { display: none; }
 body.sidebar-collapsed .nav-links { padding: 1rem 0.5rem; }
 body.sidebar-collapsed .nav-links li {
@@ -202,6 +223,14 @@ body.sidebar-collapsed .sidebar-footer { padding: 0.75rem; }
 .sidebar-inline-toggle:hover {
     opacity: 1;
     border-color: var(--border-color);
+}
+.sidebar-toggle-glyph {
+    display: inline-block;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: -0.06em;
+    line-height: 1;
 }
 
 /* Dashboard UI Layout */
@@ -573,6 +602,21 @@ body.sidebar-collapsed .sidebar-footer { padding: 0.75rem; }
     color: var(--text-primary);
     display: block;
     width: 100%;
+}
+
+.pg-explain-page .pg-explain-field-label--wrap {
+    font-weight: 400;
+    line-height: 1.45;
+}
+
+.pg-explain-page .pg-explain-field-label-strong {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.pg-explain-page .pg-explain-field-hint-inline {
+    font-weight: 400;
+    font-size: 0.78rem;
 }
 
 .pg-explain-page .pg-explain-field-hint {
@@ -1424,6 +1468,61 @@ body.sidebar-collapsed .sidebar-footer { padding: 0.75rem; }
     padding: 0.45rem 0.5rem !important;
 }
 
+/* EXPLAIN Analyze — 10-table report grid (explain_analyze_report_layout.md) */
+.pg-explain-report-section .pg-explain-report-h3 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin: 0 0 0.65rem 0;
+    color: var(--text-primary);
+}
+.pg-explain-report-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin-top: 0.25rem;
+}
+
+/* Analyze report grids — Query Performance–style scroll + sticky headers */
+.pg-explain-page .pg-explain-report-table-wrap {
+    max-height: min(42vh, 520px);
+    overflow: auto;
+    margin-top: 0.35rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    -webkit-overflow-scrolling: touch;
+}
+
+.pg-explain-page .pg-explain-perf-grid thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg-surface, var(--bg-primary));
+    box-shadow: 0 1px 0 var(--border-color);
+}
+
+.pg-explain-page .pg-explain-perf-grid tbody tr:hover {
+    background: var(--bg-surface-hover, rgba(255, 255, 255, 0.04));
+}
+
+.pg-explain-page th.pg-explain-perf-th-sortable:hover {
+    color: var(--accent-blue, var(--accent));
+}
+
+.pg-explain-report-section .data-table {
+    min-width: 520px;
+}
+.pg-explain-report-section .data-table td {
+    font-size: 0.76rem;
+    vertical-align: top;
+}
+.pg-explain-report-section .data-table th {
+    white-space: nowrap;
+}
+.pg-explain-report-clip {
+    display: inline-block;
+    max-width: 100%;
+    word-break: break-word;
+}
+
 /* =========================================
    Sortable Table Headers
 ========================================= */
@@ -1629,6 +1728,40 @@ th.sortable i { margin-left: 4px; font-size: 0.7em; }
     }
 }
 
+/* PostgreSQL Control Center: stack health row under meta + actions */
+.dashboard-pg-header-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
+    flex: 1;
+    min-width: 0;
+}
+.dashboard-pg-header-primary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    justify-content: flex-end;
+    width: 100%;
+}
+.dashboard-pg-header-health-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    width: 100%;
+}
+.dashboard-sky-theme .dashboard-title-line > h1 {
+    white-space: nowrap;
+}
+@media (max-width: 400px) {
+    .dashboard-sky-theme .dashboard-title-line > h1 {
+        white-space: normal;
+    }
+}
+
 /* Inline title + subtitle when both sit under .page-title (no HTML change required) */
 .dashboard-sky-theme .page-title.flex-between > div:first-of-type:has(> h1 + p.subtitle) {
     display: flex;
@@ -1773,4 +1906,63 @@ th.sortable i { margin-left: 4px; font-size: 0.7em; }
 .metric-value.loading {
     animation: pulse-opacity 1.5s ease-in-out infinite;
     color: var(--text-muted);
+}
+
+/* PostgreSQL CPU dashboard (pg_cpu) */
+.pg-cpu-bottom-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    gap: 0.75rem;
+    align-items: stretch;
+}
+@media (max-width: 900px) {
+    .pg-cpu-bottom-grid {
+        grid-template-columns: 1fr;
+    }
+}
+.saturation-badge {
+    display: inline-block;
+    padding: 0.15rem 0.45rem;
+    border-radius: 0.35rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+.saturation-badge--ok {
+    background: rgba(34, 197, 94, 0.2);
+    color: var(--success, #22c55e);
+}
+.saturation-badge--warn {
+    background: rgba(245, 158, 11, 0.2);
+    color: var(--warning, #f59e0b);
+}
+.saturation-badge--danger {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--danger, #ef4444);
+}
+.saturation-badge--muted {
+    background: rgba(148, 163, 184, 0.2);
+    color: var(--text-secondary, #888);
+}
+
+.pg-cpu-second-row {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 0.75rem;
+    align-items: stretch;
+}
+.pg-cpu-third-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+}
+@media (max-width: 980px) {
+    .pg-cpu-second-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+.pg-cpu-queries-table td .pg-cpu-query-link {
+    color: var(--accent-blue, #3b82f6);
+    text-decoration: underline;
+    cursor: pointer;
 }

@@ -102,7 +102,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		// Strict: only auth endpoints stay public; config is moved behind JWT below.
 	} else {
 		registerMonitoringReadRoutes(openAPI, mon, rulesBP)
-		registerMonitoringElevatedRoutes(openAPI, mssqlH, handlers.PgExplainAnalyze, handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
+		registerMonitoringElevatedRoutes(openAPI, mssqlH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
 		// Legacy: explain was public when auth is not required.
 	}
 
@@ -144,7 +144,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		dbaAPI := r.PathPrefix("/api").Subrouter()
 		dbaAPI.Use(middleware.RequireAuth(""))
 		dbaAPI.Use(middleware.RequireAnyRole("dba", "admin"))
-		registerMonitoringElevatedRoutes(dbaAPI, mssqlH, handlers.PgExplainAnalyze, handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
+		registerMonitoringElevatedRoutes(dbaAPI, mssqlH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
 		registerPostgresDBAMutations(dbaAPI, postgresH)
 		registerDashboardWidgetRoutes(dbaAPI, dashboardH)
 	}

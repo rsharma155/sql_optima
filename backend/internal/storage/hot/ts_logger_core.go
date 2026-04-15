@@ -117,13 +117,35 @@ type PostgresConnectionRow struct {
 }
 
 type PostgresSystemStatsRow struct {
-	CaptureTimestamp  time.Time `json:"capture_timestamp"`
-	ServerName        string    `json:"server_name"`
-	CPUUsage          float64   `json:"cpu_usage"`
-	MemoryUsage       float64   `json:"memory_usage"`
-	ActiveConnections int       `json:"active_connections"`
-	IdleConnections   int       `json:"idle_connections"`
-	TotalConnections  int       `json:"total_connections"`
+	CaptureTimestamp     time.Time `json:"capture_timestamp"`
+	ServerName           string    `json:"server_name"`
+	CPUUsage             float64   `json:"cpu_usage"`
+	MemoryUsage          float64   `json:"memory_usage"`
+	ActiveConnections    int       `json:"active_connections"`
+	IdleConnections      int       `json:"idle_connections"`
+	TotalConnections     int       `json:"total_connections"`
+	HostCpuPercent       float64   `json:"host_cpu_percent"`
+	PostgresCpuPercent   float64   `json:"postgres_cpu_percent"`
+	Load1m               float64   `json:"load_1m"`
+	Load5m               float64   `json:"load_5m"`
+	Load15m              float64   `json:"load_15m"`
+	CpuCores             int       `json:"cpu_cores"`
+}
+
+// PgSystemStatsInsert is the payload for a postgres_system_stats Timescale row.
+// Metadata: used by the metrics collector to persist host vs. Postgres CPU and load.
+type PgSystemStatsInsert struct {
+	CPUUsage           float64
+	MemoryUsage        float64
+	ActiveConnections  int
+	IdleConnections    int
+	TotalConnections   int
+	HostCpuPercent     float64
+	PostgresCpuPercent float64
+	Load1m             float64
+	Load5m             float64
+	Load15m            float64
+	CpuCores           int
 }
 
 type PostgresReplicationSlotRow struct {
@@ -320,23 +342,34 @@ type ServerPropertiesRow struct {
 
 func (tl *TimescaleLogger) GetLatestMetrics(ctx context.Context, instanceName string, dbType string) (map[string]interface{}, error) {
 	if dbType == "postgres" {
-		query := `SELECT capture_timestamp, cpu_usage, memory_usage, active_connections, total_connections
+		query := `SELECT capture_timestamp, cpu_usage, memory_usage, active_connections, total_connections,
+			COALESCE(host_cpu_percent, 0), COALESCE(postgres_cpu_percent, 0),
+			COALESCE(load_1m, 0), COALESCE(load_5m, 0), COALESCE(load_15m, 0), COALESCE(cpu_cores, 0)
 			FROM postgres_system_stats
 			WHERE server_instance_name = $1
 			ORDER BY capture_timestamp DESC LIMIT 1`
 		var ts time.Time
 		var cpu, mem float64
 		var active, total int
-		err := tl.pool.QueryRow(ctx, query, instanceName).Scan(&ts, &cpu, &mem, &active, &total)
+		var hostCPU, pgCPU, load1, load5, load15 float64
+		var cpuCores int
+		err := tl.pool.QueryRow(ctx, query, instanceName).Scan(&ts, &cpu, &mem, &active, &total,
+			&hostCPU, &pgCPU, &load1, &load5, &load15, &cpuCores)
 		if err != nil && err != pgx.ErrNoRows {
 			return nil, err
 		}
 		return map[string]interface{}{
-			"cpu_usage":          cpu,
-			"memory_usage":       mem,
-			"active_connections": active,
-			"total_connections":  total,
-			"capture_timestamp":  ts,
+			"cpu_usage":             cpu,
+			"memory_usage":          mem,
+			"active_connections":    active,
+			"total_connections":     total,
+			"capture_timestamp":     ts,
+			"host_cpu_percent":      hostCPU,
+			"postgres_cpu_percent":  pgCPU,
+			"load_1m":               load1,
+			"load_5m":               load5,
+			"load_15m":              load15,
+			"cpu_cores":             cpuCores,
 		}, nil
 	}
 

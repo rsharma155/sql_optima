@@ -1,0 +1,172 @@
+        <div class="page-view active">
+            <div class="page-title flex-between" style="align-items:flex-start; gap:0.75rem; flex-wrap:wrap;">
+                <div style="min-width:0;">
+                    <h1><i class="fa-solid fa-link-slash text-accent"></i> Locks & Blocking Dashboard</h1>
+                    <p class="subtitle">Trace Postgres Block chains and Lock grants.</p>
+                    <div id="pgLocksAlertBanner" class="alert alert-danger mt-2" style="display:none; padding:0.6rem 0.75rem;">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        <strong id="pgLocksAlertTitle">Blocking detected</strong>
+                        <span class="text-muted" id="pgLocksAlertMsg" style="margin-left:0.35rem;"></span>
+                    </div>
+                </div>
+
+                <div class="glass-panel" style="padding:0.55rem 0.65rem; margin-left:auto;">
+                    <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:flex-end; justify-content:flex-end;">
+                        <div>
+                            <label class="text-muted" for="pgLocksFrom" style="font-size:0.65rem;display:block;">From</label>
+                            <input type="datetime-local" id="pgLocksFrom" class="form-control" style="font-size:0.72rem; min-width:10.5rem;" />
+                        </div>
+                        <div>
+                            <label class="text-muted" for="pgLocksTo" style="font-size:0.65rem;display:block;">To</label>
+                            <input type="datetime-local" id="pgLocksTo" class="form-control" style="font-size:0.72rem; min-width:10.5rem;" />
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline text-accent" id="pgLocksApplyRange" style="height:32px;">
+                            <i class="fa-solid fa-filter"></i> Apply
+                        </button>
+                    </div>
+                    <div id="pgLocksRangeMeta" class="text-muted mt-1" style="font-size:0.65rem; text-align:right;"></div>
+                    <div id="pgLocksRangeHint" class="text-danger mt-1" style="font-size:0.65rem; display:none;" role="alert"></div>
+                </div>
+            </div>
+
+            <div class="table-card glass-panel mt-2" style="padding:0.75rem;">
+                <div class="card-header">
+                    <h3 style="font-size:0.85rem; margin:0;">Realtime Status (KPIs)</h3>
+                </div>
+                <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:0.75rem;">
+                    <div class="strip-metric-cell" title="Distinct blocked sessions detected (Timescale incidents pipeline).">
+                        <div class="strip-metric-label">Active Blocking Sessions</div>
+                        <div class="strip-metric-value metric-value" id="pgKpiActiveVictims">—</div>
+                        <div class="text-muted sub" id="pgKpiIncidentMeta">—</div>
+                    </div>
+                    <div class="strip-metric-cell" title="Root blocker PID and query snippet (best-effort).">
+                        <div class="strip-metric-label">Root Blocker</div>
+                        <div class="strip-metric-value metric-value" id="pgKpiRootPid">—</div>
+                        <div class="text-muted sub" id="pgKpiRootQuery">—</div>
+                    </div>
+                    <div class="strip-metric-cell" title="Count of sessions in 'idle in transaction' for > 30s (snapshot-based).">
+                        <div class="strip-metric-label">Idle-in-Txn Risk</div>
+                        <div class="strip-metric-value metric-value" id="pgKpiIdleRisk">—</div>
+                        <div class="text-muted sub">age > 30s</div>
+                    </div>
+                    <div class="strip-metric-cell" title="Severity score: (victims*10) + (chain_depth*5) + (idle_in_txn_count*30) + (incident_duration_mins*2).">
+                        <div class="strip-metric-label">Severity Score</div>
+                        <div class="strip-metric-value metric-value" id="pgKpiSeverity">—</div>
+                        <div class="text-muted sub" id="pgKpiSeverityBand">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+                <div class="chart-card glass-panel col-span-2" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Incident Timeline (last 1h)</h3></div>
+                    <div class="text-muted sub" style="font-size:0.65rem; margin-bottom:0.35rem;">Blocked sessions per minute from <code>monitor.pg_blocking_pairs</code>, with incident windows from <code>monitor.pg_blocking_incident</code>.</div>
+                    <div class="chart-container" style="height:170px;"><canvas id="pgBlockingIncidentTimelineChart"></canvas></div>
+                </div>
+
+                <div class="table-card glass-panel col-span-2 border-danger" style="padding:0.75rem;">
+                    <div class="card-header">
+                        <h3 style="font-size:0.85rem; margin:0;">Blocking Tree Visualizer</h3>
+                    </div>
+                    <div class="table-responsive p-3" style="background: rgba(0,0,0,0.2); border-radius: 8px; max-height:300px; overflow-y:auto;">
+                        <ul id="blockingTreeList" style="list-style:none; padding-left:1rem; font-family:'JetBrains Mono', monospace; font-size:0.9rem;">
+                            <li style="color: var(--text-muted); font-style: italic;">Loading blocking tree...</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="table-card glass-panel col-span-2" style="padding:0.75rem;">
+                    <div class="card-header">
+                        <h3 style="font-size:0.85rem; margin:0;">Actionable Blocking Summary</h3>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:0.75rem;">
+                        <div class="strip-metric-cell" title="Total blocked sessions detected in the current blocking tree snapshot.">
+                            <div class="strip-metric-label">Blocked Sessions</div>
+                            <div class="strip-metric-value metric-value" id="pgBlockedSessionsTotal">0</div>
+                            <div class="text-muted sub">live snapshot</div>
+                        </div>
+                        <div class="strip-metric-cell" title="PID with the highest number of sessions blocked (direct + indirect).">
+                            <div class="strip-metric-label">Top Blocker (PID)</div>
+                            <div class="strip-metric-value metric-value" id="pgTopBlockerPid">—</div>
+                            <div class="text-muted sub" id="pgTopBlockerCount">—</div>
+                        </div>
+                        <div class="strip-metric-cell" title="Longest blocked duration among blocked sessions (approx. based on query_start).">
+                            <div class="strip-metric-label">Worst Blocked Duration</div>
+                            <div class="strip-metric-value metric-value" id="pgWorstBlockedDur">—</div>
+                            <div class="text-muted sub" id="pgWorstBlockedPid">—</div>
+                        </div>
+                        <div class="strip-metric-cell" title="If idle-in-transaction is involved, it often indicates open transactions holding locks.">
+                            <div class="strip-metric-label">Idle-in-Txn Involved</div>
+                            <div class="strip-metric-value metric-value" id="pgIdleInTxnInvolved">—</div>
+                            <div class="text-muted sub">risk signal</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="chart-card glass-panel col-span-2" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Sessions waiting on lock (history)</h3></div>
+                    <div class="text-muted sub" style="font-size:0.65rem; margin-bottom:0.35rem;">Sum of <code>pg_stat_activity</code> sessions with <code>wait_event_type = 'Lock'</code> per collector snapshot (Timescale). Not wall-clock wait duration.</div>
+                    <div class="chart-container" style="height:160px;"><canvas id="pgLockWaitTrendChart"></canvas></div>
+                </div>
+
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Deadlocks (from pg_stat_database)</h3></div>
+                    <div class="chart-container" style="height:140px;"><canvas id="pgDeadlocksChart"></canvas></div>
+                </div>
+
+                <div class="chart-card glass-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Lock Wait Distribution</h3></div>
+                    <div class="chart-container" style="height:140px;"><canvas id="pgLockDistChart"></canvas></div>
+                </div>
+            </div>
+
+            <div class="table-card glass-panel mt-3" style="padding:0.75rem;">
+                <div class="card-header">
+                    <h3 style="font-size:0.85rem; margin:0;">Top Locked Tables (waiting locks)</h3>
+                </div>
+                <div class="table-responsive" style="max-height:220px; overflow-y:auto;">
+                    <table class="data-table" style="font-size:0.75rem;">
+                        <thead>
+                            <tr><th>Relation</th><th>Waiting Locks</th><th>Max Wait (s)</th></tr>
+                        </thead>
+                        <tbody id="pgTopLockedTablesTbody">
+                            <tr><td colspan="3" class="text-center text-muted">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="table-card glass-panel mt-3" style="padding:0.75rem;">
+                <div class="card-header flex-between" style="align-items:center;">
+                    <h3 style="font-size:0.85rem; margin:0;">Blocking Details</h3>
+                    <div class="text-muted" style="font-size:0.7rem;">Captured: <span id="pgBlockingDetailsCapturedAt">—</span></div>
+                </div>
+                <div class="table-responsive" style="max-height:220px; overflow-y:auto;">
+                    <table class="data-table" style="font-size:0.75rem;">
+                        <thead>
+                            <tr><th>Captured At</th><th>PID</th><th>User</th><th>DB</th><th>Query Start</th><th>Duration</th><th>Wait</th><th>Query</th></tr>
+                        </thead>
+                        <tbody id="pgBlockingDetailsTbody">
+                            <tr><td colspan="8" class="text-center text-muted">Loading blocking details...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="table-card glass-panel mt-3" style="padding:0.75rem;">
+                <div class="card-header">
+                    <h3 style="font-size:0.85rem; margin:0;">Raw Locks Manifest</h3>
+                </div>
+                <div class="table-responsive" style="max-height:300px; overflow-y:auto;">
+                    <table class="data-table" style="font-size:0.7rem;">
+                        <thead>
+                            <tr><th>PID</th><th>Lock Type</th><th>Relation</th><th>Mode</th><th>Granted?</th><th>Waiting For</th></tr>
+                        </thead>
+                        <tbody id="locksTbody">
+                            <tr><td colspan="6" class="text-center text-muted">Loading locks...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+

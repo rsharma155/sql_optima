@@ -36,23 +36,12 @@ window.PgExplainView = function PgExplainView() {
             <div class="glass-panel mt-3" style="padding:1rem 1.1rem;">
                 <div class="pg-explain-layout">
                     <div class="pg-explain-field">
-                        <label class="pg-explain-field-label" for="pgExplainQuery">Optional: original SQL (strongly recommended)</label>
-                        <p class="pg-explain-field-hint">Required for <strong>Index advisor &amp; rewrites</strong>. Also enables SQL line excerpts and heuristic index hints. Not executed on the server.</p>
+                        <label class="pg-explain-field-label pg-explain-field-label--wrap" for="pgExplainQuery"><span class="pg-explain-field-label-strong">Optional: original SQL (strongly recommended)</span><span class="pg-explain-field-hint-inline text-muted"> Required for <strong>Index advisor &amp; rewrites</strong>. Also enables SQL line excerpts and heuristic index hints. Not executed on the server.</span></label>
                         <textarea id="pgExplainQuery" class="pg-explain-textarea pg-explain-textarea--sql" rows="4" spellcheck="false" placeholder="SELECT u.id, u.name FROM users u WHERE u.status = 'active';"></textarea>
                     </div>
 
                     <div class="pg-explain-field">
-                    <!--
-                        <div class="pg-explain-plan-banner" role="note">
-                            <i class="fa-solid fa-paste" style="margin-top:0.15rem; color:var(--accent);"></i>
-                            <span><strong>Paste JSON here</strong> — required. Output from <code>EXPLAIN (…, FORMAT JSON)</code> only.</span>
-                        </div>
-                        -->
-                        <label class="pg-explain-field-label" for="pgExplainPlan">Execution plan <span class="badge badge-danger" style="font-size:0.65rem; vertical-align:middle;">Required</span></label>
-                        <p class="pg-explain-field-hint" style="margin-bottom: 0.5rem;"><strong>Note:</strong> Run <code>EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) …</code> in your database client (JSON is required for this page). Max ~512 KB. Must be valid JSON (tree + metrics + SQL insights are driven from the JSON plan).</p>
-                        <!--
-                        <p class="pg-explain-field-hint">Max ~512 KB. Must be valid JSON (tree + metrics + SQL insights are driven from the JSON plan).</p>
-                        -->
+                        <label class="pg-explain-field-label pg-explain-field-label--wrap" for="pgExplainPlan"><span class="pg-explain-field-label-strong">Execution plan <span class="badge badge-danger" style="font-size:0.65rem; vertical-align:middle;">Required</span></span><span class="pg-explain-field-hint-inline text-muted"> <strong>Note:</strong> Run <code>EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) …</code> in your database client (JSON is required for this page). Max ~512 KB. Must be valid JSON (tree + metrics + SQL insights are driven from the JSON plan).</span></label>
                         <textarea id="pgExplainPlan" class="pg-explain-textarea pg-explain-textarea--plan" rows="12" spellcheck="false" placeholder='Example: [ { &quot;Plan&quot;: { &quot;Node Type&quot;: &quot;Seq Scan&quot;, ... }, &quot;Planning Time&quot;: 0.1, &quot;Execution Time&quot;: 2.3 } ]'></textarea>
                     </div>
 
@@ -74,6 +63,14 @@ window.PgExplainView = function PgExplainView() {
     const queryEl = document.getElementById('pgExplainQuery');
     const errEl = document.getElementById('pgExplainErr');
     const host = document.getElementById('pgExplainResultsHost');
+    if (host && !host.__pgExplainPerfSortDeleg) {
+        host.__pgExplainPerfSortDeleg = true;
+        host.addEventListener('click', function (ev) {
+            if (typeof host._pgExplainPerfSortClick === 'function') {
+                host._pgExplainPerfSortClick(ev);
+            }
+        });
+    }
 
     function showErr(msg) {
         if (!errEl) return;
@@ -116,6 +113,41 @@ window.PgExplainView = function PgExplainView() {
         var x = Number(n);
         if (Math.abs(x) >= 10000) return x.toExponential(2);
         return x.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+
+    /** Row / count columns: full numeric value with grouping — never scientific notation. */
+    function formatRowCount(n) {
+        if (n == null || n === '' || Number.isNaN(Number(n))) return '—';
+        var x = Number(n);
+        if (!Number.isFinite(x)) return '—';
+        if (Math.abs(x - Math.round(x)) < 1e-7) {
+            return Math.round(x).toLocaleString(undefined, { maximumFractionDigits: 0, useGrouping: true });
+        }
+        return x.toLocaleString(undefined, { maximumFractionDigits: 4, useGrouping: true });
+    }
+
+    /** True for column keys whose snake_case segments include `row` or `rows` (avoids `growth`, etc.). */
+    function columnKeyIsRowish(colKey) {
+        var parts = String(colKey || '').toLowerCase().split('_');
+        for (var i = 0; i < parts.length; i++) {
+            if (parts[i] === 'row' || parts[i] === 'rows') return true;
+        }
+        return false;
+    }
+
+    /**
+     * Large integers (loops, temp blocks, workers, plan nodes, …): show grouped digits, never scientific notation.
+     * Superset of rowish columns.
+     */
+    function columnKeyUseFullNumberGrouping(colKey) {
+        if (columnKeyIsRowish(colKey)) return true;
+        var parts = String(colKey || '').toLowerCase().split('_');
+        for (var i = 0; i < parts.length; i++) {
+            var p = parts[i];
+            if (p === 'loops' || p === 'blocks' || p === 'workers' || p === 'nodes' || p === 'depth' || p === 'rank') return true;
+        }
+        if (parts.length && parts[parts.length - 1] === 'count') return true;
+        return false;
     }
 
     function formatMsMaybe(ms) {
@@ -579,8 +611,8 @@ window.PgExplainView = function PgExplainView() {
             var title = nodeLabel(n);
             var sub = nodeSubtitle(n);
 
-            var est = n.plan_rows != null ? String(n.plan_rows) : '—';
-            var act = n.actual_rows != null ? String(n.actual_rows) : '—';
+            var est = n.plan_rows != null ? formatRowCount(n.plan_rows) : '—';
+            var act = n.actual_rows != null ? formatRowCount(n.actual_rows) : '—';
             var ex = n.exclusive_time != null ? Number(n.exclusive_time).toFixed(2) + ' ms' : '';
             var costPct = '';
             if (totalCost && n.total_cost != null) {
@@ -620,8 +652,8 @@ window.PgExplainView = function PgExplainView() {
         var kids = node.plans || [];
         var badges = collectBadges(node, fnByNode[node.id] || []);
         var estCost = node.total_cost != null ? formatNum(node.total_cost) : '—';
-        var estRows = node.plan_rows != null ? String(node.plan_rows) : '—';
-        var actRows = node.actual_rows != null ? String(node.actual_rows) : '—';
+        var estRows = node.plan_rows != null ? formatRowCount(node.plan_rows) : '—';
+        var actRows = node.actual_rows != null ? formatRowCount(node.actual_rows) : '—';
         var collapseBtn = kids.length
             ? '<button type="button" class="pg-explain-pg-collapse" aria-expanded="true" title="Collapse children">−</button>'
             : '<span class="pg-explain-pg-collapse-spacer" aria-hidden="true"></span>';
@@ -768,9 +800,9 @@ window.PgExplainView = function PgExplainView() {
                 '<td style="' + esc(heat) + '">' + esc(formatMsMaybe(ex)) + '</td>' +
                 '<td>' + esc(formatMsMaybe(inc)) + '</td>' +
                 '<td>' + esc(rc) + '</td>' +
-                '<td class="text-end">' + (actR != null ? esc(actR) : '—') + '</td>' +
-                '<td class="text-end">' + (planR != null ? esc(planR) : '—') + '</td>' +
-                '<td class="text-end">' + (node.actual_loops != null ? esc(node.actual_loops) : '—') + '</td>' +
+                '<td class="text-end">' + (actR != null ? esc(formatRowCount(actR)) : '—') + '</td>' +
+                '<td class="text-end">' + (planR != null ? esc(formatRowCount(planR)) : '—') + '</td>' +
+                '<td class="text-end">' + (node.actual_loops != null ? esc(formatRowCount(node.actual_loops)) : '—') + '</td>' +
                 '<td class="text-muted pg-explain-dpez-buf">' + esc(buf) + '</td>' +
                 '<td class="pg-explain-dpez-node">' + nodeTxt + '</td></tr>';
         }).join('');
@@ -894,8 +926,8 @@ window.PgExplainView = function PgExplainView() {
             var body = '<div class="pg-explain-tip-grid">' +
                 '<div><span class="text-muted">Exclusive</span><br/><strong>' + esc(formatMsMaybe(node.exclusive_time)) + '</strong></div>' +
                 '<div><span class="text-muted">Inclusive</span><br/><strong>' + esc(formatMsMaybe(node.inclusive_time != null ? node.inclusive_time : node.actual_total_time)) + '</strong></div>' +
-                '<div><span class="text-muted">Act rows</span><br/><strong>' + esc(node.actual_rows != null ? node.actual_rows : '—') + '</strong></div>' +
-                '<div><span class="text-muted">Est rows</span><br/><strong>' + esc(node.plan_rows != null ? node.plan_rows : '—') + '</strong></div>' +
+                '<div><span class="text-muted">Act rows</span><br/><strong>' + esc(node.actual_rows != null ? formatRowCount(node.actual_rows) : '—') + '</strong></div>' +
+                '<div><span class="text-muted">Est rows</span><br/><strong>' + esc(node.plan_rows != null ? formatRowCount(node.plan_rows) : '—') + '</strong></div>' +
                 '</div>';
             var extra = '';
             if (node.index_name) extra += '<div class="pg-explain-tip-filter"><span class="text-muted">Index</span><br/>' + esc(String(node.index_name)) + '</div>';
@@ -1115,10 +1147,12 @@ window.PgExplainView = function PgExplainView() {
             host.style.display = 'block';
             return;
         }
+        var perf = data.performance_report || null;
         var sum = r.summary || {};
         var findings = r.findings || [];
         var fc = sum.findings_count || {};
         var ctxList = (data.sql_context && data.sql_context.findings) ? data.sql_context.findings : [];
+        var perfReportTableStore = [];
 
         var planRoot = pickAnalyzePlanRoot(data);
 
@@ -1150,6 +1184,198 @@ window.PgExplainView = function PgExplainView() {
             if (sum.join_count == null || sum.join_count === '') sum.join_count = joinC;
         }
 
+        function reportColumnIsNumericForSort(colKey) {
+            var k = String(colKey || '');
+            if (k.indexOf('_ms') !== -1 || k.indexOf('_mb') !== -1) return true;
+            if (k === 'time_percent' || k === 'error_ratio' || k === 'confidence_score') return true;
+            if (columnKeyUseFullNumberGrouping(k)) return true;
+            return false;
+        }
+
+        function reportCellSortValue(colKey, val) {
+            if (val === null || val === undefined || val === '') return null;
+            if (typeof val === 'boolean') return val ? 1 : 0;
+            var k = String(colKey || '');
+            if (typeof val === 'number') return Number.isFinite(val) ? val : null;
+            if (typeof val === 'string') {
+                var t = val.trim().replace(/,/g, '');
+                if (k === 'time_percent' && t.indexOf('%') !== -1) t = t.replace(/%/g, '').trim();
+                var n = Number(t);
+                return Number.isFinite(n) ? n : null;
+            }
+            return null;
+        }
+
+        /** Format one cell for analyze report grids (explain_analyze_report_layout.md). */
+        function reportGridCell(colKey, val) {
+            if (val === null || val === undefined || val === '') return '—';
+            if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+            if (Array.isArray(val)) return esc(val.join(', '));
+            if (typeof val === 'number') {
+                if (String(colKey).indexOf('_ms') !== -1) return esc(formatMsMaybe(val));
+                if (colKey === 'time_percent') return esc(Number(val).toFixed(2)) + '%';
+                if (colKey === 'confidence_score') return esc(Number(val).toFixed(2));
+                if (columnKeyUseFullNumberGrouping(colKey)) return esc(formatRowCount(val));
+                return esc(formatNum(val));
+            }
+            var s = String(val);
+            if (columnKeyUseFullNumberGrouping(colKey)) {
+                var trimmed = s.trim();
+                if (trimmed !== '' && /^-?\d/.test(trimmed)) {
+                    var nx = Number(trimmed);
+                    if (Number.isFinite(nx)) return esc(formatRowCount(nx));
+                }
+            }
+            if (s.length > 320) {
+                return '<span class="pg-explain-report-clip" title="' + esc(s) + '">' + esc(s.slice(0, 320)) + '…</span>';
+            }
+            return esc(s);
+        }
+
+        /** Render a titled data-table card (Query Performance–style scroll + sortable numeric headers). */
+        function reportDataTable(title, columns, rows) {
+            rows = rows || [];
+            var tidx = perfReportTableStore.length;
+            perfReportTableStore.push({ columns: columns, rows: rows.slice() });
+            var thead = '<thead><tr>' + columns.map(function (c) {
+                var sort = reportColumnIsNumericForSort(c.key);
+                if (!sort) {
+                    return '<th>' + esc(c.label) + '</th>';
+                }
+                return '<th class="pg-explain-perf-th-sortable sortable text-end" data-col-key="' + esc(c.key) + '" title="Sort">' + esc(c.label) +
+                    ' <i class="fa-solid fa-sort sort-icon-pg-exp" style="opacity:0.55;font-size:0.65rem;" aria-hidden="true"></i></th>';
+            }).join('') + '</tr></thead>';
+            var tbody = '<tbody>';
+            if (!rows.length) {
+                tbody += '<tr><td colspan="' + columns.length + '" class="text-muted">No data.</td></tr>';
+            } else {
+                rows.forEach(function (row) {
+                    tbody += '<tr>';
+                    columns.forEach(function (c) {
+                        var tdClass = reportColumnIsNumericForSort(c.key) ? ' class="text-end"' : '';
+                        tbody += '<td' + tdClass + '>' + reportGridCell(c.key, row[c.key]) + '</td>';
+                    });
+                    tbody += '</tr>';
+                });
+            }
+            tbody += '</tbody>';
+            return '<div class="table-card glass-panel pg-explain-report-section mb-3" style="padding:0.75rem 1rem;">' +
+                '<div class="card-header flex-between w-100" style="align-items:center; flex-wrap:wrap; gap:0.5rem;">' +
+                '<h3 class="pg-explain-report-h3" style="margin:0;">' + esc(title) + '</h3></div>' +
+                '<div class="table-responsive pg-explain-report-table-wrap">' +
+                '<table class="data-table pg-explain-perf-grid" style="font-size:0.72rem;" data-pg-explain-perf-tidx="' + tidx + '">' +
+                thead + tbody + '</table></div></div>';
+        }
+
+        /** Full 10-table report per explain_analyze_report_layout.md (fixed order). */
+        function renderPerfReport(perf) {
+            if (!perf) {
+                return '<p class="text-muted">No performance report.</p>';
+            }
+            if (!perf.execution_summary) {
+                return '<div class="alert alert-info">Performance report uses an older format. Re-run <strong>Analyze plan</strong> after upgrading.</div>';
+            }
+            var cachedNote = data.performance_cached
+                ? '<p class="text-muted mb-2" style="font-size:0.76rem;"><i class="fa-solid fa-database"></i> Report served from cache (same canonical plan hash).</p>'
+                : '';
+
+            var t1 = reportDataTable('1. Execution summary', [
+                { key: 'execution_time_ms', label: 'Execution time' },
+                { key: 'planning_time_ms', label: 'Planning time' },
+                { key: 'jit_time_ms', label: 'JIT time' },
+                { key: 'total_plan_nodes', label: 'Total plan nodes' },
+                { key: 'max_plan_depth', label: 'Max plan depth' },
+                { key: 'total_rows_processed', label: 'Total rows processed (max)' },
+                { key: 'final_rows_returned', label: 'Final rows returned' },
+                { key: 'parallel_workers_planned', label: 'Parallel workers planned' },
+                { key: 'parallel_workers_launched', label: 'Parallel workers launched' },
+                { key: 'primary_bottleneck', label: 'Primary bottleneck' }
+            ], perf.execution_summary || []);
+
+            var t2 = reportDataTable('2. Time breakdown by operation type', [
+                { key: 'rank', label: 'Rank' },
+                { key: 'operation_type', label: 'Operation type' },
+                { key: 'node_count', label: 'Node count' },
+                { key: 'total_time_ms', label: 'Total time' },
+                { key: 'time_percent', label: 'Time %' }
+            ], perf.time_breakdown || []);
+
+            var t3 = reportDataTable('3. Top expensive plan nodes', [
+                { key: 'rank', label: 'Rank' },
+                { key: 'node_type', label: 'Node type' },
+                { key: 'relation_name', label: 'Relation' },
+                { key: 'parent_node_type', label: 'Parent type' },
+                { key: 'depth_level', label: 'Depth' },
+                { key: 'actual_rows', label: 'Actual rows' },
+                { key: 'actual_loops', label: 'Loops' },
+                { key: 'rows_processed', label: 'Rows × loops' },
+                { key: 'execution_time_ms', label: 'Execution time' },
+                { key: 'time_percent', label: 'Time %' }
+            ], perf.top_nodes || []);
+
+            var t4 = reportDataTable('4. Cardinality estimation quality', [
+                { key: 'node_type', label: 'Node type' },
+                { key: 'relation_name', label: 'Relation' },
+                { key: 'estimated_rows', label: 'Estimated rows' },
+                { key: 'actual_rows', label: 'Actual rows' },
+                { key: 'error_ratio', label: 'Error ratio' },
+                { key: 'estimation_quality', label: 'Quality' }
+            ], perf.cardinality || []);
+
+            var t5 = reportDataTable('5. Memory & disk analysis', [
+                { key: 'memory_pressure_level', label: 'Memory pressure' },
+                { key: 'disk_sort_detected', label: 'Disk sort' },
+                { key: 'hash_spill_detected', label: 'Hash spill' },
+                { key: 'temp_blocks_read', label: 'Temp blocks read' },
+                { key: 'temp_blocks_written', label: 'Temp blocks written' },
+                { key: 'largest_sort_space_mb', label: 'Largest sort space (MB)' },
+                { key: 'peak_hash_memory_mb', label: 'Peak hash memory (MB)' }
+            ], perf.memory_disk || []);
+
+            var t6 = reportDataTable('6. Table access pattern summary', [
+                { key: 'relation_name', label: 'Relation' },
+                { key: 'scan_type', label: 'Scan type' },
+                { key: 'node_count', label: 'Node count' },
+                { key: 'total_rows_read', label: 'Total rows read' },
+                { key: 'parallel_used', label: 'Parallel used' },
+                { key: 'large_scan_flag', label: 'Large scan' }
+            ], perf.table_access || []);
+
+            var t7 = reportDataTable('7. Join analysis', [
+                { key: 'join_type', label: 'Join type' },
+                { key: 'node_count', label: 'Node count' },
+                { key: 'total_time_ms', label: 'Total time' },
+                { key: 'rows_joined', label: 'Rows joined' },
+                { key: 'join_efficiency', label: 'Efficiency' }
+            ], perf.join_analysis || []);
+
+            var t8 = reportDataTable('8. Detected findings (rule engine)', [
+                { key: 'severity', label: 'Severity' },
+                { key: 'category', label: 'Category' },
+                { key: 'finding_code', label: 'Code' },
+                { key: 'finding_summary', label: 'Summary' },
+                { key: 'evidence', label: 'Evidence' }
+            ], perf.findings || []);
+
+            var t9 = reportDataTable('9. Index opportunity candidates', [
+                { key: 'priority', label: 'Priority' },
+                { key: 'opportunity_type', label: 'Type' },
+                { key: 'table_name', label: 'Table' },
+                { key: 'columns_involved', label: 'Columns' },
+                { key: 'reason', label: 'Reason' }
+            ], perf.index_opportunities || []);
+
+            var t10 = reportDataTable('10. Tuning recommendations', [
+                { key: 'priority_rank', label: 'Priority' },
+                { key: 'recommendation_category', label: 'Category' },
+                { key: 'action_summary', label: 'Action' },
+                { key: 'expected_impact', label: 'Expected impact' },
+                { key: 'confidence_score', label: 'Confidence' }
+            ], perf.tuning_recommendations || []);
+
+            return cachedNote + t1 + t2 + t3 + t4 + t5 + t6 + t7 + t8 + t9 + t10;
+        }
+
         var findingsHtml = findings.map(function (f, i) {
             var ctx = ctxList[i];
             var extra = '';
@@ -1172,30 +1398,90 @@ window.PgExplainView = function PgExplainView() {
                 '<div class="mt-1" style="font-size:0.82rem;">' + esc(f.message || '') + '</div>' + extra + '</div>';
         }).join('');
 
-        var summaryBlock =
+        var legacySummaryMini =
             '<div class="chart-card glass-panel mb-3" style="padding:0.75rem;">' +
-            '<div class="card-header"><h3 style="font-size:0.9rem; margin:0;">Summary</h3></div>' +
+            '<div class="card-header"><h3 style="font-size:0.9rem; margin:0;">Plan meta</h3></div>' +
             '<div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:0.5rem; font-size:0.78rem;">' +
             '<div><span class="text-muted">Total cost</span><br/><strong>' + esc(sum.total_cost) + '</strong></div>' +
             '<div><span class="text-muted">Execution</span><br/><strong>' + esc(sum.execution_time_ms) + ' ms</strong></div>' +
             '<div><span class="text-muted">Planning</span><br/><strong>' + esc(sum.planning_time_ms) + ' ms</strong></div>' +
             '<div><span class="text-muted">Nodes</span><br/><strong>' + esc(sum.node_count) + '</strong></div>' +
-            '<div><span class="text-muted">Scans</span><br/><strong>' + esc(sum.scan_count) + '</strong></div>' +
-            '<div><span class="text-muted">Joins</span><br/><strong>' + esc(sum.join_count) + '</strong></div>' +
             '</div>' +
-            '<div class="mt-2 text-muted" style="font-size:0.72rem;">Findings: critical ' + esc(fc.critical) + ' · high ' + esc(fc.high) + ' · medium ' + esc(fc.medium) + ' · low ' + esc(fc.low) + ' · info ' + esc(fc.info) + '</div>' +
-            '</div>' +
-            '<h3 style="font-size:0.9rem;">Findings</h3>' + (findingsHtml || '<p class="text-muted">No findings.</p>');
+            '<div class="mt-2 text-muted" style="font-size:0.72rem;">Legacy findings: critical ' + esc(fc.critical) + ' · high ' + esc(fc.high) + ' · medium ' + esc(fc.medium) + ' · low ' + esc(fc.low) + ' · info ' + esc(fc.info) + '</div>' +
+            '</div>';
+
+        var analyzeBlock = renderPerfReport(perf) +
+            '<div class="mt-3">' +
+            '<details class="glass-panel" style="padding:0.75rem 0.85rem;"><summary style="cursor:pointer;"><strong>Legacy analyzer findings (debug)</strong></summary>' +
+            '<div class="mt-2">' + legacySummaryMini +
+            '<h3 style="font-size:0.9rem;">Findings</h3>' + (findingsHtml || '<p class="text-muted">No findings.</p>') +
+            '</div></details></div>';
 
         var planMeta = {};
         if (r.plan) {
             if (r.plan.planning_time != null) planMeta.planning_time_ms = r.plan.planning_time;
             if (r.plan.execution_time != null) planMeta.execution_time_ms = r.plan.execution_time;
         }
-        mountResultsShell('analyze', summaryBlock, planRoot, data.sql_context, (queryEl && queryEl.value) ? queryEl.value : '', {
+        mountResultsShell('analyze', analyzeBlock, planRoot, data.sql_context, (queryEl && queryEl.value) ? queryEl.value : '', {
             analyzerFindings: findings,
             planMeta: planMeta
         });
+
+        host._pgExplainPerfTables = perfReportTableStore;
+        host._pgExplainPerfSortClick = function (ev) {
+            var th = ev.target.closest('th.pg-explain-perf-th-sortable');
+            if (!th || !host.contains(th)) return;
+            var table = th.closest('table.pg-explain-perf-grid');
+            if (!table) return;
+            var tidx = parseInt(table.getAttribute('data-pg-explain-perf-tidx'), 10);
+            var storeAll = host._pgExplainPerfTables;
+            if (!storeAll || storeAll[tidx] == null) return;
+            var colKey = th.getAttribute('data-col-key');
+            if (!colKey) return;
+            var prevCol = table.getAttribute('data-sort-col');
+            var prevDir = table.getAttribute('data-sort-dir') || 'desc';
+            var dir = prevCol === colKey && prevDir === 'desc' ? 'asc' : 'desc';
+            table.setAttribute('data-sort-col', colKey);
+            table.setAttribute('data-sort-dir', dir);
+            var rows = storeAll[tidx].rows;
+            var cols = storeAll[tidx].columns;
+            var mul = dir === 'asc' ? 1 : -1;
+            rows.sort(function (a, b) {
+                var va = reportCellSortValue(colKey, a[colKey]);
+                var vb = reportCellSortValue(colKey, b[colKey]);
+                var aNull = va === null || Number.isNaN(va);
+                var bNull = vb === null || Number.isNaN(vb);
+                if (aNull && bNull) return 0;
+                if (aNull) return 1;
+                if (bNull) return -1;
+                if (va === vb) return 0;
+                return va < vb ? -mul : mul;
+            });
+            var html = '';
+            if (!rows.length) {
+                html = '<tr><td colspan="' + cols.length + '" class="text-muted">No data.</td></tr>';
+            } else {
+                rows.forEach(function (row) {
+                    html += '<tr>';
+                    cols.forEach(function (c) {
+                        var tdClass = reportColumnIsNumericForSort(c.key) ? ' class="text-end"' : '';
+                        html += '<td' + tdClass + '>' + reportGridCell(c.key, row[c.key]) + '</td>';
+                    });
+                    html += '</tr>';
+                });
+            }
+            var tbody = table.querySelector('tbody');
+            if (tbody) tbody.innerHTML = html;
+            table.querySelectorAll('th.pg-explain-perf-th-sortable i.sort-icon-pg-exp').forEach(function (i) {
+                i.className = 'fa-solid fa-sort sort-icon-pg-exp';
+                i.style.opacity = '0.55';
+            });
+            var activeIcon = th.querySelector('i.sort-icon-pg-exp');
+            if (activeIcon) {
+                activeIcon.className = 'fa-solid ' + (dir === 'asc' ? 'fa-sort-up' : 'fa-sort-down') + ' sort-icon-pg-exp';
+                activeIcon.style.opacity = '0.95';
+            }
+        };
     }
 
     function renderOptimize(data) {

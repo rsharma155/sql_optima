@@ -1,97 +1,105 @@
-# SQL Optima - TimescaleDB Schema
+# SQL Optima — TimescaleDB and SQL scripts
 
-This directory contains the unified SQL scripts for the SQL Optima monitoring tool.
+This directory is the **single source** for SQL Optima database scripts (merged from the former `sql_scripts_used/` tree).
 
-## Files
+## Root-level scripts
 
 | File | Description |
 |------|-------------|
-| `00_timescale_schema.sql` | Main schema - all core hypertable and table definitions |
+| `00_timescale_schema.sql` | Main TimescaleDB schema: hypertables, indexes, compression |
 | `01_seed_data.sql` | Default users, widgets, and collection schedules |
-| `02_additional_sqlserver_metrics.sql` | Extended SQL Server metrics (from Eric Darling's Performance Monitor) |
-| `SST.sql` | System Setup Test - sanity check script |
-| `00_query_stats_migration.sql` | (Deprecated) Query stats tables are now included in `00_timescale_schema.sql` |
+| `02_rule_engine.sql` | Rule engine schema (if used) |
+| `pgsql_init.sql` | PostgreSQL instance bootstrap helper |
+| `sqlserver_init.sql` | SQL Server–side helper scripts |
+| `SST.sql` | *(Optional)* System setup test — include in repo if you maintain it |
+| `02_additional_sqlserver_metrics.sql` | *(Optional)* Extended SQL Server metrics — include if maintained separately |
+
+## Supplementary directories
+
+| Directory | Description |
+|-----------|-------------|
+| `collection/` | **~70** parameterized queries used by collectors against SQL Server and PostgreSQL (metrics, waits, jobs, PG stats, etc.) |
+| `timescaledb_fetch/` | **~48** read/insert templates for TimescaleDB (historical series, summaries, hypertable helpers) |
+| `migrations/` | Ordered **incremental** migrations for existing deployments (run after `00_timescale_schema.sql` when upgrading) |
+| `postgres/` | Scripts to run **on monitored PostgreSQL** instances (e.g. optional materialized views), not on TimescaleDB |
+
+### Migrations (`migrations/`)
+
+Apply in numeric order when upgrading an existing database. `009_postgres_system_stats_cpu_enhancement.sql` was renumbered from `005_*` when merging with `005_enterprise_metrics_collection.sql` to avoid two `005_` files.
+
+| File | Purpose |
+|------|---------|
+| `001_create_query_store_stats.sql` | Query store stats table |
+| `002_sqlserver_enterprise_monitoring.sql` | SQL Server enterprise objects |
+| `003_postgres_enterprise_monitoring.sql` | PostgreSQL enterprise objects |
+| `004_fix_top_queries_table.sql` | Top queries fix |
+| `005_enterprise_metrics_collection.sql` | Enterprise metrics collection |
+| `006_custom_dashboards_alerts.sql` | Dashboards / alerts |
+| `007_fix_query_dictionary_constraint.sql` | Query dictionary constraint |
+| `008_add_job_error_tracking.sql` | Job error tracking |
+| `009_postgres_system_stats_cpu_enhancement.sql` | Extended `postgres_system_stats` CPU columns |
 
 ## Usage
 
-### Initial Setup
+### Initial setup (new TimescaleDB)
 
-1. **Connect to TimescaleDB:**
-   ```bash
-   psql -h localhost -p 5432 -U postgres -d dbmonitor_metrics
-   ```
-
-2. **Run the main schema:**
+1. Connect to TimescaleDB (e.g. `dbmonitor_metrics`).
+2. Run the main schema:
    ```sql
    \i 00_timescale_schema.sql
    ```
-
-3. **Run additional SQL Server metrics (optional - for extended monitoring):**
-   ```sql
-   \i 02_additional_sqlserver_metrics.sql
-   ```
-
-4. **Run seed data:**
+3. Run seed data:
    ```sql
    \i 01_seed_data.sql
    ```
+4. Optional: `\i 02_rule_engine.sql` if you use the rule engine.
 
-5. **Run sanity check:**
-   ```sql
-   \i SST.sql
-   ```
+### Upgrading an existing database
 
-### Docker Compose Usage
+Run only the migration files you have not applied yet, in order (e.g. `\i migrations/009_postgres_system_stats_cpu_enhancement.sql`).
 
-The schema is automatically applied during container initialization via:
-```yaml
-volumes:
-  - ./sql_scripts:/docker-entrypoint-initdb.d
-```
+### Collection and fetch scripts
 
-## Schema Overview
+- **`collection/`** — referenced by metric collectors / agent configuration; not executed as a single bundle.
+- **`timescaledb_fetch/`** — used by the backend or agents for Timescale inserts/selects; paths are typically configured per metric name.
 
-### SQL Server Metrics (48 hypertables in core + additional)
-- Core: metrics, cpu_history, memory_history, wait_history, file_io_history, connection_history, lock_history, disk_history, top_queries
-- Enterprise: database_throughput, query_store_stats, ag_health
-- Jobs: job_metrics, job_details, agent_schedules, job_failures
-- Advanced: latch_waits, memory_clerks, waiting_tasks, procedure_stats, spinlock_stats, tempdb_stats, database_size, server_config, database_config, memory_grants, scheduler_wg, file_io_latency, qs_runtime
-- Extended (from Eric Darling's Performance Monitor): wait_stats, memory_stats, memory_pressure_events, cpu_utilization_stats, deadlock_xml, blocked_process_xml, blocking_deadlock_stats, perfmon_stats, cpu_scheduler_stats, latch_stats, spinlock_stats_v2, plan_cache_stats, session_stats, tempdb_stats_v2, server_properties, critical_issues, database_size_v2, trace_flags_history
+### Docker Compose
 
-### PostgreSQL Metrics (14 hypertables)
-- Core: throughput_metrics, connection_stats, replication_stats, system_stats, database_stats, session_stats, lock_stats, table_stats, index_stats, query_stats, config_settings, long_running_queries
-- Enterprise: bgwriter_stats, archiver_stats
+The `infrastructure/docker` stack may mount this folder (e.g. `../sql_scripts:/sql_scripts:ro`) and run `00_timescale_schema.sql` and `01_seed_data.sql` on startup. Subfolders are available for manual or scripted use.
 
-### Cross-Engine Storage & Index Health (3 hypertables)
-- monitor.index_usage_stats
-- monitor.table_usage_stats
-- monitor.table_size_history
+## Schema overview
 
-### Application Tables (13 regular tables)
-- optima_users, optima_ui_widgets, user_dashboards, dashboard_widgets
-- alert_thresholds, notification_channels, alert_subscriptions, alert_history
-- monitored_servers, metric_collection_settings, dashboard_exports
-- postgres_query_dictionary, query_store_stats
+### SQL Server metrics
 
-### Management Tables
-- sqlserver_collection_schedule, sqlserver_collection_log
+Core and enterprise hypertables: metrics, CPU/memory/wait history, connections, locks, disks, throughput, query store, AG health, jobs, and extended performance objects as defined in `00_timescale_schema.sql` and migrations.
 
-## Default Credentials
+### PostgreSQL metrics
+
+Throughput, connections, replication, system stats, database stats, sessions, locks, tables, indexes, queries, config, long-running queries, bgwriter, archiver, etc.
+
+### Cross-engine storage and index health
+
+`monitor.index_usage_stats`, `monitor.table_usage_stats`, `monitor.table_size_history` (see main schema).
+
+### Application tables
+
+Users, widgets, dashboards, alerts, monitored servers, `postgres_query_dictionary`, and related tables.
+
+## Default credentials
 
 | Username | Password | Role |
 |----------|----------|------|
 | admin | admin123 | admin |
 | viewer | admin123 | viewer |
 
-**IMPORTANT:** Change these passwords in production!
+Change these in production.
 
-## Compression Policy
+## Compression
 
-All hypertables have compression enabled for chunks older than 7 days. Configuration tables use 30-day retention.
+Hypertables typically use compression for chunks older than 7 days. See `00_timescale_schema.sql` for policies.
 
 ## Troubleshooting
 
-If SST fails, check:
-1. TimescaleDB extension is installed: `SELECT * FROM pg_extension WHERE extname = 'timescaledb';`
-2. Docker volume is clean (delete `timescaledb_data` volume if reinitializing)
-3. User has superuser privileges
+1. TimescaleDB extension: `SELECT * FROM pg_extension WHERE extname = 'timescaledb';`
+2. Clean Docker volumes if reinitializing from scratch.
+3. Migrations require a user with sufficient privileges.

@@ -147,6 +147,10 @@ func Main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Postgres locks/blocking incidents are lightweight and useful even when Redis-backed
+	// collectors are enabled. Start this adaptive watcher whenever Timescale is connected.
+	go metricsSvc.StartPgLocksBlockingCollector(ctx)
+
 	redisAddr := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
 	var asynqSch *asynq.Scheduler
 	if redisAddr != "" {
