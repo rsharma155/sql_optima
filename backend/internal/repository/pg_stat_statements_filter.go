@@ -25,6 +25,9 @@ func pgStatStatementsExcludedRoleNames() []string {
 		seen[name] = struct{}{}
 	}
 	add("dbmonitor_user")
+	add("dbmonitor")
+	add("sql_optima")
+	add("sqloptima")
 	if extra := os.Getenv("SQL_OPTIMA_PG_STATEMENTS_EXCLUDE_USERS"); extra != "" {
 		for _, p := range strings.Split(extra, ",") {
 			add(p)
@@ -44,16 +47,28 @@ func buildPgStatStatementsFilters() string {
 	var b strings.Builder
 	b.WriteString(`s.query NOT LIKE '%pg_stat_statements%'`)
 	b.WriteString(`
+		  AND s.query NOT ILIKE '%sql_optima%'
+		  AND s.query NOT ILIKE '%sqloptima%'
+		  AND s.query NOT ILIKE '%SQLOptima%'
+		  AND s.query NOT ILIKE '%DeltaCollector%'
+		  AND s.query NOT ILIKE '%dbmonitor_metrics%'
 		  AND s.query NOT ILIKE 'autovacuum:%'
 		  AND s.query NOT ILIKE 'analyze %'
 		  AND s.query NOT ILIKE 'vacuum %'
 		  AND s.query NOT ILIKE 'reindex %'
 		  AND s.query NOT ILIKE 'checkpoint%'
+		  AND s.query NOT ILIKE 'discard %'
+		  AND s.query NOT ILIKE 'deallocate%'
+		  AND s.query NOT ILIKE 'prepare %'
+		  AND s.query NOT ILIKE 'listen %'
+		  AND s.query NOT ILIKE 'notify %'
 		  AND s.query NOT ILIKE 'show %'
 		  AND s.query NOT ILIKE 'set %'
 		  AND s.query NOT ILIKE 'begin%'
 		  AND s.query NOT ILIKE 'commit%'
 		  AND s.query NOT ILIKE 'rollback%'
+		  AND s.query NOT ILIKE 'savepoint%'
+		  AND s.query NOT ILIKE 'release savepoint%'
 		  AND s.query NOT ILIKE '%pg_catalog.%'
 		  AND s.query NOT ILIKE '%information_schema.%'
 		  AND s.query NOT ILIKE '%pg_toast.%'

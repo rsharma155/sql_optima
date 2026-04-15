@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1091,6 +1092,152 @@ func (c *PgRepository) GetBlockingTree(instanceName string) ([]PgBlockingNode, e
 	var out []PgBlockingNode
 	for pid := range roots {
 		out = append(out, sessionMap[pid])
+	}
+	return out, nil
+}
+
+// GetBlockingTreeFast returns a blocking tree using pg_blocking_pids(), which is the same signal used by
+// the incident collector (monitor.pg_blocking_pairs). This is typically more consistent for "live" UI.
+func (c *PgRepository) GetBlockingTreeFast(instanceName string) ([]PgBlockingNode, error) {
+	c.mutex.RLock()
+	db, ok := c.conns[instanceName]
+	c.mutex.RUnlock()
+	if !ok || db == nil {
+		return nil, fmt.Errorf("connection not found")
+	}
+
+	// Build pairs directly from pg_blocking_pids().
+	type pair struct{ blocked, blocking int }
+	var pairs []pair
+	pidSet := make(map[int]struct{})
+
+	rows, err := db.Query(`
+		SELECT a.pid AS blocked_pid, unnest(pg_blocking_pids(a.pid)) AS blocking_pid
+		FROM pg_stat_activity a
+		WHERE cardinality(pg_blocking_pids(a.pid)) > 0
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var bpid, spid int
+		if err := rows.Scan(&bpid, &spid); err != nil {
+			continue
+		}
+		pairs = append(pairs, pair{blocked: bpid, blocking: spid})
+		pidSet[bpid] = struct{}{}
+		pidSet[spid] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(pairs) == 0 {
+		return []PgBlockingNode{}, nil
+	}
+
+	// Load pg_stat_activity rows for involved PIDs.
+	var pidList []int
+	for pid := range pidSet {
+		pidList = append(pidList, pid)
+	}
+	args := make([]any, 0, len(pidList))
+	ph := make([]string, 0, len(pidList))
+	for i, pid := range pidList {
+		args = append(args, pid)
+		ph = append(ph, fmt.Sprintf("$%d", i+1))
+	}
+
+	actQ := fmt.Sprintf(`
+		SELECT
+			a.pid,
+			COALESCE(a.usename,''),
+			COALESCE(a.datname,''),
+			COALESCE(a.state,''),
+			a.query_start,
+			EXTRACT(EPOCH FROM (now() - a.state_change)) as duration_seconds,
+			COALESCE(a.wait_event_type || ':' || a.wait_event, '') as wait_event,
+			LEFT(a.query, 400) as query
+		FROM pg_stat_activity a
+		WHERE a.pid IN (%s)
+	`, strings.Join(ph, ","))
+
+	actRows, err := db.Query(actQ, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer actRows.Close()
+
+	sessionMap := make(map[int]PgBlockingNode)
+	for actRows.Next() {
+		var node PgBlockingNode
+		var durationSeconds float64
+		if err := actRows.Scan(&node.PID, &node.User, &node.Database, &node.State, &node.QueryStart, &durationSeconds, &node.WaitEvent, &node.Query); err != nil {
+			continue
+		}
+		duration := time.Duration(durationSeconds) * time.Second
+		minutes := int(duration.Minutes())
+		seconds := int(duration.Seconds()) % 60
+		node.Duration = fmt.Sprintf("%dm %ds", minutes, seconds)
+		sessionMap[node.PID] = node
+	}
+
+	for pid := range pidSet {
+		if _, ok := sessionMap[pid]; ok {
+			continue
+		}
+		sessionMap[pid] = PgBlockingNode{
+			PID:       pid,
+			State:     "unknown",
+			Duration:  "-",
+			WaitEvent: "",
+			Query:     "",
+		}
+	}
+
+	// Determine roots: blockers that are not blocked.
+	blockedSet := make(map[int]struct{})
+	blockerSet := make(map[int]struct{})
+	for _, p := range pairs {
+		blockedSet[p.blocked] = struct{}{}
+		blockerSet[p.blocking] = struct{}{}
+	}
+	var rootPIDs []int
+	for pid := range blockerSet {
+		if _, isBlocked := blockedSet[pid]; !isBlocked {
+			rootPIDs = append(rootPIDs, pid)
+		}
+	}
+	sort.Ints(rootPIDs)
+
+	children := make(map[int][]int)
+	for _, p := range pairs {
+		children[p.blocking] = append(children[p.blocking], p.blocked)
+	}
+
+	var build func(pid int, seen map[int]struct{}) PgBlockingNode
+	build = func(pid int, seen map[int]struct{}) PgBlockingNode {
+		n := sessionMap[pid]
+		if seen == nil {
+			seen = map[int]struct{}{}
+		}
+		if _, ok := seen[pid]; ok {
+			return n
+		}
+		seen2 := make(map[int]struct{}, len(seen)+1)
+		for k := range seen {
+			seen2[k] = struct{}{}
+		}
+		seen2[pid] = struct{}{}
+		for _, ch := range children[pid] {
+			n.BlockedBy = append(n.BlockedBy, build(ch, seen2))
+		}
+		return n
+	}
+
+	out := make([]PgBlockingNode, 0, len(rootPIDs))
+	for _, pid := range rootPIDs {
+		out = append(out, build(pid, map[int]struct{}{}))
 	}
 	return out, nil
 }

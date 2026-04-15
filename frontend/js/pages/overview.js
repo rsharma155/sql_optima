@@ -28,22 +28,6 @@ async function initPgDashboard() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: ''};
     const database = window.appState.currentDatabase || 'all';
 
-    // Align header widgets with MSSQL dashboards.
-    try {
-        const strip = document.getElementById('pgStatusStrip');
-        if (strip && typeof window.renderStatusStrip === 'function') {
-            strip.innerHTML = window.renderStatusStrip({
-                lastUpdateId: 'pgLastRefreshTime',
-                sourceBadgeId: 'pgDataSourceBadge',
-                includeHealth: false,
-                includeFreshness: false,
-                autoRefreshText: ''
-            });
-        }
-    } catch (e) {
-        // non-fatal
-    }
-
     let labels = Array.from({length:30}, (_,i)=> `-${30-i}m`);
     labels[labels.length - 1] = "Now";
     let tps = Array.from({length:30}, ()=>0);
@@ -204,14 +188,15 @@ async function initPgDashboard() {
         console.error("PG CC/db-observation fetch failed:", e);
     }
 
-    // Update server info in the header
+    // Update server info in the header (keep Last Update row intact)
     if (serverInfo.version && serverInfo.uptime) {
-        const timePicker = document.querySelector('.time-picker');
-        if (timePicker) {
-            timePicker.innerHTML = `
-                <span class="text-muted" style="font-size:0.8rem">Uptime: <strong>${serverInfo.uptime}</strong></span>
-                <span class="text-muted" style="font-size:0.8rem">Version: <strong>PostgreSQL ${serverInfo.version}</strong></span>
-            `;
+        const uptimeEl = document.getElementById('pg-uptime');
+        const verEl = document.getElementById('pg-version');
+        if (uptimeEl) {
+            uptimeEl.innerHTML = `Uptime: <strong>${window.escapeHtml ? window.escapeHtml(serverInfo.uptime) : serverInfo.uptime}</strong>`;
+        }
+        if (verEl) {
+            verEl.innerHTML = `Version: <strong>PostgreSQL ${window.escapeHtml ? window.escapeHtml(String(serverInfo.version)) : serverInfo.version}</strong>`;
         }
     }
 

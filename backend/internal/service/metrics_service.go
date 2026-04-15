@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rsharma155/sql_optima/internal/collector/pghostcpu"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/repository"
@@ -588,6 +589,65 @@ func (s *MetricsService) GetTimescalePostgresSystemStats(instanceName string, li
 	return s.tsLogger.GetPostgresSystemStats(context.Background(), instanceName, limit)
 }
 
+// GetPostgresCpuHistory returns Timescale postgres_system_stats rows (host vs Postgres CPU, load, cores).
+func (s *MetricsService) GetPostgresCpuHistory(instanceName string, limit int) ([]hot.PostgresSystemStatsRow, error) {
+	return s.GetTimescalePostgresSystemStats(instanceName, limit)
+}
+
+// GetPostgresCpuSaturation merges the latest Timescale snapshot with optional live Linux probes for KPIs.
+func (s *MetricsService) GetPostgresCpuSaturation(instanceName string) map[string]interface{} {
+	active, _, _, _ := s.PgRepo.GetConnectionStats(instanceName)
+	snap := pghostcpu.Collect()
+
+	var tsRow hot.PostgresSystemStatsRow
+	haveTS := false
+	if s.tsLogger != nil {
+		if rows, err := s.tsLogger.GetPostgresSystemStats(context.Background(), instanceName, 1); err == nil && len(rows) > 0 {
+			tsRow = rows[0]
+			haveTS = true
+		}
+	}
+
+	load1 := tsRow.Load1m
+	cores := tsRow.CpuCores
+	pgPct := tsRow.PostgresCpuPercent
+	hostPct := tsRow.HostCpuPercent
+	if hostPct == 0 && haveTS {
+		hostPct = tsRow.CPUUsage
+	}
+
+	if snap.Load1m > 0 {
+		load1 = snap.Load1m
+	}
+	if snap.CpuCores > 0 {
+		cores = snap.CpuCores
+	}
+	if snap.PostgresCpuPercent > 0 {
+		pgPct = snap.PostgresCpuPercent
+	}
+	if snap.HostCpuPercent > 0 {
+		hostPct = snap.HostCpuPercent
+	}
+
+	if detail, err := s.PgRepo.GetSystemStatsDetail(instanceName); err == nil && detail != nil && hostPct == 0 {
+		hostPct = detail.CPUUsagePct
+	}
+
+	sat := pghostcpu.CpuSaturationPct(load1, cores)
+	per := pghostcpu.CpuPerConnection(pgPct, active)
+
+	return map[string]interface{}{
+		"instance":             instanceName,
+		"cpu_saturation_pct":   sat,
+		"cpu_per_connection":   per,
+		"load_1m":              load1,
+		"cpu_cores":            cores,
+		"host_cpu_percent":     hostPct,
+		"postgres_cpu_percent": pgPct,
+		"active_connections":   active,
+	}
+}
+
 func (s *MetricsService) GetTimescalePostgresReplicationSlots(instanceName string, limit int) ([]hot.PostgresReplicationSlotRow, error) {
 	if s.tsLogger == nil {
 		return nil, fmt.Errorf("TimescaleDB not connected")
@@ -678,6 +738,63 @@ func (s *MetricsService) GetPostgresLockWaitHistory(ctx context.Context, instanc
 		return nil, nil, fmt.Errorf("TimescaleDB not connected")
 	}
 	return s.tsLogger.GetPostgresLockWaitHistory(ctx, instanceName, windowMinutes, maxPoints)
+}
+
+// GetPgLocksBlockingKpis returns a lightweight KPI bundle for the Locks & Blocking dashboard.
+func (s *MetricsService) GetPgLocksBlockingKpis(ctx context.Context, instanceName string) (*hot.PgBlockingKpis, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetPgBlockingKpis(ctx, instanceName)
+}
+
+func (s *MetricsService) GetPgBlockingTimeline(ctx context.Context, instanceName string, window time.Duration) ([]hot.PgBlockingTimelinePoint, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetPgBlockingTimeline(ctx, instanceName, window)
+}
+
+func (s *MetricsService) GetPgBlockingTimelineRange(ctx context.Context, instanceName string, from, to time.Time) ([]hot.PgBlockingTimelinePoint, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetPgBlockingTimelineRange(ctx, instanceName, from, to)
+}
+
+func (s *MetricsService) GetPgBlockingIncidentsInWindow(ctx context.Context, instanceName string, window time.Duration) ([]hot.PgBlockingIncident, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetPgBlockingIncidentsInWindow(ctx, instanceName, window)
+}
+
+func (s *MetricsService) GetPgBlockingIncidentsRange(ctx context.Context, instanceName string, from, to time.Time) ([]hot.PgBlockingIncident, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetPgBlockingIncidentsRange(ctx, instanceName, from, to)
+}
+
+func (s *MetricsService) GetPgTopLockedTables(ctx context.Context, instanceName string, lookback time.Duration, limit int) ([]hot.PgTopLockedTable, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetPgTopLockedTables(ctx, instanceName, lookback, limit)
+}
+
+func (s *MetricsService) GetPgTopLockedTablesRange(ctx context.Context, instanceName string, from, to time.Time, limit int) ([]hot.PgTopLockedTable, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetPgTopLockedTablesRange(ctx, instanceName, from, to, limit)
+}
+
+func (s *MetricsService) GetPgBlockingDetailsInRange(ctx context.Context, instanceName string, from, to time.Time) (*hot.PgBlockingDetailsResponse, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetPgBlockingDetailsInRange(ctx, instanceName, from, to)
 }
 
 func (s *MetricsService) GetLatestPostgresPoolerStats(ctx context.Context, instanceName string) (*hot.PostgresPoolerStatRow, error) {

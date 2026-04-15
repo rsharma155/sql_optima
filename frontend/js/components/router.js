@@ -485,9 +485,24 @@ document.getElementById('theme-toggle').addEventListener('change', (e) => {
     if (window.__sidebarCollapseBound) return;
     window.__sidebarCollapseBound = true;
 
+    const syncInlineToggle = (collapsed) => {
+        const inlineBtn = document.getElementById('sidebar-toggle-inline');
+        if (!inlineBtn) return;
+        if (collapsed) {
+            inlineBtn.title = 'Expand sidebar';
+            inlineBtn.setAttribute('aria-label', 'Expand sidebar');
+            inlineBtn.innerHTML = '<span class="sidebar-toggle-glyph" aria-hidden="true">&gt;&gt;</span>';
+        } else {
+            inlineBtn.title = 'Collapse sidebar';
+            inlineBtn.setAttribute('aria-label', 'Collapse sidebar');
+            inlineBtn.innerHTML = '<span class="sidebar-toggle-glyph" aria-hidden="true">&lt;&lt;</span>';
+        }
+    };
+
     const apply = (collapsed) => {
         document.body.classList.toggle('sidebar-collapsed', !!collapsed);
         localStorage.setItem('sidebar_collapsed', collapsed ? '1' : '0');
+        syncInlineToggle(!!collapsed);
     };
 
     // Default: if user never chose, auto-collapse on laptop widths.
@@ -496,14 +511,6 @@ document.getElementById('theme-toggle').addEventListener('change', (e) => {
         apply(window.innerWidth <= 1200);
     } else {
         apply(saved === '1');
-    }
-
-    const btn = document.getElementById('sidebar-toggle');
-    if (btn) {
-        btn.addEventListener('click', () => {
-            const next = !document.body.classList.contains('sidebar-collapsed');
-            apply(next);
-        });
     }
 
     const inlineBtn = document.getElementById('sidebar-toggle-inline');

@@ -1,11 +1,11 @@
-        <div class="page-view active dashboard-sky-theme">
+        <div class="page-view active dashboard-sky-theme pg-cpu-page">
             <div class="page-title flex-between">
                 <div>
                     <button class="btn btn-secondary btn-sm" onclick="window.appNavigateBack()" style="margin-right:1rem;">
                         <i class="fa-solid fa-arrow-left"></i> Back
                     </button>
-                    <h1><i class="fa-solid fa-microchip text-accent"></i> CPU Usage Details</h1>
-                    <p class="subtitle">OS CPU vs PostgreSQL CPU consumption with historical trends.</p>
+                    <h1><i class="fa-solid fa-microchip text-accent"></i> PostgreSQL CPU Dashboard</h1>
+                    <p class="subtitle">Host vs. Postgres CPU, saturation, execution time by database, and top statements.</p>
                 </div>
                 <div class="flex gap-2">
                     <button class="btn btn-secondary" onclick="window.appNavigate('pg-memory')">
@@ -20,61 +20,81 @@
             <div class="top-strips dashboard-top-strips" style="margin-top:0.5rem;">
                 <div class="glass-panel dashboard-strip-panel">
                     <div class="dashboard-strip-header">
-                        <h4><span class="dashboard-strip-header-icons" aria-hidden="true"><i class="fa-solid fa-microchip"></i></span> CPU & Connections</h4>
+                        <h4><span class="dashboard-strip-header-icons" aria-hidden="true"><i class="fa-solid fa-gauge-high"></i></span> CPU KPIs</h4>
                     </div>
-                    <div class="dashboard-strip-metrics-row--6">
+                    <div class="dashboard-strip-metrics-row--6 pg-cpu-kpi-row">
                         <div class="strip-metric-cell">
                             <div class="strip-metric-label">Host CPU</div>
-                            <div class="strip-metric-value metric-value" id="os-cpu-current">--</div>
-                            <div class="text-muted sub" id="os-cpu-trend">Host utilization</div>
+                            <div class="strip-metric-value metric-value" id="kpi-host-cpu">--</div>
+                            <div class="text-muted sub" id="kpi-host-cpu-sub">pg_stat_cpu / host probe</div>
                         </div>
                         <div class="strip-metric-cell">
-                            <div class="strip-metric-label">Active Connections</div>
-                            <div class="strip-metric-value metric-value" id="active-connections">--</div>
-                            <div class="text-muted sub" id="connections-trend">pg_stat_activity</div>
+                            <div class="strip-metric-label">Postgres CPU</div>
+                            <div class="strip-metric-value metric-value" id="kpi-pg-cpu">--</div>
+                            <div class="text-muted sub">backend processes</div>
                         </div>
                         <div class="strip-metric-cell">
-                            <div class="strip-metric-label">Notes</div>
-                            <div class="strip-metric-value metric-value">—</div>
-                            <div class="text-muted sub">PG CPU share requires OS/process metrics</div>
+                            <div class="strip-metric-label">Active connections</div>
+                            <div class="strip-metric-value metric-value" id="kpi-active-conn">--</div>
+                            <div class="text-muted sub">pg_stat_activity</div>
                         </div>
                         <div class="strip-metric-cell">
-                            <div class="strip-metric-label">OS Active</div>
-                            <div class="strip-metric-value metric-value" id="os-cpu-active">--</div>
-                            <div class="text-muted sub">Used vs idle</div>
+                            <div class="strip-metric-label">CPU saturation</div>
+                            <div class="strip-metric-value metric-value">
+                                <span id="cpu-saturation-badge" class="saturation-badge saturation-badge--muted" title="load_1m / cpu_cores">--</span>
+                            </div>
+                            <div class="text-muted sub">load ÷ cores</div>
                         </div>
                         <div class="strip-metric-cell">
-                            <div class="strip-metric-label">Refresh</div>
-                            <div class="strip-metric-value metric-value">Live</div>
-                            <div class="text-muted sub">Timescale history</div>
+                            <div class="strip-metric-label">Avg CPU / conn</div>
+                            <div class="strip-metric-value metric-value" id="kpi-cpu-per-conn">--</div>
+                            <div class="text-muted sub">postgres CPU % ÷ active</div>
                         </div>
                         <div class="strip-metric-cell">
-                            <div class="strip-metric-label">Cores</div>
-                            <div class="strip-metric-value metric-value">—</div>
-                            <div class="text-muted sub">Hidden (not collected)</div>
+                            <div class="strip-metric-label">Load (1m) / Cores</div>
+                            <div class="strip-metric-value metric-value" id="kpi-load-cores">--</div>
+                            <div class="text-muted sub">from Timescale / host probe</div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Charts -->
-            <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr; gap:0.75rem;">
+            <div class="pg-cpu-second-row mt-3">
                 <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">CPU Usage Over Time</h3></div>
-                    <div class="chart-container" style="height:140px;"><canvas id="cpuTimeSeriesChart"></canvas></div>
+                    <div class="card-header flex-between">
+                        <h3 style="font-size:0.85rem; margin:0;">Host vs. Postgres CPU %</h3>
+                        <span class="text-muted" style="font-size:0.7rem;">Timescale history</span>
+                    </div>
+                    <div class="chart-container" style="height:320px;"><canvas id="cpuTimeSeriesChart"></canvas></div>
+                </div>
+                <div class="chart-card glass-panel pg-cpu-donut-panel" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">CPU time by database</h3></div>
+                    <p class="text-muted" style="font-size:0.65rem; margin:0 0 0.5rem 0;">Σ total_exec_time from pg_stat_statements (cumulative)</p>
+                    <div class="chart-container" style="height:320px;"><canvas id="cpuDbDonutChart"></canvas></div>
                 </div>
             </div>
 
-            <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 2fr; gap:0.75rem;">
-                <div class="table-card glass-panel" style="padding:0.75rem;">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">CPU Usage Details</h3></div>
-                    <div class="table-responsive" style="max-height:140px; overflow-y:auto;">
-                        <table class="data-table" style="font-size:0.7rem;">
+            <div class="pg-cpu-third-row mt-3">
+                <div class="table-card glass-panel pg-cpu-queries-panel" style="padding:0.75rem;">
+                    <div class="card-header flex-between">
+                        <h3 style="font-size:0.85rem; margin:0;">Top CPU queries</h3>
+                        <span class="text-muted" style="font-size:0.7rem;">Click a query to view details</span>
+                    </div>
+                    <div class="table-responsive" style="max-height:320px; overflow-y:auto;">
+                        <table class="data-table pg-cpu-queries-table" style="font-size:0.7rem;">
                             <thead>
-                                <tr><th>Time</th><th>OS CPU %</th><th>Connections</th></tr>
+                                <tr>
+                                    <th>timestamp</th>
+                                    <th>user</th>
+                                    <th>queryid</th>
+                                    <th>query</th>
+                                    <th>total ms</th>
+                                    <th>calls</th>
+                                    <th>avg ms</th>
+                                </tr>
                             </thead>
-                            <tbody id="cpu-details-table">
-                                <tr><td colspan="3" class="text-center text-muted">Loading CPU data...</td></tr>
+                            <tbody id="cpu-top-queries-body">
+                                <tr><td colspan="7" class="text-center text-muted">Loading...</td></tr>
                             </tbody>
                         </table>
                     </div>

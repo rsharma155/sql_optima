@@ -4,6 +4,7 @@
 -- Version: 1.0.0
 -- ============================================================================
 
+/*
 -- ============================================================================
 -- SEED DATA: Default Users
 -- Password: admin123 (bcrypt hash pre-computed)
@@ -21,6 +22,8 @@ VALUES (
     '$2a$10$XI9xAr9NzIbsTqZZaixXXubexWasheZi/cjQmSO4V0lwr4T4CzCAu',
     'viewer'
 ) ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash;
+
+*/
 
 -- ============================================================================
 -- SEED DATA: UI Widgets

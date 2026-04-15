@@ -136,7 +136,9 @@ func (tl *TimescaleLogger) GetPostgresSystemStats(ctx context.Context, instanceN
 
 	query := `
 		SELECT capture_timestamp, server_instance_name, cpu_usage, memory_usage,
-		       active_connections, idle_connections, total_connections
+		       active_connections, idle_connections, total_connections,
+		       COALESCE(host_cpu_percent, 0), COALESCE(postgres_cpu_percent, 0),
+		       COALESCE(load_1m, 0), COALESCE(load_5m, 0), COALESCE(load_15m, 0), COALESCE(cpu_cores, 0)
 		FROM postgres_system_stats
 		WHERE server_instance_name = $1
 		ORDER BY capture_timestamp DESC
@@ -154,7 +156,8 @@ func (tl *TimescaleLogger) GetPostgresSystemStats(ctx context.Context, instanceN
 	for rows.Next() {
 		var r PostgresSystemStatsRow
 		if err := rows.Scan(&r.CaptureTimestamp, &r.ServerName, &r.CPUUsage, &r.MemoryUsage,
-			&r.ActiveConnections, &r.IdleConnections, &r.TotalConnections); err != nil {
+			&r.ActiveConnections, &r.IdleConnections, &r.TotalConnections,
+			&r.HostCpuPercent, &r.PostgresCpuPercent, &r.Load1m, &r.Load5m, &r.Load15m, &r.CpuCores); err != nil {
 			log.Printf("[TSLogger] Failed to scan row: %v", err)
 			continue
 		}
@@ -209,8 +212,9 @@ func (tl *TimescaleLogger) LogPostgresReplicationStats(ctx context.Context, inst
 	return err
 }
 
-func (tl *TimescaleLogger) LogPostgresSystemStats(ctx context.Context, instanceName string, cpuUsage, memoryUsage float64, activeConns, idleConns, totalConns int) error {
-	sig := pgFnv64(instanceName, cpuUsage, memoryUsage, activeConns, idleConns, totalConns)
+func (tl *TimescaleLogger) LogPostgresSystemStats(ctx context.Context, instanceName string, row PgSystemStatsInsert) error {
+	sig := pgFnv64(instanceName, row.CPUUsage, row.MemoryUsage, row.ActiveConnections, row.IdleConnections, row.TotalConnections,
+		row.HostCpuPercent, row.PostgresCpuPercent, row.Load1m, row.Load5m, row.Load15m, row.CpuCores)
 	tl.mu.Lock()
 	if prev, ok := tl.prevPgSystemStatsHash[instanceName]; ok && prev == sig {
 		tl.mu.Unlock()
@@ -219,11 +223,16 @@ func (tl *TimescaleLogger) LogPostgresSystemStats(ctx context.Context, instanceN
 	tl.prevPgSystemStatsHash[instanceName] = sig
 	tl.mu.Unlock()
 
-	query := `INSERT INTO postgres_system_stats (capture_timestamp, server_instance_name, cpu_usage, memory_usage, active_connections, idle_connections, total_connections)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	query := `INSERT INTO postgres_system_stats (
+			capture_timestamp, server_instance_name, cpu_usage, memory_usage,
+			active_connections, idle_connections, total_connections,
+			host_cpu_percent, postgres_cpu_percent, load_1m, load_5m, load_15m, cpu_cores
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 
 	now := time.Now().UTC()
-	_, err := tl.pool.Exec(ctx, query, now, instanceName, cpuUsage, memoryUsage, activeConns, idleConns, totalConns)
+	_, err := tl.pool.Exec(ctx, query, now, instanceName,
+		row.CPUUsage, row.MemoryUsage, row.ActiveConnections, row.IdleConnections, row.TotalConnections,
+		row.HostCpuPercent, row.PostgresCpuPercent, row.Load1m, row.Load5m, row.Load15m, row.CpuCores)
 	return err
 }
 

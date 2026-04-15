@@ -1,7 +1,7 @@
 /*
  * SQL Optima — https://github.com/rsharma155/sql_optima
  *
- * Purpose: Lock monitoring page for both SQL Server and PostgreSQL.
+ * Purpose: PostgreSQL Locks & Blocking dashboard (stateful incident monitoring).
  *
  * Author: Ravi Sharma
  * Copyright (c) 2026 Ravi Sharma
@@ -9,19 +9,73 @@
  */
 
 window.PgLocksView = async function() {
-    window.routerOutlet.innerHTML = await window.loadTemplate('/pages/locks.html');
+    window.routerOutlet.innerHTML = await window.loadTemplate('/pages/pg_locks.html');
     setTimeout(initPgLocks, 50);
+}
+
+function pgLocksFormatLocal(dt) {
+    const pad = n => String(n).padStart(2, '0');
+    return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate()) + 'T' + pad(dt.getHours()) + ':' + pad(dt.getMinutes());
+}
+
+function pgLocksToRFC3339(datetimeLocalValue) {
+    // datetime-local is interpreted as local time. Convert to RFC3339 UTC for API.
+    const ms = Date.parse(datetimeLocalValue);
+    if (!isFinite(ms)) return '';
+    return new Date(ms).toISOString();
 }
 
 async function initPgLocks() {
     window.currentCharts = window.currentCharts || {};
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: ''};
+    const instQ = encodeURIComponent(inst.name);
+
+    // Range UI (default last 1 hour).
+    const fromEl = document.getElementById('pgLocksFrom');
+    const toEl = document.getElementById('pgLocksTo');
+    const now = new Date();
+    const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    if (fromEl && !fromEl.dataset.touched) fromEl.value = pgLocksFormatLocal(hourAgo);
+    if (toEl && !toEl.dataset.touched) toEl.value = pgLocksFormatLocal(now);
+
+    const applyBtn = document.getElementById('pgLocksApplyRange');
+    if (applyBtn) {
+        applyBtn.onclick = () => {
+            if (fromEl) fromEl.dataset.touched = '1';
+            if (toEl) toEl.dataset.touched = '1';
+            loadPgLocksRangeData();
+        };
+    }
+
+    function updateRangeHint() {
+        const hint = document.getElementById('pgLocksRangeHint');
+        if (!hint || !fromEl || !toEl) return;
+        if (!fromEl.value || !toEl.value) {
+            hint.style.display = 'none';
+            hint.textContent = '';
+            return;
+        }
+        const err = typeof window.getDatetimeLocalRangeError === 'function'
+            ? window.getDatetimeLocalRangeError(fromEl.value, toEl.value) : '';
+        if (err) {
+            hint.textContent = err;
+            hint.style.display = 'block';
+        } else {
+            hint.style.display = 'none';
+            hint.textContent = '';
+        }
+    }
+    if (fromEl && toEl && !fromEl.dataset.pgRangeListeners) {
+        fromEl.dataset.pgRangeListeners = '1';
+        fromEl.addEventListener('change', updateRangeHint);
+        toEl.addEventListener('change', updateRangeHint);
+    }
 
     // Fetch locks data
     let locks = [];
     try {
         const response = await window.apiClient.authenticatedFetch(
-            `/api/postgres/locks?instance=${encodeURIComponent(inst.name)}`
+            `/api/postgres/locks?instance=${instQ}`
         );
         if (response.ok) {
             const contentType = response.headers.get('content-type') || '';
@@ -55,34 +109,94 @@ async function initPgLocks() {
         }
     }
 
-    // Fetch blocking tree data
-    let blockingTree = [];
+    // Always load KPIs (current), then load range-driven time series.
+    let kpis = null;
     try {
-        const blockingResponse = await window.apiClient.authenticatedFetch(
-            `/api/postgres/blocking-tree?instance=${encodeURIComponent(inst.name)}`
-        );
-        if (blockingResponse.ok) {
-            const contentType = blockingResponse.headers.get('content-type') || '';
-            if (contentType.includes('application/json')) {
-                const data = await blockingResponse.json();
-                blockingTree = data.blocking_tree || [];
-            }
-        } else {
-            console.error("Failed to load PG blocking tree:", blockingResponse.status);
+        const kRes = await window.apiClient.authenticatedFetch(`/api/postgres/locks-blocking/kpis?instance=${instQ}`);
+        if (kRes.ok && (kRes.headers.get('content-type') || '').includes('application/json')) {
+            const data = await kRes.json();
+            kpis = data && data.kpis ? data.kpis : null;
         }
     } catch (e) {
-        console.error("PG blocking tree fetch failed:", e);
+        console.error("PG locks-blocking KPI fetch failed:", e);
+    }
+    updatePgLocksKpis(kpis);
+
+    async function loadPgLocksRangeData() {
+        if (fromEl && toEl && fromEl.value && toEl.value) {
+            const rangeErr = typeof window.getDatetimeLocalRangeError === 'function'
+                ? window.getDatetimeLocalRangeError(fromEl.value, toEl.value) : '';
+            if (rangeErr) {
+                if (typeof window.showDateRangeValidationError === 'function') {
+                    window.showDateRangeValidationError(rangeErr);
+                }
+                const hint = document.getElementById('pgLocksRangeHint');
+                if (hint) {
+                    hint.textContent = rangeErr;
+                    hint.style.display = 'block';
+                }
+                return;
+            }
+        }
+
+        const fromISO = fromEl && fromEl.value ? pgLocksToRFC3339(fromEl.value) : '';
+        const toISO = toEl && toEl.value ? pgLocksToRFC3339(toEl.value) : '';
+        const meta = document.getElementById('pgLocksRangeMeta');
+        if (meta && fromISO && toISO) {
+            meta.textContent = `${new Date(fromISO).toLocaleString()} → ${new Date(toISO).toLocaleString()}`;
+        }
+
+        let timelinePoints = [];
+        let incidentWindows = [];
+        let topLockedTables = [];
+        let detailsTree = [];
+        let detailsCapturedAt = '';
+        try {
+            const [tRes, topRes, dRes] = await Promise.all([
+                window.apiClient.authenticatedFetch(`/api/postgres/locks-blocking/timeline?instance=${instQ}&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`),
+                window.apiClient.authenticatedFetch(`/api/postgres/locks-blocking/top-locked-tables?instance=${instQ}&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}&limit=10`),
+                window.apiClient.authenticatedFetch(`/api/postgres/locks-blocking/details?instance=${instQ}&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`),
+            ]);
+            if (tRes.ok && (tRes.headers.get('content-type') || '').includes('application/json')) {
+                const data = await tRes.json();
+                timelinePoints = Array.isArray(data.timeline) ? data.timeline : [];
+                incidentWindows = Array.isArray(data.incidents) ? data.incidents : [];
+            }
+            if (topRes.ok && (topRes.headers.get('content-type') || '').includes('application/json')) {
+                const data = await topRes.json();
+                topLockedTables = Array.isArray(data.tables) ? data.tables : [];
+            }
+            if (dRes.ok && (dRes.headers.get('content-type') || '').includes('application/json')) {
+                const data = await dRes.json();
+                detailsTree = Array.isArray(data.blocking_tree) ? data.blocking_tree : [];
+                detailsCapturedAt = data && data.collected_at ? String(data.collected_at) : '';
+            }
+        } catch (e) {
+            console.error("PG locks-blocking range fetch failed:", e);
+        }
+
+        renderPgBlockingIncidentTimeline(timelinePoints, incidentWindows);
+        renderPgTopLockedTables(topLockedTables);
+        renderBlockingTree(detailsTree);
+        const capEl = document.getElementById('pgBlockingDetailsCapturedAt');
+        if (capEl) {
+            capEl.textContent = detailsCapturedAt ? new Date(detailsCapturedAt).toLocaleString() : '—';
+        }
+        renderBlockingDetails(detailsTree, detailsCapturedAt);
+        renderBlockingSummary(detailsTree);
     }
 
-    renderBlockingTree(blockingTree);
-    renderBlockingDetails(blockingTree);
-    renderBlockingSummary(blockingTree);
+    window.__loadPgLocksRangeData = loadPgLocksRangeData;
+    await loadPgLocksRangeData();
+
+    // NOTE: Blocking Tree + Details are now range-driven and Timescale-backed via
+    // /api/postgres/locks-blocking/details (see loadPgLocksRangeData()).
 
     // Deadlock delta history (Timescale-backed). No dummy charts.
     let deadlockHist = null;
     try {
         const dlResponse = await window.apiClient.authenticatedFetch(
-            `/api/postgres/deadlocks/history?instance=${encodeURIComponent(inst.name)}&window_minutes=180&limit=400`
+            `/api/postgres/deadlocks/history?instance=${instQ}&window_minutes=180&limit=400`
         );
         if (dlResponse.ok) {
             const contentType = dlResponse.headers.get('content-type') || '';
@@ -98,7 +212,7 @@ async function initPgLocks() {
     let lockWaitHist = null;
     try {
         const lwResponse = await window.apiClient.authenticatedFetch(
-            `/api/postgres/locks/wait-history?instance=${encodeURIComponent(inst.name)}&window_minutes=180&limit=400`
+            `/api/postgres/locks/wait-history?instance=${instQ}&window_minutes=180&limit=400`
         );
         if (lwResponse.ok) {
             const contentType = lwResponse.headers.get('content-type') || '';
@@ -185,6 +299,159 @@ async function initPgLocks() {
             }, options: {responsive:true, maintainAspectRatio:false, cutout:'60%', plugins:{legend:{position:'bottom'}}}
         });
     }
+}
+
+function updatePgLocksKpis(kpis) {
+    const elVictims = document.getElementById('pgKpiActiveVictims');
+    const elMeta = document.getElementById('pgKpiIncidentMeta');
+    const elRootPid = document.getElementById('pgKpiRootPid');
+    const elRootQuery = document.getElementById('pgKpiRootQuery');
+    const elIdle = document.getElementById('pgKpiIdleRisk');
+    const elSev = document.getElementById('pgKpiSeverity');
+    const elBand = document.getElementById('pgKpiSeverityBand');
+    if (!elVictims || !elMeta || !elRootPid || !elRootQuery || !elIdle || !elSev || !elBand) return;
+
+    const victims = Number(kpis?.active_blocking_sessions ?? 0) || 0;
+    const depth = Number(kpis?.chain_depth ?? 0) || 0;
+    const idleRisk = Number(kpis?.idle_in_txn_risk_count ?? 0) || 0;
+    const durMins = Number(kpis?.incident_duration_mins ?? 0) || 0;
+    const rootPid = kpis?.root_blocker_pid != null ? String(kpis.root_blocker_pid) : '—';
+    const rootQ = String(kpis?.root_blocker_query ?? '').trim();
+
+    elVictims.textContent = String(victims);
+    elVictims.classList.toggle('text-danger', victims > 0);
+    elVictims.classList.toggle('text-success', victims === 0);
+
+    const incId = kpis?.incident_id != null ? String(kpis.incident_id) : '';
+    elMeta.textContent = incId ? `incident #${incId} • ${durMins}m • depth ${depth}` : 'no active incident';
+
+    elRootPid.textContent = rootPid;
+    elRootQuery.textContent = rootQ ? (rootQ.length > 110 ? (rootQ.slice(0, 110) + '…') : rootQ) : '—';
+
+    elIdle.textContent = String(idleRisk);
+    elIdle.classList.toggle('text-warning', idleRisk > 0);
+
+    const score = (victims * 10) + (depth * 5) + (idleRisk * 30) + (durMins * 2);
+    elSev.textContent = String(score);
+    const band = score >= 80 ? 'RED' : score >= 50 ? 'ORANGE' : score >= 20 ? 'YELLOW' : 'GREEN';
+    elBand.textContent = band;
+    elBand.classList.remove('text-success', 'text-warning', 'text-danger');
+    if (band === 'GREEN') elBand.classList.add('text-success');
+    else if (band === 'YELLOW') elBand.classList.add('text-warning');
+    else elBand.classList.add('text-danger');
+
+    // On-page alert banner for active blocking / alarming severity.
+    const banner = document.getElementById('pgLocksAlertBanner');
+    const title = document.getElementById('pgLocksAlertTitle');
+    const msg = document.getElementById('pgLocksAlertMsg');
+    if (banner && title && msg) {
+        const alarming = victims > 0 || score >= 50;
+        if (!alarming) {
+            banner.style.display = 'none';
+        } else {
+            banner.style.display = 'block';
+            const incId = kpis?.incident_id != null ? String(kpis.incident_id) : '';
+            title.textContent = victims > 0 ? 'Blocking detected' : 'Incident severity elevated';
+            const root = kpis?.root_blocker_pid != null ? `root PID ${kpis.root_blocker_pid}` : 'root unknown';
+            msg.textContent = `${victims} blocked • score ${score} (${band})${incId ? ` • incident #${incId}` : ''} • ${root}`;
+            banner.classList.remove('alert-warning', 'alert-danger');
+            banner.classList.add(score >= 80 || victims > 0 ? 'alert-danger' : 'alert-warning');
+        }
+    }
+}
+
+function renderPgTopLockedTables(rows) {
+    const tbody = document.getElementById('pgTopLockedTablesTbody');
+    if (!tbody) return;
+    const list = Array.isArray(rows) ? rows : [];
+    if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No waiting locks in lookback window</td></tr>';
+        return;
+    }
+    tbody.innerHTML = list.map(r => {
+        const rel = window.escapeHtml(String(r?.relation_name ?? 'virtual'));
+        const cnt = Number(r?.waiting_count ?? 0) || 0;
+        const maxw = Number(r?.max_wait_seconds ?? 0) || 0;
+        return `<tr><td>${rel}</td><td><strong>${cnt}</strong></td><td>${maxw.toFixed(0)}</td></tr>`;
+    }).join('');
+}
+
+function renderPgBlockingIncidentTimeline(points, incidents) {
+    const canvas = document.getElementById('pgBlockingIncidentTimelineChart');
+    if (!canvas) return;
+
+    const rows = Array.isArray(points) ? points : [];
+    const labels = rows.map(p => {
+        const ts = p?.bucket;
+        try { return ts ? new Date(ts).toLocaleTimeString() : ''; } catch { return ''; }
+    });
+    const data = rows.map(p => Number(p?.blocked_sessions ?? 0) || 0);
+
+    const windows = (Array.isArray(incidents) ? incidents : []).map(w => {
+        const s = w?.started_at ? Date.parse(w.started_at) : NaN;
+        const e = w?.ended_at ? Date.parse(w.ended_at) : NaN;
+        return { startMs: s, endMs: isFinite(e) ? e : Date.now() };
+    }).filter(w => isFinite(w.startMs));
+
+    const shadePlugin = {
+        id: 'incidentShading',
+        beforeDatasetsDraw(chart) {
+            if (!windows.length) return;
+            const ctx = chart.ctx;
+            const xScale = chart.scales.x;
+            const area = chart.chartArea;
+            if (!xScale || !area) return;
+
+            const xs = rows.map(p => {
+                const ts = p?.bucket;
+                const ms = ts ? Date.parse(ts) : NaN;
+                return isFinite(ms) ? ms : NaN;
+            });
+
+            ctx.save();
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.10)';
+            windows.forEach(w => {
+                let first = -1, last = -1;
+                for (let i = 0; i < xs.length; i++) {
+                    const ms = xs[i];
+                    if (!isFinite(ms)) continue;
+                    if (ms >= w.startMs && ms <= w.endMs) {
+                        if (first === -1) first = i;
+                        last = i;
+                    }
+                }
+                if (first === -1 || last === -1) return;
+                const x0 = xScale.getPixelForValue(first);
+                const x1 = xScale.getPixelForValue(last);
+                ctx.fillRect(x0, area.top, Math.max(1, x1 - x0), area.bottom - area.top);
+            });
+            ctx.restore();
+        }
+    };
+
+    if (window.currentCharts.pgBlockingTimeline) {
+        window.currentCharts.pgBlockingTimeline.destroy();
+    }
+
+    window.currentCharts.pgBlockingTimeline = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: { labels, datasets: [{
+            label: 'Blocked sessions / min',
+            data,
+            borderColor: window.getCSSVar('--danger'),
+            backgroundColor: 'rgba(239, 68, 68, 0.08)',
+            fill: true,
+            tension: 0.25,
+            pointRadius: 0,
+        }]},
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: { y: { beginAtZero: true } }
+        },
+        plugins: [shadePlugin],
+    });
 }
 
 function renderBlockingSummary(blockingTree) {
@@ -316,13 +583,13 @@ function renderBlockingTree(blockingTree) {
     function renderNode(node, isRoot = true) {
         const iconClass = node.state === 'idle in transaction' ? 'fa-lock text-danger' : 'fa-lock text-warning';
         const liClass = isRoot ? 'style="margin-bottom:0.75rem;"' : 'style="margin-top:0.5rem;"';
-        
+
         let html = `<li ${liClass}><i class="fa-solid ${iconClass}"></i> <strong>PID ${node.pid}</strong> (${window.escapeHtml(node.state)}) <em>Duration: ${window.escapeHtml(node.duration)}</em>`;
-        
+
         if (node.wait_event) {
             html += ` <em>WaitEvent: ${window.escapeHtml(node.wait_event)}</em>`;
         }
-        
+
         if (node.blocked_by && node.blocked_by.length > 0) {
             html += '<ul style="list-style:none; border-left: 2px dashed var(--warning); margin-left:1rem; padding-left:1rem;">';
             node.blocked_by.forEach(blocked => {
@@ -330,7 +597,7 @@ function renderBlockingTree(blockingTree) {
             });
             html += '</ul>';
         }
-        
+
         html += '</li>';
         return html;
     }
@@ -339,11 +606,11 @@ function renderBlockingTree(blockingTree) {
     blockingTree.forEach(node => {
         html += renderNode(node);
     });
-    
+
     container.innerHTML = html;
 }
 
-function renderBlockingDetails(blockingTree) {
+function renderBlockingDetails(blockingTree, capturedAtIso) {
     const tbody = document.getElementById('pgBlockingDetailsTbody');
     if (!tbody) return;
 
@@ -359,22 +626,46 @@ function renderBlockingDetails(blockingTree) {
     all.sort((a,b) => (b.blocked_by?.length||0) - (a.blocked_by?.length||0));
     const top = all.slice(0, 20);
 
-    tbody.innerHTML = top.map(n => {
+    // IMPORTANT: avoid inline onclick with raw SQL (quotes/newlines break JS parsing).
+    const capTxt = capturedAtIso ? (() => { try { return new Date(capturedAtIso).toLocaleString(); } catch { return capturedAtIso; } })() : '—';
+    tbody.innerHTML = top.map((n, idx) => {
         const qs = n.query_start ? new Date(n.query_start).toLocaleString() : '-';
-        const sql = n.query || '';
+        const sql = String(n.query || '');
         const preview = sql.substring(0, 90) + (sql.length > 90 ? '...' : '');
+        const pid = n.pid != null ? String(n.pid) : '';
+        const user = String(n.user || '');
+        const db = String(n.database || '');
+        const dur = String(n.duration || '');
+        const wait = String(n.wait_event || '');
         return `
-            <tr style="cursor:pointer;" onclick="window.pgShowSqlModal('${window.escapeHtml(String(n.pid || ''))}','${window.escapeHtml(String(n.user||''))}','${window.escapeHtml(sql).replace(/'/g,'&#39;')}')">
-                <td>${n.pid}</td>
-                <td>${window.escapeHtml(n.user || '-')}</td>
-                <td>${window.escapeHtml(n.database || '-')}</td>
+            <tr class="pg-blocking-row" style="cursor:pointer;"
+                data-pid="${window.escapeHtml(pid)}"
+                data-user="${window.escapeHtml(user)}"
+                data-sql="${window.escapeHtml(sql)}">
+                <td class="text-muted">${window.escapeHtml(capTxt)}</td>
+                <td>${window.escapeHtml(pid || '-')}</td>
+                <td>${window.escapeHtml(user || '-')}</td>
+                <td>${window.escapeHtml(db || '-')}</td>
                 <td class="text-muted">${window.escapeHtml(qs)}</td>
-                <td>${window.escapeHtml(n.duration || '-')}</td>
-                <td class="text-muted">${window.escapeHtml(n.wait_event || '-')}</td>
+                <td>${window.escapeHtml(dur || '-')}</td>
+                <td class="text-muted">${window.escapeHtml(wait || '-')}</td>
                 <td><span class="code-snippet" title="${window.escapeHtml(sql)}">${window.escapeHtml(preview)}</span></td>
             </tr>
         `;
     }).join('');
+
+    // Delegate click handling to the tbody.
+    if (!tbody.dataset.pgBlockingClickBound) {
+        tbody.dataset.pgBlockingClickBound = '1';
+        tbody.addEventListener('click', (e) => {
+            const tr = e.target && e.target.closest ? e.target.closest('tr.pg-blocking-row') : null;
+            if (!tr) return;
+            const pid = tr.dataset.pid || '';
+            const user = tr.dataset.user || '';
+            const sql = tr.dataset.sql || '';
+            window.pgShowSqlModal(pid, user, sql);
+        });
+    }
 }
 
 window.pgShowSqlModal = function(pid, user, sql) {
@@ -405,3 +696,4 @@ window.pgShowSqlModal = function(pid, user, sql) {
     if (close) close.onclick = () => div.remove();
     div.onclick = (e) => { if (e.target === div) div.remove(); };
 };
+

@@ -4,19 +4,23 @@
                     <h1>PostgreSQL Control Center</h1>
                     <span class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></span>
                 </div>
-                <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
-                    <div class="glass-panel p-2 rounded" style="display:flex; align-items:center; gap:0.5rem;">
-                        <span class="text-muted" style="font-size:0.75rem;">DB Health</span>
-                        <span id="pgHealthScoreBadge" class="badge badge-success" style="min-width:5.5rem; text-align:center;">--</span>
+                <div class="dashboard-page-title-actions dashboard-pg-header-actions">
+                    <div class="dashboard-pg-header-primary">
+                        <div class="time-picker glass-panel p-2 rounded" style="display:flex; flex-wrap:wrap; align-items:center; gap:0.35rem 0.85rem; justify-content:flex-end;">
+                            <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="pgLastRefreshTime">--:--:--</span></span>
+                            <span class="text-muted" style="font-size:0.75rem;" id="pg-uptime">Loading...</span>
+                            <span class="text-muted" style="font-size:0.75rem;" id="pg-version">Loading...</span>
+                        </div>
+                        <button class="btn btn-sm btn-outline" onclick="window.appNavigate('drilldown-pg-enterprise')" title="Advanced / raw Timescale-backed enterprise metrics"><i class="fa-solid fa-server"></i> Advanced</button>
+                        <button class="btn btn-sm btn-outline text-accent" onclick="window.PgDashboardView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
                     </div>
-                    <div id="pgStatusStrip"></div>
-                    <div class="time-picker glass-panel p-2 rounded custom-select-group text-right" style="display:flex; flex-direction:column; gap:0.15rem;">
-                        <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="pgLastRefreshTime">--:--:--</span></span>
-                        <span class="text-muted" style="font-size:0.75rem" id="pg-uptime">Loading...</span>
-                        <span class="text-muted" style="font-size:0.75rem" id="pg-version">Loading...</span>
+                    <div class="dashboard-pg-header-health-row">
+                        <div class="glass-panel p-2 rounded" style="display:flex; align-items:center; gap:0.5rem;">
+                            <span class="text-muted" style="font-size:0.75rem;">DB Health</span>
+                            <span id="pgHealthScoreBadge" class="badge badge-success" style="min-width:5.5rem; text-align:center;">--</span>
+                        </div>
+                        <span id="pgDataSourceBadge" class="badge badge-info" style="font-size:0.65rem; display:none;">Source</span>
                     </div>
-                    <button class="btn btn-sm btn-outline" onclick="window.appNavigate('drilldown-pg-enterprise')" title="Advanced / raw Timescale-backed enterprise metrics"><i class="fa-solid fa-server"></i> Advanced</button>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.PgDashboardView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
 

@@ -1383,6 +1383,12 @@ CREATE TABLE IF NOT EXISTS postgres_system_stats (
     active_connections INTEGER DEFAULT 0,
     idle_connections INTEGER DEFAULT 0,
     total_connections INTEGER DEFAULT 0,
+    host_cpu_percent DOUBLE PRECISION DEFAULT 0,
+    postgres_cpu_percent DOUBLE PRECISION DEFAULT 0,
+    load_1m DOUBLE PRECISION DEFAULT 0,
+    load_5m DOUBLE PRECISION DEFAULT 0,
+    load_15m DOUBLE PRECISION DEFAULT 0,
+    cpu_cores INTEGER DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
 SELECT create_hypertable('postgres_system_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
@@ -1978,6 +1984,25 @@ CREATE TABLE IF NOT EXISTS optima_ui_widgets (
 CREATE INDEX IF NOT EXISTS idx_optima_widgets_section ON optima_ui_widgets (dashboard_section);
 
 -- --------------------------------------------------------------------------
+-- 2.2.1: Plan Analysis Cache (EXPLAIN Plan Analyzer)
+-- --------------------------------------------------------------------------
+-- Stores deterministic performance reports derived from EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+-- to avoid recomputation for identical plans. Cache keys use a canonical JSON SHA-256 hash.
+CREATE TABLE IF NOT EXISTS plan_analysis_cache (
+    plan_hash TEXT PRIMARY KEY,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    query_text TEXT NULL,
+    raw_plan_json JSONB NOT NULL,
+    report_json JSONB NOT NULL,
+    total_execution_time_ms DOUBLE PRECISION NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_plan_analysis_cache_updated_at ON plan_analysis_cache (updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_plan_analysis_cache_exec_time ON plan_analysis_cache (total_execution_time_ms DESC);
+COMMENT ON TABLE plan_analysis_cache IS 'Cache of deterministic EXPLAIN plan analysis reports (canonical JSON hash → report JSON).';
+
+-- --------------------------------------------------------------------------
 -- 2.3: Custom Dashboards
 -- --------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS user_dashboards (
@@ -2220,6 +2245,137 @@ CREATE INDEX IF NOT EXISTS idx_collection_log_collector ON sqlserver_collection_
 
 -- Keep these objects in a dedicated schema to avoid name collisions with legacy tables.
 CREATE SCHEMA IF NOT EXISTS monitor;
+
+-- ============================================================================
+-- SECTION 3.4: PostgreSQL Locks & Blocking (Stateful incidents)
+-- ============================================================================
+-- Design notes:
+-- - These tables live in TimescaleDB (not the monitored Postgres instance).
+-- - We persist "snapshots" + derived blocking pairs so we can reconstruct incidents over time.
+-- - `server_id` maps to your configured instance name.
+
+-- 3.4.1: Session state snapshot (pg_stat_activity)
+CREATE TABLE IF NOT EXISTS monitor.pg_session_snapshot (
+    collected_at TIMESTAMPTZ NOT NULL,
+    server_id TEXT NOT NULL,
+    pid INT,
+    usename TEXT,
+    datname TEXT,
+    application_name TEXT,
+    client_addr TEXT,
+    state TEXT,
+    wait_event_type TEXT,
+    wait_event TEXT,
+    xact_start TIMESTAMPTZ,
+    query_start TIMESTAMPTZ,
+    state_change TIMESTAMPTZ,
+    query TEXT,
+    PRIMARY KEY (collected_at, server_id, pid)
+);
+SELECT create_hypertable('monitor.pg_session_snapshot', 'collected_at', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_pg_session_snapshot_lookup ON monitor.pg_session_snapshot (server_id, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pg_session_snapshot_state ON monitor.pg_session_snapshot (server_id, state, collected_at DESC);
+ALTER TABLE monitor.pg_session_snapshot SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'server_id',
+    timescaledb.compress_orderby = 'collected_at DESC'
+);
+DO $$
+BEGIN
+    CALL remove_compression_policy('monitor.pg_session_snapshot', if_exists => TRUE);
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
+SELECT add_compression_policy('monitor.pg_session_snapshot', INTERVAL '7 days', if_not_exists => TRUE);
+
+-- 3.4.2: Locks snapshot (pg_locks + pg_class for relation_name)
+CREATE TABLE IF NOT EXISTS monitor.pg_lock_snapshot (
+    collected_at TIMESTAMPTZ NOT NULL,
+    server_id TEXT NOT NULL,
+    pid INT,
+    locktype TEXT,
+    mode TEXT,
+    granted BOOLEAN,
+    relation_oid OID NOT NULL DEFAULT 0,
+    relation_name TEXT,
+    transactionid TEXT,
+    waiting_seconds DOUBLE PRECISION,
+    PRIMARY KEY (collected_at, server_id, pid, locktype, mode, granted, relation_oid)
+);
+-- MIGRATION: ensure relation_oid is non-null (PK cannot contain NULLs).
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='monitor' AND table_name='pg_lock_snapshot' AND column_name='relation_oid'
+    ) THEN
+        -- Set any existing NULLs to 0 and enforce NOT NULL with default.
+        EXECUTE 'UPDATE monitor.pg_lock_snapshot SET relation_oid = 0 WHERE relation_oid IS NULL';
+        BEGIN
+            EXECUTE 'ALTER TABLE monitor.pg_lock_snapshot ALTER COLUMN relation_oid SET DEFAULT 0';
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
+        BEGIN
+            EXECUTE 'ALTER TABLE monitor.pg_lock_snapshot ALTER COLUMN relation_oid SET NOT NULL';
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
+    END IF;
+END $$;
+SELECT create_hypertable('monitor.pg_lock_snapshot', 'collected_at', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_pg_lock_snapshot_lookup ON monitor.pg_lock_snapshot (server_id, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pg_lock_snapshot_waiting ON monitor.pg_lock_snapshot (server_id, granted, collected_at DESC) WHERE granted = FALSE;
+ALTER TABLE monitor.pg_lock_snapshot SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'server_id,granted',
+    timescaledb.compress_orderby = 'collected_at DESC'
+);
+DO $$
+BEGIN
+    CALL remove_compression_policy('monitor.pg_lock_snapshot', if_exists => TRUE);
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
+SELECT add_compression_policy('monitor.pg_lock_snapshot', INTERVAL '7 days', if_not_exists => TRUE);
+
+-- 3.4.3: Blocking pairs (dependency graph edges)
+CREATE TABLE IF NOT EXISTS monitor.pg_blocking_pairs (
+    collected_at TIMESTAMPTZ NOT NULL,
+    server_id TEXT NOT NULL,
+    blocked_pid INT NOT NULL,
+    blocking_pid INT NOT NULL,
+    PRIMARY KEY (collected_at, server_id, blocked_pid, blocking_pid)
+);
+SELECT create_hypertable('monitor.pg_blocking_pairs', 'collected_at', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_pg_blocking_pairs_lookup ON monitor.pg_blocking_pairs (server_id, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pg_blocking_pairs_edge ON monitor.pg_blocking_pairs (server_id, blocking_pid, collected_at DESC);
+ALTER TABLE monitor.pg_blocking_pairs SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'server_id',
+    timescaledb.compress_orderby = 'collected_at DESC'
+);
+DO $$
+BEGIN
+    CALL remove_compression_policy('monitor.pg_blocking_pairs', if_exists => TRUE);
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
+SELECT add_compression_policy('monitor.pg_blocking_pairs', INTERVAL '14 days', if_not_exists => TRUE);
+
+-- 3.4.4: Incident tracking (stateful; not a hypertable)
+CREATE TABLE IF NOT EXISTS monitor.pg_blocking_incident (
+    incident_id BIGSERIAL PRIMARY KEY,
+    server_id TEXT NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL,
+    ended_at TIMESTAMPTZ,
+    root_blocker_pid INT,
+    root_blocker_query TEXT,
+    peak_blocked_sessions INT DEFAULT 0,
+    status TEXT DEFAULT 'active' -- 'active' | 'resolved'
+);
+CREATE INDEX IF NOT EXISTS idx_pg_blocking_incident_server_started ON monitor.pg_blocking_incident (server_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pg_blocking_incident_status ON monitor.pg_blocking_incident (server_id, status, started_at DESC) WHERE status = 'active';
 
 -- 3.3.1: Index usage stats (delta snapshot)
 CREATE TABLE IF NOT EXISTS monitor.index_usage_stats (

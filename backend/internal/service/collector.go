@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rsharma155/sql_optima/internal/collector/pghostcpu"
 	"github.com/rsharma155/sql_optima/internal/collectors"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
@@ -43,6 +44,7 @@ func (s *MetricsService) StartBackgroundCollector(ctx context.Context) {
 	log.Printf("[Collector]   - Long Running Queries: every 60s (within historical)")
 	log.Printf("[Collector]   - Top CPU Queries: every 60s (within historical)")
 	log.Printf("[Collector]   - Live Diagnostics ticker: DISABLED (RTD is on-demand only)")
+	log.Printf("[Collector]   - PG Locks/Blocking incidents: adaptive 15s/5s")
 
 	s.dashboardCache = make(map[string]models.DashboardMetrics)
 	s.pgDashboardCache = make(map[string]models.PgCoreDashboardCache)
@@ -52,6 +54,8 @@ func (s *MetricsService) StartBackgroundCollector(ctx context.Context) {
 
 	// Run one live scrape on startup only (warm cache), then rely on on-demand RTD endpoints.
 	s.runLiveDiagnosticsWithContext(ctx)
+	// Start stateful incident monitoring in the background (if Timescale schema is ready).
+	go s.StartPgLocksBlockingCollector(ctx)
 
 	for {
 		select {
@@ -535,19 +539,52 @@ func (s *MetricsService) logPostgresMetricsToTimescaleWithContext(ctx context.Co
 		}
 	}
 
-	active, idle, total, err := s.PgRepo.GetConnectionStats(instanceName)
-	if err == nil {
+	active, idle, total, connErr := s.PgRepo.GetConnectionStats(instanceName)
+	if connErr != nil {
+		active, idle, total = 0, 0, 0
+		log.Printf("[Collector] GetConnectionStats failed for %s: %v", instanceName, connErr)
+	} else {
 		if err := s.tsLogger.LogPostgresConnectionStats(ctx, instanceName, total, active, idle); err != nil {
 			log.Printf("[Collector] ERROR: LogPostgresConnectionStats failed for %s: %v", instanceName, err)
 			return fmt.Errorf("LogPostgresConnectionStats: %w", err)
 		}
 	}
 
-	cpuUsage, memoryUsage, sysErr := s.PgRepo.GetSystemStats(instanceName)
-	if sysErr == nil {
-		if err := s.tsLogger.LogPostgresSystemStats(ctx, instanceName, cpuUsage, memoryUsage, active, idle, total); err != nil {
-			log.Printf("[Collector] ERROR: LogPostgresSystemStats failed for %s: %v", instanceName, err)
+	memPct := 0.0
+	hostPct := 0.0
+	if detail, derr := s.PgRepo.GetSystemStatsDetail(instanceName); derr == nil && detail != nil {
+		hostPct = detail.CPUUsagePct
+		memPct = detail.MemoryUsedPct
+	} else {
+		cu, mu, err := s.PgRepo.GetSystemStats(instanceName)
+		if err != nil {
+			log.Printf("[Collector] system stats for %s: %v", instanceName, err)
+		} else {
+			hostPct = cu
+			memPct = mu
 		}
+	}
+	snap := pghostcpu.Collect()
+	if snap.HostCpuPercent > 0 {
+		hostPct = snap.HostCpuPercent
+	}
+	pgPct := snap.PostgresCpuPercent
+
+	row := hot.PgSystemStatsInsert{
+		CPUUsage:           hostPct,
+		MemoryUsage:        memPct,
+		ActiveConnections:  active,
+		IdleConnections:    idle,
+		TotalConnections:   total,
+		HostCpuPercent:     hostPct,
+		PostgresCpuPercent: pgPct,
+		Load1m:             snap.Load1m,
+		Load5m:             snap.Load5m,
+		Load15m:            snap.Load15m,
+		CpuCores:           snap.CpuCores,
+	}
+	if err := s.tsLogger.LogPostgresSystemStats(ctx, instanceName, row); err != nil {
+		log.Printf("[Collector] ERROR: LogPostgresSystemStats failed for %s: %v", instanceName, err)
 	}
 
 	bgStats, err := s.PgRepo.FetchBGWriterStats(instanceName)
