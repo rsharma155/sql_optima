@@ -1,0 +1,25 @@
+version: "2"
+
+linters:
+  default: standard
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        - (net/http.ResponseWriter).Write
+        - (*encoding/json.Encoder).Encode
+        - (*github.com/jackc/pgx/v5/pgxpool.Pool).Close
+  exclusions:
+    rules:
+      # defer Close / Rollback — idiomatic Go, return value rarely actionable
+      - linters: [errcheck]
+        source: "defer "
+      # test files — more lenient
+      - linters: [errcheck, ineffassign]
+        path: "_test\\.go"
+    paths:
+      - third_party
+      - vendor
