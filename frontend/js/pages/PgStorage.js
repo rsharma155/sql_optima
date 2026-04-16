@@ -142,12 +142,12 @@ window.PgStorageView = async function() {
                         </h4>
                     </div>
                     <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:0.75rem;">
-                        <div class="strip-metric-cell" style="${worstDeadPct?.t ? 'cursor:pointer;' : ''}" ${worstDeadPct?.t ? `onclick="window.pgLoadTableDeadTrend('${window.escapeHtml(worstDeadPct.t.schema).replace(/'/g,'&#39;')}','${window.escapeHtml(worstDeadPct.t.table).replace(/'/g,'&#39;')}')"` : ''} title="Highest dead tuple ratio (bloat%) in the current table list. Click to load dead% trend.">
+                        <div class="strip-metric-cell" style="${worstDeadPct?.t ? 'cursor:pointer;' : ''}" ${worstDeadPct?.t ? `data-action="pg-load-dead-trend" data-schema="${window.escapeHtml(worstDeadPct.t.schema)}" data-table="${window.escapeHtml(worstDeadPct.t.table)}"` : ''} title="Highest dead tuple ratio (bloat%) in the current table list. Click to load dead% trend.">
                             <div class="strip-metric-label">Worst Dead %</div>
                             <div class="strip-metric-value metric-value">${worstDeadPct?.t ? `${Number(worstDeadPct.pct || 0).toFixed(1)}%` : '--'}</div>
                             <div class="text-muted sub">${worstDeadPct?.t ? `${window.escapeHtml(worstDeadPct.t.schema)}.${window.escapeHtml(worstDeadPct.t.table)}` : 'No data'}</div>
                         </div>
-                        <div class="strip-metric-cell" style="${mostDeadTuples?.t ? 'cursor:pointer;' : ''}" ${mostDeadTuples?.t ? `onclick="window.pgLoadTableDeadTrend('${window.escapeHtml(mostDeadTuples.t.schema).replace(/'/g,'&#39;')}','${window.escapeHtml(mostDeadTuples.t.table).replace(/'/g,'&#39;')}')"` : ''} title="Highest dead tuples count in the current table list. Click to load dead% trend.">
+                        <div class="strip-metric-cell" style="${mostDeadTuples?.t ? 'cursor:pointer;' : ''}" ${mostDeadTuples?.t ? `data-action="pg-load-dead-trend" data-schema="${window.escapeHtml(mostDeadTuples.t.schema)}" data-table="${window.escapeHtml(mostDeadTuples.t.table)}"` : ''} title="Highest dead tuples count in the current table list. Click to load dead% trend.">
                             <div class="strip-metric-label">Most Dead Tuples</div>
                             <div class="strip-metric-value metric-value">${mostDeadTuples?.t ? Number(mostDeadTuples.dead || 0).toLocaleString() : '--'}</div>
                             <div class="text-muted sub">${mostDeadTuples?.t ? `${window.escapeHtml(mostDeadTuples.t.schema)}.${window.escapeHtml(mostDeadTuples.t.table)}` : 'No data'}</div>
@@ -172,7 +172,7 @@ window.PgStorageView = async function() {
                             <tbody>
                                 ${bloatCandidates.map(r => `
                                     <tr>
-                                        <td style="cursor:pointer;" title="Click to load dead tuple trend" onclick="window.pgLoadTableDeadTrend('${window.escapeHtml(r.schema_name || '').replace(/'/g,'&#39;')}','${window.escapeHtml(r.table_name || '').replace(/'/g,'&#39;')}')">
+                                        <td style="cursor:pointer;" title="Click to load dead tuple trend" data-action="pg-load-dead-trend" data-schema="${window.escapeHtml(r.schema_name || '')}" data-table="${window.escapeHtml(r.table_name || '')}">
                                             <strong>${window.escapeHtml(r.schema_name || '')}.${window.escapeHtml(r.table_name || '')}</strong>
                                         </td>
                                         <td>${window.escapeHtml(fmtBytes(r.totalBytes))}</td>
@@ -222,7 +222,7 @@ window.PgStorageView = async function() {
                             <tbody>
                                 ${tables.length > 0 ? tables.map(table => `
                                     <tr>
-                                        <td style="cursor:pointer;" title="Click to load dead tuple trend" onclick="window.pgLoadTableDeadTrend('${window.escapeHtml(table.schema).replace(/'/g,'&#39;')}','${window.escapeHtml(table.table).replace(/'/g,'&#39;')}')"><strong>${window.escapeHtml(table.schema)}.${window.escapeHtml(table.table)}</strong></td>
+                                        <td style="cursor:pointer;" title="Click to load dead tuple trend" data-action="pg-load-dead-trend" data-schema="${window.escapeHtml(table.schema)}" data-table="${window.escapeHtml(table.table)}"><strong>${window.escapeHtml(table.schema)}.${window.escapeHtml(table.table)}</strong></td>
                                         <td>${window.escapeHtml(table.total_size)}</td>
                                         <td><span class="${table.dead_tuples > 1000 ? 'text-danger font-bold' : ''}">${table.dead_tuples.toLocaleString()}</span></td>
                                         <td><span class="badge ${table.bloat_pct > 20 ? 'badge-danger' : 'badge-success'}">${table.bloat_pct.toFixed(1)}%</span></td>

@@ -106,7 +106,7 @@ function renderJobsDashboard(inst, metrics) {
             <td style="max-width:400px;">
                 <span style="font-size:0.75rem; color:var(--text-primary); cursor:pointer;" 
                       title="Click to see full message"
-                      onclick="window.showJobFailureDetail(${idx}, '${escapedMsg.replace(/'/g, "\\'").replace(/"/g, '&quot;')}')">
+                      data-action="jobs-detail" data-idx="${idx}">
                     ${window.escapeHtml(truncatedMsg)}
                     ${message.length > 100 ? '<span style="color:var(--accent);"> [more]</span>' : ''}
                 </span>
@@ -127,13 +127,13 @@ function renderJobsDashboard(inst, metrics) {
                 <div class="flex-between dashboard-page-title-actions" style="gap: 0.5rem; align-items: center; flex-wrap: wrap; justify-content: flex-end;">
                     <span id="jobsDataSourceBadge" class="badge badge-info" style="display:none; font-size:0.65rem;">Source</span>
                     <span class="text-muted" style="font-size:0.75rem;">Auto refresh:</span>
-                    <select id="jobsAutoRefreshSelector" class="custom-select" onchange="window.setJobsRefresh(this.value)" style="padding:0.25rem; font-size:0.8rem; min-width:100px;">
+                    <select id="jobsAutoRefreshSelector" class="custom-select" data-change-action="setJobsRefresh" style="padding:0.25rem; font-size:0.8rem; min-width:100px;">
                         <option value="0">Off</option>
                         <option value="10000" ${window.appState.jobsRate === 10000 ? 'selected' : ''}>10s</option>
                         <option value="15000" ${window.appState.jobsRate === 15000 ? 'selected' : ''}>15s</option>
                         <option value="30000" ${window.appState.jobsRate === 30000 ? 'selected' : ''}>30s</option>
                     </select>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.appNavigate('dashboard')"><i class="fa-solid fa-arrow-left"></i> Dashboard</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="navigate" data-route="dashboard"><i class="fa-solid fa-arrow-left"></i> Dashboard</button>
                 </div>
             </div>
 
@@ -163,7 +163,7 @@ function renderJobsDashboard(inst, metrics) {
                     <div class="metric-value" style="font-size:1.5rem; color:${sums.running_jobs > 0 ? '#f59e0b' : 'var(--text-primary)'}; font-weight:600;">${sums.running_jobs}</div>
                 </div>
 
-                <div class="metric-card glass-panel ${sums.failed_jobs > 0 ? 'status-danger' : 'status-healthy'}" style="padding: 0.5rem; text-align:center; cursor:pointer;" onclick="document.getElementById('JobFailAnchor').scrollIntoView({behavior: 'smooth'})">
+                <div class="metric-card glass-panel ${sums.failed_jobs > 0 ? 'status-danger' : 'status-healthy'}" style="padding: 0.5rem; text-align:center; cursor:pointer;" data-action="scroll-id" data-target="JobFailAnchor">
                     <div class="metric-header" style="font-size:0.65rem; margin-bottom:0.25rem; color:var(--text-muted);">Failed (24h)</div>
                     <div class="metric-value" style="font-size:1.5rem; color:${sums.failed_jobs > 0 ? '#ef4444' : 'var(--text-primary)'}; font-weight:600;">${sums.failed_jobs}</div>
                 </div>
@@ -268,7 +268,7 @@ window.showJobFailureDetail = function(idx, message) {
         <div style="background:var(--bg-surface); margin:2%; padding:20px; border:1px solid var(--border-color,#333); border-radius:12px; width:95%; max-width:800px; max-height:80vh; overflow-y:auto; color:var(--text-primary,#e0e0e0); box-shadow:0 4px 20px rgba(0,0,0,0.5);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom:1px solid var(--border-color,#333); padding-bottom:0.75rem;">
                 <h3 style="margin:0; color:var(--danger,#ef4444); font-size:1.1rem;"><i class="fa-solid fa-circle-exclamation"></i> Job Failure Details</h3>
-                <button onclick="document.getElementById('job-failure-modal').remove()" style="background:transparent; border:1px solid var(--border-color,#555); color:var(--text-primary,#e0e0e0); font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px; line-height:1;">&times;</button>
+                <button data-action="close-id" data-target="job-failure-modal" style="background:transparent; border:1px solid var(--border-color,#555); color:var(--text-primary,#e0e0e0); font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px; line-height:1;">&times;</button>
             </div>
             <div style="background:var(--bg-base); padding:1rem; border-radius:8px; border:1px solid var(--border-color,#333);">
                 <pre style="margin:0; white-space:pre-wrap; word-wrap:break-word; color:var(--text-primary,#e0e0e0); font-family:'Courier New',monospace; font-size:0.85rem; line-height:1.5;">${window.escapeHtml(message)}</pre>

@@ -373,7 +373,7 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 		log.Printf("[Collector] WARNING: LogSQLServerDiskHistory failed: %v", err)
 	}
 
-	topQueries, err := s.MsRepo.FetchTopCPUQueries(instanceName, 20)
+	topQueries, err := s.MsRepo.FetchTopCPUQueries(instanceName, 20, "")
 	if err != nil {
 		log.Printf("[Collector] WARNING: FetchTopCPUQueries failed: %v", err)
 	} else {

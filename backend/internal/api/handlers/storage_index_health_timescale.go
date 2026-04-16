@@ -312,3 +312,43 @@ func (h *StorageIndexHealthTimescaleHandlers) Filters(w http.ResponseWriter, r *
 	_ = json.NewEncoder(w).Encode(opts)
 }
 
+// IndexDefinition returns the latest stored index definition(s) from monitor.index_definitions.
+// Query params: engine, instance, db (optional), schema (optional), index_name (optional).
+func (h *StorageIndexHealthTimescaleHandlers) IndexDefinition(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.metricsSvc == nil || !h.metricsSvc.IsTimescaleConnected() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "timescale not configured"})
+		return
+	}
+
+	engine := strings.TrimSpace(r.URL.Query().Get("engine"))
+	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
+	dbName := strings.TrimSpace(r.URL.Query().Get("db"))
+	schemaName := strings.TrimSpace(r.URL.Query().Get("schema"))
+	indexName := strings.TrimSpace(r.URL.Query().Get("index_name"))
+
+	if engine == "" || instance == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "engine and instance are required"})
+		return
+	}
+	if engine != "sqlserver" && engine != "postgres" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "engine must be sqlserver or postgres"})
+		return
+	}
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	rows, err := h.metricsSvc.TimescaleStorageIndexDefinition(r.Context(), engine, instance, dbName, schemaName, indexName)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"definitions": rows})
+}

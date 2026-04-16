@@ -33,7 +33,7 @@ window.SentinelMockView = function SentinelMockView() {
                     <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; justify-content:flex-end;">
                         <span class="badge badge-outline" style="font-size:0.65rem; letter-spacing:0.12em; text-transform:uppercase;">Live Monitoring</span>
                         <span class="badge badge-info" style="font-size:0.65rem;">Source: Timescale snapshot</span>
-                        <button class="btn btn-sm btn-outline text-accent" onclick="window.appNavigate('dashboard')"><i class="fa-solid fa-arrow-left"></i> Back</button>
+                        <button class="btn btn-sm btn-outline text-accent" data-action="navigate" data-route="dashboard"><i class="fa-solid fa-arrow-left"></i> Back</button>
                     </div>
                 </div>
             </div>

@@ -8,7 +8,7 @@ This directory is the **single source** for SQL Optima database scripts (merged 
 |------|-------------|
 | `00_timescale_schema.sql` | Main TimescaleDB schema: hypertables, indexes, compression |
 | `01_seed_data.sql` | Default users, widgets, and collection schedules |
-| `02_rule_engine.sql` | Rule engine schema (if used) |
+| `02_rule_engine.sql` | **Canonical** rule engine schema (if used). This is the consolidated replacement for the former `rule_engine/*.sql` scripts. |
 | `pgsql_init.sql` | PostgreSQL instance bootstrap helper |
 | `sqlserver_init.sql` | SQL Server–side helper scripts |
 | `SST.sql` | *(Optional)* System setup test — include in repo if you maintain it |
@@ -54,6 +54,11 @@ Apply in numeric order when upgrading an existing database. `009_postgres_system
    ```
 4. Optional: `\i 02_rule_engine.sql` if you use the rule engine.
 
+### Rule engine scripts (historical note)
+
+- The legacy `rule_engine/` folder (with numbered SQL fragments like `001_*`, `006_*`, `007_*`) has been **retired**.
+- The **only** supported install path for the rule engine schema is now: `02_rule_engine.sql`.
+
 ### Upgrading an existing database
 
 Run only the migration files you have not applied yet, in order (e.g. `\i migrations/009_postgres_system_stats_cpu_enhancement.sql`).
@@ -65,7 +70,9 @@ Run only the migration files you have not applied yet, in order (e.g. `\i migrat
 
 ### Docker Compose
 
-The `infrastructure/docker` stack may mount this folder (e.g. `../sql_scripts:/sql_scripts:ro`) and run `00_timescale_schema.sql` and `01_seed_data.sql` on startup. Subfolders are available for manual or scripted use.
+- The infra stack under `infrastructure/docker/` mounts this directory and applies core scripts on startup.
+- The root-level `docker/docker-compose.yml` also mounts this directory via `../infrastructure/sql_scripts:/sql_scripts:ro` for schema setup.
+- Subfolders are available for manual or scripted use.
 
 ## Schema overview
 

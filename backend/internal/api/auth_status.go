@@ -21,6 +21,7 @@ func HandleAuthStatus(sec config.Security) http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"auth_required": sec.AuthRequired,
 			"auth_mode":     sec.AuthMode,
+			"deployment":    config.DeploymentMode(),
 		})
 	}
 }

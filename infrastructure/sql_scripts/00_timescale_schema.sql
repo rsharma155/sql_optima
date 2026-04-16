@@ -10,6 +10,8 @@
 
 -- Enable TimescaleDB extension (idempotent)
 CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+-- UUID helpers for server registry IDs
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ============================================================================
 -- SECTION 1: CORE METRICS TABLES
@@ -1958,6 +1960,45 @@ COMMENT ON TABLE postgres_deadlock_stats IS 'Deadlocks total and delta per datab
 -- ============================================================================
 
 -- --------------------------------------------------------------------------
+-- 2.0: Server Registry + Audit Logs (secure credential storage)
+-- --------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS optima_servers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    db_type TEXT NOT NULL CHECK (db_type IN ('postgres','sqlserver')),
+    host TEXT NOT NULL,
+    port INT NOT NULL,
+    username TEXT NOT NULL,
+    auth_type TEXT NOT NULL DEFAULT 'static',
+
+    encrypted_secret BYTEA NOT NULL,
+    encrypted_dek BYTEA NOT NULL,
+
+    ssl_mode TEXT DEFAULT 'require',
+    is_active BOOLEAN DEFAULT TRUE,
+
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    created_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_optima_servers_active ON optima_servers (is_active);
+CREATE INDEX IF NOT EXISTS idx_optima_servers_name ON optima_servers (name);
+CREATE INDEX IF NOT EXISTS idx_optima_servers_type ON optima_servers (db_type);
+ALTER TABLE optima_servers ADD COLUMN IF NOT EXISTS last_test_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS optima_audit_logs (
+    id BIGSERIAL PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    server_id UUID NULL,
+    actor TEXT,
+    ip_address TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_optima_audit_logs_time ON optima_audit_logs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_optima_audit_logs_server_time ON optima_audit_logs (server_id, created_at DESC);
+
+-- --------------------------------------------------------------------------
 -- 2.1: User Management
 -- --------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS optima_users (
@@ -2605,3 +2646,104 @@ BEGIN
 END $$;
 
 COMMENT ON COLUMN sqlserver_job_metrics.error_message IS 'Stores error message if job collection failed (e.g., permission denied on msdb tables)';
+
+-- ============================================================================
+-- LEGACY MIGRATION COMPATIBILITY OBJECTS
+-- Consolidated from infrastructure/sql_scripts/migrations/*.sql
+-- ============================================================================
+
+-- 002_sqlserver_enterprise_monitoring.sql / 004_fix_top_queries_table.sql
+ALTER TABLE sqlserver_top_queries ADD COLUMN IF NOT EXISTS wait_type TEXT;
+CREATE INDEX IF NOT EXISTS idx_top_queries_query_text ON sqlserver_top_queries USING gin (to_tsvector('english', query_text));
+
+-- 001_create_query_store_stats.sql
+CREATE MATERIALIZED VIEW IF NOT EXISTS query_store_stats_hourly
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 hour', capture_timestamp) AS bucket,
+    server_name,
+    database_name,
+    query_hash,
+    query_text,
+    SUM(executions) AS total_executions,
+    AVG(avg_duration_ms) AS avg_duration_ms,
+    AVG(avg_cpu_ms) AS avg_cpu_ms,
+    AVG(avg_logical_reads) AS avg_logical_reads,
+    SUM(total_cpu_ms) AS total_cpu_ms
+FROM query_store_stats
+GROUP BY 1, 2, 3, 4, 5
+WITH NO DATA;
+
+DO $$
+BEGIN
+    CALL add_continuous_aggregate_policy('query_store_stats_hourly',
+        start_offset => INTERVAL '3 hours',
+        end_offset => INTERVAL '1 hour',
+        schedule_interval => INTERVAL '1 hour',
+        if_not_exists => TRUE
+    );
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
+
+-- 002_sqlserver_enterprise_monitoring.sql
+CREATE MATERIALIZED VIEW IF NOT EXISTS sqlserver_ag_health_summary AS
+SELECT
+    time_bucket('5 minutes', capture_timestamp) AS bucket,
+    server_instance_name,
+    ag_name,
+    replica_server_name,
+    database_name,
+    AVG(CASE WHEN synchronization_state = 'SYNCHRONIZING' THEN 1 ELSE 0 END) AS sync_pct,
+    AVG(CASE WHEN synchronization_state = 'SYNCHRONIZED' THEN 1 ELSE 0 END) AS healthy_pct,
+    AVG(log_send_queue_kb) AS avg_log_send_queue_kb,
+    AVG(redo_queue_kb) AS avg_redo_queue_kb,
+    MAX(log_send_queue_kb) AS max_log_send_queue_kb,
+    MAX(redo_queue_kb) AS max_redo_queue_kb
+FROM sqlserver_ag_health
+WHERE capture_timestamp >= NOW() - INTERVAL '7 days'
+GROUP BY 1, 2, 3, 4, 5
+WITH NO DATA;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sqlserver_db_throughput_summary AS
+SELECT
+    time_bucket('1 minute', capture_timestamp) AS bucket,
+    server_instance_name,
+    database_name,
+    AVG(tps) AS avg_tps,
+    AVG(batch_requests_per_sec) AS avg_batch_requests,
+    SUM(total_reads) AS total_reads,
+    SUM(total_writes) AS total_writes
+FROM sqlserver_database_throughput
+WHERE capture_timestamp >= NOW() - INTERVAL '7 days'
+GROUP BY 1, 2, 3
+WITH NO DATA;
+
+-- 003_postgres_enterprise_monitoring.sql
+CREATE MATERIALIZED VIEW IF NOT EXISTS postgres_checkpoint_summary AS
+SELECT
+    time_bucket('5 minutes', capture_timestamp) AS bucket,
+    server_instance_name,
+    AVG(checkpoints_timed) AS avg_checkpoints_timed,
+    AVG(checkpoints_req) AS avg_checkpoints_req,
+    SUM(CASE WHEN checkpoints_req > 0 THEN 1 ELSE 0 END) AS req_checkpoint_count,
+    AVG(checkpoint_write_time) AS avg_checkpoint_write_time,
+    AVG(buffers_checkpoint) AS avg_buffers_checkpoint,
+    MAX(buffers_checkpoint) AS max_buffers_checkpoint
+FROM postgres_bgwriter_stats
+WHERE capture_timestamp >= NOW() - INTERVAL '7 days'
+GROUP BY 1, 2
+WITH NO DATA;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS postgres_archive_summary AS
+SELECT
+    time_bucket('5 minutes', capture_timestamp) AS bucket,
+    server_instance_name,
+    SUM(archived_count) AS total_archived,
+    SUM(failed_count) AS total_failed,
+    MAX(failed_count) AS max_failed_in_period,
+    AVG(failed_count_delta) AS avg_failure_rate
+FROM postgres_archiver_stats
+WHERE capture_timestamp >= NOW() - INTERVAL '7 days'
+GROUP BY 1, 2
+WITH NO DATA;

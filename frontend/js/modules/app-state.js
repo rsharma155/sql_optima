@@ -18,5 +18,7 @@ export const appState = {
     /** When true, API expects JWT on /api/config and dashboard routes (AUTH_REQUIRED=1). */
     authRequired: false,
     authMode: 'local',
+    /** "docker" | "dedicated" — from API (SQL_OPTIMA_DEPLOYMENT). */
+    deployment: 'dedicated',
     navigationHistory: []
 };

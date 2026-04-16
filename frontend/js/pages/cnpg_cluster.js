@@ -48,8 +48,8 @@ window.CNPGClusterTopologyView = async function() {
                     <label class="flex-between" style="align-items:center; gap:0.5rem; font-size:0.8rem; cursor:pointer;">
                         <input type="checkbox" id="cnpgAutoRefresh" checked style="width:16px; height:16px;"> Auto-refresh (15s)
                     </label>
-                    <button class="btn btn-sm btn-outline" onclick="window.appNavigateBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshCNPGTopology()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-outline" data-action="navigate-back"><i class="fa-solid fa-arrow-left"></i> Back</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshCNPGTopology"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
             <div id="cnpgContent" style="display:flex; justify-content:center; align-items:center; height:50vh;">

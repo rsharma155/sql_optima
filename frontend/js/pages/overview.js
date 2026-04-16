@@ -9,7 +9,15 @@
  */
 
 window.PgDashboardView = async function() {
-    const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...'};
+    if (!window.appState.config?.instances?.length || window.appState.currentInstanceIdx < 0) {
+        window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-warning">Please select an instance first</h3><p class="text-muted">Open <strong>Global Estate Overview</strong> and pick a PostgreSQL target.</p></div>`;
+        return;
+    }
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+    if (!inst || inst.type === 'sqlserver') {
+        window.appNavigate('dashboard');
+        return;
+    }
     const dbName = window.appState.currentDatabase !== 'all' ? window.appState.currentDatabase : 'Cluster / System Check';
 
     let html = await window.loadTemplate('/pages/overview.html');
@@ -303,13 +311,30 @@ async function initPgDashboard() {
             while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
             return v.toFixed(u >= 3 ? 2 : 1) + ' ' + units[u];
         };
-        if (sizeVal && dbSize && dbSize.total_bytes != null) {
-            sizeVal.innerHTML = fmtBytes(dbSize.total_bytes);
-            if (sizeSub) {
-                const g = Number(dbSize.growth_bytes_per_hr || 0);
-                sizeSub.textContent = (Number.isFinite(g) && Math.abs(g) > 0)
-                    ? (g >= 0 ? '+' : '') + fmtBytes(g) + '/hr'
-                    : 'growth: --';
+        if (sizeVal && dbSize) {
+            // When a specific database is selected, show only that DB's size from the by_database breakdown.
+            let displayBytes = dbSize.total_bytes;
+            let growthBytes = dbSize.growth_bytes_per_hr;
+            let sizeLabel = '';
+            if (database && database !== 'all' && Array.isArray(dbSize.by_database) && dbSize.by_database.length) {
+                const match = dbSize.by_database.find(d => d.database === database);
+                if (match) {
+                    displayBytes = match.bytes;
+                    growthBytes = null; // per-DB growth rate not tracked; hide it
+                    sizeLabel = ` (${database})`;
+                }
+            }
+            if (displayBytes != null) {
+                sizeVal.innerHTML = fmtBytes(displayBytes);
+                if (sizeSub) {
+                    const g = Number(growthBytes || 0);
+                    sizeSub.textContent = (Number.isFinite(g) && Math.abs(g) > 0)
+                        ? (g >= 0 ? '+' : '') + fmtBytes(g) + '/hr' + sizeLabel
+                        : (sizeLabel ? sizeLabel.trim() : 'growth: --');
+                }
+            } else {
+                if (sizeVal) sizeVal.innerHTML = '--';
+                if (sizeSub) sizeSub.textContent = '--';
             }
         } else {
             if (sizeVal) sizeVal.innerHTML = '--';
@@ -483,20 +508,36 @@ async function initPgDashboard() {
         if (hist && hist.labels && hist.labels.length) {
             const labels2 = hist.labels;
 
-            const makeLine = (id, label, data, color) => {
+            const makeLine = (id, label, data, color, note) => {
                 const el = document.getElementById(id);
                 if (!el || !window.Chart) return;
                 if (window.currentCharts[id]) window.currentCharts[id].destroy();
+                const subtitlePlugin = note
+                    ? { display: true, text: note, font: { size: 10, style: 'italic' }, color: '#888', padding: { bottom: 4 } }
+                    : { display: false };
                 window.currentCharts[id] = new Chart(el, {
                     type: 'line',
                     data: { labels: labels2, datasets: [{ label, data, borderColor: color, backgroundColor: color, tension: 0.25, pointRadius: 0 }] },
-                    options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false }}, scales:{ x:{ display:true }, y:{ beginAtZero:true } } }
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            subtitle: subtitlePlugin,
+                            tooltip: {
+                                callbacks: note ? { footer: () => [note] } : {}
+                            }
+                        },
+                        scales: { x: { display: true }, y: { beginAtZero: true } }
+                    }
                 });
             };
 
-            makeLine('pgWalRateChart', 'WAL MB/min', hist.wal_rate_mb_per_min || [], window.getCSSVar ? window.getCSSVar('--accent-blue') : '#3b82f6');
-            makeLine('pgAutovacChart', 'Autovacuum', hist.autovacuum_workers || [], window.getCSSVar ? window.getCSSVar('--warning') : '#f59e0b');
-            makeLine('pgDeadTupleChart', 'Dead tuple %', hist.dead_tuple_ratio_pct || [], window.getCSSVar ? window.getCSSVar('--danger') : '#ef4444');
+            makeLine('pgWalRateChart', 'WAL MB/min', hist.wal_rate_mb_per_min || [], window.getCSSVar ? window.getCSSVar('--accent-blue') : '#3b82f6',
+                'Cluster-wide — WAL is generated at the instance level, not per-database');
+            makeLine('pgAutovacChart', 'Autovacuum', hist.autovacuum_workers || [], window.getCSSVar ? window.getCSSVar('--warning') : '#f59e0b',
+                'Cluster-wide — autovacuum workers run across all databases in the cluster');
+            makeLine('pgDeadTupleChart', 'Dead tuple %', hist.dead_tuple_ratio_pct || [], window.getCSSVar ? window.getCSSVar('--danger') : '#ef4444',
+                'Cluster-wide — worst-case dead tuple % across all user tables in the cluster');
         }
 
         // Replication lag detail chart (per replica), only show if series exists

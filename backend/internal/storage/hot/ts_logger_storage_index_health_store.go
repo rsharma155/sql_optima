@@ -361,6 +361,74 @@ func (tl *TimescaleLogger) InsertIndexDefinition(ctx context.Context, d models.I
 	return err
 }
 
+// IndexDefinitionRow is returned by QueryIndexDefinition.
+type IndexDefinitionRow struct {
+	DBName           string
+	SchemaName       string
+	TableName        string
+	IndexName        string
+	KeyColumns       string
+	IncludeColumns   string
+	FilterDefinition string
+	IsUnique         bool
+	IsPK             bool
+	IndexType        string
+}
+
+// QueryIndexDefinition returns the latest stored definition for a specific index from monitor.index_definitions.
+// At least one of (dbName, indexName) must be non-empty.
+func (tl *TimescaleLogger) QueryIndexDefinition(ctx context.Context, engine, serverID, dbName, schemaName, indexName string) ([]IndexDefinitionRow, error) {
+	if engine == "" || serverID == "" {
+		return nil, fmt.Errorf("engine and serverID are required")
+	}
+	args := []interface{}{engine, serverID}
+	clauses := []string{"engine=$1", "server_id=$2"}
+	if dbName != "" {
+		args = append(args, dbName)
+		clauses = append(clauses, fmt.Sprintf("db_name=$%d", len(args)))
+	}
+	if schemaName != "" {
+		args = append(args, schemaName)
+		clauses = append(clauses, fmt.Sprintf("schema_name=$%d", len(args)))
+	}
+	if indexName != "" {
+		args = append(args, indexName)
+		clauses = append(clauses, fmt.Sprintf("index_name=$%d", len(args)))
+	}
+	q := fmt.Sprintf(`
+		SELECT DISTINCT ON (db_name, schema_name, index_name)
+			db_name, schema_name, table_name, index_name,
+			COALESCE(key_columns,'') AS key_columns,
+			COALESCE(include_columns,'') AS include_columns,
+			COALESCE(filter_definition,'') AS filter_definition,
+			COALESCE(is_unique, false) AS is_unique,
+			COALESCE(is_pk, false) AS is_pk,
+			COALESCE(index_type,'') AS index_type
+		FROM monitor.index_definitions
+		WHERE %s
+		ORDER BY db_name, schema_name, index_name, time DESC
+		LIMIT 100
+	`, strings.Join(clauses, " AND "))
+	rows, err := tl.pool.Query(ctx, q, args...)
+	if err != nil {
+		if isMissingRelation(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+	var out []IndexDefinitionRow
+	for rows.Next() {
+		var r IndexDefinitionRow
+		if err := rows.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.IndexName,
+			&r.KeyColumns, &r.IncludeColumns, &r.FilterDefinition, &r.IsUnique, &r.IsPK, &r.IndexType); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (tl *TimescaleLogger) QueryStorageIndexHealthFilterOptions(ctx context.Context, engine, serverID, from, to string, dbName, schemaName string) (*SIHFilterOptions, error) {
 	baseWhereTime := `engine=$1 AND server_id=$2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
 	baseArgsTime := []interface{}{engine, serverID, from, to}

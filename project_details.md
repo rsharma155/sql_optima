@@ -6,7 +6,7 @@ This document describes how the **Go backend**, **SPA frontend**, and **navigati
 
 ## High-level architecture
 
-1. **Backend (`backend/`)** — HTTP API built with Gorilla `mux`. It loads `config.yaml`, resolves database passwords from environment variables, and exposes JSON under `/api/...`. A **collector service** polls SQL Server and PostgreSQL and writes snapshots to **TimescaleDB** (optional) via the hot storage layer.
+1. **Backend (`backend/`)** — HTTP API built with Gorilla `mux`. On startup it optionally reads `config.yaml` for instance definitions and resolves database passwords from environment variables. In Docker mode, instances are managed via the **server registry** (Admin UI / API) and `config.yaml` is not required. A **collector service** polls SQL Server and PostgreSQL and writes snapshots to **TimescaleDB** via the hot storage layer.
 2. **Frontend (`frontend/`)** — Static HTML/CSS/JS SPA. `index.html` loads `js/entry.js` (module bootstrap), `auth.js`, `router.js`, and many page scripts that attach view functions to `window`.
 3. **Routing** — There is **no path-based** router in the URL bar for most views. Navigation is **`window.appNavigate(routeId)`**, which swaps content inside `#router-outlet` and updates the sidebar’s `data-route` items. Browser history is tracked in `appState.navigationHistory` for back navigation where used.
 4. **Authentication** — `POST /api/login` and **`POST /api/auth/login`** are the same rate-limited handler (shared per-IP budget, implemented in `internal/api/router.go` via `AuthHandlers.Login`). The UI uses `/api/login` by default. `GET /api/auth/me` requires a valid JWT. Tokens are stored in `localStorage` and `apiClient.authenticatedFetch` sends `Authorization: Bearer …`. Many read-only dashboard APIs are intentionally **public**; mutating endpoints (e.g. kill session, admin) require auth. (A previous bug registered `POST /api/auth/login` behind JWT middleware, which made login impossible on that path; that registration was removed.)
@@ -130,3 +130,10 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 | Auth UI | `frontend/js/components/auth.js` |
 | API client | `frontend/js/api/client.js` |
 | App boot | `frontend/js/modules/app-client.js`, `frontend/js/entry.js` |
+| Docker quick start | `docker/docker-compose.yml` — API + TimescaleDB + Vault + schema bootstrap |
+| Production compose | `docker-compose.platform.yml` — adds worker, Redis, Prometheus, Grafana |
+| API server image | `Dockerfile` — multi-stage distroless non-root build |
+| Worker image | `Dockerfile.worker` — background collector/queue worker |
+| Dev TimescaleDB | `infrastructure/docker/docker-compose.yml` — standalone TimescaleDB for local dev |
+| Schema scripts | `infrastructure/sql_scripts/` — schema, seed data, rule engine |
+| Instance config | `config.yaml` — optional; instances can be managed via Admin UI instead |

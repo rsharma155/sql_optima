@@ -46,7 +46,7 @@ type DashboardMetrics struct {
 	// Extended Events Metrics
 	XEventMetrics *XEventMetrics `json:"xevent_metrics,omitempty"`
 
-	// Dynamic Full-Scale Telemetry directly from queries.yml
+	// Optional auxiliary telemetry fields (kept for backward compatibility).
 	PrometheusData map[string][]map[string]interface{} `json:"prometheus_data,omitempty"`
 
 	Timestamp string `json:"timestamp"`

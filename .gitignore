@@ -106,3 +106,5 @@ run/
 **/*_test_report.json
 **/*_final_report.json
 
+# Local planning docs
+project_backlog.md

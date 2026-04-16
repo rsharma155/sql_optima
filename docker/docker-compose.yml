@@ -1,17 +1,37 @@
-version: '3.8'
-
 services:
-  # The Go Backend metrics scraper & API engine
-  backend:
+  api:
     build:
-      # Parent of sql_monitoring_UI must include pg_explain_analyze (e.g. sql_optima/). For a standalone clone, run `go mod vendor` under backend/ and use Dockerfile.standalone or build the binary locally.
-      context: ../..
-      dockerfile: sql_monitoring_UI/docker/Dockerfile.backend
+      context: ..
+      dockerfile: Dockerfile
     ports:
-      - "8080:8080"
-    volumes:
-      - ../config.yaml:/app/config.yaml
-      - ../queries.yml:/app/queries.yml
+      - "${API_PORT:-8080}:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: ":8080"
+      SQL_OPTIMA_DEPLOYMENT: ${SQL_OPTIMA_DEPLOYMENT:-docker}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-0}
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-32chars-minimum-for-prod}
+      VAULT_ADDR: ${VAULT_ADDR:-http://vault:8200}
+      VAULT_TOKEN: ${VAULT_TOKEN:-root}
+      VAULT_TRANSIT_MOUNT: ${VAULT_TRANSIT_MOUNT:-transit}
+      VAULT_NAMESPACE: ${VAULT_NAMESPACE:-}
+      VAULT_TRANSIT_KEY: ${VAULT_TRANSIT_KEY:-sql-optima}
+      DB_HOST: timescaledb
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-dbmonitor}
+      DB_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
+      DB_NAME: ${DB_NAME:-dbmonitor_metrics}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      schema-setup:
+        condition: service_completed_successfully
+      vault:
+        condition: service_healthy
+      vault-setup:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
       interval: 30s
@@ -20,13 +40,115 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-  # Optional decoupled NGINX UI (If Go isn't hosting it)
-  frontend:
-    build:
-      context: ../..
-      dockerfile: sql_monitoring_UI/docker/Dockerfile.frontend
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16
+    environment:
+      POSTGRES_USER: ${DB_USER:-dbmonitor}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
+      POSTGRES_DB: ${DB_NAME:-dbmonitor_metrics}
     ports:
-      - "3000:80"
-    depends_on:
-      - backend
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - log_statement=none
+      - -c
+      - log_min_duration_statement=5000
+      - -c
+      - log_min_error_statement=error
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-dbmonitor} -d ${DB_NAME:-dbmonitor_metrics}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
+
+  vault:
+    image: hashicorp/vault:latest
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "${VAULT_PORT:-8200}:8200"
+    environment:
+      VAULT_TOKEN: ${VAULT_TOKEN:-root}
+    command:
+      - sh
+      - -lc
+      - |
+        exec vault server -dev \
+          -dev-root-token-id="$${VAULT_TOKEN}" \
+          -dev-listen-address="0.0.0.0:8200"
+    healthcheck:
+      # Use the vault CLI (present in the image) instead of curl/wget.
+      # In dev mode this returns 0 once the server is ready and unsealed.
+      test: ["CMD", "sh", "-lc", "VAULT_ADDR=http://127.0.0.1:8200 vault status -format=json >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  vault-setup:
+    image: hashicorp/vault:latest
+    environment:
+      VAULT_ADDR: ${VAULT_ADDR:-http://vault:8200}
+      VAULT_TOKEN: ${VAULT_TOKEN:-root}
+      VAULT_TRANSIT_KEY: ${VAULT_TRANSIT_KEY:-sql-optima}
+    depends_on:
+      vault:
+        condition: service_healthy
+    command:
+      - sh
+      - -lc
+      - |
+        set -e
+        export VAULT_ADDR="$$VAULT_ADDR"
+        export VAULT_TOKEN="$$VAULT_TOKEN"
+        echo "Vault bootstrap: enabling transit (idempotent) and ensuring key exists..."
+        vault login -no-print "$$VAULT_TOKEN" >/dev/null 2>&1 || true
+        vault secrets enable -path=transit transit >/dev/null 2>&1 || true
+        vault write -f "transit/keys/$$VAULT_TRANSIT_KEY" >/dev/null 2>&1 || true
+        echo "Vault bootstrap complete."
+    restart: "no"
+
+  schema-setup:
+    image: postgres:16-alpine
+    environment:
+      DB_HOST: timescaledb
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-dbmonitor}
+      DB_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
+      DB_NAME: ${DB_NAME:-dbmonitor_metrics}
+      PGPASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
+    volumes:
+      - ../infrastructure/sql_scripts:/sql_scripts:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        export PGPASSWORD="$$DB_PASSWORD"
+        until pg_isready -h $$DB_HOST -p $$DB_PORT -U $$DB_USER; do
+          echo "Waiting for TimescaleDB..."
+          sleep 2
+        done
+        echo "[1/5] Applying TimescaleDB schema..."
+        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/00_timescale_schema.sql || true
+        echo "[2/5] Applying rule engine..."
+        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/02_rule_engine.sql || true
+        echo "[3/5] Applying additional PG rules..."
+        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/03_additional_pg_rules.sql || true
+        echo "[4/5] Applying alert engine schema..."
+        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/04_alert_engine.sql || true
+        echo "[5/5] Seeding initial data..."
+        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/01_seed_data.sql || true
+        echo "Schema setup complete."
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  timescaledb_data: {}

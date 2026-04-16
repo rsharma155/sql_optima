@@ -101,18 +101,24 @@ func NewMssqlRepository(cfg *config.Config) *MssqlRepository {
 				password = os.Getenv(envPrefix + "_PASSWORD")
 			}
 
-			// Construct DSN
+			catalog := strings.TrimSpace(inst.Database)
+			if catalog == "" {
+				catalog = "master"
+			}
+			// Construct DSN (encrypt=true for Azure SQL / MI / cloud endpoints)
 			var connStr string
 			if inst.IntegratedSecurity {
 				// Windows Authentication (Passwordless / Active Directory)
-				connStr = fmt.Sprintf("server=%s;port=%d;database=master;Integrated Security=true;", inst.Host, port)
+				connStr = fmt.Sprintf("server=%s;port=%d;database=%s;Integrated Security=true;encrypt=true;", inst.Host, port, catalog)
 			} else {
 				// SQL Authentication natively
-				connStr = fmt.Sprintf("server=%s;port=%d;database=master;user id=%s;password=%s;", inst.Host, port, user, password)
+				connStr = fmt.Sprintf("server=%s;port=%d;database=%s;user id=%s;password=%s;encrypt=true;", inst.Host, port, catalog, user, password)
 			}
 
 			if inst.TrustServerCertificate {
 				connStr += "TrustServerCertificate=true;"
+			} else {
+				connStr += "TrustServerCertificate=false;"
 			}
 
 			db, err := sqlserver.OpenMetricsPool(connStr)
@@ -476,6 +482,11 @@ func queryStoreStatsSelectSQL(dbPrefix string) string {
 		LEFT JOIN %s.sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
 		WHERE q.is_internal_query = 0
 		  AND ISNULL(rs.count_executions, 0) > 0
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sql_optima%%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sqloptima%%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sys.dm_%%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sys.query_store_%%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sp_server_diagnostics%%'
 		  AND (
 			rs.last_execution_time >= DATEADD(day, -7, SYSDATETIMEOFFSET())
 			OR rsi.end_time >= DATEADD(day, -7, GETDATE())
@@ -580,6 +591,11 @@ func (c *MssqlRepository) fetchQueryStoreStatsSingleDB(db *sql.DB, labelDB strin
 		LEFT JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
 		WHERE q.is_internal_query = 0
 		  AND ISNULL(rs.count_executions, 0) > 0
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sql_optima%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sqloptima%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sys.dm_%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sys.query_store_%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sp_server_diagnostics%'
 		  AND (
 			rs.last_execution_time >= DATEADD(day, -7, SYSDATETIMEOFFSET())
 			OR rsi.end_time >= DATEADD(day, -7, GETDATE())

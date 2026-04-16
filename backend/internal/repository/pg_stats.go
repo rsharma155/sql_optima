@@ -100,8 +100,13 @@ func NewPgRepository(cfg *config.Config) *PgRepository {
 				sslmode = "disable"
 			}
 
+			dbname := strings.TrimSpace(inst.Database)
+			if dbname == "" {
+				dbname = "postgres"
+			}
+
 			// Build connection string with optional SSL certificates
-			connStr := fmt.Sprintf("host=%s port=%d user=%s dbname=postgres sslmode=%s", inst.Host, port, user, sslmode)
+			connStr := fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=%s", inst.Host, port, user, dbname, sslmode)
 
 			if password != "" {
 				connStr += fmt.Sprintf(" password=%s", password)
@@ -245,7 +250,12 @@ func (c *PgRepository) reconnectInstance(instanceName string) bool {
 		sslmode = "disable"
 	}
 
-	connStr := fmt.Sprintf("host=%s port=%d user=%s dbname=postgres sslmode=%s", inst.Host, port, user, sslmode)
+	dbname := strings.TrimSpace(inst.Database)
+	if dbname == "" {
+		dbname = "postgres"
+	}
+
+	connStr := fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=%s", inst.Host, port, user, dbname, sslmode)
 	if password != "" {
 		connStr += fmt.Sprintf(" password=%s", password)
 	}

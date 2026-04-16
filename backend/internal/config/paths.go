@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Path resolver for config.yaml, queries.yml, and frontend directory locations.
+// Purpose: Path resolver for config.yaml and frontend directory locations.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -12,17 +12,18 @@ import (
 	"os"
 )
 
-// ResolveDataPaths always uses config.yaml, queries.yml, and frontend/ from the repo root.
+// ResolveDataPaths returns config.yaml and frontend/ from the repo root.
 // The server must be run from the backend directory.
-func ResolveDataPaths() (configPath, queriesPath, frontendDir string) {
+// If config.yaml is absent (e.g. Docker builds), a warning is logged
+// and the path is still returned — LoadConfig will produce an empty config.
+func ResolveDataPaths() (configPath, frontendDir string) {
 	configPath = "../config.yaml"
-	queriesPath = "../queries.yml"
 	frontendDir = "../frontend"
 
 	if _, err := os.Stat(configPath); err != nil {
-		log.Fatalf("[FATAL] config.yaml not found at %s (run from backend directory)", configPath)
+		log.Printf("[paths] config.yaml not found at %s — instances will come from server registry only", configPath)
 	}
 
-	log.Printf("[paths] using config=%s queries=%s frontend=%s", configPath, queriesPath, frontendDir)
-	return configPath, queriesPath, frontendDir
+	log.Printf("[paths] using config=%s frontend=%s", configPath, frontendDir)
+	return configPath, frontendDir
 }

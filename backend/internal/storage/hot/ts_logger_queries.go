@@ -83,7 +83,7 @@ func (tl *TimescaleLogger) LogSQLServerTopQueries(ctx context.Context, instanceN
 	return nil
 }
 
-func (tl *TimescaleLogger) GetSQLServerTopQueries(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerTopQueries(ctx context.Context, instanceName string, limit int, database string) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -94,11 +94,12 @@ func (tl *TimescaleLogger) GetSQLServerTopQueries(ctx context.Context, instanceN
 		       database_name, login_name, program_name
 		FROM sqlserver_top_queries
 		WHERE server_instance_name = $1
+		  AND ($3 = '' OR database_name = $3)
 		ORDER BY capture_timestamp DESC, cpu_time_ms DESC
 		LIMIT $2
 	`
 
-	rows, err := tl.pool.Query(ctx, query, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, query, instanceName, limit, strings.TrimSpace(database))
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +145,7 @@ func (tl *TimescaleLogger) GetSQLServerTopQueries(ctx context.Context, instanceN
 	return results, rows.Err()
 }
 
-func (tl *TimescaleLogger) GetSQLServerTopQueriesWithRange(ctx context.Context, instanceName string, limit int, from, to string) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerTopQueriesWithRange(ctx context.Context, instanceName string, limit int, from, to string, database string) ([]map[string]interface{}, error) {
 	var start, end time.Time
 	var err error
 	if strings.TrimSpace(from) != "" && strings.TrimSpace(to) != "" {
@@ -189,12 +190,13 @@ func (tl *TimescaleLogger) GetSQLServerTopQueriesWithRange(ctx context.Context, 
 		WHERE server_instance_name = $1
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
+		  AND ($5 = '' OR database_name = $5)
 		GROUP BY query_hash
 		ORDER BY SUM(cpu_time_ms) DESC
 		LIMIT $4
 	`
 
-	rows, err := tl.pool.Query(ctx, query, instanceName, start, end, limit)
+	rows, err := tl.pool.Query(ctx, query, instanceName, start, end, limit, strings.TrimSpace(database))
 	if err != nil {
 		return nil, err
 	}

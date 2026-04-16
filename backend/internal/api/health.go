@@ -32,20 +32,8 @@ func HandleHealthLiveness(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func HandleHealthReadiness(w http.ResponseWriter, r *http.Request, cfg *config.Config, queriesLoaded bool, metricsSvc *service.MetricsService) {
+func HandleHealthReadiness(w http.ResponseWriter, r *http.Request, cfg *config.Config, metricsSvc *service.MetricsService) {
 	w.Header().Set("Content-Type", "application/json")
-
-	strictMode := os.Getenv("HEALTH_STRICT") == "1"
-
-	if strictMode && !queriesLoaded {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":  "unhealthy",
-			"reason":  "queries.yml not loaded",
-			"version": "1.0.0",
-		})
-		return
-	}
 
 	if len(cfg.Instances) == 0 {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -74,7 +62,6 @@ func HandleHealthReadiness(w http.ResponseWriter, r *http.Request, cfg *config.C
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":    "ok",
 		"instances": len(cfg.Instances),
-		"queries":   queriesLoaded,
 		"version":   "1.0.0",
 		"timestamp": time.Now().Format(time.RFC3339),
 	})

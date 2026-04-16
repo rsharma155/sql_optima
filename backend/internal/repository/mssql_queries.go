@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 )
 
 // CollectLongRunningQueries fetches currently running long queries from dm_exec_requests
@@ -100,8 +101,9 @@ func (c *MssqlRepository) CollectLongRunningQueries(ctx context.Context, db *sql
 	return results, nil
 }
 
-// CollectLiveRunningQueries fetches currently running queries
-func (c *MssqlRepository) CollectLiveRunningQueries(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
+// CollectLiveRunningQueries fetches currently running queries (Real-Time Diagnostics).
+// If database is non-empty, scopes to that DB only.
+func (c *MssqlRepository) CollectLiveRunningQueries(ctx context.Context, db *sql.DB, database string) ([]map[string]interface{}, error) {
 	query := `
 		SELECT TOP 50
 			r.session_id, 
@@ -121,11 +123,12 @@ func (c *MssqlRepository) CollectLiveRunningQueries(ctx context.Context, db *sql
 		WHERE r.session_id > 50 AND s.is_user_process = 1
 		AND s.database_id > 4
 		AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
+		AND (@p1 = '' OR DB_NAME(s.database_id) = @p1)
 		AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		ORDER BY r.total_elapsed_time DESC`
 
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := db.QueryContext(ctx, query, strings.TrimSpace(database))
 	if err != nil {
 		return nil, err
 	}

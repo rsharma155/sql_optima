@@ -6,9 +6,9 @@
                 </div>
                 <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
                     <div id="pgQueriesStatusStrip"></div>
-                    <button class="btn btn-sm btn-outline" onclick="window.resetPgQueries()"><i class="fa-solid fa-rotate-right"></i> Reset Stats</button>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.PgQueriesView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
-                    <button type="button" class="btn btn-sm btn-outline" onclick="window.appNavigate('pg-explain')" title="Paste EXPLAIN output for findings and optimization hints"><i class="fa-solid fa-diagram-project"></i> EXPLAIN Analyzer</button>
+                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="resetPgQueries"><i class="fa-solid fa-rotate-right"></i> Reset Stats</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgQueriesView"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="pg-explain" title="Paste EXPLAIN output for findings and optimization hints"><i class="fa-solid fa-diagram-project"></i> EXPLAIN Analyzer</button>
                 </div>
             </div>
 
@@ -52,10 +52,10 @@
                 <div class="card-header flex-between w-100">
                     <div class="text-muted" style="font-size:0.75rem;">Collected: <span id="pgQueriesCollectedAt">--</span></div>
                     <ul class="nav-tabs" id="pg-queries-tabs" style="display:flex; list-style:none; gap:1.5rem; margin:0; padding:0; cursor:pointer; font-weight:600">
-                        <li class="text-accent active-tab" style="border-bottom: 2px solid var(--accent-blue)" onclick="window.sortPgQueries(this, 'total')">By Total Time</li>
-                        <li class="text-muted" onclick="window.sortPgQueries(this, 'mean')">By Mean Time</li>
-                        <li class="text-muted" onclick="window.sortPgQueries(this, 'calls')">By Calls (Aggressive)</li>
-                        <li class="text-muted" onclick="window.sortPgQueries(this, 'io')">By I/O Wait</li>
+                        <li class="text-accent active-tab" style="border-bottom: 2px solid var(--accent-blue)" data-action="sort-pg-queries" data-sort="total">By Total Time</li>
+                        <li class="text-muted" data-action="sort-pg-queries" data-sort="mean">By Mean Time</li>
+                        <li class="text-muted" data-action="sort-pg-queries" data-sort="calls">By Calls (Aggressive)</li>
+                        <li class="text-muted" data-action="sort-pg-queries" data-sort="io">By I/O Wait</li>
                     </ul>
                 </div>
                 <div class="table-responsive" style="max-height:350px; overflow-y:auto;">

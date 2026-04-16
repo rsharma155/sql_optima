@@ -11,8 +11,8 @@
                             <span class="text-muted" style="font-size:0.75rem;" id="pg-uptime">Loading...</span>
                             <span class="text-muted" style="font-size:0.75rem;" id="pg-version">Loading...</span>
                         </div>
-                        <button class="btn btn-sm btn-outline" onclick="window.appNavigate('drilldown-pg-enterprise')" title="Advanced / raw Timescale-backed enterprise metrics"><i class="fa-solid fa-server"></i> Advanced</button>
-                        <button class="btn btn-sm btn-outline text-accent" onclick="window.PgDashboardView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                        <button class="btn btn-sm btn-outline" data-action="navigate" data-route="drilldown-pg-enterprise" title="Advanced / raw Timescale-backed enterprise metrics"><i class="fa-solid fa-server"></i> Advanced</button>
+                        <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgDashboardView"><i class="fa-solid fa-refresh"></i> Refresh</button>
                     </div>
                     <div class="dashboard-pg-header-health-row">
                         <div class="glass-panel p-2 rounded" style="display:flex; align-items:center; gap:0.5rem;">
@@ -38,37 +38,37 @@
                         </h4>
                     </div>
                     <div class="dashboard-strip-metrics-row--9">
-                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-queries')" title="Transactions per second (from pg_stat_database deltas). Useful for workload intensity baseline.">
+                        <div class="strip-metric-cell" style="cursor:pointer;" data-action="navigate" data-route="pg-queries" title="Transactions per second (from pg_stat_database deltas). Useful for workload intensity baseline.">
                             <div class="strip-metric-label">TPS</div>
                             <div class="strip-metric-value metric-value" data-metric="tps">Loading...</div>
                             <div class="text-muted sub">Transactions/sec</div>
                         </div>
-                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-sessions')" title="Active vs waiting sessions (from pg_stat_activity). High waiting suggests contention (locks/IO).">
+                        <div class="strip-metric-cell" style="cursor:pointer;" data-action="navigate" data-route="pg-sessions" title="Active vs waiting sessions (from pg_stat_activity). High waiting suggests contention (locks/IO).">
                             <div class="strip-metric-label">Sessions</div>
                             <div class="strip-metric-value metric-value" data-metric="sessions-aw">--</div>
                             <div class="text-muted sub">Active / Waiting</div>
                         </div>
-                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-sessions')" title="Active/total connections. Spikes can indicate pool issues or connection storms.">
+                        <div class="strip-metric-cell" style="cursor:pointer;" data-action="navigate" data-route="pg-sessions" title="Active/total connections. Spikes can indicate pool issues or connection storms.">
                             <div class="strip-metric-label">Connections</div>
                             <div class="strip-metric-value metric-value" data-metric="connections">Loading...</div>
                             <div class="text-muted sub">Active / Total</div>
                         </div>
-                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-storage')" title="Buffer cache hit ratio (pg_stat_database). Low values suggest disk reads / missing indexes / small cache.">
+                        <div class="strip-metric-cell" style="cursor:pointer;" data-action="navigate" data-route="pg-storage" title="Buffer cache hit ratio (pg_stat_database). Low values suggest disk reads / missing indexes / small cache.">
                             <div class="strip-metric-label">Cache Hit</div>
                             <div class="strip-metric-value metric-value" data-metric="cache-hit">Loading...</div>
                             <div class="text-muted sub">Buffer hit ratio</div>
                         </div>
-                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-cpu')" title="Host CPU utilization %. High sustained CPU can slow query execution and background tasks.">
+                        <div class="strip-metric-cell" style="cursor:pointer;" data-action="navigate" data-route="pg-cpu" title="Host CPU utilization %. High sustained CPU can slow query execution and background tasks.">
                             <div class="strip-metric-label">CPU</div>
                             <div class="strip-metric-value metric-value" data-metric="system-cpu">Loading...</div>
                             <div class="text-muted sub">System CPU</div>
                         </div>
-                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-memory')" title="Host memory used %. High memory pressure can cause swapping and latency spikes.">
+                        <div class="strip-metric-cell" style="cursor:pointer;" data-action="navigate" data-route="pg-memory" title="Host memory used %. High memory pressure can cause swapping and latency spikes.">
                             <div class="strip-metric-label">Memory</div>
                             <div class="strip-metric-value metric-value" data-metric="system-mem">Loading...</div>
                             <div class="text-muted sub">System RAM</div>
                         </div>
-                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('pg-replication')" title="Max replication lag in seconds (derived from lag MB and WAL rate). High lag risks stale reads and RPO/RTO impact.">
+                        <div class="strip-metric-cell" style="cursor:pointer;" data-action="navigate" data-route="pg-replication" title="Max replication lag in seconds (derived from lag MB and WAL rate). High lag risks stale reads and RPO/RTO impact.">
                             <div class="strip-metric-label">Replication Lag</div>
                             <div class="strip-metric-value metric-value" data-metric="repl-lag">--</div>
                             <div class="text-muted sub">Max lag (sec)</div>
@@ -83,7 +83,7 @@
                             <div class="strip-metric-value metric-value" data-metric="db-size">--</div>
                             <div class="text-muted sub" id="pgDbSizeSub">--</div>
                         </div>
-                        <div class="strip-metric-cell" id="pgBackupCell" style="display:none; cursor:pointer;" onclick="window.appNavigate('pg-backups')" title="Last backup run status (reported by your backup job). If this is missing or failed, your recovery posture is unknown/at risk. Click for history.">
+                        <div class="strip-metric-cell" id="pgBackupCell" style="display:none; cursor:pointer;" data-action="navigate" data-route="pg-backups" title="Last backup run status (reported by your backup job). If this is missing or failed, your recovery posture is unknown/at risk. Click for history.">
                             <div class="strip-metric-label">Backup</div>
                             <div class="strip-metric-value metric-value" data-metric="backup-status">--</div>
                             <div class="text-muted sub" id="pgBackupSub">--</div>
@@ -127,7 +127,7 @@
                             <div class="strip-metric-value metric-value" data-metric="wal-rate">--</div>
                             <div class="text-muted sub">MB/min</div>
                         </div>
-                        <div class="strip-metric-cell" id="metric-blocking-sessions" style="cursor:pointer;" onclick="window.appNavigate('pg-locks')" title="Count of sessions waiting on locks (wait_event_type=Lock). Non-zero usually means contention/blocking chains.">
+                        <div class="strip-metric-cell" id="metric-blocking-sessions" style="cursor:pointer;" data-action="navigate" data-route="pg-locks" title="Count of sessions waiting on locks (wait_event_type=Lock). Non-zero usually means contention/blocking chains.">
                             <div class="strip-metric-label">Blocking Sessions</div>
                             <div class="strip-metric-value metric-value" data-metric="blocking-sessions">0</div>
                             <div class="text-muted sub">Lock waits</div>
@@ -142,7 +142,7 @@
                             <div class="strip-metric-value metric-value" data-metric="xid-age">--</div>
                             <div class="text-muted sub">max age(datfrozenxid)</div>
                         </div>
-                        <div class="strip-metric-cell" id="pgCritErrorsCell" style="display:none; cursor:pointer;" onclick="window.appNavigate('pg-logs')" title="Critical errors seen in PostgreSQL logs in the last hour (FATAL/PANIC/ERROR, auth failures, OOM). Click to browse recent events.">
+                        <div class="strip-metric-cell" id="pgCritErrorsCell" style="display:none; cursor:pointer;" data-action="navigate" data-route="pg-logs" title="Critical errors seen in PostgreSQL logs in the last hour (FATAL/PANIC/ERROR, auth failures, OOM). Click to browse recent events.">
                             <div class="strip-metric-label">Critical Errors</div>
                             <div class="strip-metric-value metric-value" data-metric="crit-errors">0</div>
                             <div class="text-muted sub" id="pgCritErrorsSub">Last 60m</div>

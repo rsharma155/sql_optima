@@ -11,20 +11,21 @@ package api
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/api/handlers"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/middleware"
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
-func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service.MetricsService, queriesLoaded bool, loginLimiter *middleware.LoginRateLimiter, sec config.Security) {
+func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service.MetricsService, loginLimiter *middleware.LoginRateLimiter, sec config.Security) {
 	r.HandleFunc("/api/health", HandleHealthLiveness).Methods("GET")
 	r.HandleFunc("/api/health/ready", func(w http.ResponseWriter, req *http.Request) {
-		HandleHealthReadiness(w, req, cfg, queriesLoaded, metricsSvc)
+		HandleHealthReadiness(w, req, cfg, metricsSvc)
 	}).Methods("GET")
 
 	r.HandleFunc("/api/auth/status", HandleAuthStatus(sec)).Methods("GET")
@@ -52,8 +53,9 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		}).Methods("GET")
 	}
 
-	authH := handlers.NewAuthHandlers(metricsSvc)
+	authH := handlers.NewAuthHandlers(metricsSvc, loginLimiter)
 	adminH := handlers.NewAdminHandlers(metricsSvc)
+	adminServersH := handlers.NewAdminServerHandlers(metricsSvc)
 	widgetAdminH := handlers.NewWidgetAdminHandlers(metricsSvc)
 	mssqlH := handlers.NewMssqlHandlers(metricsSvc, cfg)
 	postgresH := handlers.NewPostgresHandlers(metricsSvc, cfg)
@@ -69,14 +71,34 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		Health: healthH, Dashboard: dashboardH, Query: queryH, SIH: sihH,
 	}
 
+	// ── Alert engine wiring ────────────────────────────────────
+	var alertH *handlers.AlertHandlers
+	if tsPool := metricsSvc.GetTimescaleDBPool(); tsPool != nil {
+		alertRepo := repository.NewAlertRepository(tsPool)
+		maintRepo := repository.NewAlertMaintenanceRepository(tsPool)
+
+		evaluators := []service.AlertEvaluator{
+			service.NewMssqlBlockingEvaluator(tsPool),
+			service.NewMssqlFailedJobsEvaluator(tsPool),
+			service.NewMssqlDiskSpaceEvaluator(tsPool),
+			service.NewPgReplicationLagEvaluator(tsPool),
+			service.NewPgBlockingEvaluator(tsPool),
+			service.NewPgBackupFreshnessEvaluator(tsPool),
+			service.NewPgDiskSpaceEvaluator(tsPool),
+		}
+
+		alertSvc := service.NewAlertService(alertRepo, maintRepo, evaluators)
+		alertH = handlers.NewAlertHandlers(alertSvc, alertRepo, maintRepo)
+	}
+
 	var rulesH *handlers.RulesHandler
-	var rulesHErr error
 	rulesBP := func(w http.ResponseWriter, req *http.Request) {
 		if rulesH == nil {
-			rulesH, rulesHErr = handlers.NewRulesHandlerFromConfig(cfg)
-			if rulesHErr != nil {
-				log.Printf("[Router] RulesHandler initialization error: %v", rulesHErr)
+			var pool *pgxpool.Pool
+			if metricsSvc != nil {
+				pool = metricsSvc.GetTimescaleDBPool()
 			}
+			rulesH = handlers.NewRulesHandler(pool, cfg)
 		}
 		if rulesH != nil {
 			rulesH.BestPractices(w, req)
@@ -97,18 +119,25 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		openAPI.Handle("/login", limitedLogin).Methods("POST")
 		openAPI.Handle("/auth/login", limitedLogin).Methods("POST")
 	}
+	openAPI.HandleFunc("/logout", authH.Logout).Methods("POST")
+	openAPI.HandleFunc("/auth/logout", authH.Logout).Methods("POST")
 
 	if sec.AuthRequired {
 		// Strict: only auth endpoints stay public; config is moved behind JWT below.
 	} else {
 		registerMonitoringReadRoutes(openAPI, mon, rulesBP)
 		registerMonitoringElevatedRoutes(openAPI, mssqlH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
+		if alertH != nil {
+			registerAlertReadRoutes(openAPI, alertH)
+			registerAlertMutationRoutes(openAPI, alertH)
+		}
 		// Legacy: explain was public when auth is not required.
 	}
 
 	// --- Any authenticated user (JWT or OIDC)
 	authed := r.PathPrefix("/api").Subrouter()
 	authed.Use(middleware.RequireAuth(""))
+	authed.Use(middleware.CSRFProtect)
 	authed.HandleFunc("/auth/me", authH.Me).Methods("GET")
 
 	if sec.AuthRequired {
@@ -140,18 +169,26 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		readAPI.Use(middleware.RequireAuth(""))
 		readAPI.Use(middleware.RequireAnyRole("viewer", "dba", "admin"))
 		registerMonitoringReadRoutes(readAPI, mon, rulesBP)
+		if alertH != nil {
+			registerAlertReadRoutes(readAPI, alertH)
+		}
 
 		dbaAPI := r.PathPrefix("/api").Subrouter()
 		dbaAPI.Use(middleware.RequireAuth(""))
 		dbaAPI.Use(middleware.RequireAnyRole("dba", "admin"))
+		dbaAPI.Use(middleware.CSRFProtect)
 		registerMonitoringElevatedRoutes(dbaAPI, mssqlH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
 		registerPostgresDBAMutations(dbaAPI, postgresH)
 		registerDashboardWidgetRoutes(dbaAPI, dashboardH)
+		if alertH != nil {
+			registerAlertMutationRoutes(dbaAPI, alertH)
+		}
 	}
 
 	if !sec.AuthRequired {
 		legacyAuthed := r.PathPrefix("/api").Subrouter()
 		legacyAuthed.Use(middleware.RequireAuth(""))
+		legacyAuthed.Use(middleware.CSRFProtect)
 		legacyAuthed.HandleFunc("/mssql/xevents", mssqlH.XEvents).Methods("GET")
 		registerPostgresDBAMutations(legacyAuthed, postgresH)
 		registerDashboardWidgetRoutes(legacyAuthed, dashboardH)
@@ -160,10 +197,19 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	// --- Admin-only
 	adminAPI := r.PathPrefix("/api/admin").Subrouter()
 	adminAPI.Use(middleware.RequireAuth("admin"))
+	adminAPI.Use(middleware.CSRFProtect)
 	adminAPI.HandleFunc("/users", adminH.CreateUser).Methods("POST")
 	adminAPI.HandleFunc("/users", adminH.ListUsers).Methods("GET")
 	adminAPI.HandleFunc("/users/{id}", adminH.DeleteUser).Methods("DELETE")
 	adminAPI.HandleFunc("/users/{id}/role", adminH.UpdateUserRole).Methods("PUT")
+	adminAPI.HandleFunc("/servers", adminServersH.AddServer).Methods("POST")
+	adminAPI.HandleFunc("/servers", adminServersH.ListServers).Methods("GET")
+	adminAPI.HandleFunc("/servers/test-draft", adminServersH.TestServerDraft).Methods("POST")
+	adminAPI.HandleFunc("/servers/{id}/test", adminServersH.TestServer).Methods("POST")
+	adminAPI.HandleFunc("/servers/{id}/rotate", adminServersH.RotateServer).Methods("POST")
+	adminAPI.HandleFunc("/servers/{id}", adminServersH.UpdateServer).Methods("PUT")
+	adminAPI.HandleFunc("/servers/{id}", adminServersH.PatchServer).Methods("PATCH")
+	adminAPI.HandleFunc("/servers/{id}", adminServersH.DeleteServer).Methods("DELETE")
 	adminAPI.HandleFunc("/widgets/{id}", widgetAdminH.UpdateWidget).Methods("PUT")
 	adminAPI.HandleFunc("/widgets/{id}/restore", widgetAdminH.RestoreWidget).Methods("POST")
 	adminAPI.HandleFunc("/widgets/{id}", widgetAdminH.GetWidget).Methods("GET")

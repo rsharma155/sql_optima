@@ -58,16 +58,21 @@ func (s *MetricsService) collectPerformanceDebtOnce() {
 	if s.tsLogger == nil {
 		return
 	}
+	sqlserverCount := 0
 	var wg sync.WaitGroup
 	for _, inst := range s.Config.Instances {
 		if inst.Type != "sqlserver" {
 			continue
 		}
+		sqlserverCount++
 		wg.Add(1)
 		go func(instanceName string, databases []string) {
 			defer wg.Done()
 			s.collectPerformanceDebtForInstance(instanceName, databases)
 		}(inst.Name, inst.Databases)
+	}
+	if sqlserverCount == 0 {
+		log.Printf("[PerfDebtCollector] No SQL Server instances configured; skipping collection")
 	}
 	wg.Wait()
 }
@@ -255,9 +260,9 @@ func (s *MetricsService) collectPerformanceDebtForInstance(instanceName string, 
 					sev = "WARNING"
 				}
 				details, _ := json.Marshal(map[string]any{
-					"file":             f.FileName,
-					"size_mb":          f.SizeMB,
-					"growth":           f.Growth,
+					"file":              f.FileName,
+					"size_mb":           f.SizeMB,
+					"growth":            f.Growth,
 					"is_percent_growth": f.IsPercentGrowth,
 				})
 				appendIfChanged(hot.PerformanceDebtFindingRow{
@@ -426,6 +431,150 @@ func (s *MetricsService) collectPerformanceDebtForInstance(instanceName string, 
 		})
 	}
 
+	// Max server memory — should not be unlimited (2147483647 = default/unlimited).
+	if maxMem, err := s.MsRepo.FetchConfigValueInUse(instanceName, "max server memory (MB)"); err == nil {
+		sev := "INFO"
+		if maxMem >= 2147483647 {
+			sev = "CRITICAL"
+		}
+		details, _ := json.Marshal(map[string]any{"max_server_memory_mb": maxMem})
+		appendIfChanged(hot.PerformanceDebtFindingRow{
+			CaptureTimestamp:   now,
+			ServerInstanceName: instanceName,
+			DatabaseName:       "master",
+			Section:            "Engine Config",
+			FindingType:        "max_server_memory",
+			Severity:           sev,
+			Title:              "Max server memory configuration",
+			ObjectName:         "sp_configure",
+			ObjectType:         "config",
+			FindingKey:         "config:max_server_memory",
+			Details:            details,
+			Recommendation:     "Set max server memory to leave ~10-20% of OS RAM for the OS. Default unlimited can cause OS memory pressure.",
+			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'max server memory (MB)', 12288; RECONFIGURE;",
+		})
+	}
+
+	// Optimize for ad hoc workloads — should be 1 to reduce plan cache bloat.
+	if adHoc, err := s.MsRepo.FetchConfigValueInUse(instanceName, "optimize for ad hoc workloads"); err == nil {
+		sev := "INFO"
+		if adHoc == 0 {
+			sev = "WARNING"
+		}
+		details, _ := json.Marshal(map[string]any{"optimize_for_ad_hoc_workloads": adHoc})
+		appendIfChanged(hot.PerformanceDebtFindingRow{
+			CaptureTimestamp:   now,
+			ServerInstanceName: instanceName,
+			DatabaseName:       "master",
+			Section:            "Engine Config",
+			FindingType:        "optimize_for_ad_hoc",
+			Severity:           sev,
+			Title:              "Optimize for ad hoc workloads",
+			ObjectName:         "sp_configure",
+			ObjectType:         "config",
+			FindingKey:         "config:optimize_ad_hoc",
+			Details:            details,
+			Recommendation:     "Enable to store only compiled plan stubs on first execution, reducing plan cache bloat from single-use plans.",
+			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'optimize for ad hoc workloads', 1; RECONFIGURE;",
+		})
+	}
+
+	// Backup compression default — should be 1 for faster backups and less I/O.
+	if bkComp, err := s.MsRepo.FetchConfigValueInUse(instanceName, "backup compression default"); err == nil {
+		sev := "INFO"
+		if bkComp == 0 {
+			sev = "WARNING"
+		}
+		details, _ := json.Marshal(map[string]any{"backup_compression_default": bkComp})
+		appendIfChanged(hot.PerformanceDebtFindingRow{
+			CaptureTimestamp:   now,
+			ServerInstanceName: instanceName,
+			DatabaseName:       "master",
+			Section:            "Engine Config",
+			FindingType:        "backup_compression_default",
+			Severity:           sev,
+			Title:              "Backup compression default",
+			ObjectName:         "sp_configure",
+			ObjectType:         "config",
+			FindingKey:         "config:backup_compression",
+			Details:            details,
+			Recommendation:     "Enable to reduce backup size and duration. CPU overhead is minimal on modern hardware.",
+			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'backup compression default', 1; RECONFIGURE;",
+		})
+	}
+
+	// Remote admin connections — should be 1 for emergency DAC access.
+	if rac, err := s.MsRepo.FetchConfigValueInUse(instanceName, "remote admin connections"); err == nil {
+		sev := "INFO"
+		if rac == 0 {
+			sev = "WARNING"
+		}
+		details, _ := json.Marshal(map[string]any{"remote_admin_connections": rac})
+		appendIfChanged(hot.PerformanceDebtFindingRow{
+			CaptureTimestamp:   now,
+			ServerInstanceName: instanceName,
+			DatabaseName:       "master",
+			Section:            "Engine Config",
+			FindingType:        "remote_admin_connections",
+			Severity:           sev,
+			Title:              "Remote admin connections (DAC)",
+			ObjectName:         "sp_configure",
+			ObjectType:         "config",
+			FindingKey:         "config:remote_admin_connections",
+			Details:            details,
+			Recommendation:     "Enable so DBAs can connect via DAC when the instance is unresponsive.",
+			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'remote admin connections', 1; RECONFIGURE;",
+		})
+	}
+
+	// Lightweight pooling — should be 0 (fiber mode is deprecated/harmful for most workloads).
+	if lwp, err := s.MsRepo.FetchConfigValueInUse(instanceName, "lightweight pooling"); err == nil {
+		sev := "INFO"
+		if lwp != 0 {
+			sev = "CRITICAL"
+		}
+		details, _ := json.Marshal(map[string]any{"lightweight_pooling": lwp})
+		appendIfChanged(hot.PerformanceDebtFindingRow{
+			CaptureTimestamp:   now,
+			ServerInstanceName: instanceName,
+			DatabaseName:       "master",
+			Section:            "Engine Config",
+			FindingType:        "lightweight_pooling",
+			Severity:           sev,
+			Title:              "Lightweight pooling (fiber mode)",
+			ObjectName:         "sp_configure",
+			ObjectType:         "config",
+			FindingKey:         "config:lightweight_pooling",
+			Details:            details,
+			Recommendation:     "Disable (set to 0). Fiber mode is deprecated, causes instability, and Microsoft recommends against it.",
+			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'lightweight pooling', 0; RECONFIGURE;",
+		})
+	}
+
+	// Priority boost — should be 0 (can cause instability and deadlocks with OS).
+	if pb, err := s.MsRepo.FetchConfigValueInUse(instanceName, "priority boost"); err == nil {
+		sev := "INFO"
+		if pb != 0 {
+			sev = "CRITICAL"
+		}
+		details, _ := json.Marshal(map[string]any{"priority_boost": pb})
+		appendIfChanged(hot.PerformanceDebtFindingRow{
+			CaptureTimestamp:   now,
+			ServerInstanceName: instanceName,
+			DatabaseName:       "master",
+			Section:            "Engine Config",
+			FindingType:        "priority_boost",
+			Severity:           sev,
+			Title:              "Priority boost",
+			ObjectName:         "sp_configure",
+			ObjectType:         "config",
+			FindingKey:         "config:priority_boost",
+			Details:            details,
+			Recommendation:     "Disable (set to 0). Running SQL Server at high OS priority can cause system instability.",
+			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'priority boost', 0; RECONFIGURE;",
+		})
+	}
+
 	if err := s.tsLogger.LogPerformanceDebtFindings(ctx, findings); err != nil {
 		log.Printf("[PerfDebtCollector] insert error instance=%s findings=%d err=%v", instanceName, len(findings), err)
 		return
@@ -455,4 +604,3 @@ func bracket(s string) string {
 	s = strings.ReplaceAll(s, "]", "")
 	return "[" + s + "]"
 }
-

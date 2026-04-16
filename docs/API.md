@@ -13,7 +13,7 @@ Except where noted, endpoints require `Authorization: Bearer <JWT>` from `POST /
 | POST | `/api/postgres/explain/optimize` | Same body (JSON plan only); returns `report` and `sql_context` with `heuristic_insights`. |
 | POST | `/api/postgres/explain/index-advisor` | Body `{ "query", "plan": object, "instance_name"?, "database_dsn"?, "query_params"?, "options"? }`. JSON plan only; embeds **pg_missing_index** for index DDL + query rewrites. Resolves DSN from `instance_name` or the sole configured Postgres instance. Returns `recommendation_status`, `top_recommendation`, `query_rewrites`, `diagnostics`, etc. |
 | GET | `/api/health` | Liveness: process is up (JSON `{ "status": "ok", "timestamp": "..." }`). |
-| GET | `/api/health/ready` | Readiness: config has instances; if `HEALTH_STRICT=1`, `queries.yml` must have loaded. |
+| GET | `/api/health/ready` | Readiness: config has instances (and optionally TimescaleDB if `HEALTH_CHECK_TIMESCALE=1`). |
 
 ## Authenticated
 
@@ -44,5 +44,5 @@ Except where noted, endpoints require `Authorization: Bearer <JWT>` from `POST /
 |----------|---------|
 | `CORS_ALLOWED_ORIGINS` | Comma-separated origins for browser cross-origin API access. |
 | `CONFIG_REDACT_TOPOLOGY` | `1` to redact host/port in `/api/config`. |
-| `HEALTH_STRICT` | `1` to fail readiness when `queries.yml` did not load. |
+| `HEALTH_CHECK_TIMESCALE` | `1` to fail readiness when TimescaleDB is unavailable. |
 | `LOGIN_RATE_LIMIT_PER_MIN` | Override default login rate limit (per IP per minute). |

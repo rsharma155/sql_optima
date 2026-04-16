@@ -13,7 +13,7 @@ window.IndexDrilldown = function() {
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between">
                 <div>
-                    <button class="btn btn-sm btn-outline mb-2" onclick="window.appNavigate('dashboard')"><i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button>
+                    <button class="btn btn-sm btn-outline mb-2" data-action="navigate" data-route="dashboard"><i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button>
                     <h1>Index Usage Drilldown</h1>
                     <p class="subtitle">Analyze Index Seeks, Scans, and identify Missing Index impact</p>
                 </div>

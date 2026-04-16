@@ -50,41 +50,64 @@ func clientIP(r *http.Request) string {
 
 type LoginRateLimiter struct {
 	mu        sync.Mutex
-	windows   map[string][]time.Time
+	windows   map[string][]time.Time // keyed by IP or "user:<username>"
 	maxPerMin int
+	// maxPerMinUser is a tighter per-username limit (default: maxPerMin/4, min 5).
+	// Even if the attacker rotates IPs, each target account gets at most
+	// maxPerMinUser attempts per minute.
+	maxPerMinUser int
 }
 
 func NewLoginRateLimiter(maxPerMin int) *LoginRateLimiter {
 	if maxPerMin <= 0 {
 		maxPerMin = 20
 	}
+	perUser := maxPerMin / 4
+	if perUser < 5 {
+		perUser = 5
+	}
 	return &LoginRateLimiter{
-		windows:   make(map[string][]time.Time),
-		maxPerMin: maxPerMin,
+		windows:       make(map[string][]time.Time),
+		maxPerMin:     maxPerMin,
+		maxPerMinUser: perUser,
 	}
 }
 
-// Allow returns true if the request may proceed.
+// Allow returns true if the IP has not exceeded the per-IP limit.
 func (l *LoginRateLimiter) Allow(ip string) bool {
+	return l.allow(ip, l.maxPerMin)
+}
+
+// AllowUsername returns true if the given (lowercased) username has not
+// exceeded the tighter per-user limit. Call this after decoding the request
+// body so the username is available, but before calling AuthenticateUser.
+func (l *LoginRateLimiter) AllowUsername(username string) bool {
+	if username == "" {
+		return true // blank username checked elsewhere
+	}
+	return l.allow("user:"+strings.ToLower(username), l.maxPerMinUser)
+}
+
+func (l *LoginRateLimiter) allow(key string, limit int) bool {
 	now := time.Now()
 	cutoff := now.Add(-time.Minute)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	hits := l.windows[ip]
+	hits := l.windows[key]
 	var kept []time.Time
 	for _, t := range hits {
 		if t.After(cutoff) {
 			kept = append(kept, t)
 		}
 	}
-	if len(kept) >= l.maxPerMin {
-		l.windows[ip] = kept
+	if len(kept) >= limit {
+		l.windows[key] = kept
 		return false
 	}
 	kept = append(kept, now)
-	l.windows[ip] = kept
+	l.windows[key] = kept
 	return true
 }
 

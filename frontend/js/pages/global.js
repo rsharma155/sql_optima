@@ -16,9 +16,12 @@ window.GlobalEstateView = async function() {
     const instances = window.appState.config.instances || [];
     
     instances.forEach((m, i) => {
-        const stateHtml = '<span class="status-indicator status-healthy" title="Connected"></span>';
+        const isUp = m.available !== false;
+        const stateClass = isUp ? 'status-healthy' : 'status-danger';
+        const stateTitle = isUp ? 'Connected' : 'Unreachable';
+        const stateHtml = '<span class="status-indicator ' + stateClass + '" title="' + stateTitle + '"></span>';
         const card = `
-            <div class="estate-card glass-panel clickable-chart" onclick="window.selectInstanceFromEstate(${i})" style="padding: 10px; border-radius: 6px; cursor: pointer; border: 1px solid rgba(255,255,255,0.05); transition: 0.2s;">
+            <div class="estate-card glass-panel clickable-chart" data-instance-idx="${i}" style="padding: 10px; border-radius: 6px; cursor: pointer; border: 1px solid rgba(255,255,255,0.05); transition: 0.2s;">
                 <div class="estate-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
                     <h4 style="margin:0; font-size: 0.85rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
                         <i class="fa-solid ${m.type==='postgres' ? 'fa-database' : 'fa-microsoft'} text-accent" style="margin-right:4px;"></i> ${m.name}
@@ -43,22 +46,45 @@ window.GlobalEstateView = async function() {
         }
     });
 
+    const hasSql = sqlHtml.length > 0;
+    const hasPg = pgHtml.length > 0;
+    const hasAny = hasSql || hasPg;
+
+    let bodyBlocks = '';
+    if (!hasAny) {
+        bodyBlocks = `
+            <div class="glass-panel" style="padding:1.5rem;margin-top:1rem;">
+                <p class="text-muted" style="margin:0;">No monitoring instances are configured yet. Administrators can add SQL Server or PostgreSQL targets under <strong>Admin</strong> (or the onboarding flow).</p>
+            </div>`;
+    } else {
+        if (hasSql) {
+            bodyBlocks += `
+            <h3 class="mt-4 mb-3 pb-2" style="border-bottom: 1px solid rgba(255,255,255,0.1);"><i class="fa-brands fa-microsoft text-accent"></i> SQL Server instances</h3>
+            <div class="estate-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">
+                ${sqlHtml}
+            </div>`;
+        }
+        if (hasPg) {
+            bodyBlocks += `
+            <h3 class="mt-5 mb-3 pb-2" style="border-bottom: 1px solid rgba(255,255,255,0.1);"><i class="fa-solid fa-server" style="color:var(--success)"></i> PostgreSQL clusters</h3>
+            <div class="estate-grid pb-5" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">
+                ${pgHtml}
+            </div>`;
+        }
+        if (hasSql && !hasPg) {
+            bodyBlocks += `<p class="text-muted mt-3" style="font-size:0.8rem;">No PostgreSQL instances are registered.</p>`;
+        } else if (!hasSql && hasPg) {
+            bodyBlocks += `<p class="text-muted mt-3" style="font-size:0.8rem;">No SQL Server instances are registered.</p>`;
+        }
+    }
+
     window.routerOutlet.innerHTML = `
         <div class="page-view active">
             <div class="page-title mb-4">
                 <h1><i class="fa-solid fa-earth-americas text-accent"></i> Global Estate Overview</h1>
                 <p class="subtitle mt-1">Select an instance to populate the diagnostic tools menu.</p>
             </div>
-
-            <h3 class="mt-4 mb-3 pb-2" style="border-bottom: 1px solid rgba(255,255,255,0.1);"><i class="fa-brands fa-microsoft text-accent"></i> SQL Server Estates</h3>
-            <div class="estate-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">
-                ${sqlHtml || '<div class="text-muted"><i>No MSSQL Servers Linked in configuration</i></div>'}
-            </div>
-
-            <h3 class="mt-5 mb-3 pb-2" style="border-bottom: 1px solid rgba(255,255,255,0.1);"><i class="fa-solid fa-server " style="color:var(--success)"></i> PostgreSQL Clusters</h3>
-            <div class="estate-grid pb-5" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">
-                ${pgHtml || '<div class="text-muted"><i>No PostgreSQL Clusters Linked in configuration</i></div>'}
-            </div>
+            ${bodyBlocks}
         </div>
     `;
 
@@ -70,6 +96,14 @@ window.GlobalEstateView = async function() {
         `;
         document.head.appendChild(style);
     }
+
+    // Bind click via event delegation (CSP-safe, no inline handlers).
+    document.querySelectorAll('.estate-card[data-instance-idx]').forEach(function(card) {
+        card.addEventListener('click', function() {
+            var idx = parseInt(card.getAttribute('data-instance-idx'), 10);
+            if (!isNaN(idx)) window.selectInstanceFromEstate(idx);
+        });
+    });
 }
 
 window.selectInstanceFromEstate = function(idx) {

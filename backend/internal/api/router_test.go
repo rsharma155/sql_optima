@@ -22,8 +22,11 @@ func TestValidateInstanceName(t *testing.T) {
 		{"PG-Cluster-01", false},
 		{"ValidServer", false},
 		{"Valid_Server_123", false},
+		{"Production Postgres", false},
+		{"EU (reporting)", false},
 		{"../../../etc/passwd", true},
 		{"<script>alert(1)</script>", true},
+		{"bad;drop", true},
 		{"", true},
 	}
 

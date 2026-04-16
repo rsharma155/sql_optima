@@ -73,7 +73,7 @@ window.MemoryDrilldown = async function() {
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between">
                 <div class="flex-between" style="align-items:center; gap:1rem;">
-                    <button class="btn btn-sm btn-outline" style="padding:0.3rem 0.6rem; font-size:1.1rem;" onclick="window.appNavigate('dashboard')" title="Back to Dashboard"><i class="fa-solid fa-arrow-left"></i></button>
+                    <button class="btn btn-sm btn-outline" style="padding:0.3rem 0.6rem; font-size:1.1rem;" data-action="navigate" data-route="dashboard" title="Back to Dashboard"><i class="fa-solid fa-arrow-left"></i></button>
                     <h1 style="font-size: 1.5rem;">Memory Performance Analyzer <span class="subtitle">- Instance: ${window.escapeHtml(inst.name)}</span></h1>
                 </div>
                 <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
@@ -85,8 +85,8 @@ window.MemoryDrilldown = async function() {
                         <label style="font-size: 0.8rem; color: var(--text-muted);">to:</label>
                         <input type="datetime-local" id="memDrillTo" class="custom-select" style="padding: 0.25rem; font-size: 0.8rem;">
                     </div>
-                    <button class="btn btn-sm btn-accent" onclick="window.applyMemoryDrilldownRange()"><i class="fa-solid fa-filter"></i> Apply</button>
-                    <button class="btn btn-sm btn-outline" onclick="window.refreshMemoryDrilldown()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-accent" data-action="call" data-fn="applyMemoryDrilldownRange"><i class="fa-solid fa-filter"></i> Apply</button>
+                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="refreshMemoryDrilldown"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
             <div id="memHealthBanner" class="glass-panel mt-3" style="padding:0.75rem 1rem; display:flex; align-items:center; justify-content:space-between; gap:1rem;">
@@ -166,7 +166,7 @@ window.MemoryDrilldown = async function() {
 
             <div class="grid mt-4" style="display:grid; grid-template-columns: 1.2fr 0.8fr; gap:1rem;">
                 <div class="chart-card glass-panel" style="height: 260px;">
-                    <div class="card-header"><h3>Buffer Pool by Database (MB)</h3></div>
+                    <div class="card-header"><h3>Buffer Pool by Database (MB) <span class="text-muted" style="font-size:0.7rem; font-weight:400;">User databases only</span></h3></div>
                     <div class="chart-container" style="height: 200px;"><canvas id="memBufferPoolDbChart"></canvas></div>
                 </div>
                 <div class="chart-card glass-panel" style="height: 260px;">
@@ -246,7 +246,13 @@ window.renderMemoryDrilldownCharts = function(data) {
     const mem = window._memoryDrilldownSortPoints(data.memory_metrics || []);
     const plan = window._memoryDrilldownSortPoints(data.plan_cache_health || []);
     const clerks = window._memoryDrilldownSortPoints(data.memory_clerks || []);
-    const bpdb = window._memoryDrilldownSortPoints(data.buffer_pool_by_db || []);
+    const bpdbRaw = window._memoryDrilldownSortPoints(data.buffer_pool_by_db || []);
+    // Filter out system databases (master, model, msdb, tempdb, Resource) — show user DBs only.
+    const _systemDbs = new Set(['master', 'model', 'msdb', 'tempdb', 'resource', 'resourcedb']);
+    const bpdb = bpdbRaw.filter(function(r) {
+        const n = String(r.database_name || r.database || '').trim().toLowerCase();
+        return n && !_systemDbs.has(n);
+    });
     const src = data.data_source || {};
 
     const baseOpts = {

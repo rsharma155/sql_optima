@@ -103,7 +103,7 @@ function pgCpuShowQueryModal(row) {
                         • total: <strong>${pgCpuEsc(total)} ms</strong> • calls: <strong>${pgCpuEsc(calls)}</strong> • avg: <strong>${pgCpuEsc(avg)} ms</strong>
                     </div>
                 </div>
-                <button onclick="document.getElementById('pg-cpu-query-modal').remove()" style="background:transparent; border:1px solid var(--border-color); color:var(--text-primary); font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
+                <button data-action="close-id" data-target="pg-cpu-query-modal" style="background:transparent; border:1px solid var(--border-color); color:var(--text-primary); font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
             </div>
             <hr style="border:0; border-top:1px solid var(--border-color,#333); margin:12px 0;">
             <pre style="white-space:pre-wrap; word-break:break-word; font-size:0.8rem; line-height:1.35; margin:0;">${pgCpuEsc(qtext)}</pre>
@@ -312,7 +312,7 @@ function renderPgCpuTopQueries(queries) {
                 <td><code>${pgCpuEsc(qid)}</code></td>
                 <td style="max-width:360px;word-break:break-word;">
                     <span class="pg-cpu-query-link" role="button" tabindex="0"
-                          onclick="window.pgCpuShowQueryDetails(${idx});"
+                          data-action="pg-cpu-query-details" data-idx="${idx}"
                           onkeydown="if(event.key==='Enter'){window.pgCpuShowQueryDetails(${idx});}">
                         ${pgCpuEsc(qt)}
                     </span>

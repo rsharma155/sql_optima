@@ -1,0 +1,29 @@
+# Keep Docker build context small and avoid accidental vendoring.
+.git
+.github
+.idea
+.vscode
+**/.DS_Store
+
+# Local data / logs
+data
+backups
+logs
+**/*.log
+
+# Node artifacts
+node_modules
+
+# Go artifacts
+**/*.test
+**/*.out
+bin
+dist
+
+# Vendoring (can cause Go to auto-switch to -mod=vendor)
+backend/vendor
+
+# Secrets / local config
+.env
+.env.*
+

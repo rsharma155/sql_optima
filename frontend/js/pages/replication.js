@@ -85,8 +85,8 @@ window.PgReplicationView = async function() {
                 <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
                     <div id="pgReplStatusStrip"></div>
                     <span class="badge badge-outline" style="font-size:0.65rem;">Mode: ${window.escapeHtml(haLabel)}</span>
-                    <button class="btn btn-sm btn-outline" onclick="window.appNavigateBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.PgReplicationView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-outline" data-action="navigate-back"><i class="fa-solid fa-arrow-left"></i> Back</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgReplicationView"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
 

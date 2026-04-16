@@ -34,12 +34,14 @@ type Instance struct {
 	Available bool     `yaml:"available,omitempty" json:"available,omitempty"`
 
 	// Security Additions
-	TrustServerCertificate bool   `yaml:"trust_server_certificate,omitempty" json:"trust_server_certificate,omitempty"` // MSSQL
+	TrustServerCertificate bool   `yaml:"trust_server_certificate,omitempty" json:"trust_server_certificate,omitempty"` // MSSQL (Azure SQL / MI when CA validation is impractical)
 	IntegratedSecurity     bool   `yaml:"integrated_security,omitempty" json:"integrated_security,omitempty"`           // MSSQL AD Auth
 	SSLMode                string `yaml:"sslmode,omitempty" json:"sslmode,omitempty"`                                   // PG
-	SSLCert                string `yaml:"sslcert,omitempty" json:"sslcert,omitempty"`                                   // PG Passwordless Certificate
-	SSLKey                 string `yaml:"sslkey,omitempty" json:"sslkey,omitempty"`                                     // PG Passwordless Key
-	SSLRootCert            string `yaml:"sslrootcert,omitempty" json:"sslrootcertcert,omitempty"`                       // PG Root CA
+	// Initial catalog: PostgreSQL dbname (default postgres), SQL Server database (default master). Used for RDS / Azure endpoints.
+	Database    string `yaml:"database,omitempty" json:"database,omitempty"`
+	SSLCert     string `yaml:"sslcert,omitempty" json:"sslcert,omitempty"`             // PG Passwordless Certificate
+	SSLKey      string `yaml:"sslkey,omitempty" json:"sslkey,omitempty"`               // PG Passwordless Key
+	SSLRootCert string `yaml:"sslrootcert,omitempty" json:"sslrootcertcert,omitempty"` // PG Root CA
 
 	// Postgres HA provider hint (optional): cnpg | patroni | streaming | auto
 	HAProvider string `yaml:"ha_provider,omitempty" json:"ha_provider,omitempty"`
@@ -58,9 +60,14 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 // LoadConfigWithSecurity loads config and optionally strips YAML passwords so only env credentials apply.
+// If the file does not exist, an empty config is returned (all instances will come from the server registry).
 func LoadConfigWithSecurity(path string, sec Security) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("[config] %s not found — starting with empty instance list (use Admin UI or API to register targets)\n", path)
+			return &Config{Instances: []Instance{}}, nil
+		}
 		return nil, err
 	}
 
@@ -91,8 +98,9 @@ func LoadConfigWithSecurity(path string, sec Security) (*Config, error) {
 
 		// Skip instances without credentials instead of failing entirely
 		if inst.User == "" || inst.Password == "" {
-			fmt.Printf("[config] skipping instance %s: missing %s_USER or %s_PASSWORD env vars\n",
-				inst.Name, envPrefix, envPrefix)
+			// Do not print environment variable names or other system details to stdout.
+			// Keep the signal, but avoid leaking local env naming conventions in logs.
+			fmt.Printf("[config] skipping instance %s: missing credentials\n", inst.Name)
 			continue
 		}
 

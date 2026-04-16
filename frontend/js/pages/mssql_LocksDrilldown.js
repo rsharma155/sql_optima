@@ -19,29 +19,29 @@ window.LocksDrilldown = async function() {
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between">
                 <div>
-                    <button class="btn btn-sm btn-outline mb-2" onclick="window.appNavigate('dashboard')"><i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button>
+                    <button class="btn btn-sm btn-outline mb-2" data-action="navigate" data-route="dashboard"><i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button>
                     <h1>Blocking & Wait Types Drilldown</h1>
                     <p class="subtitle">Live blocking chains, blocked sessions, and current wait pressure (user workloads)</p>
                 </div>
                 <div class="filter-group glass-panel p-3 rounded flex-between" style="flex-wrap:wrap; gap:0.75rem; max-width:420px;">
                     <span style="font-size:0.85rem;">Wait category (chart):</span>
-                    <select class="custom-select" style="min-width:11rem;" id="waitCategoryFilter" onchange="window.applyLocksWaitCategoryFilter()">
+                    <select class="custom-select" style="min-width:11rem;" id="waitCategoryFilter" data-change-action="applyLocksWaitCategoryFilter">
                         <option value="all">All waits</option>
                         <option value="LCK">LCK (locks)</option>
                         <option value="PAGEIOLATCH">PAGEIOLATCH</option>
                         <option value="CXPACKET">CXPACKET / CXCONSUMER</option>
                         <option value="ASYNC_NETWORK_IO">ASYNC_NETWORK_IO</option>
                     </select>
-                    <button type="button" class="btn btn-sm btn-outline" onclick="window.loadBlockingData(true)" title="Refresh all sections"><i class="fa-solid fa-refresh"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline" data-action="call" data-fn="loadBlockingData" data-arg="true" title="Refresh all sections"><i class="fa-solid fa-refresh"></i></button>
                 </div>
             </div>
 
             <div id="locks-quick-links" class="flex-between glass-panel p-2 mt-2" style="flex-wrap:wrap; gap:0.5rem; font-size:0.78rem;">
                 <span class="text-muted">Jump to:</span>
-                <button type="button" class="btn btn-sm btn-outline" onclick="window.appNavigate('live-diagnostics')"><i class="fa-solid fa-bolt text-warning"></i> Real-Time Diagnostics</button>
-                <button type="button" class="btn btn-sm btn-outline" onclick="window.appNavigate('drilldown-deadlocks')"><i class="fa-solid fa-skull text-danger"></i> Deadlock history</button>
-                <button type="button" class="btn btn-sm btn-outline" onclick="window.appNavigate('drilldown-cpu')"><i class="fa-solid fa-microchip"></i> CPU drilldown</button>
-                <button type="button" class="btn btn-sm btn-outline" onclick="window.appNavigate('drilldown-memory')"><i class="fa-solid fa-memory"></i> Memory drilldown</button>
+                <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="live-diagnostics"><i class="fa-solid fa-bolt text-warning"></i> Real-Time Diagnostics</button>
+                <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="drilldown-deadlocks"><i class="fa-solid fa-skull text-danger"></i> Deadlock history</button>
+                <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="drilldown-cpu"><i class="fa-solid fa-microchip"></i> CPU drilldown</button>
+                <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="drilldown-memory"><i class="fa-solid fa-memory"></i> Memory drilldown</button>
             </div>
 
             <div id="locks-summary-strip" class="tables-grid mt-3" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:0.75rem;"></div>
@@ -80,7 +80,7 @@ window.LocksDrilldown = async function() {
             <div class="table-card glass-panel mt-4 border-danger">
                 <div class="card-header flex-between" style="flex-wrap:wrap; gap:0.5rem;">
                     <h3 style="margin:0;">Head blockers (aggregated from snapshot)</h3>
-                    <button type="button" class="btn btn-sm btn-outline" onclick="window.appNavigate('drilldown-deadlocks')"><i class="fa-solid fa-skull text-danger"></i> Deadlocks</button>
+                    <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="drilldown-deadlocks"><i class="fa-solid fa-skull text-danger"></i> Deadlocks</button>
                 </div>
                 <div class="table-responsive" id="blocking-table-container">
                     <div style="display:flex; justify-content:center; align-items:center; height:100px;">
@@ -273,7 +273,7 @@ window.loadBlockingData = async function(forceRefresh) {
                                 <td style="max-width:260px; font-size:0.7rem;">
                                     <span class="code-snippet" style="cursor:pointer; display:inline-block; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
                                           title="${window.escapeHtml(qt)}"
-                                          onclick="window.showQueryModalDirect(window.appState.queryCache['lock_victim_${i}'])">${window.escapeHtml(short)}</span>
+                                          data-action="show-query-modal-direct" data-key="lock_victim_${i}">${window.escapeHtml(short)}</span>
                                 </td>
                             </tr>`;
                         }).join('')}
@@ -330,7 +330,7 @@ window.loadBlockingData = async function(forceRefresh) {
                                 <td style="font-size:0.7rem; max-width:260px;">
                                     <span class="code-snippet" style="cursor:pointer; display:inline-block; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
                                           title="${window.escapeHtml(b.query_text || '')}"
-                                          onclick="window.showQueryModalDirect(window.appState.queryCache['lock_${b.spid}'])">
+                                          data-action="show-query-modal-direct" data-key="lock_${b.spid}">
                                         ${window.escapeHtml((b.query_text || 'N/A').substring(0, 80))}${(b.query_text && b.query_text.length > 80) ? '…' : ''}
                                     </span>
                                 </td>

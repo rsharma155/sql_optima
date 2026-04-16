@@ -12,17 +12,23 @@
 import { appState } from './app-state.js';
 
 export const apiClient = {
-    getToken() {
-        return localStorage.getItem('auth_token');
+    /** Read the csrf_token cookie (not HttpOnly). */
+    _csrfToken() {
+        const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+        return m ? decodeURIComponent(m[1]) : '';
     },
 
-    setToken(token) {
-        localStorage.setItem('auth_token', token);
+    getToken() {
+        // Legacy compatibility — returns null. JWT is now in HttpOnly cookie.
+        return null;
+    },
+
+    setToken(_token) {
+        // JWT is stored in an HttpOnly cookie by the backend.
         appState.isAuthenticated = true;
     },
 
     clearToken() {
-        localStorage.removeItem('auth_token');
         appState.isAuthenticated = false;
     },
 
@@ -33,6 +39,9 @@ export const apiClient = {
             const data = await response.json();
             appState.authRequired = !!data.auth_required;
             appState.authMode = data.auth_mode || 'local';
+            if (data.deployment === 'docker' || data.deployment === 'dedicated') {
+                appState.deployment = data.deployment;
+            }
         } catch (e) {
             console.warn('[auth] /api/auth/status failed', e);
             appState.authRequired = false;
@@ -40,28 +49,29 @@ export const apiClient = {
     },
 
     async authenticatedFetch(url, options = {}) {
-        const token = this.getToken();
-        if (appState.authRequired && !token) {
-            this.showLoginModal();
-            throw new Error('No authentication token available');
-        }
-
         const headers = {
             'Content-Type': 'application/json',
             ...options.headers
         };
 
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
+        // Attach CSRF token for all requests (server only checks on mutating methods).
+        const csrf = this._csrfToken();
+        if (csrf) {
+            headers['X-CSRF-Token'] = csrf;
         }
 
-        const response = await fetch(url, { ...options, headers });
+        const response = await fetch(url, { ...options, headers, credentials: 'same-origin' });
 
         if (response.status === 401) {
             this.clearToken();
-            if (appState.authRequired) {
-                this.showLoginModal();
+            // Clear in-memory auth state so stale "Signed in as" displays are removed.
+            if (window._auth) {
+                window._auth.token = null;
+                window._auth.user = null;
+                localStorage.removeItem('auth_user');
             }
+            // Always prompt login on 401 — admin routes require auth regardless of AUTH_REQUIRED setting.
+            this.showLoginModal();
             throw new Error('Authentication required');
         }
 
@@ -95,12 +105,14 @@ export const apiClient = {
             const response = await fetch('/api/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
                 body: JSON.stringify({ username, password })
             });
 
             if (response.ok) {
                 const data = await response.json();
-                this.setToken(data.token);
+                // JWT is in HttpOnly cookie — just mark state as authenticated.
+                this.setToken(null);
                 return { success: true };
             }
             const error = await response.json().catch(() => ({}));
@@ -201,6 +213,46 @@ export async function boot() {
     await apiClient.fetchAuthStatus();
     console.log('[BOOT] auth_required=', appState.authRequired);
 
+    let st = {};
+    try {
+        const sr = await fetch('/api/setup/status');
+        if (sr.ok) {
+            st = await sr.json();
+            if (st.deployment === 'docker' || st.deployment === 'dedicated') {
+                appState.deployment = st.deployment;
+            }
+        }
+    } catch (e) {
+        console.warn('[BOOT] /api/setup/status', e);
+    }
+
+    const docker = appState.deployment === 'docker' || !!st.docker_mode;
+    const pathEarly = (window.location && window.location.pathname) ? window.location.pathname : '/';
+
+    // Dedicated: Timescale + admin wizard (browser) before anything else.
+    if (!docker && !st.public_setup_disabled) {
+        if (st.needs_timescale || st.needs_bootstrap_admin) {
+            if (pathEarly === '/setup-schema') {
+                window.appNavigate('setup-schema');
+            } else {
+                window.appNavigate('setup');
+            }
+            return;
+        }
+    }
+
+    // Docker: Timescale from compose — only wizard for admin bootstrap or compose error (handled inside /setup view).
+    if (docker && !st.public_setup_disabled) {
+        if (!st.timescale_connected || st.needs_bootstrap_admin) {
+            if (pathEarly === '/setup-schema') {
+                window.appNavigate('setup-schema');
+            } else {
+                window.appNavigate('setup');
+            }
+            return;
+        }
+    }
+
     if (appState.authRequired && !apiClient.getToken()) {
         console.log('[BOOT] Login required before loading config');
         apiClient.showLoginModal();
@@ -213,7 +265,14 @@ export async function boot() {
         return;
     }
 
-    console.log('[BOOT] Config loaded with', appState.config.instances?.length || 0, 'instances');
+    let st2 = st;
+    try {
+        const sr2 = await fetch('/api/setup/status');
+        if (sr2.ok) st2 = await sr2.json();
+    } catch (e) { /* ignore */ }
+
+    const instanceCount = appState.config.instances?.length || 0;
+    console.log('[BOOT] Config loaded with', instanceCount, 'instances');
 
     appState.config.instances.forEach((inst) => {
         if (!inst.user) inst.user = 'dbsqlmonitor';
@@ -226,6 +285,39 @@ export async function boot() {
     }
 
     window.router.populateInstanceDropdown();
-    window.appNavigate('global');
+
+    const isAdmin = !!(window._auth && window._auth.isLoggedIn && window._auth.isLoggedIn() && window._auth.isAdmin && window._auth.isAdmin());
+
+    // After Timescale + users exist: full-page onboarding until at least one active monitoring server is registered.
+    if (st2.needs_onboarding_servers && isAdmin) {
+        window.appNavigate('onboarding-servers');
+        console.log('[BOOT] Routed to onboarding (no active monitoring servers in registry)');
+        return;
+    }
+
+    if (instanceCount === 0) {
+        if (!isAdmin) {
+            window.appNavigate('login');
+        } else {
+            window.appNavigate('onboarding-servers');
+        }
+        console.log('[BOOT] No instances in config; routed to login or onboarding');
+        return;
+    }
+
+    const path = (window.location && window.location.pathname) ? window.location.pathname : '/';
+    if (path === '/admin') {
+        window.appNavigate('admin');
+    } else if (path === '/login') {
+        window.appNavigate('login');
+    } else if (path === '/setup') {
+        window.appNavigate('setup');
+    } else if (path === '/setup-schema') {
+        window.appNavigate('setup-schema');
+    } else if (path === '/onboarding-servers') {
+        window.appNavigate('onboarding-servers');
+    } else {
+        window.appNavigate('global');
+    }
     console.log('[BOOT] Boot sequence complete');
 }

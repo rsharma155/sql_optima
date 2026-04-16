@@ -14,6 +14,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"github.com/rsharma155/sql_optima/internal/security/sqlsandbox"
 )
 
 const (
@@ -37,7 +39,20 @@ func safeQuery(ctx context.Context, db *sql.DB, query string) QueryResult {
 	queryCtx, cancel := context.WithTimeout(ctx, QueryTimeout)
 	defer cancel()
 
-	rows, err := db.QueryContext(queryCtx, query)
+	// Enforce read-only + single-statement + bounded row count even on internal live helpers.
+	wrapped, serr := sqlsandbox.WrapWithRowLimit("sqlserver", query, sqlsandbox.DefaultMaxRows)
+	if serr != nil {
+		return QueryResult{
+			Success: false,
+			Error: &QueryError{
+				Code:    "UNSAFE_QUERY",
+				Message: "Query rejected by safety sandbox (read-only monitoring queries only).",
+				Timeout: false,
+			},
+		}
+	}
+
+	rows, err := db.QueryContext(queryCtx, wrapped)
 	if err != nil {
 		return handleQueryError(err, queryCtx.Err())
 	}

@@ -39,6 +39,11 @@ window.DashboardView = async function() {
         window.appState.dashboardLoading = false;
         return;
     }
+    if (inst.type === 'postgres') {
+        window.appState.dashboardLoading = false;
+        window.appNavigate('pg-dashboard');
+        return;
+    }
     window.appState.currentInstanceName = inst.name;
     window.appState.timescaleMetrics = { sqlserver: [], postgres: [], topQueries: [] };
     window.appState.lastUpdate = null;
@@ -55,7 +60,7 @@ window.DashboardView = async function() {
                 <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:1rem;">
                     <span id="dataSourceBadge" class="badge badge-info" style="display:none; font-size:0.65rem;">Source</span>
                     <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="lastRefreshTime">Loading...</span></span>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshDashboardData()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshDashboardData"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
             <div style="display:flex; justify-content:center; align-items:center; height:50vh;">
@@ -76,21 +81,24 @@ window.DashboardView = async function() {
         
         appDebug('[Dashboard] Response status:', res.status);
         
-        // Check content type to ensure we got JSON
         const contentType = res.headers.get('content-type') || '';
+        const bodyText = await res.text();
         if (!contentType.includes('application/json')) {
-            const text = await res.text();
-            appDebug('[Dashboard] Non-JSON response:', text.substring(0, 200));
+            appDebug('[Dashboard] Non-JSON response:', bodyText.substring(0, 200));
             console.error('[Dashboard] Non-JSON response from API');
-            throw new Error(`Expected JSON but got ${contentType || 'text/html'}`);
+            throw new Error(`Expected JSON but got ${contentType || 'unknown'} (${res.status})`);
         }
-        
+
+        let v2;
+        try {
+            v2 = JSON.parse(bodyText);
+        } catch (parseErr) {
+            throw new Error(`Invalid JSON from server (${res.status})`);
+        }
         if (!res.ok) {
-            const errorData = await res.json().catch(() => ({}));
-            throw new Error(errorData.error || `HTTP ${res.status}`);
+            const errMsg = (v2 && (v2.error || v2.message)) ? String(v2.error || v2.message) : `HTTP ${res.status}`;
+            throw new Error(errMsg);
         }
-        
-        const v2 = await res.json();
         appDebug('[Dashboard] V2 data response:', Object.keys(v2));
         window.appState.dashboardV2 = v2;
         
@@ -277,7 +285,7 @@ function renderTopOffendersRowsHtml(sortedRows) {
             <td><strong>${idx + 1}</strong></td>
             <td title="${window.escapeHtml(dbn)}">${window.escapeHtml(dbn.length > 24 ? dbn.substring(0, 24) + '…' : dbn)}</td>
             <td style="max-width:480px;">
-                <span class="code-snippet" style="cursor:pointer" onclick="window.showQueryStoreQueryModal(window.appState.queryCache['qs${idx}'])" title="${window.escapeHtml(qt)}">${window.escapeHtml(short)}</span>
+                <span class="code-snippet" style="cursor:pointer" data-action="show-query-modal-direct" data-key="qs${idx}" data-fn="showQueryStoreQueryModal" title="${window.escapeHtml(qt)}">${window.escapeHtml(short)}</span>
             </td>
             <td><span class="badge badge-outline">${execs.toLocaleString()}</span></td>
             <td>${avgCpu.toFixed(1)}</td>
@@ -784,7 +792,7 @@ function updateLongRunningQueriesTable() {
             const ageStr = ageMinutes >= 0 && ageMinutes < 60 ? `(${ageMinutes}m)` : (tsStr || '');
             const qt = (q.queryText || 'Unknown').substring(0, 40);
             const app = q.programName != null ? String(q.programName) : '';
-            return `<tr><td><span class="badge badge-outline">${tsStr}</span><span class="text-muted" style="font-size:0.65rem; margin-left:4px;">${ageStr}</span></td><td><span class="code-snippet" style="cursor:pointer" onclick="window.showQueryModalDirect(window.appState.queryCache['lrq${idx}'])">${window.escapeHtml(qt)}</span></td><td>${window.escapeHtml(q.dbName)}</td><td>${window.escapeHtml(q.loginName)}</td><td title="${window.escapeHtml(app)}">${window.escapeHtml(app.length > 28 ? app.substring(0, 28) + '…' : app)}</td><td>${(q.cpuTimeMs || 0)}ms</td><td>${(q.totalElapsedMs || 0)}ms</td><td>${window.escapeHtml(q.waitType)}</td></tr>`;
+            return `<tr><td><span class="badge badge-outline">${tsStr}</span><span class="text-muted" style="font-size:0.65rem; margin-left:4px;">${ageStr}</span></td><td><span class="code-snippet" style="cursor:pointer" data-action="show-query-modal-direct" data-key="lrq${idx}">${window.escapeHtml(qt)}</span></td><td>${window.escapeHtml(q.dbName)}</td><td>${window.escapeHtml(q.loginName)}</td><td title="${window.escapeHtml(app)}">${window.escapeHtml(app.length > 28 ? app.substring(0, 28) + '…' : app)}</td><td>${(q.cpuTimeMs || 0)}ms</td><td>${(q.totalElapsedMs || 0)}ms</td><td>${window.escapeHtml(q.waitType)}</td></tr>`;
         }).join('');
     }
     
@@ -814,7 +822,7 @@ function renderSessionRow(session, index) {
         <td><span class="badge badge-info">${window.escapeHtml(session.wait_type || 'N/A')}</span></td>
         <td style="font-size:0.75rem;">${window.escapeHtml(session.database_name || 'N/A')}</td>
         <td style="font-size:0.75rem;">${window.escapeHtml(session.login_name || 'N/A')}</td>
-        <td style="font-size:0.7rem; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; color:var(--accent);" onclick="event.stopPropagation(); window.showSessionDetailFromRow(this)">${sqlText.substring(0,50)}...</td>
+        <td style="font-size:0.7rem; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; color:var(--accent);" data-action="call" data-fn="showSessionDetailFromRow" data-pass-el="1">${sqlText.substring(0,50)}...</td>
     </tr>`;
 }
 
@@ -837,7 +845,7 @@ window.showSessionDetail = function(spid) {
     modalEl.innerHTML = `<div style="background:var(--bg-secondary, #ffffff); margin:2%; padding:20px; border:1px solid var(--border-color, #e5e7eb); border-radius:12px; width:95%; max-width:1000px; max-height:90vh; overflow-y:auto; color:var(--text-primary, #1f2937);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom:1px solid var(--border-color, #e5e7eb); padding-bottom:0.75rem;">
             <h3 style="margin:0; color:var(--accent, #3b82f6);"><i class="fa-solid fa-id-card"></i> Session Detail - SPID ${spid}</h3>
-            <button onclick="window.closeSessionDetail()" style="background:transparent; border:1px solid var(--border-color, #d1d5db); color:var(--text-primary, #1f2937); font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
+            <button data-action="call" data-fn="closeSessionDetail" style="background:transparent; border:1px solid var(--border-color, #d1d5db); color:var(--text-primary, #1f2937); font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
         </div>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem;">
             <div class="glass-panel" style="background:var(--bg-tertiary, #f9fafb); padding:1rem;"><h4 style="margin:0 0 0.75rem 0; color:var(--accent, #3b82f6);">Identity</h4>
@@ -860,7 +868,7 @@ window.showSessionDetail = function(spid) {
         <div style="margin-bottom:1rem;"><h4 style="margin:0 0 0.75rem 0; color:var(--accent, #3b82f6);">SQL Text</h4>
             <div class="glass-panel" style="background:var(--bg-tertiary, #f9fafb); padding:1rem; max-height:200px; overflow:auto;"><pre style="margin:0; white-space:pre-wrap; color:var(--text-primary, #1f2937); font-family:monospace; font-size:0.85rem;">${window.escapeHtml(session.query_text || 'No query available')}</pre></div>
         </div>
-        ${session.blocking_session_id ? `<div style="margin-top:1rem;"><button class="btn btn-sm btn-outline" style="color:var(--accent, #3b82f6);" onclick="window.appNavigate('drilldown-locks'); window.closeSessionDetail();"><i class="fa-solid fa-link"></i> Drill Down to Locks</button></div>` : ''}
+        ${session.blocking_session_id ? `<div style="margin-top:1rem;"><button class="btn btn-sm btn-outline" style="color:var(--accent, #3b82f6);" data-action="navigate" data-route="drilldown-locks" data-also-call="closeSessionDetail"><i class="fa-solid fa-link"></i> Drill Down to Locks</button></div>` : ''}
     </div>`;
     document.body.appendChild(modalEl);
     modalEl.addEventListener('click', e => { if(e.target === modalEl) window.closeSessionDetail(); });
@@ -888,7 +896,7 @@ window.showQueryModalDirect = function(queryText) {
     modal.innerHTML = `<div style="background:var(--bg-surface); margin:2%; padding:20px; border:1px solid var(--border-color,#333); border-radius:12px; width:95%; max-width:1000px; max-height:90vh; overflow-y:auto; color:var(--text-primary,#e0e0e0);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
             <h3 style="margin:0; color:var(--accent,#3b82f6);">Query Details</h3>
-            <button onclick="document.getElementById('query-modal').remove()" style="background:transparent; border:1px solid #555; color:#e0e0e0; font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
+            <button data-action="close-id" data-target="query-modal" style="background:transparent; border:1px solid #555; color:#e0e0e0; font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
         </div>
         <div style="background:var(--bg-base); padding:1rem; border-radius:8px; max-height:60vh; overflow:auto; border:1px solid var(--border-color,#333);">
             <pre style="margin:0; white-space:pre-wrap; font-family:monospace; font-size:0.85rem;">${window.escapeHtml(queryText)}</pre>
@@ -953,7 +961,7 @@ function renderDashboard(inst, metrics) {
         const ageStr = ageMinutes >= 0 && ageMinutes < 60 ? `(${ageMinutes}m)` : (tsStr || '');
         const qt = (q.queryText || 'Unknown').substring(0, 40);
         const app = q.programName != null ? String(q.programName) : '';
-        return `<tr><td><span class="badge badge-outline">${tsStr}</span><span class="text-muted" style="font-size:0.65rem; margin-left:4px;">${ageStr}</span></td><td><span class="code-snippet" style="cursor:pointer" onclick="window.showQueryModalDirect(window.appState.queryCache['lrq${idx}'])">${window.escapeHtml(qt)}</span></td><td>${window.escapeHtml(q.dbName)}</td><td>${window.escapeHtml(q.loginName)}</td><td title="${window.escapeHtml(app)}">${window.escapeHtml(app.length > 28 ? app.substring(0, 28) + '…' : app)}</td><td>${(q.cpuTimeMs || 0)}ms</td><td>${(q.totalElapsedMs || 0)}ms</td><td>${window.escapeHtml(q.waitType)}</td></tr>`;
+        return `<tr><td><span class="badge badge-outline">${tsStr}</span><span class="text-muted" style="font-size:0.65rem; margin-left:4px;">${ageStr}</span></td><td><span class="code-snippet" style="cursor:pointer" data-action="show-query-modal-direct" data-key="lrq${idx}">${window.escapeHtml(qt)}</span></td><td>${window.escapeHtml(q.dbName)}</td><td>${window.escapeHtml(q.loginName)}</td><td title="${window.escapeHtml(app)}">${window.escapeHtml(app.length > 28 ? app.substring(0, 28) + '…' : app)}</td><td>${(q.cpuTimeMs || 0)}ms</td><td>${(q.totalElapsedMs || 0)}ms</td><td>${window.escapeHtml(q.waitType)}</td></tr>`;
     }).join('');
     const longRunningHtml = displayLongRunning;
 
@@ -1005,7 +1013,7 @@ function renderDashboard(inst, metrics) {
                         <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="lastRefreshTime">--:--:--</span></span>
                         <span class="text-muted" style="font-size:0.65rem; display:block;">Auto-refresh: every 10s</span>
                     </div>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshDashboardData()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshDashboardData"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
             <!--
@@ -1036,7 +1044,7 @@ function renderDashboard(inst, metrics) {
                             <div class="strip-metric-label">CPU</div>
                             <div class="strip-metric-value"><span id="metric-cpu" class="${cpuIsDanger ? 'text-danger fw-bold' : (cpuIsWarning ? 'text-warning fw-bold' : '')}">${avgCpuLoad >= 0 ? avgCpuLoad.toFixed(1) + '%' : ''}</span>${avgCpuLoad < 0 ? '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>' : ''}</div>
                         </div>
-                        <div class="strip-metric-cell ${memIsDanger ? 'strip-metric-cell--accent-bad' : (memIsWarning ? 'strip-metric-cell--accent-warn' : '')}" style="cursor:pointer;" onclick="window.appNavigate('drilldown-memory')" title="Open Memory Drilldown (Timescale range)">
+                        <div class="strip-metric-cell ${memIsDanger ? 'strip-metric-cell--accent-bad' : (memIsWarning ? 'strip-metric-cell--accent-warn' : '')}" style="cursor:pointer;" data-action="navigate" data-route="drilldown-memory" title="Open Memory Drilldown (Timescale range)">
                             <div class="strip-metric-label">Memory</div>
                             <div class="strip-metric-value"><span id="metric-memory" class="${memIsDanger ? 'text-danger fw-bold' : (memIsWarning ? 'text-warning fw-bold' : '')}">${memoryUsage >= 0 ? memoryUsage.toFixed(1) + '%' : ''}</span>${memoryUsage < 0 ? '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>' : ''}</div>
                         </div>
@@ -1053,7 +1061,7 @@ function renderDashboard(inst, metrics) {
                             <div class="strip-metric-value" style="color:var(--success,#22c55e);"><span id="metric-active">${activeUsers >= 0 ? activeUsers : '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>'}</span></div>
                         </div>
                         <div class="strip-metric-cell ${blockedIsDanger ? 'strip-metric-cell--accent-warn' : ''}">
-                            <div class="strip-metric-label" title="Count of active blocked sessions from live blocking activity, not total lock count." style="display:flex; justify-content:space-between; align-items:center; gap:0.35rem;">Blocked${(blocking != null && blocking > 0) ? '<a href="#" onclick="window.appNavigate(\'drilldown-locks\'); return false;" style="font-size:0.65rem; color:var(--accent);" title="Drill down to Locks"><i class="fa-solid fa-arrow-right"></i></a>' : ''}</div>
+                            <div class="strip-metric-label" title="Count of active blocked sessions from live blocking activity, not total lock count." style="display:flex; justify-content:space-between; align-items:center; gap:0.35rem;">Blocked${(blocking != null && blocking > 0) ? '<a data-action="navigate" data-route="drilldown-locks" style="font-size:0.65rem; color:var(--accent);" title="Drill down to Locks"><i class="fa-solid fa-arrow-right"></i></a>' : ''}</div>
                             <div class="strip-metric-value"><span id="metric-blocked">${blocking != null ? blocking : 0}</span></div>
                         </div>
                     </div>
@@ -1086,7 +1094,7 @@ function renderDashboard(inst, metrics) {
                             <div class="strip-metric-value">${logPct != null ? logPct.toFixed(0) + '%' : '--'}</div>
                             <div class="text-muted sub" title="${window.escapeHtml(logDb)}">${window.escapeHtml(logDb || '')}</div>
                         </div>
-                        <div class="strip-metric-cell" style="cursor:pointer;" onclick="window.appNavigate('drilldown-memory')" title="Open Memory Drilldown (PLE history)">
+                        <div class="strip-metric-cell" style="cursor:pointer;" data-action="navigate" data-route="drilldown-memory" title="Open Memory Drilldown (PLE history)">
                             <div class="strip-metric-label">PLE</div>
                             <div class="strip-metric-value">${risk.ple != null ? Number(risk.ple).toFixed(0) : '--'}</div>
                         </div>
@@ -1099,12 +1107,12 @@ function renderDashboard(inst, metrics) {
                 </div>
             </div>
             <div class="charts-grid dashboard-charts-row mt-3" data-cols="3">
-                <div class="chart-card glass-panel" style="padding:0.6rem; cursor:pointer;" onclick="window.appNavigate('drilldown-cpu')" title="Drilldown into System Resources"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">System Resources</h3></div><div class="chart-container"><canvas id="dashResourcesChart"></canvas></div></div>
+                <div class="chart-card glass-panel" style="padding:0.6rem; cursor:pointer;" data-action="navigate" data-route="drilldown-cpu" title="Drilldown into System Resources"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">System Resources</h3></div><div class="chart-container"><canvas id="dashResourcesChart"></canvas></div></div>
                 <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Batch Requests/sec (1h)</h3></div><div class="chart-container"><canvas id="dashBatchChart"></canvas></div></div>
                 <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Disk I/O Latency <span class="dashboard-strip-header-tooltip" title="Trend uses Timescale (sqlserver_file_io_latency). Each dashboard load records one snapshot when Timescale is connected; the Enterprise metrics collector also writes on a timer (default ~2 min, ENTERPRISE_METRICS_INTERVAL_SEC). Check logs for WarmFileIOLatency / EnterpriseMetricsCollector / insert errors. Latency can read as 0 ms with no I/O or very fast storage."><i class="fa-solid fa-circle-info"></i></span></h3></div><div class="chart-container"><canvas id="dashIoChart"></canvas></div></div>
             </div>
             <div class="charts-grid dashboard-charts-row mt-2" data-cols="3">
-                <div class="chart-card glass-panel" style="padding:0.6rem; cursor:pointer;" onclick="window.appNavigate('drilldown-memory')" title="Memory drilldown (PLE &amp; Timescale)"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Page Life Expectancy</h3></div><div class="chart-container"><canvas id="dashPleChart"></canvas></div></div>
+                <div class="chart-card glass-panel" style="padding:0.6rem; cursor:pointer;" data-action="navigate" data-route="drilldown-memory" title="Memory drilldown (PLE &amp; Timescale)"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Page Life Expectancy</h3></div><div class="chart-container"><canvas id="dashPleChart"></canvas></div></div>
                 <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Buffer Cache Hit % (1h)</h3></div><div class="chart-container"><canvas id="dashBchrChart"></canvas></div></div>
                 <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Wait Categories (15m)</h3></div><div class="chart-container"><canvas id="dashWaitCategoriesDonut"></canvas></div></div>
             </div>
@@ -1115,7 +1123,7 @@ function renderDashboard(inst, metrics) {
                         <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
                             <span class="text-muted" style="font-size:0.65rem;">1h snapshot · click column headers to sort</span>
                             <span class="badge badge-info">${qsOffenders.length}</span>
-                            <a href="#" onclick="window.appNavigate('drilldown-bottlenecks'); return false;" class="btn btn-xs btn-outline text-accent" style="font-size:0.7rem;" title="Open full Query Store view (time range &amp; details)"><i class="fa-solid fa-arrow-right"></i> Drill down</a>
+                            <a data-action="navigate" data-route="drilldown-bottlenecks" class="btn btn-xs btn-outline text-accent" style="font-size:0.7rem;" title="Open full Query Store view (time range &amp; details)"><i class="fa-solid fa-arrow-right"></i> Drill down</a>
                         </div>
                     </div>
                     <div class="table-responsive" style="max-height:220px; overflow-y:auto;">
@@ -1149,7 +1157,7 @@ function renderDashboard(inst, metrics) {
             </div>
             <div class="tables-grid mt-3" style="display:grid; grid-template-columns:1fr; gap:0.75rem;">
                 <div class="table-card glass-panel">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Active Sessions (&gt;5s or Blocking)</h3><div style="display:flex; gap:0.5rem; align-items:center;"><span class="badge badge-${connStats.blocked>0?'danger':'info'}" id="active-sessions-badge">${significantSessions.length}</span><a href="#" onclick="window.appNavigate('drilldown-locks'); return false;" style="font-size:0.7rem; color:var(--accent);" title="Drill down to Locks"><i class="fa-solid fa-arrow-right"></i></a></div></div>
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Active Sessions (&gt;5s or Blocking)</h3><div style="display:flex; gap:0.5rem; align-items:center;"><span class="badge badge-${connStats.blocked>0?'danger':'info'}" id="active-sessions-badge">${significantSessions.length}</span><a data-action="navigate" data-route="drilldown-locks" style="font-size:0.7rem; color:var(--accent);" title="Drill down to Locks"><i class="fa-solid fa-arrow-right"></i></a></div></div>
                     <div class="table-responsive" style="max-height:280px; overflow-y:auto;">
                         <table class="data-table" style="font-size:0.7rem;"><thead><tr><th>spid</th><th>state</th><th>blocker</th><th>duration</th><th>status</th><th>wait_type</th><th>database</th><th>login</th><th>sql_text</th></tr></thead>
                         <tbody id="active-sessions-body">${sessionsHtml || '<tr><td colspan="9" class="text-center text-muted">No significant sessions.</td></tr>'}</tbody></table>

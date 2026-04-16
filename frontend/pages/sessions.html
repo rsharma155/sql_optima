@@ -9,8 +9,8 @@
                     <div class="filter-group glass-panel p-2 rounded custom-select-group">
                         <select id="sessionStateFilter" class="custom-select"><option value="all">All States</option><option value="active">Active Only</option><option value="idle in transaction">Idle in Transaction</option></select>
                     </div>
-                    <button class="btn btn-sm btn-outline" onclick="window.appNavigateBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.PgSessionsView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-outline" data-action="navigate-back"><i class="fa-solid fa-arrow-left"></i> Back</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgSessionsView"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
             

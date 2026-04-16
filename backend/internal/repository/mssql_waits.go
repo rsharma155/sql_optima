@@ -10,10 +10,12 @@ package repository
 import (
 	"database/sql"
 	"log"
+	"strings"
 )
 
 // CollectWaitStats returns current waits for user-database sessions only (Real-Time Diagnostics).
-func (c *MssqlRepository) CollectWaitStats(db *sql.DB) ([]map[string]interface{}, error) {
+// If database is non-empty, scopes to that DB only.
+func (c *MssqlRepository) CollectWaitStats(db *sql.DB, database string) ([]map[string]interface{}, error) {
 	query := `
 		SELECT TOP 50
 			w.wait_type,
@@ -24,6 +26,7 @@ func (c *MssqlRepository) CollectWaitStats(db *sql.DB) ([]map[string]interface{}
 		WHERE s.is_user_process = 1
 		  AND s.database_id > 4
 		  AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
+		  AND (@p1 = '' OR DB_NAME(s.database_id) = @p1)
 		  AND s.session_id > 50
 		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
@@ -33,7 +36,7 @@ func (c *MssqlRepository) CollectWaitStats(db *sql.DB) ([]map[string]interface{}
 		ORDER BY SUM(w.wait_duration_ms) DESC
 	`
 
-	rows, err := db.Query(query)
+	rows, err := db.Query(query, strings.TrimSpace(database))
 	if err != nil {
 		log.Printf("[MSSQL] Wait Stats (RTD) Query Error: %v", err)
 		return nil, err

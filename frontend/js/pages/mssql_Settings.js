@@ -26,11 +26,11 @@ window.SettingsView = async function() {
             </div>
             
             <div class="settings-tabs" style="display:flex; gap:0.5rem; margin-bottom:1rem; border-bottom:1px solid var(--border-color); padding-bottom:0.5rem;">
-                <button class="btn btn-sm btn-accent" onclick="window.showSettingsTab('dashboards')" id="tab-dashboards">Dashboards</button>
-                <button class="btn btn-sm btn-outline" onclick="window.showSettingsTab('alerts')" id="tab-alerts">Alerts</button>
-                <button class="btn btn-sm btn-outline" onclick="window.showSettingsTab('servers')" id="tab-servers">Servers</button>
-                <button class="btn btn-sm btn-outline" onclick="window.showSettingsTab('collection')" id="tab-collection">Metrics Collection</button>
-                <button class="btn btn-sm btn-outline" onclick="window.showSettingsTab('import-export')" id="tab-import-export">Import/Export</button>
+                <button class="btn btn-sm btn-accent" data-action="show-settings-tab" data-tab="dashboards" id="tab-dashboards">Dashboards</button>
+                <button class="btn btn-sm btn-outline" data-action="show-settings-tab" data-tab="alerts" id="tab-alerts">Alerts</button>
+                <button class="btn btn-sm btn-outline" data-action="show-settings-tab" data-tab="servers" id="tab-servers">Servers</button>
+                <button class="btn btn-sm btn-outline" data-action="show-settings-tab" data-tab="collection" id="tab-collection">Metrics Collection</button>
+                <button class="btn btn-sm btn-outline" data-action="show-settings-tab" data-tab="import-export" id="tab-import-export">Import/Export</button>
             </div>
             
             <div id="settings-content">
@@ -178,7 +178,7 @@ window.renderDashboardSettings = async function() {
         <div class="glass-panel" style="padding:1rem;">
             <div class="flex-between" style="margin-bottom:1rem;">
                 <h3><i class="fa-solid fa-chart-line text-accent"></i> Custom Dashboards</h3>
-                <button class="btn btn-sm btn-accent" onclick="window.createNewDashboard()">
+                <button class="btn btn-sm btn-accent" data-action="new-dashboard">
                     <i class="fa-solid fa-plus"></i> New Dashboard
                 </button>
             </div>
@@ -190,28 +190,28 @@ window.renderDashboardSettings = async function() {
             <h3><i class="fa-solid fa-puzzle-piece text-accent"></i> Available Metrics</h3>
             <p class="text-muted" style="font-size:0.85rem;">Select metrics to add to your custom dashboards</p>
             <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:0.5rem; margin-top:0.5rem;">
-                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" onclick="window.toggleMetricSelection(this)">
+                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" data-action="toggle-metric-selection">
                     <input type="checkbox" value="cpu_usage" style="pointer-events:none;"> <span>CPU Usage</span>
                 </div>
-                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" onclick="window.toggleMetricSelection(this)">
+                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" data-action="toggle-metric-selection">
                     <input type="checkbox" value="memory_usage" style="pointer-events:none;"> <span>Memory Usage</span>
                 </div>
-                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" onclick="window.toggleMetricSelection(this)">
+                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" data-action="toggle-metric-selection">
                     <input type="checkbox" value="disk_io" style="pointer-events:none;"> <span>Disk I/O</span>
                 </div>
-                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" onclick="window.toggleMetricSelection(this)">
+                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" data-action="toggle-metric-selection">
                     <input type="checkbox" value="active_connections" style="pointer-events:none;"> <span>Active Connections</span>
                 </div>
-                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" onclick="window.toggleMetricSelection(this)">
+                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" data-action="toggle-metric-selection">
                     <input type="checkbox" value="tps" style="pointer-events:none;"> <span>Transactions/sec</span>
                 </div>
-                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" onclick="window.toggleMetricSelection(this)">
+                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" data-action="toggle-metric-selection">
                     <input type="checkbox" value="wait_stats" style="pointer-events:none;"> <span>Wait Statistics</span>
                 </div>
-                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" onclick="window.toggleMetricSelection(this)">
+                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" data-action="toggle-metric-selection">
                     <input type="checkbox" value="query_performance" style="pointer-events:none;"> <span>Query Performance</span>
                 </div>
-                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" onclick="window.toggleMetricSelection(this)">
+                <div class="metric-option" style="padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; cursor:pointer; display:flex; align-items:center; gap:0.5rem;" data-action="toggle-metric-selection">
                     <input type="checkbox" value="locks" style="pointer-events:none;"> <span>Lock Statistics</span>
                 </div>
             </div>
@@ -225,7 +225,7 @@ window.renderAlertSettings = async function() {
             <div class="glass-panel" style="padding:0.75rem;">
                 <div class="flex-between" style="margin-bottom:0.75rem;">
                     <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-bell text-accent"></i> Alert Thresholds</h3>
-                    <button class="btn btn-xs btn-accent" onclick="window.createNewThreshold()"><i class="fa-solid fa-plus"></i></button>
+                    <button class="btn btn-xs btn-accent" data-action="call" data-fn="createNewThreshold"><i class="fa-solid fa-plus"></i></button>
                 </div>
                 <div id="threshold-list" style="display:flex; flex-direction:column; gap:0.5rem; max-height:350px; overflow-y:auto;">
                     <div class="text-center text-muted" style="font-size:0.8rem;">Loading...</div>
@@ -234,7 +234,7 @@ window.renderAlertSettings = async function() {
             <div class="glass-panel" style="padding:0.75rem;">
                 <div class="flex-between" style="margin-bottom:0.75rem;">
                     <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-paper-plane text-accent"></i> Notification Channels</h3>
-                    <button class="btn btn-xs btn-accent" onclick="window.createNewChannel()"><i class="fa-solid fa-plus"></i></button>
+                    <button class="btn btn-xs btn-accent" data-action="call" data-fn="createNewChannel"><i class="fa-solid fa-plus"></i></button>
                 </div>
                 <div id="channel-list" style="display:flex; flex-direction:column; gap:0.5rem; max-height:350px; overflow-y:auto;">
                     <div class="text-center text-muted" style="font-size:0.8rem;">Loading...</div>
@@ -258,7 +258,7 @@ window.renderServerSettings = async function() {
         <div class="glass-panel" style="padding:1rem;">
             <div class="flex-between" style="margin-bottom:1rem;">
                 <h3><i class="fa-solid fa-server text-accent"></i> Monitored Servers</h3>
-                <button class="btn btn-sm btn-accent" onclick="window.addNewServer()">
+                <button class="btn btn-sm btn-accent" data-action="call" data-fn="addNewServer">
                     <i class="fa-solid fa-plus"></i> Add Server
                 </button>
             </div>
@@ -270,7 +270,7 @@ window.renderServerSettings = async function() {
                 <p class="text-muted" style="font-size:0.85rem;">Add servers by importing a JSON configuration file</p>
                 <div style="display:flex; gap:0.5rem; align-items:center;">
                     <input type="file" id="server-config-file" accept=".json" style="font-size:0.85rem;">
-                    <button class="btn btn-sm btn-outline" onclick="window.importServerConfig()">Import</button>
+                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="importServerConfig">Import</button>
                 </div>
             </div>
         </div>
@@ -286,10 +286,10 @@ window.renderCollectionSettings = async function() {
                 <div class="glass-panel" style="padding:0.75rem;">
                     <div class="flex-between">
                         <div><strong>CPU Metrics</strong><div class="text-muted" style="font-size:0.75rem;">Collect CPU utilization and per-core metrics</div></div>
-                        <label class="switch"><input type="checkbox" checked onchange="window.toggleCollection('cpu', this.checked)"><span class="slider"></span></label>
+                        <label class="switch"><input type="checkbox" checked data-change-action="toggleCollection" data-metric="cpu"><span class="slider"></span></label>
                     </div>
                     <div style="margin-top:0.5rem;"><label style="font-size:0.8rem;">Collection Interval:</label>
-                        <select class="custom-select" style="width:auto;" onchange="window.updateCollectionInterval('cpu', this.value)">
+                        <select class="custom-select" style="width:auto;" data-change-action="updateCollectionInterval" data-metric="cpu">
                             <option value="5s">5 seconds</option><option value="15s" selected>15 seconds</option><option value="30s">30 seconds</option><option value="1m">1 minute</option>
                         </select>
                     </div>
@@ -297,10 +297,10 @@ window.renderCollectionSettings = async function() {
                 <div class="glass-panel" style="padding:0.75rem;">
                     <div class="flex-between">
                         <div><strong>Memory Metrics</strong><div class="text-muted" style="font-size:0.75rem;">Collect memory usage and buffer pool metrics</div></div>
-                        <label class="switch"><input type="checkbox" checked onchange="window.toggleCollection('memory', this.checked)"><span class="slider"></span></label>
+                        <label class="switch"><input type="checkbox" checked data-change-action="toggleCollection" data-metric="memory"><span class="slider"></span></label>
                     </div>
                     <div style="margin-top:0.5rem;"><label style="font-size:0.8rem;">Collection Interval:</label>
-                        <select class="custom-select" style="width:auto;" onchange="window.updateCollectionInterval('memory', this.value)">
+                        <select class="custom-select" style="width:auto;" data-change-action="updateCollectionInterval" data-metric="memory">
                             <option value="5s">5 seconds</option><option value="15s" selected>15 seconds</option><option value="30s">30 seconds</option><option value="1m">1 minute</option>
                         </select>
                     </div>
@@ -308,32 +308,32 @@ window.renderCollectionSettings = async function() {
                 <div class="glass-panel" style="padding:0.75rem;">
                     <div class="flex-between">
                         <div><strong>Query Performance</strong><div class="text-muted" style="font-size:0.75rem;">Collect top queries and execution stats</div></div>
-                        <label class="switch"><input type="checkbox" checked onchange="window.toggleCollection('queries', this.checked)"><span class="slider"></span></label>
+                        <label class="switch"><input type="checkbox" checked data-change-action="toggleCollection" data-metric="queries"><span class="slider"></span></label>
                     </div>
                     <div style="margin-top:0.5rem; display:flex; align-items:center; gap:1rem;">
                         <div><label style="font-size:0.8rem;">Interval:</label>
-                            <select class="custom-select" style="width:auto;" onchange="window.updateCollectionInterval('queries', this.value)">
+                            <select class="custom-select" style="width:auto;" data-change-action="updateCollectionInterval" data-metric="queries">
                                 <option value="15s">15 seconds</option><option value="30s">30 seconds</option><option value="1m" selected>1 minute</option><option value="5m">5 minutes</option>
                             </select>
                         </div>
                         <div><label style="font-size:0.8rem;">Query Threshold (ms):</label>
-                            <input type="number" id="query-threshold-input" class="custom-input" style="width:100px;" value="1000" min="100" onchange="window.updateQueryThreshold(this.value)">
+                            <input type="number" id="query-threshold-input" class="custom-input" style="width:100px;" value="1000" min="100" data-change-action="updateQueryThreshold">
                         </div>
                     </div>
                 </div>
                 <div class="glass-panel" style="padding:0.75rem;">
                     <div class="flex-between">
                         <div><strong>Wait Statistics</strong><div class="text-muted" style="font-size:0.75rem;">Collect wait type and duration metrics</div></div>
-                        <label class="switch"><input type="checkbox" checked onchange="window.toggleCollection('waits', this.checked)"><span class="slider"></span></label>
+                        <label class="switch"><input type="checkbox" checked data-change-action="toggleCollection" data-metric="waits"><span class="slider"></span></label>
                     </div>
                     <div style="margin-top:0.5rem;"><label style="font-size:0.8rem;">Collection Interval:</label>
-                        <select class="custom-select" style="width:auto;" onchange="window.updateCollectionInterval('waits', this.value)">
+                        <select class="custom-select" style="width:auto;" data-change-action="updateCollectionInterval" data-metric="waits">
                             <option value="15s">15 seconds</option><option value="30s" selected>30 seconds</option><option value="1m">1 minute</option><option value="5m">5 minutes</option>
                         </select>
                     </div>
                 </div>
             </div>
-            <div class="mt-3"><button class="btn btn-accent" onclick="window.saveCollectionSettings()"><i class="fa-solid fa-save"></i> Save Settings</button></div>
+            <div class="mt-3"><button class="btn btn-accent" data-action="call" data-fn="saveCollectionSettings"><i class="fa-solid fa-save"></i> Save Settings</button></div>
         </div>
     `;
 };
@@ -347,22 +347,22 @@ window.renderImportExportSettings = async function() {
                 <div class="glass-panel" style="padding:0.75rem; text-align:center;">
                     <i class="fa-solid fa-chart-line" style="font-size:1.5rem; color:var(--accent);"></i>
                     <h4 style="margin:0.5rem 0; font-size:0.85rem;">Dashboards</h4>
-                    <button class="btn btn-xs btn-outline" onclick="window.exportConfig('dashboard')">Export</button>
+                    <button class="btn btn-xs btn-outline" data-action="call" data-fn="exportConfig" data-arg="dashboard">Export</button>
                 </div>
                 <div class="glass-panel" style="padding:0.75rem; text-align:center;">
                     <i class="fa-solid fa-bell" style="font-size:1.5rem; color:var(--warning);"></i>
                     <h4 style="margin:0.5rem 0; font-size:0.85rem;">Alerts</h4>
-                    <button class="btn btn-xs btn-outline" onclick="window.exportConfig('alerts')">Export</button>
+                    <button class="btn btn-xs btn-outline" data-action="call" data-fn="exportConfig" data-arg="alerts">Export</button>
                 </div>
                 <div class="glass-panel" style="padding:0.75rem; text-align:center;">
                     <i class="fa-solid fa-server" style="font-size:1.5rem; color:var(--success);"></i>
                     <h4 style="margin:0.5rem 0; font-size:0.85rem;">Servers</h4>
-                    <button class="btn btn-xs btn-outline" onclick="window.exportConfig('servers')">Export</button>
+                    <button class="btn btn-xs btn-outline" data-action="call" data-fn="exportConfig" data-arg="servers">Export</button>
                 </div>
                 <div class="glass-panel" style="padding:0.75rem; text-align:center;">
                     <i class="fa-solid fa-box-archive" style="font-size:1.5rem; color:var(--info);"></i>
                     <h4 style="margin:0.5rem 0; font-size:0.85rem;">Full Export</h4>
-                    <button class="btn btn-xs btn-accent" onclick="window.exportConfig('full')">Export All</button>
+                    <button class="btn btn-xs btn-accent" data-action="call" data-fn="exportConfig" data-arg="full">Export All</button>
                 </div>
             </div>
         </div>
@@ -371,7 +371,7 @@ window.renderImportExportSettings = async function() {
             <p class="text-muted" style="font-size:0.85rem;">Import configuration from a previously exported file</p>
             <div style="display:flex; gap:0.5rem; align-items:center; margin-top:1rem;">
                 <input type="file" id="import-config-file" accept=".json" style="font-size:0.85rem;">
-                <button class="btn btn-accent" onclick="window.importConfig()"><i class="fa-solid fa-upload"></i> Import</button>
+                <button class="btn btn-accent" data-action="call" data-fn="importConfig"><i class="fa-solid fa-upload"></i> Import</button>
             </div>
         </div>
     `;
@@ -391,8 +391,8 @@ window.loadDashboardList = function() {
         <div class="glass-panel" style="padding:0.75rem; display:flex; justify-content:space-between; align-items:center;">
             <div><strong>${window.escapeHtml(d.name || 'Dashboard ' + (i + 1))}</strong><div class="text-muted" style="font-size:0.75rem;">${(d.metrics || []).length} metrics | ${d.type || 'custom'}</div></div>
             <div style="display:flex; gap:0.5rem;">
-                <button class="btn btn-sm btn-outline" onclick="window.editDashboard(${i})"><i class="fa-solid fa-edit"></i></button>
-                <button class="btn btn-sm btn-outline" style="border-color:var(--danger); color:var(--danger);" onclick="window.deleteDashboard(${i})"><i class="fa-solid fa-trash"></i></button>
+                <button class="btn btn-sm btn-outline" data-action="call" data-fn="editDashboard" data-idx="${i}"><i class="fa-solid fa-edit"></i></button>
+                <button class="btn btn-sm btn-outline" style="border-color:var(--danger); color:var(--danger);" data-action="call" data-fn="deleteDashboard" data-idx="${i}"><i class="fa-solid fa-trash"></i></button>
             </div>
         </div>
     `).join('');
@@ -410,8 +410,8 @@ window.loadThresholdList = function() {
         <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; font-size:0.8rem;">
             <div><strong>${window.escapeHtml(t.metric || t.name)}</strong> <span class="text-muted">${t.condition || '>'} ${t.value || 0} | ${t.severity || 'warning'}</span></div>
             <div style="display:flex; gap:0.25rem;">
-                <button class="btn btn-xs btn-outline" onclick="window.editThreshold(${i})"><i class="fa-solid fa-edit"></i></button>
-                <button class="btn btn-xs btn-outline" style="border-color:var(--danger); color:var(--danger);" onclick="window.deleteThreshold(${i})"><i class="fa-solid fa-trash"></i></button>
+                <button class="btn btn-xs btn-outline" data-action="call" data-fn="editThreshold" data-idx="${i}"><i class="fa-solid fa-edit"></i></button>
+                <button class="btn btn-xs btn-outline" style="border-color:var(--danger); color:var(--danger);" data-action="call" data-fn="deleteThreshold" data-idx="${i}"><i class="fa-solid fa-trash"></i></button>
             </div>
         </div>
     `).join('');
@@ -429,8 +429,8 @@ window.loadChannelList = function() {
         <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:var(--bg-tertiary); border-radius:4px; font-size:0.8rem;">
             <div><strong><i class="fa-solid fa-${c.type === 'email' ? 'envelope' : c.type === 'slack' ? 'slack' : 'webhook'}"></i> ${window.escapeHtml(c.name || c.type)}</strong><div class="text-muted" style="font-size:0.7rem;">${window.escapeHtml(c.endpoint || c.email || '')}</div></div>
             <div style="display:flex; gap:0.25rem;">
-                <button class="btn btn-xs btn-outline" onclick="window.editChannel(${i})"><i class="fa-solid fa-edit"></i></button>
-                <button class="btn btn-xs btn-outline" style="border-color:var(--danger); color:var(--danger);" onclick="window.deleteChannel(${i})"><i class="fa-solid fa-trash"></i></button>
+                <button class="btn btn-xs btn-outline" data-action="call" data-fn="editChannel" data-idx="${i}"><i class="fa-solid fa-edit"></i></button>
+                <button class="btn btn-xs btn-outline" style="border-color:var(--danger); color:var(--danger);" data-action="call" data-fn="deleteChannel" data-idx="${i}"><i class="fa-solid fa-trash"></i></button>
             </div>
         </div>
     `).join('');
@@ -466,8 +466,8 @@ window.loadServerList = function() {
             <div class="glass-panel" style="padding:0.75rem; display:flex; justify-content:space-between; align-items:center;">
                 <div><strong>${window.escapeHtml(s.name)}</strong><span class="badge ${typeBadge}" style="margin-left:0.5rem;">${typeLabel}</span><div class="text-muted" style="font-size:0.75rem;">${window.escapeHtml(s.host || '')}:${s.port || (s.type === 'postgres' ? 5432 : 1433)} | ${window.escapeHtml(s.user || '')}</div></div>
                 <div style="display:flex; gap:0.5rem;">
-                    <button class="btn btn-sm btn-outline" onclick="window.editServer(${i})"><i class="fa-solid fa-edit"></i></button>
-                    <button class="btn btn-sm btn-outline" style="border-color:var(--danger); color:var(--danger);" onclick="window.deleteServer(${i})"><i class="fa-solid fa-trash"></i></button>
+                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="editServer" data-idx="${i}"><i class="fa-solid fa-edit"></i></button>
+                    <button class="btn btn-sm btn-outline" style="border-color:var(--danger); color:var(--danger);" data-action="call" data-fn="deleteServer" data-idx="${i}"><i class="fa-solid fa-trash"></i></button>
                 </div>
             </div>
         `;

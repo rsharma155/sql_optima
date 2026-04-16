@@ -12,7 +12,7 @@ window.DeadlockDrilldown = function() {
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title">
-                <button class="btn btn-sm btn-outline mb-2" onclick="window.appNavigate('drilldown-locks')"><i class="fa-solid fa-arrow-left"></i> Back to Locks</button>
+                <button class="btn btn-sm btn-outline mb-2" data-action="navigate" data-route="drilldown-locks"><i class="fa-solid fa-arrow-left"></i> Back to Locks</button>
                 <h1><i class="fa-solid fa-skull-crossbones text-danger"></i> Deadlock Analysis</h1>
                 <p class="subtitle">Historical Deadlock graphs tracked via Extended Events</p>
             </div>
@@ -32,14 +32,14 @@ window.DeadlockDrilldown = function() {
                                 <td><strong>SPID 114</strong> (SalesPortal)</td>
                                 <td><strong>SPID 92</strong> (SQL Agent)</td>
                                 <td>Object: dbo.Orders</td>
-                                <td><button class="btn btn-sm btn-outline" onclick="alert('Viewing Deadlock XML Graph...')"><i class="fa-solid fa-sitemap"></i> View Graph</button></td>
+                                <td><button class="btn btn-sm btn-outline" ><i class="fa-solid fa-sitemap"></i> View Graph</button></td>
                             </tr>
                             <tr>
                                 <td>Yesterday (21:15)</td>
                                 <td><strong>SPID 65</strong> (Reporting)</td>
                                 <td><strong>SPID 81</strong> (Web_App)</td>
                                 <td>Page: 1:45210</td>
-                                <td><button class="btn btn-sm btn-outline" onclick="alert('Viewing Deadlock XML Graph...')"><i class="fa-solid fa-sitemap"></i> View Graph</button></td>
+                                <td><button class="btn btn-sm btn-outline" ><i class="fa-solid fa-sitemap"></i> View Graph</button></td>
                             </tr>
                         </tbody>
                     </table>

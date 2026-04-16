@@ -29,7 +29,7 @@ window.mssql_QueryDrilldown = async function() {
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between">
                 <div>
-                    <button class="btn btn-sm btn-outline mb-2" onclick="window.appNavigate(window.appState.queryDrillBackRoute || 'drilldown-top-queries')"><i class="fa-solid fa-arrow-left"></i> Back</button>
+                    <button class="btn btn-sm btn-outline mb-2" data-action="call" data-fn="appNavigate" data-arg="${window.appState.queryDrillBackRoute || 'drilldown-top-queries'}"><i class="fa-solid fa-arrow-left"></i> Back</button>
                     <h1>Distributed Query Drill-Down Diagnostics</h1>
                     <p class="subtitle">Extracting live thread analytics mapped on [${window.escapeHtml(inst.name)}]</p>
                 </div>
@@ -65,7 +65,7 @@ window.mssql_QueryDrilldown = async function() {
             <div class="metric-card glass-panel mt-4" style="text-align: left; padding: 2rem;">
                 <div class="card-header flex-between" style="border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 1rem;">
                     <h3>Execution Query Trace Map</h3>
-                    <button class="btn btn-sm btn-outline" onclick="navigator.clipboard.writeText(decodeURIComponent('${encodeURIComponent(payload.text)}'))"><i class="fa-solid fa-copy"></i> Copy Trace</button>
+                    <button class="btn btn-sm btn-outline" data-action="copy-text" data-text="${encodeURIComponent(payload.text)}"><i class="fa-solid fa-copy"></i> Copy Trace</button>
                 </div>
                 <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.95rem; white-space: pre-wrap; background: rgba(0,0,0,0.3); padding: 1.5rem; border-radius: 8px; margin-top: 1rem; color: #e2e8f0;">
                     ${formattedSQL}

@@ -30,8 +30,8 @@ func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, instanceN
 		owner := getStr(job, "owner")
 		createdDate := getStr(job, "created_date")
 		currentStatus := getStr(job, "current_status")
-		lastRunDate := getStr(job, "last_run_date")
-		lastRunTime := getStr(job, "last_run_time")
+		lastRunDate := getInt(job, "last_run_date")
+		lastRunTime := getInt(job, "last_run_time")
 		lastRunStatus := getStr(job, "last_run_status")
 
 		prevJob := tl.prevJobDetails[jobName]
@@ -40,8 +40,8 @@ func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, instanceN
 			if getBool(prevJob, "enabled") == enabled &&
 				getStr(prevJob, "owner") == owner &&
 				getStr(prevJob, "current_status") == currentStatus &&
-				getStr(prevJob, "last_run_date") == lastRunDate &&
-				getStr(prevJob, "last_run_time") == lastRunTime &&
+				getInt(prevJob, "last_run_date") == lastRunDate &&
+				getInt(prevJob, "last_run_time") == lastRunTime &&
 				getStr(prevJob, "last_run_status") == lastRunStatus {
 				shouldInsert = false
 			}

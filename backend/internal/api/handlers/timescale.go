@@ -125,8 +125,9 @@ func (h *TimescaleHandlers) MssqlTopQueries(w http.ResponseWriter, r *http.Reque
 
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
+	dbFilter := strings.TrimSpace(r.URL.Query().Get("database"))
 
-	queries, err := h.metricsSvc.GetTimescaleSQLServerTopQueries(instance, 100, from, to)
+	queries, err := h.metricsSvc.GetTimescaleSQLServerTopQueries(instance, 100, from, to, dbFilter)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

@@ -38,7 +38,7 @@ window.InstanceHealthDashboardView = async function() {
     window.appState.currentInstanceName = inst.name;
     appDebug('[InstanceHealthDashboard] Instance name:', inst.name);
     
-    window.routerOutlet.innerHTML = '<div class="page-view active dashboard-sky-theme"><div class="page-title flex-between"><div><h1>Instance Health Dashboard</h1><p class="subtitle">Instance: ' + window.escapeHtml(inst.name) + ' | Health & Anomaly Detection</p></div><div class="flex-between" style="align-items:center; gap:1rem;"><span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="healthDashboardLastUpdate">--:--:--</span></span><button class="btn btn-sm btn-outline text-accent" onclick="window.InstanceHealthDashboardView()"><i class="fa-solid fa-refresh"></i> Refresh</button></div></div><div style="display:flex; justify-content:center; align-items:center; height:50vh;"><div class="spinner"></div><span style="margin-left:1rem;">Loading health metrics...</span></div></div>';
+    window.routerOutlet.innerHTML = '<div class="page-view active dashboard-sky-theme"><div class="page-title flex-between"><div><h1>Instance Health Dashboard</h1><p class="subtitle">Instance: ' + window.escapeHtml(inst.name) + ' | Health & Anomaly Detection</p></div><div class="flex-between" style="align-items:center; gap:1rem;"><span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="healthDashboardLastUpdate">--:--:--</span></span><button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="InstanceHealthDashboardView"><i class="fa-solid fa-refresh"></i> Refresh</button></div></div><div style="display:flex; justify-content:center; align-items:center; height:50vh;"><div class="spinner"></div><span style="margin-left:1rem;">Loading health metrics...</span></div></div>';
 
     await window.loadHealthDashboard().catch(e => {
         appDebug('[HealthDashboard] Load failed:', e);
@@ -185,7 +185,7 @@ function renderHealthDashboard(inst, healthScore, anomalies, regressedQueries, w
     html += '<div><h1>Instance Health Dashboard</h1><p class="subtitle">Instance: ' + window.escapeHtml(instanceName) + ' | Health & Anomaly Detection</p></div>';
     html += '<div class="flex-between" style="align-items:center; gap:1rem;">';
     html += '<span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="healthDashboardLastUpdate">' + new Date().toLocaleString() + '</span></span>';
-    html += '<button class="btn btn-sm btn-outline text-accent" onclick="window.InstanceHealthDashboardView()"><i class="fa-solid fa-refresh"></i> Refresh</button>';
+    html += '<button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="InstanceHealthDashboardView"><i class="fa-solid fa-refresh"></i> Refresh</button>';
     html += '</div></div>';
 
     if (timescaleAvailable === false) {
@@ -252,7 +252,7 @@ function renderHealthDashboard(inst, healthScore, anomalies, regressedQueries, w
     } else {
         for (var j = 0; j < regressedQueriesList.length; j++) {
             var q = regressedQueriesList[j];
-            html += '<tr onclick="window.showQueryAnalysisModal(\'' + encodeURIComponent(q.query_text || q.query_hash) + '\')">';
+            html += '<tr data-action="call" data-fn="showQueryAnalysisModal" data-arg="' + encodeURIComponent(q.query_text || q.query_hash) + '">';
             html += '<td style="max-width:400px; overflow:hidden; text-overflow:ellipsis;">' + window.escapeHtml((q.query_text || q.query_hash || 'N/A').substring(0, 50)) + '</td>';
             html += '<td>' + q.exec_count + '</td>';
             html += '<td>' + (q.avg_duration_ms?.toFixed(0) || 0) + '</td>';
