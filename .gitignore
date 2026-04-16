@@ -28,6 +28,8 @@ dbmonitor
 dbmonitor.exe
 server
 server.exe
+migrate
+sql_optima
 
 # Go build artifacts
 bin/

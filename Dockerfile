@@ -11,7 +11,9 @@ COPY config.yam[l] ../
 RUN test -f ../config.yaml || echo 'instances: []' > ../config.yaml
 COPY frontend ../frontend
 # Force module mode even if a stale vendor/ exists in build context.
-RUN CGO_ENABLED=0 go build -mod=mod -ldflags="-s -w" -o /sql-optima ./cmd/server
+# GOTOOLCHAIN=auto lets the builder satisfy go.mod's minimum-version requirement
+# even when the base image ships a slightly older patch release.
+RUN GOTOOLCHAIN=auto CGO_ENABLED=0 go build -mod=mod -ldflags="-s -w" -o /sql-optima ./cmd/server
 RUN mkdir -p /src/backend/logs && chmod 0777 /src/backend/logs
 
 FROM gcr.io/distroless/static-debian12:nonroot
