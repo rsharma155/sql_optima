@@ -37,9 +37,9 @@ func (h *HealthHandlers) Score(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var score float64 = 100.0
-	var cpuDeviation float64 = 1.0
-	var blockedCount int = 0
+	var score = 100.0
+	var cpuDeviation = 1.0
+	var blockedCount int
 
 	var currentCPU, baselineCPU float64
 	pool := h.metricsSvc.GetTimescaleDBPool()
@@ -56,7 +56,7 @@ func (h *HealthHandlers) Score(w http.ResponseWriter, r *http.Request) {
 	`, instance).Scan(&currentCPU)
 
 	if err == nil && currentCPU > 0 {
-		err = pool.QueryRow(r.Context(), `
+		_ = pool.QueryRow(r.Context(), `
 			SELECT COALESCE(AVG(avg_hourly_cpu), 50)
 			FROM (SELECT time_bucket('1 hour', capture_timestamp) AS hb, AVG(avg_cpu_load) AS avg_hourly_cpu
 			      FROM sqlserver_metrics WHERE server_instance_name = $1 AND capture_timestamp >= NOW() - INTERVAL '7 days'
@@ -73,7 +73,7 @@ func (h *HealthHandlers) Score(w http.ResponseWriter, r *http.Request) {
 		score -= 10
 	}
 
-	err = pool.QueryRow(r.Context(), `
+	_ = pool.QueryRow(r.Context(), `
 		SELECT COUNT(DISTINCT blocked_session_id)
 		FROM sqlserver_connection_history
 		WHERE server_instance_name = $1 AND active_requests > 0
@@ -427,12 +427,12 @@ func (h *HealthHandlers) MetricsHistory(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var cpuBaseline, batchBaseline, diskBaseline float64
-	pool.QueryRow(r.Context(), `
+	_ = pool.QueryRow(r.Context(), `
 		SELECT COALESCE(AVG(avg_cpu_load), 50) FROM sqlserver_metrics
 		WHERE server_instance_name = $1 AND capture_timestamp >= NOW() - INTERVAL '7 days'
 	`, instance).Scan(&cpuBaseline)
 
-	pool.QueryRow(r.Context(), `
+	_ = pool.QueryRow(r.Context(), `
 		SELECT COALESCE(AVG(total_tps), 100) FROM (
 			SELECT time_bucket('1 hour', capture_timestamp) AS hour, SUM(avg_tps) AS total_tps
 			FROM sqlserver_db_throughput_metrics
@@ -441,7 +441,7 @@ func (h *HealthHandlers) MetricsHistory(w http.ResponseWriter, r *http.Request) 
 		) t
 	`, instance).Scan(&batchBaseline)
 
-	pool.QueryRow(r.Context(), `
+	_ = pool.QueryRow(r.Context(), `
 		SELECT COALESCE(AVG(avg_read_latency), 10) FROM (
 			SELECT time_bucket('1 hour', capture_timestamp) AS hour, AVG(disk_read_ms_per_sec) AS avg_read_latency
 			FROM sqlserver_wait_history

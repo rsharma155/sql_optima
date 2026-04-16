@@ -538,7 +538,6 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthFilterOptions(ctx context.Cont
 	if strings.TrimSpace(schemaName) != "" {
 		whereTablesTime += " AND schema_name = $" + fmt.Sprint(n)
 		argsTablesTime = append(argsTablesTime, schemaName)
-		n++
 	}
 	tables, err := queryDistinctUnion("table_name", whereTablesTime, argsTablesTime)
 	if err != nil {
@@ -556,7 +555,6 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthFilterOptions(ctx context.Cont
 		if strings.TrimSpace(schemaName) != "" {
 			whereTablesAny += " AND schema_name = $" + fmt.Sprint(n2)
 			argsTablesAny = append(argsTablesAny, schemaName)
-			n2++
 		}
 		tables, err = queryDistinctUnion("table_name", whereTablesAny, argsTablesAny)
 		if err != nil {
@@ -655,6 +653,3 @@ func (tl *TimescaleLogger) RefreshIndexUnusedCandidatesDaily(ctx context.Context
 	}
 	return tag.RowsAffected(), nil
 }
-
-// Helper for collectors that need a default window.
-func nowUTC() time.Time { return time.Now().UTC() }

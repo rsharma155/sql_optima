@@ -184,24 +184,9 @@ func ParseText(input string) (*types.Plan, error) {
 	return plan, nil
 }
 
-func findNodeByPtr(root *types.PlanNode, target *types.PlanNode) *types.PlanNode {
-	if root == target {
-		return root
-	}
-	for i := range root.Plans {
-		found := findNodeByPtr(&root.Plans[i], target)
-		if found != nil {
-			return found
-		}
-	}
-	return nil
-}
-
 func ParseJSON(input string) (*types.Plan, error) {
 	input = strings.TrimSpace(input)
-	if strings.HasPrefix(input, "\uFEFF") {
-		input = strings.TrimPrefix(input, "\uFEFF")
-	}
+	input = strings.TrimPrefix(input, "\uFEFF")
 	// PostgreSQL emits Title Case keys ("Node Type", "Total Cost"); types use snake_case json tags.
 	// Wrappers (e.g. execution_plan_json) and single-element arrays are handled in NormalizePostgresExplainJSON.
 	normalized, err := NormalizePostgresExplainJSON([]byte(input))
@@ -213,12 +198,4 @@ func ParseJSON(input string) (*types.Plan, error) {
 		return nil, fmt.Errorf("explain json: cannot decode into plan model (after normalizing PostgreSQL keys): %w", err)
 	}
 	return &plan, nil
-}
-
-func getChildTypes(node *types.PlanNode) []string {
-	var types []string
-	for _, child := range node.Plans {
-		types = append(types, child.NodeType)
-	}
-	return types
 }

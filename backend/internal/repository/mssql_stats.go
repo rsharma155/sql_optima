@@ -149,7 +149,7 @@ func NewMssqlRepository(cfg *config.Config) *MssqlRepository {
 					var discoverDbs []string
 					for rows.Next() {
 						var dbName string
-						rows.Scan(&dbName)
+						_ = rows.Scan(&dbName)
 						discoverDbs = append(discoverDbs, dbName)
 					}
 					rows.Close()
@@ -727,7 +727,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 	var query string
 	if !hasSecondaryLag || !hasLastRedoneTime || !hasLastHardenedTime || !hasLogSendRate || !hasUndoRate || !hasUndoQueueSize {
 		log.Printf("[MSSQL] FetchAGHealthStats: Using minimal fallback query for %s (missing columns detected)", instanceName)
-		query = fmt.Sprintf(`
+		query = `
 			SELECT 
 				ag.name AS ag_name,
 				ar.replica_server_name,
@@ -748,7 +748,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 			FROM sys.availability_groups ag
 			INNER JOIN sys.availability_replicas ar ON ag.group_id = ar.group_id
 			ORDER BY ag.name, ar.replica_server_name
-		`)
+		`
 	} else if hasDbStates {
 		query = `
 			SELECT 
@@ -808,7 +808,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 		// If query fails due to missing columns, retry with an ultra-minimal query using only literals
 		if strings.Contains(err.Error(), "Invalid column name") {
 			log.Printf("[MSSQL] FetchAGHealthStats: Retrying with ultra-minimal fallback query for %s", instanceName)
-			query = fmt.Sprintf(`
+			query = `
 				SELECT 
 					ag.name AS ag_name,
 					ar.replica_server_name,
@@ -829,7 +829,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 				FROM sys.availability_groups ag
 				INNER JOIN sys.availability_replicas ar ON ag.group_id = ar.group_id
 				ORDER BY ag.name, ar.replica_server_name
-			`)
+			`
 			rows, err = db.Query(query)
 			if err != nil {
 				log.Printf("[MSSQL] FetchAGHealthStats Fallback Error for %s: %v", instanceName, err)
@@ -1050,10 +1050,10 @@ func (c *MssqlRepository) FetchSchedulerWG(instanceName string) ([]map[string]in
 			continue
 		}
 		results = append(results, map[string]interface{}{
-			"pool_name":        poolName,
-			"group_name":       groupName,
-			"active_requests":  active,
-			"queued_requests":  queued,
+			"pool_name":         poolName,
+			"group_name":        groupName,
+			"active_requests":   active,
+			"queued_requests":   queued,
 			"cpu_usage_percent": cpuPct,
 		})
 	}

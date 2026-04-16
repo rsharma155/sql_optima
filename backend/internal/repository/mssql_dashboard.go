@@ -93,7 +93,7 @@ func (c *MssqlRepository) FetchLiveTelemetry(instanceName string, prev models.Da
 	}
 
 	sessionQuery := `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
-	db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
+	_ = db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
 
 	connQuery := `
 		SELECT 
@@ -500,7 +500,7 @@ func (c *MssqlRepository) FetchDashboardTelemetry(instanceName string, prev mode
 
 	// 2. Active Sessions (mssql_active_sessions_by_status)
 	sessionQuery := `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
-	db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
+	_ = db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
 
 	// 2b. Connections grouping natively over physically bounded user target logical pools
 	connQuery := `

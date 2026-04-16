@@ -8,6 +8,7 @@
 package sqlparse
 
 import (
+	"context"
 	"testing"
 
 	"github.com/rsharma155/sql_optima/internal/missing_index/types"
@@ -16,7 +17,7 @@ import (
 func TestParseSimpleSelect(t *testing.T) {
 	query := "SELECT id, name FROM users WHERE status = 'active'"
 
-	analysis, err := Parse(nil, query)
+	analysis, err := Parse(context.TODO(), query)
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -85,7 +86,7 @@ func TestExtractProjectedColumns(t *testing.T) {
 }
 
 func TestEmptyQuery(t *testing.T) {
-	analysis, err := Parse(nil, "")
+	analysis, err := Parse(context.TODO(), "")
 	if err != nil {
 		t.Fatalf("Parse failed for empty query: %v", err)
 	}
@@ -101,7 +102,7 @@ func TestExtractLimit(t *testing.T) {
 	limit := extractLimit(query)
 
 	if limit == nil {
-		t.Error("Expected limit to be extracted")
+		t.Fatal("Expected limit to be extracted")
 	}
 
 	if *limit != 10 {

@@ -16,20 +16,20 @@ import (
 
 // PlanGraphNode is a node for tree/flow visualizations (client renders Mermaid or HTML).
 type PlanGraphNode struct {
-	ID             string  `json:"id"`
-	ParentID       string  `json:"parent_id,omitempty"`
-	NodeType       string  `json:"node_type"`
-	RelationName   string  `json:"relation_name,omitempty"`
-	Alias          string  `json:"alias,omitempty"`
-	IndexName      string  `json:"index_name,omitempty"`
-	TotalCost      float64 `json:"total_cost"`
-	PlanRows       int     `json:"plan_rows"`
-	ActualRows     int     `json:"actual_rows,omitempty"`
-	ActualTotalMs  float64 `json:"actual_total_time_ms,omitempty"`
-	ExclusiveMs    float64 `json:"exclusive_time_ms,omitempty"`
-	Filter         string  `json:"filter,omitempty"`
-	IndexCond      string  `json:"index_cond,omitempty"`
-	PlannerNodeID  int     `json:"planner_node_id,omitempty"`
+	ID            string  `json:"id"`
+	ParentID      string  `json:"parent_id,omitempty"`
+	NodeType      string  `json:"node_type"`
+	RelationName  string  `json:"relation_name,omitempty"`
+	Alias         string  `json:"alias,omitempty"`
+	IndexName     string  `json:"index_name,omitempty"`
+	TotalCost     float64 `json:"total_cost"`
+	PlanRows      int     `json:"plan_rows"`
+	ActualRows    int     `json:"actual_rows,omitempty"`
+	ActualTotalMs float64 `json:"actual_total_time_ms,omitempty"`
+	ExclusiveMs   float64 `json:"exclusive_time_ms,omitempty"`
+	Filter        string  `json:"filter,omitempty"`
+	IndexCond     string  `json:"index_cond,omitempty"`
+	PlannerNodeID int     `json:"planner_node_id,omitempty"`
 }
 
 // PlanGraph is a flat node list + edges for DAG visualization.
@@ -111,10 +111,10 @@ func MermaidFlowchart(g PlanGraph) string {
 			lbl += fmt.Sprintf("\\ncost %.0f", n.TotalCost)
 		}
 		lbl = strings.ReplaceAll(lbl, `"`, "'")
-		b.WriteString(fmt.Sprintf(`  %s["%s"]`+"\n", n.ID, lbl))
+		fmt.Fprintf(&b, `  %s["%s"]`+"\n", n.ID, lbl)
 	}
 	for _, e := range g.Edges {
-		b.WriteString(fmt.Sprintf("  %s --> %s\n", e.From, e.To))
+		fmt.Fprintf(&b, "  %s --> %s\n", e.From, e.To)
 	}
 	return b.String()
 }

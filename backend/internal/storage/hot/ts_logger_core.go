@@ -21,53 +21,53 @@ import (
 )
 
 type TimescaleLogger struct {
-	pool                *pgxpool.Pool
-	mu                  sync.RWMutex
-	prevDiskHistory     map[string]map[string]interface{}
-	prevJobDetails      map[string]map[string]interface{}
-	prevJobFailures     map[string]string
-	prevLongRunningHash map[string]int64
-	prevMemoryPLE       float64
-	prevWaitHistory     map[string]map[string]float64
-	prevQueryStoreStats       map[string]int64
-	prevSchedulerStats        map[string]uint64
-	prevEnterpriseBatchHash   map[string]uint64
+	pool                    *pgxpool.Pool
+	mu                      sync.RWMutex
+	prevDiskHistory         map[string]map[string]interface{}
+	prevJobDetails          map[string]map[string]interface{}
+	prevJobFailures         map[string]string
+	prevLongRunningHash     map[string]int64
+	prevMemoryPLE           float64
+	prevWaitHistory         map[string]map[string]float64
+	prevQueryStoreStats     map[string]int64
+	prevSchedulerStats      map[string]uint64
+	prevEnterpriseBatchHash map[string]uint64
 	// Postgres Control Center dedup/delta state
-	prevPgWalBytesTotal       map[string]uint64
-	prevPgControlCenterHash   map[string]uint64
-	prevPgSystemStatsHash     map[string]uint64
-	prevPgConnectionStatsHash map[string]uint64
+	prevPgWalBytesTotal        map[string]uint64
+	prevPgControlCenterHash    map[string]uint64
+	prevPgSystemStatsHash      map[string]uint64
+	prevPgConnectionStatsHash  map[string]uint64
 	prevPgReplicationSlotsHash map[string]uint64
-	prevPgDeadlocksTotal      map[string]map[string]int64 // instance -> db -> last total
-	prevPgWaitEventsHash      map[string]uint64
-	prevPgDbIOHash            map[string]uint64
-	prevPgSettingsHash        map[string]uint64
+	prevPgDeadlocksTotal       map[string]map[string]int64 // instance -> db -> last total
+	prevPgWaitEventsHash       map[string]uint64
+	prevPgDbIOHash             map[string]uint64
+	prevPgSettingsHash         map[string]uint64
 	// SQL Server Memory Analyzer delta state
-	prevSpillByInstance       map[string]spillDeltaState
+	prevSpillByInstance map[string]spillDeltaState
 }
 
 func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
 	return &TimescaleLogger{
-		pool:                pool,
-		prevDiskHistory:     make(map[string]map[string]interface{}),
-		prevJobDetails:      make(map[string]map[string]interface{}),
-		prevJobFailures:     make(map[string]string),
-		prevLongRunningHash: make(map[string]int64),
-		prevMemoryPLE:       -1,
-		prevWaitHistory:     make(map[string]map[string]float64),
-		prevQueryStoreStats:       make(map[string]int64),
-		prevSchedulerStats:        make(map[string]uint64),
-		prevEnterpriseBatchHash:   make(map[string]uint64),
-		prevPgWalBytesTotal:       make(map[string]uint64),
-		prevPgControlCenterHash:   make(map[string]uint64),
-		prevPgSystemStatsHash:     make(map[string]uint64),
-		prevPgConnectionStatsHash: make(map[string]uint64),
+		pool:                       pool,
+		prevDiskHistory:            make(map[string]map[string]interface{}),
+		prevJobDetails:             make(map[string]map[string]interface{}),
+		prevJobFailures:            make(map[string]string),
+		prevLongRunningHash:        make(map[string]int64),
+		prevMemoryPLE:              -1,
+		prevWaitHistory:            make(map[string]map[string]float64),
+		prevQueryStoreStats:        make(map[string]int64),
+		prevSchedulerStats:         make(map[string]uint64),
+		prevEnterpriseBatchHash:    make(map[string]uint64),
+		prevPgWalBytesTotal:        make(map[string]uint64),
+		prevPgControlCenterHash:    make(map[string]uint64),
+		prevPgSystemStatsHash:      make(map[string]uint64),
+		prevPgConnectionStatsHash:  make(map[string]uint64),
 		prevPgReplicationSlotsHash: make(map[string]uint64),
-		prevPgDeadlocksTotal:      make(map[string]map[string]int64),
-		prevPgWaitEventsHash:      make(map[string]uint64),
-		prevPgDbIOHash:            make(map[string]uint64),
-		prevPgSettingsHash:        make(map[string]uint64),
-		prevSpillByInstance:       make(map[string]spillDeltaState),
+		prevPgDeadlocksTotal:       make(map[string]map[string]int64),
+		prevPgWaitEventsHash:       make(map[string]uint64),
+		prevPgDbIOHash:             make(map[string]uint64),
+		prevPgSettingsHash:         make(map[string]uint64),
+		prevSpillByInstance:        make(map[string]spillDeltaState),
 	}
 }
 
@@ -117,19 +117,19 @@ type PostgresConnectionRow struct {
 }
 
 type PostgresSystemStatsRow struct {
-	CaptureTimestamp     time.Time `json:"capture_timestamp"`
-	ServerName           string    `json:"server_name"`
-	CPUUsage             float64   `json:"cpu_usage"`
-	MemoryUsage          float64   `json:"memory_usage"`
-	ActiveConnections    int       `json:"active_connections"`
-	IdleConnections      int       `json:"idle_connections"`
-	TotalConnections     int       `json:"total_connections"`
-	HostCpuPercent       float64   `json:"host_cpu_percent"`
-	PostgresCpuPercent   float64   `json:"postgres_cpu_percent"`
-	Load1m               float64   `json:"load_1m"`
-	Load5m               float64   `json:"load_5m"`
-	Load15m              float64   `json:"load_15m"`
-	CpuCores             int       `json:"cpu_cores"`
+	CaptureTimestamp   time.Time `json:"capture_timestamp"`
+	ServerName         string    `json:"server_name"`
+	CPUUsage           float64   `json:"cpu_usage"`
+	MemoryUsage        float64   `json:"memory_usage"`
+	ActiveConnections  int       `json:"active_connections"`
+	IdleConnections    int       `json:"idle_connections"`
+	TotalConnections   int       `json:"total_connections"`
+	HostCpuPercent     float64   `json:"host_cpu_percent"`
+	PostgresCpuPercent float64   `json:"postgres_cpu_percent"`
+	Load1m             float64   `json:"load_1m"`
+	Load5m             float64   `json:"load_5m"`
+	Load15m            float64   `json:"load_15m"`
+	CpuCores           int       `json:"cpu_cores"`
 }
 
 // PgSystemStatsInsert is the payload for a postgres_system_stats Timescale row.
@@ -149,17 +149,17 @@ type PgSystemStatsInsert struct {
 }
 
 type PostgresReplicationSlotRow struct {
-	CaptureTimestamp    time.Time `json:"capture_timestamp"`
-	ServerInstanceName  string    `json:"server_instance_name"`
-	SlotName            string    `json:"slot_name"`
-	SlotType            string    `json:"slot_type"`
-	Active              bool      `json:"active"`
-	Temporary           bool      `json:"temporary"`
-	RetainedWalMB       float64   `json:"retained_wal_mb"`
-	RestartLSN          string    `json:"restart_lsn"`
-	ConfirmedFlushLSN   string    `json:"confirmed_flush_lsn"`
-	Xmin                *int64    `json:"xmin,omitempty"`
-	CatalogXmin         *int64    `json:"catalog_xmin,omitempty"`
+	CaptureTimestamp   time.Time `json:"capture_timestamp"`
+	ServerInstanceName string    `json:"server_instance_name"`
+	SlotName           string    `json:"slot_name"`
+	SlotType           string    `json:"slot_type"`
+	Active             bool      `json:"active"`
+	Temporary          bool      `json:"temporary"`
+	RetainedWalMB      float64   `json:"retained_wal_mb"`
+	RestartLSN         string    `json:"restart_lsn"`
+	ConfirmedFlushLSN  string    `json:"confirmed_flush_lsn"`
+	Xmin               *int64    `json:"xmin,omitempty"`
+	CatalogXmin        *int64    `json:"catalog_xmin,omitempty"`
 }
 
 type QueryStoreStatsRow struct {
@@ -297,31 +297,31 @@ type PostgresQueryStatsDelta struct {
 }
 
 type CPUSchedulerStatsRow struct {
-	CaptureTimestamp         time.Time `json:"capture_timestamp"`
-	ServerInstanceName       string    `json:"server_instance_name"`
-	MaxWorkersCount          int       `json:"max_workers_count"`
-	SchedulerCount           int       `json:"scheduler_count"`
-	CPUCount                 int       `json:"cpu_count"`
-	TotalRunnableTasksCount  int       `json:"total_runnable_tasks_count"`
-	TotalWorkQueueCount      int       `json:"total_work_queue_count"`
-	TotalCurrentWorkersCount int       `json:"total_current_workers_count"`
-	AvgRunnableTasksCount    float64   `json:"avg_runnable_tasks_count"`
-	TotalActiveRequestCount  int       `json:"total_active_request_count"`
-	TotalQueuedRequestCount  int       `json:"total_queued_request_count"`
-	TotalBlockedTaskCount    int       `json:"total_blocked_task_count"`
-	RunnablePercent          float64   `json:"runnable_percent"`
-	WorkerThreadExhaustionWarning bool `json:"worker_thread_exhaustion_warning"`
-	RunnableTasksWarning     bool      `json:"runnable_tasks_warning"`
-	BlockedTasksWarning      bool      `json:"blocked_tasks_warning"`
-	QueuedRequestsWarning    bool      `json:"queued_requests_warning"`
-	TotalPhysicalMemoryKB    int       `json:"total_physical_memory_kb"`
-	AvailablePhysicalMemoryKB int      `json:"available_physical_memory_kb"`
-	SystemMemoryStateDesc    string    `json:"system_memory_state_desc"`
-	PhysicalMemoryPressureWarning bool `json:"physical_memory_pressure_warning"`
-	TotalNodeCount           int       `json:"total_node_count"`
-	NodesOnlineCount         int       `json:"nodes_online_count"`
-	OfflineCPUCount          int       `json:"offline_cpu_count"`
-	OfflineCPUWarning        bool      `json:"offline_cpu_warning"`
+	CaptureTimestamp              time.Time `json:"capture_timestamp"`
+	ServerInstanceName            string    `json:"server_instance_name"`
+	MaxWorkersCount               int       `json:"max_workers_count"`
+	SchedulerCount                int       `json:"scheduler_count"`
+	CPUCount                      int       `json:"cpu_count"`
+	TotalRunnableTasksCount       int       `json:"total_runnable_tasks_count"`
+	TotalWorkQueueCount           int       `json:"total_work_queue_count"`
+	TotalCurrentWorkersCount      int       `json:"total_current_workers_count"`
+	AvgRunnableTasksCount         float64   `json:"avg_runnable_tasks_count"`
+	TotalActiveRequestCount       int       `json:"total_active_request_count"`
+	TotalQueuedRequestCount       int       `json:"total_queued_request_count"`
+	TotalBlockedTaskCount         int       `json:"total_blocked_task_count"`
+	RunnablePercent               float64   `json:"runnable_percent"`
+	WorkerThreadExhaustionWarning bool      `json:"worker_thread_exhaustion_warning"`
+	RunnableTasksWarning          bool      `json:"runnable_tasks_warning"`
+	BlockedTasksWarning           bool      `json:"blocked_tasks_warning"`
+	QueuedRequestsWarning         bool      `json:"queued_requests_warning"`
+	TotalPhysicalMemoryKB         int       `json:"total_physical_memory_kb"`
+	AvailablePhysicalMemoryKB     int       `json:"available_physical_memory_kb"`
+	SystemMemoryStateDesc         string    `json:"system_memory_state_desc"`
+	PhysicalMemoryPressureWarning bool      `json:"physical_memory_pressure_warning"`
+	TotalNodeCount                int       `json:"total_node_count"`
+	NodesOnlineCount              int       `json:"nodes_online_count"`
+	OfflineCPUCount               int       `json:"offline_cpu_count"`
+	OfflineCPUWarning             bool      `json:"offline_cpu_warning"`
 }
 
 type ServerPropertiesRow struct {
@@ -359,17 +359,17 @@ func (tl *TimescaleLogger) GetLatestMetrics(ctx context.Context, instanceName st
 			return nil, err
 		}
 		return map[string]interface{}{
-			"cpu_usage":             cpu,
-			"memory_usage":          mem,
-			"active_connections":    active,
-			"total_connections":     total,
-			"capture_timestamp":     ts,
-			"host_cpu_percent":      hostCPU,
-			"postgres_cpu_percent":  pgCPU,
-			"load_1m":               load1,
-			"load_5m":               load5,
-			"load_15m":              load15,
-			"cpu_cores":             cpuCores,
+			"cpu_usage":            cpu,
+			"memory_usage":         mem,
+			"active_connections":   active,
+			"total_connections":    total,
+			"capture_timestamp":    ts,
+			"host_cpu_percent":     hostCPU,
+			"postgres_cpu_percent": pgCPU,
+			"load_1m":              load1,
+			"load_5m":              load5,
+			"load_15m":             load15,
+			"cpu_cores":            cpuCores,
 		}, nil
 	}
 
@@ -402,21 +402,6 @@ func (tl *TimescaleLogger) LogAllMetrics(ctx context.Context, instanceName strin
 }
 
 func (tl *TimescaleLogger) LogSystemMetrics(ctx context.Context, instanceName string, metrics interface{}) error {
-	return nil
-}
-
-func (tl *TimescaleLogger) ensureTimescaleHypertable(ctx context.Context, tableName string) error {
-	var exists bool
-	err := tl.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM timescaledb_information.hypertables WHERE table_name = $1)", tableName).Scan(&exists)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil
-		}
-		return err
-	}
-	if !exists {
-		log.Printf("[TSLogger] Warning: %s is not a hypertable", tableName)
-	}
 	return nil
 }
 

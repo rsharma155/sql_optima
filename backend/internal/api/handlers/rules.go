@@ -250,7 +250,7 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 		`
 		rows, err = h.pgPool.Query(ctx, query, dbType)
 	} else if serverID > 0 {
-		query := fmt.Sprintf(`
+		query := `
 			SELECT 
 				r.rule_id,
 				r.rule_name,
@@ -279,7 +279,7 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 				END,
 				r.category, 
 				r.rule_name;
-		`)
+		`
 		rows, err = h.pgPool.Query(ctx, query, serverID, dbType)
 	} else {
 		query := `

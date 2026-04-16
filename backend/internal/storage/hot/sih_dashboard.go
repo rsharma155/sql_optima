@@ -55,7 +55,6 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		if f.TableLike != "" {
 			where += fmt.Sprintf(" AND table_name ILIKE $%d", argN)
 			args = append(args, "%"+f.TableLike+"%")
-			argN++
 		}
 
 		q := fmt.Sprintf(`
@@ -98,7 +97,6 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		if f.TableLike != "" {
 			where += fmt.Sprintf(" AND table_name ILIKE $%d", argN)
 			args = append(args, "%"+f.TableLike+"%")
-			argN++
 		}
 		q := fmt.Sprintf(`
 			SELECT COALESCE(
@@ -302,7 +300,6 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		if f.TableLike != "" {
 			where += fmt.Sprintf(" AND table_name ILIKE $%d", n)
 			args = append(args, "%"+f.TableLike+"%")
-			n++
 		}
 
 		q := fmt.Sprintf(`
@@ -406,7 +403,6 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		if f.TableLike != "" {
 			where += fmt.Sprintf(" AND table_name ILIKE $%d", n)
 			args = append(args, "%"+f.TableLike+"%")
-			n++
 		}
 		q := fmt.Sprintf(`
 			WITH win AS (
@@ -497,4 +493,3 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		DuplicateIndexCandidates: dup,
 	}, nil
 }
-

@@ -43,10 +43,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	driver := os.Getenv("GOOSE_DRIVER")
-	if driver == "" {
-		driver = "postgres"
-	}
+	_ = os.Getenv("GOOSE_DRIVER") // unused; dialect hardcoded below
 
 	dsn := os.Getenv("GOOSE_DBSTRING")
 	if dsn == "" {
@@ -67,7 +64,9 @@ func main() {
 		log.Fatalf("database unreachable: %v", err)
 	}
 
-	goose.SetDialect("postgres")
+	if err := goose.SetDialect("postgres"); err != nil {
+		log.Fatalf("failed to set goose dialect: %v", err)
+	}
 
 	command := strings.ToLower(args[0])
 	cmdArgs := args[1:]

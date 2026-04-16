@@ -35,7 +35,7 @@ func (c *PgRepository) CollectPgSystemStats(db *sql.DB) (float64, float64, error
 				(SELECT COALESCE(100 * (1 - (available_memory::float / total_memory::float)), 0) FROM pg_os_info()) AS memory_usage,
 				0.0 AS cpu_usage
 		`
-		db.QueryRow(fallbackQuery).Scan(&memUsage, &cpuUsage)
+		_ = db.QueryRow(fallbackQuery).Scan(&memUsage, &cpuUsage)
 	}
 
 	return cpuUsage, memUsage, nil

@@ -158,12 +158,10 @@ func (c *Collector) CalculateMetrics() LearningMetrics {
 	var totalLatency float64
 	var indexHits int
 
-	latencies := make([]float64, 0, len(c.records))
 	joinOrders := make(map[string]int)
 
 	for _, r := range c.records {
 		totalLatency += r.ActualLatency
-		latencies = append(latencies, r.ActualLatency)
 
 		if len(r.IndexesUsed) > 0 {
 			indexHits++

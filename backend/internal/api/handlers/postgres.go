@@ -2020,10 +2020,8 @@ func (h *PostgresHandlers) Queries(w http.ResponseWriter, r *http.Request) {
 		"pg_stat_statements_enabled": enabled,
 		"collected_at":               time.Now().UTC(),
 	}
-	if meta != nil {
-		for k, v := range meta {
-			resp[k] = v
-		}
+	for k, v := range meta {
+		resp[k] = v
 	}
 	if err == nil && meta != nil {
 		if ec, ok := meta["end_capture"].(string); ok && ec != "" {

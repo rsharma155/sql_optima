@@ -8,6 +8,7 @@
 package candidate
 
 import (
+	"context"
 	"testing"
 
 	"github.com/rsharma155/sql_optima/internal/missing_index/catalog"
@@ -50,7 +51,7 @@ func TestGenerateCandidatesBasic(t *testing.T) {
 		IncludeColumns: true,
 	}
 
-	candidates := GenerateCandidates(nil, queryAnalysis, planAnalysis, tableInfos, options)
+	candidates := GenerateCandidates(context.TODO(), queryAnalysis, planAnalysis, tableInfos, options)
 
 	if len(candidates) == 0 {
 		t.Error("Expected candidates to be generated")

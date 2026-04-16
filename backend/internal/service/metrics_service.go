@@ -1501,12 +1501,3 @@ func (s *MetricsService) GetPostgresQueriesForAPI(ctx context.Context, instanceN
 	meta["stats_note"] = "pg_stat_statements holds cumulative counters since the last reset or server start — not limited to the selected time range. “Total time” is the sum of all executions for that statement (many runs add up). “Avg time” is mean milliseconds per execution. For true time-range stats, enable TimescaleDB and the enterprise collector (postgres_query_stats snapshots)."
 	return live, meta, nil
 }
-
-func (s *MetricsService) instanceType(name string) string {
-	for _, inst := range s.Config.Instances {
-		if inst.Name == name {
-			return inst.Type
-		}
-	}
-	return ""
-}

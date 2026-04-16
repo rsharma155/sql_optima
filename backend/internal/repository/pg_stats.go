@@ -64,9 +64,9 @@ func (c *PgRepository) HasConnection(instanceName string) bool {
 // It supports environment variable overrides for credentials and automatic database discovery.
 func NewPgRepository(cfg *config.Config) *PgRepository {
 	c := &PgRepository{
-		conns:  make(map[string]*sql.DB),
-		status: make(map[string]string),
-		cfg:    cfg,
+		conns:           make(map[string]*sql.DB),
+		status:          make(map[string]string),
+		cfg:             cfg,
 		lastDbSizeBytes: make(map[string]int64),
 		lastDbSizeAt:    make(map[string]time.Time),
 	}
@@ -158,7 +158,7 @@ func NewPgRepository(cfg *config.Config) *PgRepository {
 						var discoverDbs []string
 						for rows.Next() {
 							var dbName string
-							rows.Scan(&dbName)
+							_ = rows.Scan(&dbName)
 							discoverDbs = append(discoverDbs, dbName)
 						}
 						rows.Close()
@@ -1695,7 +1695,7 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 			var pid int
 			var duration float64
 			var query string
-			rows.Scan(&pid, &duration, &query)
+			_ = rows.Scan(&pid, &duration, &query)
 			alerts = append(alerts, models.PgAlert{
 				Severity:   "CRITICAL",
 				Metric:     fmt.Sprintf("Idle in Transaction (PID %d)", pid),
@@ -1709,10 +1709,10 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 
 	// Check connection count threshold
 	var connCount int
-	db.QueryRow("SELECT count(*) FROM pg_stat_activity").Scan(&connCount)
+	_ = db.QueryRow("SELECT count(*) FROM pg_stat_activity").Scan(&connCount)
 
 	var maxConn int
-	db.QueryRow("SELECT setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConn)
+	_ = db.QueryRow("SELECT setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConn)
 
 	if maxConn > 0 && float64(connCount)/float64(maxConn) > 0.8 {
 		alerts = append(alerts, models.PgAlert{
@@ -1757,7 +1757,7 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 			var tableName string
 			var deadTuples int
 			var bloatPct float64
-			bloatRows.Scan(&tableName, &deadTuples, &bloatPct)
+			_ = bloatRows.Scan(&tableName, &deadTuples, &bloatPct)
 			if bloatPct > 20 {
 				alerts = append(alerts, models.PgAlert{
 					Severity:   "WARNING",

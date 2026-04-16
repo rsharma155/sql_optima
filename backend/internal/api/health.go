@@ -45,10 +45,8 @@ func HandleHealthReadiness(w http.ResponseWriter, r *http.Request, cfg *config.C
 		return
 	}
 
-	tsOK := true
 	if metricsSvc != nil && os.Getenv("HEALTH_CHECK_TIMESCALE") == "1" {
-		tsOK = metricsSvc.TimescalePing(r.Context()) == nil
-		if !tsOK {
+		if metricsSvc.TimescalePing(r.Context()) != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"status":  "unhealthy",

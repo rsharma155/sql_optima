@@ -2747,3 +2747,38 @@ FROM postgres_archiver_stats
 WHERE capture_timestamp >= NOW() - INTERVAL '7 days'
 GROUP BY 1, 2
 WITH NO DATA;
+
+-- ============================================================================
+-- DBA War Room: Incident timeline
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS optima_incidents (
+    time TIMESTAMPTZ NOT NULL,
+    server_instance_name TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT,
+    recommendations TEXT,
+    resolved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+SELECT create_hypertable('optima_incidents', 'time',
+    chunk_time_interval => INTERVAL '1 day',
+    if_not_exists => TRUE);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_server_time
+    ON optima_incidents (server_instance_name, time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_severity
+    ON optima_incidents (severity, time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_category
+    ON optima_incidents (category, time DESC);
+
+ALTER TABLE optima_incidents SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'server_instance_name, severity, category',
+    timescaledb.compress_orderby = 'time DESC'
+);
+
+SELECT add_compression_policy('optima_incidents', INTERVAL '7 days', if_not_exists => TRUE);

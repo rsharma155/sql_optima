@@ -347,7 +347,7 @@ func Main() {
   Press Ctrl+C to stop the server.
 ======================================================
 `, port, addr)
-	fmt.Fprint(os.Stdout, banner)
+	_, _ = fmt.Fprint(os.Stdout, banner)
 	fmt.Fprint(os.Stderr, banner)
 
 	sig := <-sigChan
