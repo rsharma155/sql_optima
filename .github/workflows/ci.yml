@@ -101,9 +101,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Docker image
+        id: docker-build
         run: docker build -t sql-optima:ci .
 
       - name: Trivy container scan
+        if: steps.docker-build.outcome == 'success'
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: image
@@ -116,7 +118,7 @@ jobs:
 
       - name: Upload container scan SARIF
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: always() && hashFiles('trivy-container.sarif') != ''
         with:
           sarif_file: trivy-container.sarif
           category: trivy-container
