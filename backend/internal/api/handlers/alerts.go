@@ -111,10 +111,7 @@ func (h *AlertHandlers) AcknowledgeAlert(w http.ResponseWriter, r *http.Request)
 	var body struct {
 		Reason string `json:"reason"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		jsonError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
+	_ = json.NewDecoder(r.Body).Decode(&body) // body is optional; ignore decode errors
 
 	actor := actorFromRequest(r)
 
@@ -133,10 +130,7 @@ func (h *AlertHandlers) ResolveAlert(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Reason string `json:"reason"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		jsonError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
+	_ = json.NewDecoder(r.Body).Decode(&body) // body is optional; ignore decode errors
 
 	actor := actorFromRequest(r)
 

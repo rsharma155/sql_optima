@@ -506,7 +506,8 @@ async function initPgDashboard() {
     try {
         const hist = ccHistory;
         if (hist && hist.labels && hist.labels.length) {
-            const labels2 = hist.labels;
+            const toLocalTime = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? iso : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); };
+            const labels2 = hist.labels.map(toLocalTime);
 
             const makeLine = (id, label, data, color, note) => {
                 const el = document.getElementById(id);

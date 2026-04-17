@@ -2167,3 +2167,182 @@ func (h *PostgresHandlers) Alerts(w http.ResponseWriter, r *http.Request) {
 		"alerts":   alerts,
 	})
 }
+
+// BloatEstimates returns per-table bloat heuristics (dead tuples, estimated waste) live from the instance.
+func (h *PostgresHandlers) BloatEstimates(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid instance"})
+		return
+	}
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	rows, err := h.metricsSvc.PgRepo.GetBloatEstimates(instance, limit)
+	if err != nil {
+		log.Printf("[API] PG bloat error for %s: %v", instance, err)
+		rows = []repository.PgBloatEstimate{}
+	}
+	if rows == nil {
+		rows = []repository.PgBloatEstimate{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance": instance,
+		"tables":   rows,
+	})
+}
+
+// IdleInTransaction returns sessions currently stuck in idle-in-transaction state.
+func (h *PostgresHandlers) IdleInTransaction(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid instance"})
+		return
+	}
+	sessions, err := h.metricsSvc.PgRepo.GetIdleInTransactionSessions(instance)
+	if err != nil {
+		log.Printf("[API] PG idle-in-transaction error for %s: %v", instance, err)
+		sessions = []repository.PgIdleInTransactionSession{}
+	}
+	if sessions == nil {
+		sessions = []repository.PgIdleInTransactionSession{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance": instance,
+		"sessions": sessions,
+		"count":    len(sessions),
+	})
+}
+
+// XIDWraparoundRisk returns per-database XID freeze risk breakdown.
+func (h *PostgresHandlers) XIDWraparoundRisk(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid instance"})
+		return
+	}
+	risks, err := h.metricsSvc.PgRepo.GetXIDWraparoundRisk(instance)
+	if err != nil {
+		log.Printf("[API] PG xid-wraparound error for %s: %v", instance, err)
+		risks = []repository.PgXIDWraparoundRisk{}
+	}
+	if risks == nil {
+		risks = []repository.PgXIDWraparoundRisk{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance":  instance,
+		"databases": risks,
+	})
+}
+
+// WALArchiverRisk returns a combined WAL archiver health and slot retention risk summary.
+func (h *PostgresHandlers) WALArchiverRisk(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid instance"})
+		return
+	}
+	risk, err := h.metricsSvc.PgRepo.GetWALArchiverRisk(instance)
+	if err != nil {
+		log.Printf("[API] PG wal-archiver-risk error for %s: %v", instance, err)
+		json.NewEncoder(w).Encode(map[string]interface{}{"instance": instance, "risk": nil})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance": instance,
+		"risk":     risk,
+	})
+}
+
+// LongRunningTransactions returns active transactions running longer than 1 minute.
+func (h *PostgresHandlers) LongRunningTransactions(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid instance"})
+		return
+	}
+	txns, err := h.metricsSvc.PgRepo.GetLongRunningTransactions(instance)
+	if err != nil {
+		log.Printf("[API] PG long-running-transactions error for %s: %v", instance, err)
+		txns = []repository.PgLongRunningTransaction{}
+	}
+	if txns == nil {
+		txns = []repository.PgLongRunningTransaction{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance":     instance,
+		"transactions": txns,
+		"count":        len(txns),
+	})
+}
+
+// IndexBloat returns index size and usage signals to help identify bloated or unused indexes.
+func (h *PostgresHandlers) IndexBloat(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid instance"})
+		return
+	}
+	limitStr := r.URL.Query().Get("limit")
+	limit := 100
+	if v, err := strconv.Atoi(limitStr); err == nil && v > 0 {
+		limit = v
+	}
+	indexes, err := h.metricsSvc.PgRepo.GetIndexBloat(instance, limit)
+	if err != nil {
+		log.Printf("[API] PG index-bloat error for %s: %v", instance, err)
+		indexes = []repository.PgIndexBloat{}
+	}
+	if indexes == nil {
+		indexes = []repository.PgIndexBloat{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance": instance,
+		"indexes":  indexes,
+	})
+}

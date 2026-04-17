@@ -38,6 +38,7 @@ Apply in numeric order when upgrading an existing database. `009_postgres_system
 | `007_fix_query_dictionary_constraint.sql` | Query dictionary constraint |
 | `008_add_job_error_tracking.sql` | Job error tracking |
 | `009_postgres_system_stats_cpu_enhancement.sql` | Extended `postgres_system_stats` CPU columns |
+| `010_rule_engine_phase2_1.sql` | SQL Server rule-engine Epic 2.1 first-batch metadata refresh |
 
 ## Usage
 
@@ -61,7 +62,7 @@ Apply in numeric order when upgrading an existing database. `009_postgres_system
 
 ### Upgrading an existing database
 
-Run only the migration files you have not applied yet, in order (e.g. `\i migrations/009_postgres_system_stats_cpu_enhancement.sql`).
+Run only the migration files you have not applied yet, in order (e.g. `\i migrations/010_rule_engine_phase2_1.sql`).
 
 ### Collection and fetch scripts
 

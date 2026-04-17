@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -168,9 +169,20 @@ func (r *Runner) processRule(ctx context.Context, workerID int, rule models.Rule
 		env := results[0] // Use first row as environment
 
 		// Normalise nil values to float64(0) so expressions don't crash with <nil> operands.
+		// Also coerce string-encoded numbers to int64/float64 so comparison operators work.
 		for k, v := range env {
 			if v == nil {
 				env[k] = float64(0)
+				continue
+			}
+			if s, ok := v.(string); ok {
+				if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+					env[k] = i
+					continue
+				}
+				if f, err := strconv.ParseFloat(s, 64); err == nil {
+					env[k] = f
+				}
 			}
 		}
 

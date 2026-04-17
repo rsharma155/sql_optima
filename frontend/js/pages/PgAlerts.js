@@ -79,11 +79,11 @@ window.PgAlertsView = async function() {
                 <td style="white-space:nowrap;">
                     ${statusIcon(a.status)}
                     ${a.status === 'open' ? `
-                        <button class="btn btn-xs btn-outline" onclick="window._alertAck('${a.id}')">Ack</button>
-                        <button class="btn btn-xs btn-outline" onclick="window._alertResolve('${a.id}')">Resolve</button>
+                        <button class="btn btn-xs btn-outline" data-alert-id="${window.escapeHtml(String(a.id))}" data-alert-action="ack">Ack</button>
+                        <button class="btn btn-xs btn-outline" data-alert-id="${window.escapeHtml(String(a.id))}" data-alert-action="resolve">Resolve</button>
                     ` : ''}
                     ${a.status === 'acknowledged' ? `
-                        <button class="btn btn-xs btn-outline" onclick="window._alertResolve('${a.id}')">Resolve</button>
+                        <button class="btn btn-xs btn-outline" data-alert-id="${window.escapeHtml(String(a.id))}" data-alert-action="resolve">Resolve</button>
                     ` : ''}
                 </td>
             </tr>
@@ -153,9 +153,20 @@ window.PgAlertsView = async function() {
             </div>
         </div>
     `;
+
+    // Wire Ack/Resolve buttons without inline handlers (CSP-safe)
+    window.routerOutlet.addEventListener('click', function onAlertAction(e) {
+        const btn = e.target.closest('[data-alert-action]');
+        if (!btn) return;
+        window.routerOutlet.removeEventListener('click', onAlertAction);
+        const id = btn.dataset.alertId;
+        const action = btn.dataset.alertAction;
+        if (action === 'ack') window._alertAck(id);
+        else if (action === 'resolve') window._alertResolve(id);
+    });
 };
 
-// ── Inline action helpers ──────────────────────────────────────
+// ── Alert action helpers ──────────────────────────────────────
 window._alertAck = async function(id) {
     try {
         const resp = await window.apiClient.authenticatedFetch(`/api/alerts/${encodeURIComponent(id)}/acknowledge`, { method: 'POST' });

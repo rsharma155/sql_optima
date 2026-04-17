@@ -11,6 +11,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -111,20 +113,42 @@ func NewMssqlRepository(cfg *config.Config) *MssqlRepository {
 			if inst.Encrypt != nil && !*inst.Encrypt {
 				encrypt = "false"
 			}
-			// Construct DSN
+			// Construct DSN using sqlserver:// URL format so special characters in
+			// username/password (e.g. ; @ = /) are safely percent-encoded.
 			var connStr string
 			if inst.IntegratedSecurity {
-				// Windows Authentication (Passwordless / Active Directory)
-				connStr = fmt.Sprintf("server=%s;port=%d;database=%s;Integrated Security=true;encrypt=%s;", inst.Host, port, catalog, encrypt)
+				// Windows / Integrated Security — no user/password in URL.
+				msURL := &url.URL{
+					Scheme: "sqlserver",
+					Host:   net.JoinHostPort(inst.Host, fmt.Sprintf("%d", port)),
+				}
+				q := msURL.Query()
+				q.Set("database", catalog)
+				q.Set("integrated security", "true")
+				q.Set("encrypt", encrypt)
+				if inst.TrustServerCertificate {
+					q.Set("TrustServerCertificate", "true")
+				} else {
+					q.Set("TrustServerCertificate", "false")
+				}
+				msURL.RawQuery = q.Encode()
+				connStr = msURL.String()
 			} else {
-				// SQL Authentication natively
-				connStr = fmt.Sprintf("server=%s;port=%d;database=%s;user id=%s;password=%s;encrypt=%s;", inst.Host, port, catalog, user, password, encrypt)
-			}
-
-			if inst.TrustServerCertificate {
-				connStr += "TrustServerCertificate=true;"
-			} else {
-				connStr += "TrustServerCertificate=false;"
+				msURL := &url.URL{
+					Scheme: "sqlserver",
+					User:   url.UserPassword(user, password),
+					Host:   net.JoinHostPort(inst.Host, fmt.Sprintf("%d", port)),
+				}
+				q := msURL.Query()
+				q.Set("database", catalog)
+				q.Set("encrypt", encrypt)
+				if inst.TrustServerCertificate {
+					q.Set("TrustServerCertificate", "true")
+				} else {
+					q.Set("TrustServerCertificate", "false")
+				}
+				msURL.RawQuery = q.Encode()
+				connStr = msURL.String()
 			}
 
 			db, err := sqlserver.OpenMetricsPool(connStr)
@@ -1109,4 +1133,89 @@ func (c *MssqlRepository) FetchTempdbStats(instanceName string) ([]map[string]in
 		return nil, fmt.Errorf("connection not found")
 	}
 	return c.CollectTempDBStats(db)
+}
+
+// LogShippingHealth represents one log shipping monitor row (primary or secondary perspective).
+type LogShippingHealth struct {
+	PrimaryServer           string
+	PrimaryDatabase         string
+	SecondaryServer         string
+	SecondaryDatabase       string
+	LastBackupDate          sql.NullTime
+	LastBackupFile          string
+	LastRestoreDate         sql.NullTime
+	LastCopiedDate          sql.NullTime
+	RestoreDelayMinutes     int
+	RestoreThresholdMinutes int
+	// Status: 0=unknown, 1=ok, 2=warning, 3=error
+	Status    int
+	IsPrimary bool
+}
+
+// FetchLogShippingHealth queries msdb log-shipping monitor tables.
+// Returns an empty slice (not an error) when log shipping is not configured on the instance.
+func (c *MssqlRepository) FetchLogShippingHealth(instanceName string) ([]LogShippingHealth, error) {
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return nil, fmt.Errorf("no connection for %s", instanceName)
+	}
+
+	// Quick existence check — log_shipping_secondary_databases is absent on instances that
+	// have never had log shipping configured.
+	var lsCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM msdb.dbo.log_shipping_secondary_databases WITH (NOLOCK)`).Scan(&lsCount); err != nil {
+		// Object not found or no msdb access — treat as not configured.
+		return []LogShippingHealth{}, nil
+	}
+	if lsCount == 0 {
+		return []LogShippingHealth{}, nil
+	}
+
+	// Pull secondary monitor rows.
+	rows, err := db.Query(`
+		SELECT
+			ISNULL(lss.primary_server,    '')     AS primary_server,
+			ISNULL(lss.primary_database,  '')     AS primary_database,
+			ISNULL(@@SERVERNAME,          '')     AS secondary_server,
+			ISNULL(lss.secondary_database,'')     AS secondary_database,
+			lsm.last_backup_date,
+			ISNULL(lsm.last_backup_file,  '')     AS last_backup_file,
+			lsm.last_restored_date,
+			lsm.last_copied_date,
+			lss.restore_delay,
+			lss.restore_threshold,
+			lsm.status
+		FROM msdb.dbo.log_shipping_secondary_databases   lss WITH (NOLOCK)
+		LEFT JOIN msdb.dbo.log_shipping_monitor_secondary lsm WITH (NOLOCK)
+		    ON lsm.secondary_server   = @@SERVERNAME
+		   AND lsm.secondary_database = lss.secondary_database
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []LogShippingHealth
+	for rows.Next() {
+		var h LogShippingHealth
+		h.IsPrimary = false
+		if err := rows.Scan(
+			&h.PrimaryServer, &h.PrimaryDatabase,
+			&h.SecondaryServer, &h.SecondaryDatabase,
+			&h.LastBackupDate,
+			&h.LastBackupFile,
+			&h.LastRestoreDate,
+			&h.LastCopiedDate,
+			&h.RestoreDelayMinutes,
+			&h.RestoreThresholdMinutes,
+			&h.Status,
+		); err != nil {
+			continue
+		}
+		results = append(results, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }

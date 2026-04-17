@@ -13,10 +13,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
-	_ 	"github.com/lib/pq"
+	_ "github.com/lib/pq"
 	"github.com/rsharma155/sql_optima/internal/security/sqlsandbox"
 )
 
@@ -106,7 +107,15 @@ func (c *PostgresCollector) normalizeValue(val interface{}, colName string) inte
 		if len(v) == 0 {
 			return nil
 		}
-		return string(v)
+		s := string(v)
+		// Try to parse as integer first, then float, before returning as string.
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return i
+		}
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return f
+		}
+		return s
 
 	case sql.NullString:
 		if !v.Valid {

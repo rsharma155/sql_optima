@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -57,10 +58,12 @@ func sanitizeDBError(err error, dbType string) error {
 		return errors.New("host not found or unreachable")
 	case strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "connection reset"):
 		return errors.New("connection refused - check host and port")
+	// Check SSL/TLS BEFORE auth: TLS handshake errors from go-mssqldb can contain
+	// "login" or "password" keywords and would otherwise be misclassified.
+	case strings.Contains(errStr, "ssl") || strings.Contains(errStr, "tls") || strings.Contains(errStr, "certificate") || strings.Contains(errStr, "handshake"):
+		return errors.New("SSL/TLS error - check SSL mode or certificates")
 	case strings.Contains(errStr, "authentication failed") || strings.Contains(errStr, "password") || strings.Contains(errStr, "login failed"):
 		return errors.New("authentication failed - check username and password")
-	case strings.Contains(errStr, "ssl") || strings.Contains(errStr, "certificate"):
-		return errors.New("SSL/TLS error - check SSL mode or certificates")
 	case strings.Contains(errStr, "timeout"):
 		return errors.New("connection timeout - server may be slow or unreachable")
 	default:
@@ -103,13 +106,17 @@ func (t defaultServerConnectionTester) Test(ctx context.Context, s servers.Serve
 	case servers.DBPostgres:
 		sslmode := postgresSSLMode(cred, s)
 		dbname := postgresDBName(cred, s)
-		dsn := "host=" + s.Host +
-			" port=" + itoa(s.Port) +
-			" user=" + s.Username +
-			" password=" + password +
-			" dbname=" + dbname +
-			" sslmode=" + sslmode
-		db, err := sql.Open("postgres", dsn)
+		// Use URL format so special characters in username/password are properly encoded.
+		pgURL := &url.URL{
+			Scheme: "postgres",
+			User:   url.UserPassword(s.Username, password),
+			Host:   net.JoinHostPort(s.Host, itoa(s.Port)),
+			Path:   dbname,
+		}
+		q := pgURL.Query()
+		q.Set("sslmode", sslmode)
+		pgURL.RawQuery = q.Encode()
+		db, err := sql.Open("postgres", pgURL.String())
 		if err != nil {
 			return sanitizeDBError(err, "postgres")
 		}
@@ -121,19 +128,31 @@ func (t defaultServerConnectionTester) Test(ctx context.Context, s servers.Serve
 		return nil
 
 	case servers.DBSQLServer:
-		// Azure SQL / Managed Instance / RDS SQL: encrypt mandatory; trust optional when validating server cert is impractical.
 		cat := sqlServerInitialCatalog(cred)
 		trust := "false"
 		if cred.TrustServerCertificate {
 			trust = "true"
 		}
-		connStr := "server=" + s.Host +
-			";port=" + itoa(s.Port) +
-			";database=" + cat +
-			";user id=" + s.Username +
-			";password=" + password +
-			";encrypt=true;trustservercertificate=" + trust + ";"
-		db, err := sqlserver.OpenMetricsPool(connStr)
+		// Respect ssl_mode: "disable" / "disabled" / "false" → encrypt=disable.
+		// All other values (including empty / "require") keep encrypt=true for security.
+		encrypt := "true"
+		switch strings.ToLower(strings.TrimSpace(cred.SSLMode)) {
+		case "disable", "disabled", "false", "no", "off":
+			encrypt = "false"
+		}
+		// Use sqlserver:// URL format — url.UserPassword percent-encodes the password so
+		// special characters like ; @ = / don't corrupt the connection string.
+		msURL := &url.URL{
+			Scheme: "sqlserver",
+			User:   url.UserPassword(s.Username, password),
+			Host:   net.JoinHostPort(s.Host, itoa(s.Port)),
+		}
+		q := msURL.Query()
+		q.Set("database", cat)
+		q.Set("encrypt", encrypt)
+		q.Set("TrustServerCertificate", trust)
+		msURL.RawQuery = q.Encode()
+		db, err := sqlserver.OpenMetricsPool(msURL.String())
 		if err != nil {
 			return sanitizeDBError(err, "sqlserver")
 		}
@@ -599,10 +618,10 @@ func (h *AdminServerHandlers) RotateServer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		Password                 string `json:"password"`
-		SSLMode                  string `json:"ssl_mode"`
-		Database                 string `json:"database"`
-		TrustServerCertificate   *bool  `json:"trust_server_certificate"`
+		Password               string `json:"password"`
+		SSLMode                string `json:"ssl_mode"`
+		Database               string `json:"database"`
+		TrustServerCertificate *bool  `json:"trust_server_certificate"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)

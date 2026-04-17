@@ -195,7 +195,12 @@ function renderBestPracticesDashboard(inst, data) {
                 fixScript: rawFixScript,
                 currentValue: check.current_value || '',
                 recommendedValue: check.recommended_value || '',
-                status: statusKey
+                status: statusKey,
+                severity: check.severity || '',
+                impact: check.impact || check.description || '',
+                evidence: check.evidence || '',
+                remediation: check.remediation || rawFixScript || '',
+                history: Array.isArray(check.history) ? check.history : []
             };
 
             html += `
@@ -265,15 +270,41 @@ window.showRuleDrawerById = function(drawerId) {
     if (data.recommendedValue && data.recommendedValue !== '-') {
         fixScript = fixScript.replace(/<RecommendedMB>|<Recommended>|<Value>/gi, data.recommendedValue);
     }
-    window.showRuleDrawer(data.ruleName, data.description, fixScript, data.status, data.currentValue, data.recommendedValue);
+    let remediation = data.remediation || fixScript;
+    if (data.recommendedValue && data.recommendedValue !== '-') {
+        remediation = remediation.replace(/<RecommendedMB>|<Recommended>|<Value>/gi, data.recommendedValue);
+    }
+    window.showRuleDrawer({
+        ruleName: data.ruleName,
+        description: data.description,
+        fixScript,
+        remediation,
+        status: data.status,
+        severity: data.severity,
+        currentValue: data.currentValue,
+        recommendedValue: data.recommendedValue,
+        impact: data.impact,
+        evidence: data.evidence,
+        history: data.history
+    });
 };
 
-window.showRuleDrawer = function(ruleName, description, fixScript, status, currentValue, recommendedValue) {
+window.showRuleDrawer = function(payloadOrRuleName, description, fixScript, status, currentValue, recommendedValue) {
     try {
+        const payload = typeof payloadOrRuleName === 'object' && payloadOrRuleName !== null
+            ? payloadOrRuleName
+            : {
+                ruleName: payloadOrRuleName,
+                description,
+                fixScript,
+                status,
+                currentValue,
+                recommendedValue
+            };
         const existingDrawer = document.getElementById('rule-drawer-overlay');
         if (existingDrawer) existingDrawer.remove();
 
-        const statusKey = (status || 'OK').toUpperCase();
+        const statusKey = (payload.status || 'OK').toUpperCase();
         const statusStyles = {
             'CRITICAL': { bg: '#fee2e2', color: '#991b1b', badge: 'danger' },
             'WARNING': { bg: '#fef3c7', color: '#92400e', badge: 'warning' },
@@ -291,14 +322,36 @@ window.showRuleDrawer = function(ruleName, description, fixScript, status, curre
         const drawer = document.createElement('div');
         drawer.style.cssText = `width:450px;max-width:90vw;background:#ffffff;height:100%;padding:1.5rem;overflow-y:auto;animation:slideIn 0.2s ease-out;box-shadow:-4px 0 20px rgba(0,0,0,0.3);border-left:4px solid ${style.color};`;
 
-        const safeDesc = description ? window.escapeHtml(description) : 'No description available.';
-        const safeFix = fixScript ? window.escapeHtml(fixScript) : '';
-        const safeRuleName = ruleName ? window.escapeHtml(ruleName) : 'Unknown Rule';
-        const safeCurr = currentValue ? window.escapeHtml(currentValue) : '-';
-        const safeRec = recommendedValue ? window.escapeHtml(recommendedValue) : '-';
+        const safeDesc = payload.description ? window.escapeHtml(payload.description) : 'No description available.';
+        const safeFix = payload.fixScript ? window.escapeHtml(payload.fixScript) : '';
+        const safeRuleName = payload.ruleName ? window.escapeHtml(payload.ruleName) : 'Unknown Rule';
+        const safeCurr = payload.currentValue ? window.escapeHtml(payload.currentValue) : '-';
+        const safeRec = payload.recommendedValue ? window.escapeHtml(payload.recommendedValue) : '-';
+        const safeSeverity = payload.severity ? window.escapeHtml(payload.severity) : 'Not set';
+        const safeImpact = payload.impact ? window.escapeHtml(payload.impact) : safeDesc;
+        const safeEvidence = payload.evidence ? window.escapeHtml(payload.evidence) : 'No evidence captured yet.';
+        const safeRemediation = payload.remediation ? window.escapeHtml(payload.remediation) : '';
+        const history = Array.isArray(payload.history) ? payload.history : [];
+        const historyHtml = history.length
+            ? history.map(point => {
+                const pointStatus = window.escapeHtml(point.status || 'OK');
+                const pointValue = window.escapeHtml(point.current_value || point.currentValue || '-');
+                const pointWhen = point.evaluated_at
+                    ? window.escapeHtml(new Date(point.evaluated_at).toLocaleString())
+                    : '-';
+                return `
+                    <div style="display:flex;justify-content:space-between;gap:0.75rem;padding:0.45rem 0;border-bottom:1px solid #e5e7eb;">
+                        <span><strong>${pointStatus}</strong></span>
+                        <span style="color:#374151;">${pointValue}</span>
+                        <span style="color:#6b7280;">${pointWhen}</span>
+                    </div>
+                `;
+            }).join('')
+            : '<div class="text-muted" style="font-size:0.8rem;">No recent history recorded yet.</div>';
 
         // Hide fix script for OK status
         const showFixScript = statusKey !== 'OK' && safeFix;
+        const showRemediation = statusKey !== 'OK' && safeRemediation;
 
         const copyBtn = showFixScript ? `<button class="btn btn-sm btn-outline" data-action="copy-closest-fix"><i class="fa-solid fa-copy"></i> Copy</button>` : '';
 
@@ -316,11 +369,30 @@ window.showRuleDrawer = function(ruleName, description, fixScript, status, curre
                         <div><span style="color:#6b7280; font-size:0.7rem;">Current Value:</span><br><strong>${safeCurr}</strong></div>
                         <div><span style="color:#6b7280; font-size:0.7rem;">Recommended:</span><br><strong>${safeRec}</strong></div>
                     </div>
+                    <div><span style="color:#6b7280; font-size:0.7rem;">Rule Severity:</span><br><strong>${safeSeverity}</strong></div>
                 </div>
                 <div style="margin-bottom:1.5rem; padding:1rem; background:#f9fafb; border-radius:8px;">
                     <h4 style="color:#6b7280;font-size:0.7rem;text-transform:uppercase;margin:0 0 0.5rem 0; font-weight:600;">Why This Matters</h4>
                     <p style="color:#374151;margin:0;line-height:1.6;">${safeDesc}</p>
                 </div>
+                <div style="margin-bottom:1.5rem; padding:1rem; background:#f9fafb; border-radius:8px;">
+                    <h4 style="color:#6b7280;font-size:0.7rem;text-transform:uppercase;margin:0 0 0.5rem 0; font-weight:600;">Impact</h4>
+                    <p style="color:#374151;margin:0;line-height:1.6;">${safeImpact}</p>
+                </div>
+                <div style="margin-bottom:1.5rem; padding:1rem; background:#f9fafb; border-radius:8px;">
+                    <h4 style="color:#6b7280;font-size:0.7rem;text-transform:uppercase;margin:0 0 0.5rem 0; font-weight:600;">Evidence</h4>
+                    <p style="color:#374151;margin:0;line-height:1.6;">${safeEvidence}</p>
+                </div>
+                <div style="margin-bottom:1.5rem; padding:1rem; background:#f9fafb; border-radius:8px;">
+                    <h4 style="color:#6b7280;font-size:0.7rem;text-transform:uppercase;margin:0 0 0.5rem 0; font-weight:600;">Recent History</h4>
+                    ${historyHtml}
+                </div>
+                ${showRemediation ? `
+                <div style="margin-bottom:1.5rem; padding:1rem; background:#f9fafb; border-radius:8px;">
+                    <h4 style="color:#6b7280;font-size:0.7rem;text-transform:uppercase;margin:0 0 0.5rem 0; font-weight:600;">Remediation Guidance</h4>
+                    <p style="color:#374151;margin:0;line-height:1.6; white-space:pre-wrap;">${safeRemediation}</p>
+                </div>
+                ` : ''}
                 ${showFixScript ? `
                 <div style="margin-bottom:1.5rem;">
                     <h4 style="color:#6b7280;font-size:0.7rem;text-transform:uppercase;margin:0 0 0.5rem 0; font-weight:600;">Fix Script</h4>

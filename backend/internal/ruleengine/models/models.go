@@ -74,13 +74,24 @@ type RuleResult struct {
 }
 
 type DashboardEntry struct {
-	RuleID           string    `json:"rule_id"`
-	RuleName         string    `json:"rule_name"`
-	Category         string    `json:"category"`
-	Status           string    `json:"status"`
-	CurrentValue     string    `json:"current_value"`
-	RecommendedValue string    `json:"recommended_value"`
-	Description      string    `json:"description"`
-	FixScript        string    `json:"fix_script"`
-	LastCheck        time.Time `json:"last_check"`
+	RuleID           string             `json:"rule_id"`
+	RuleName         string             `json:"rule_name"`
+	Category         string             `json:"category"`
+	Severity         string             `json:"severity"`
+	Status           string             `json:"status"`
+	CurrentValue     string             `json:"current_value"`
+	RecommendedValue string             `json:"recommended_value"`
+	Description      string             `json:"description"`
+	FixScript        string             `json:"fix_script"`
+	Impact           string             `json:"impact"`
+	Evidence         string             `json:"evidence"`
+	Remediation      string             `json:"remediation"`
+	History          []RuleHistoryPoint `json:"history,omitempty"`
+	LastCheck        time.Time          `json:"last_check"`
+}
+
+type RuleHistoryPoint struct {
+	Status       string    `json:"status"`
+	CurrentValue string    `json:"current_value"`
+	EvaluatedAt  time.Time `json:"evaluated_at"`
 }

@@ -21,17 +21,17 @@ import (
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
-// StartPerformanceDebtCollector collects maintenance/risk findings periodically (default hourly).
-// Enable/adjust interval by setting PERFDEBT_INTERVAL_MIN (min 15, max 1440).
+// StartPerformanceDebtCollector collects maintenance/risk findings periodically (default every 15 min).
+// Adjust interval by setting PERFDEBT_INTERVAL_MIN (min 5, max 1440).
 func (s *MetricsService) StartPerformanceDebtCollector(ctx context.Context) {
 	if s.tsLogger == nil {
 		log.Printf("[PerfDebtCollector] TimescaleDB not connected; collector disabled")
 		return
 	}
 
-	interval := time.Hour
+	interval := 15 * time.Minute
 	if v := strings.TrimSpace(os.Getenv("PERFDEBT_INTERVAL_MIN")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 15 && n <= 1440 {
+		if n, err := strconv.Atoi(v); err == nil && n >= 5 && n <= 1440 {
 			interval = time.Duration(n) * time.Minute
 		}
 	}

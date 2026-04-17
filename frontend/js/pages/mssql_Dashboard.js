@@ -1485,7 +1485,13 @@ window.updateIoChart = function() {
         const ioChartOptions = {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: { boxWidth: 12, font: { size: 11 } }
+                }
+            },
             scales: {
                 y: { beginAtZero: true, title: { display: true, text: 'ms' } },
                 x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } }

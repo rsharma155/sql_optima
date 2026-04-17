@@ -268,12 +268,21 @@ The built-in alert engine continuously evaluates rules against every monitored i
 |----------|--------|-------------|
 | `/api/alerts` | GET | List alerts (filter by status, instance, severity, engine) |
 | `/api/alerts/{id}` | GET | Get alert detail |
-| `/api/alerts/{id}/acknowledge` | POST | Acknowledge (body: `{"reason": "..."}`) |
-| `/api/alerts/{id}/resolve` | POST | Resolve (body: `{"reason": "..."}`) |
+| `/api/alerts/{id}/acknowledge` | POST | Acknowledge — body `{"reason": "..."}` is optional |
+| `/api/alerts/{id}/resolve` | POST | Resolve — body `{"reason": "..."}` is optional |
 | `/api/alerts/count` | GET | Count open alerts for an instance |
 | `/api/alerts/maintenance` | POST | Create maintenance window |
 | `/api/alerts/maintenance` | GET | List active maintenance windows |
 | `/api/alerts/maintenance/{id}` | DELETE | Delete maintenance window |
+
+### Admin — Permission check
+
+Probe whether the monitoring role has the required grants and generate ready-to-run SQL scripts:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/admin/servers/check-permissions-draft` | POST | Check permissions for a server definition not yet saved; returns `grant_script` and `create_user_script` |
+| `/api/admin/servers/{id}/check-permissions` | POST | Check permissions for a registered server by ID |
 
 ---
 
@@ -329,5 +338,5 @@ All endpoints are **Timescale reads** and require `engine` and `instance` query 
 
 ## PostgreSQL and SQL Server dashboards
 
-- **PostgreSQL**: Control Center, sessions, locks, queries, EXPLAIN analyzer, storage, replication/HA, enterprise monitor, best-practices, CPU/memory, alerts.
+- **PostgreSQL**: Control Center, sessions, locks, queries, EXPLAIN analyzer, storage, replication/HA, autovacuum & bloat risk, enterprise monitor, best-practices, CPU/memory, alerts.
 - **SQL Server**: Instance dashboard, CPU dashboard, live diagnostics, HA/AG, enterprise metrics, performance debt, memory drilldown, agent jobs, alerts, best practices; drilldowns for CPU, queries, bottlenecks, growth, indexes, locks, deadlocks.

@@ -50,12 +50,24 @@ window.HADashboardView = function() {
                         </div>
                     </div>
                 </div>
+
+                <div class="glass-panel" style="padding: 0.75rem;">
+                    <div class="card-header flex-between" style="margin-bottom: 0.5rem;">
+                        <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-ship text-accent"></i> Log Shipping Health</h3>
+                    </div>
+                    <div id="log-shipping-section">
+                        <div style="display:flex; justify-content:center; align-items:center; height:60px;">
+                            <div class="spinner"></div><span style="margin-left: 1rem;">Loading Log Shipping data...</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     `;
 
     loadAGHealthData(instance.name);
     loadDBThroughputData(instance.name);
+    loadLogShippingData(instance.name);
 };
 
 function loadAGHealthData(instanceName) {
@@ -165,6 +177,13 @@ function loadAGHealthData(instanceName) {
                                 <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 0.15rem;">Max: ${formatNumber(stat.max_redo_queue_kb || 0)} KB</div>
                             </div>
                         </div>
+                        ${!isPrimary ? `
+                        <div style="margin-top: 0.5rem; background: rgba(255,255,255,0.03); padding: 0.5rem; border-radius: 4px; text-align: center;">
+                            <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Secondary Lag</div>
+                            <div style="font-size: 1.1rem; font-family: 'JetBrains Mono', monospace; color: ${(stat.secondary_lag_secs || 0) > 30 ? 'var(--warning)' : 'var(--text)'}; margin-top: 0.25rem;">
+                                ${formatNumber(stat.secondary_lag_secs || 0)} <span style="font-size: 0.65rem;">sec</span>
+                            </div>
+                        </div>` : ''}
                     </div>
                 `;
             });
@@ -254,6 +273,71 @@ function loadDBThroughputData(instanceName) {
         .catch(error => {
             console.error('Error loading DB Throughput data:', error);
             section.innerHTML = `<div class="alert alert-danger"><i class="fa-solid fa-exclamation-circle"></i> Failed to load DB Throughput data: ${escapeHtml(error.message)}</div>`;
+        });
+}
+
+function loadLogShippingData(instanceName) {
+    const section = document.getElementById('log-shipping-section');
+    if (!section) return;
+
+    window.apiClient.authenticatedFetch(`/api/mssql/log-shipping?instance=${encodeURIComponent(instanceName)}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                section.innerHTML = `<div class="alert alert-warning"><i class="fa-solid fa-exclamation-triangle"></i> ${window.escapeHtml(data.error)}</div>`;
+                return;
+            }
+
+            const rows = data.log_shipping || [];
+            if (!data.log_shipping_enabled || rows.length === 0) {
+                section.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="fa-solid fa-circle-info"></i> <strong>No Log Shipping configured for this instance.</strong>
+                        <p class="text-sm mt-1">Log Shipping is not set up or no monitor rows were found in msdb.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const statusLabel = s => ({ 1: '<span class="badge badge-success">OK</span>', 2: '<span class="badge badge-warning">WARNING</span>', 3: '<span class="badge badge-danger">ERROR</span>' }[s] || '<span class="badge">UNKNOWN</span>');
+            const fmtDate = d => d ? new Date(d).toLocaleString() : '<span class="text-muted">—</span>';
+
+            let html = `
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Primary DB</th>
+                            <th>Secondary Server</th>
+                            <th>Secondary DB</th>
+                            <th>Last Backup</th>
+                            <th>Last Restored</th>
+                            <th>Restore Delay</th>
+                            <th>Threshold</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+            rows.forEach(r => {
+                html += `<tr>
+                    <td><strong>${window.escapeHtml(r.primary_database || '—')}</strong></td>
+                    <td>${window.escapeHtml(r.secondary_server || '—')}</td>
+                    <td>${window.escapeHtml(r.secondary_database || '—')}</td>
+                    <td>${fmtDate(r.last_backup_date)}</td>
+                    <td>${fmtDate(r.last_restore_date)}</td>
+                    <td class="text-right">${r.restore_delay_minutes ?? '—'} min</td>
+                    <td class="text-right">${r.restore_threshold_minutes ?? '—'} min</td>
+                    <td>${statusLabel(r.status)}</td>
+                </tr>`;
+            });
+            html += `</tbody></table>
+                <div class="table-footer"><small class="text-muted">Showing ${rows.length} log shipping pair(s) | Data from Timescale (1-hour lookback) when available, else live msdb</small></div>`;
+
+            section.innerHTML = html;
+        })
+        .catch(err => {
+            console.error('Error loading log shipping data:', err);
+            section.innerHTML = `<div class="alert alert-danger"><i class="fa-solid fa-exclamation-circle"></i> Failed to load log shipping data: ${window.escapeHtml(err.message)}</div>`;
         });
 }
 
