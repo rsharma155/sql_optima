@@ -44,17 +44,20 @@ func (e *PgBackupFreshnessEvaluator) Evaluate(ctx context.Context, instanceName 
 	var finishedAt time.Time
 	var status, tool, backupType string
 	if err := e.tsPool.QueryRow(ctx, q, instanceName).Scan(&finishedAt, &status, &tool, &backupType); err != nil {
-		// No backup records at all — emit a warning
-		return []AlertEvaluatorResult{{
-			RuleName:     "pg_backup_freshness",
-			Category:     "backup",
-			Severity:     alerts.SeverityWarning,
-			Title:        "PostgreSQL: no backup records found",
-			Description:  fmt.Sprintf("No successful backup records found for %s", instanceName),
-			InstanceName: instanceName,
-			Engine:       alerts.EnginePostgres,
-			Evidence:     map[string]interface{}{"reason": "no_backup_records"},
-		}}, nil
+		if isNoDataError(err) {
+			// No backup records at all — emit a warning
+			return []AlertEvaluatorResult{{
+				RuleName:     "pg_backup_freshness",
+				Category:     "backup",
+				Severity:     alerts.SeverityWarning,
+				Title:        "PostgreSQL: no backup records found",
+				Description:  fmt.Sprintf("No successful backup records found for %s", instanceName),
+				InstanceName: instanceName,
+				Engine:       alerts.EnginePostgres,
+				Evidence:     map[string]interface{}{"reason": "no_backup_records"},
+			}}, nil
+		}
+		return nil, fmt.Errorf("pg_backup_freshness query: %w", err)
 	}
 
 	ageHours := time.Since(finishedAt).Hours()

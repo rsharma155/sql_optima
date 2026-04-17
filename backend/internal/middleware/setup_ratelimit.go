@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// maxDistinctKeys caps the number of tracked IPs to prevent unbounded
+// memory growth under IP-spray attacks.
+const maxDistinctKeys = 10000
+
 // SetupRateLimiter limits anonymous /api/setup/* POST abuse per client IP.
 type SetupRateLimiter struct {
 	mu       sync.Mutex
@@ -74,6 +78,10 @@ func (l *SetupRateLimiter) Allow(ip string) bool {
 	}
 	if len(kept) >= l.max {
 		l.attempts[ip] = kept
+		return false
+	}
+	// Reject new keys when the map is at capacity to bound memory.
+	if _, exists := l.attempts[ip]; !exists && len(l.attempts) >= maxDistinctKeys {
 		return false
 	}
 	kept = append(kept, now)

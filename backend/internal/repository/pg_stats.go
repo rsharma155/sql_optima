@@ -158,8 +158,14 @@ func NewPgRepository(cfg *config.Config) *PgRepository {
 						var discoverDbs []string
 						for rows.Next() {
 							var dbName string
-							_ = rows.Scan(&dbName)
+							if err := rows.Scan(&dbName); err != nil {
+								log.Printf("[POSTGRES] Failed to scan discovered database row for %s: %v", instName, err)
+								continue
+							}
 							discoverDbs = append(discoverDbs, dbName)
+						}
+						if err := rows.Err(); err != nil {
+							log.Printf("[POSTGRES] Error during database discovery iteration for %s: %v", instName, err)
 						}
 						rows.Close()
 						cfg.Instances[idx].Databases = discoverDbs
@@ -1695,7 +1701,10 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 			var pid int
 			var duration float64
 			var query string
-			_ = rows.Scan(&pid, &duration, &query)
+			if err := rows.Scan(&pid, &duration, &query); err != nil {
+				log.Printf("[POSTGRES] Failed to scan long transaction row: %v", err)
+				continue
+			}
 			alerts = append(alerts, models.PgAlert{
 				Severity:   "CRITICAL",
 				Metric:     fmt.Sprintf("Idle in Transaction (PID %d)", pid),
@@ -1709,10 +1718,14 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 
 	// Check connection count threshold
 	var connCount int
-	_ = db.QueryRow("SELECT count(*) FROM pg_stat_activity").Scan(&connCount)
+	if err := db.QueryRow("SELECT count(*) FROM pg_stat_activity").Scan(&connCount); err != nil {
+		log.Printf("[POSTGRES] Failed to query connection count: %v", err)
+	}
 
 	var maxConn int
-	_ = db.QueryRow("SELECT setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConn)
+	if err := db.QueryRow("SELECT setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConn); err != nil {
+		log.Printf("[POSTGRES] Failed to query max_connections: %v", err)
+	}
 
 	if maxConn > 0 && float64(connCount)/float64(maxConn) > 0.8 {
 		alerts = append(alerts, models.PgAlert{
