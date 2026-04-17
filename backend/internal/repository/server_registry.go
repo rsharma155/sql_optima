@@ -95,6 +95,29 @@ func (r *ServerRegistryRepository) List(ctx context.Context, activeOnly bool) ([
 	return out, rows.Err()
 }
 
+func (r *ServerRegistryRepository) GetByName(ctx context.Context, name string) (servers.Server, error) {
+	if r == nil || r.pool == nil {
+		return servers.Server{}, fmt.Errorf("timescale not configured")
+	}
+	var s servers.Server
+	var id uuid.UUID
+	var dbType, authType, sslMode string
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, name, db_type, host, port, username, auth_type, ssl_mode, is_active, created_at, updated_at
+		FROM optima_servers
+		WHERE name = $1 AND is_active = TRUE
+		LIMIT 1
+	`, strings.TrimSpace(name)).Scan(&id, &s.Name, &dbType, &s.Host, &s.Port, &s.Username, &authType, &sslMode, &s.IsActive, &s.CreatedAt, &s.UpdatedAt)
+	if err != nil {
+		return servers.Server{}, err
+	}
+	s.ID = id.String()
+	s.DBType = servers.DBType(dbType)
+	s.AuthType = servers.AuthType(authType)
+	s.SSLMode = servers.SSLMode(sslMode)
+	return s, nil
+}
+
 func (r *ServerRegistryRepository) GetEncrypted(ctx context.Context, id string) (servers.Server, []byte, []byte, error) {
 	if r == nil || r.pool == nil {
 		return servers.Server{}, nil, nil, fmt.Errorf("timescale not configured")

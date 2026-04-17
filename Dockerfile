@@ -6,9 +6,9 @@ WORKDIR /src/backend
 RUN go mod download
 COPY backend/ ./
 COPY infrastructure/sql_scripts /src/infrastructure/sql_scripts
-# config.yaml is optional (instances come from server registry in Docker mode).
-COPY config.yam[l] ../
-RUN test -f ../config.yaml || echo 'instances: []' > ../config.yaml
+# config.yaml is optional — instances come from server registry in Docker mode.
+# Generate a safe default; users can volume-mount their own at runtime.
+RUN echo 'instances: []' > ../config.yaml
 COPY frontend ../frontend
 # Force module mode even if a stale vendor/ exists in build context.
 # GOTOOLCHAIN=auto lets the builder satisfy go.mod's minimum-version requirement

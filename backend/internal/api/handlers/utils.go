@@ -32,15 +32,9 @@ func instanceExists(ctx context.Context, cfg *config.Config, metricsSvc *service
 	if instanceInConfig(cfg, name) {
 		return true
 	}
-	// Check DB
 	if metricsSvc != nil && metricsSvc.ServerRepo != nil {
-		servers, err := metricsSvc.ServerRepo.List(ctx, true)
-		if err == nil {
-			for _, s := range servers {
-				if s.Name == name {
-					return true
-				}
-			}
+		if _, err := metricsSvc.ServerRepo.GetByName(ctx, name); err == nil {
+			return true
 		}
 	}
 	return false
@@ -59,15 +53,9 @@ func instanceTypeFromDB(ctx context.Context, cfg *config.Config, metricsSvc *ser
 	if instanceType(cfg, name, want) {
 		return true
 	}
-	// Check DB
 	if metricsSvc != nil && metricsSvc.ServerRepo != nil {
-		servers, err := metricsSvc.ServerRepo.List(ctx, true)
-		if err == nil {
-			for _, s := range servers {
-				if s.Name == name {
-					return string(s.DBType) == want
-				}
-			}
+		if s, err := metricsSvc.ServerRepo.GetByName(ctx, name); err == nil {
+			return string(s.DBType) == want
 		}
 	}
 	return false

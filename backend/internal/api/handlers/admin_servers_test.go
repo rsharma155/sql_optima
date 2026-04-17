@@ -48,6 +48,14 @@ func (m *memServerStore) Create(ctx context.Context, s servers.Server, encrypted
 func (m *memServerStore) List(ctx context.Context, activeOnly bool) ([]servers.Server, error) {
 	return append([]servers.Server(nil), m.created...), nil
 }
+func (m *memServerStore) GetByName(ctx context.Context, name string) (servers.Server, error) {
+	for _, s := range m.created {
+		if s.Name == name {
+			return s, nil
+		}
+	}
+	return servers.Server{}, errNotFound
+}
 func (m *memServerStore) GetEncrypted(ctx context.Context, id string) (servers.Server, []byte, []byte, error) {
 	if m.encByID == nil {
 		return servers.Server{}, nil, nil, errNotFound

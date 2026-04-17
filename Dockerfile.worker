@@ -4,9 +4,9 @@ WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
-# config.yaml is optional (instances come from server registry in Docker mode).
-COPY config.yam[l] ../
-RUN test -f ../config.yaml || echo 'instances: []' > ../config.yaml
+# config.yaml is optional — instances come from server registry in Docker mode.
+# Generate a safe default; users can volume-mount their own at runtime.
+RUN echo 'instances: []' > ../config.yaml
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /worker ./cmd/worker
 
 FROM gcr.io/distroless/static-debian12:nonroot

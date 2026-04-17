@@ -45,6 +45,12 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
 		return
 	}
+	// Reject requests with trailing garbage after the JSON object.
+	if dec.More() {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "unexpected trailing data in request body"})
+		return
+	}
 
 	req.Username = strings.TrimSpace(req.Username)
 	if req.Username == "" || req.Password == "" {

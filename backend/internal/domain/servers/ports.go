@@ -22,6 +22,7 @@ type SecretBox interface {
 type ServerStore interface {
 	Create(ctx context.Context, s Server, encryptedSecret, encryptedDEK []byte) (Server, error)
 	List(ctx context.Context, activeOnly bool) ([]Server, error)
+	GetByName(ctx context.Context, name string) (Server, error)
 	GetEncrypted(ctx context.Context, id string) (s Server, encryptedSecret, encryptedDEK []byte, err error)
 	// Delete removes the server row from the registry (credentials and metadata).
 	Delete(ctx context.Context, id string) error
