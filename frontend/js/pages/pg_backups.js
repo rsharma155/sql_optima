@@ -81,9 +81,11 @@ window.PgBackupsView = async function PgBackupsView() {
     const limit = parseInt(els.limit.value || '100', 10) || 100;
     let payload;
     try {
-      payload = await window.apiClient.authenticatedFetch(
+      const resp = await window.apiClient.authenticatedFetch(
         `/api/postgres/backups/history?instance=${encodeURIComponent(instanceName)}&limit=${encodeURIComponent(String(limit))}`
       );
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      payload = await resp.json();
     } catch (e) {
       els.meta.textContent = 'Failed to load backup history';
       els.tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger">Error: ${esc(e?.message || 'request failed')}</td></tr>`;
@@ -100,7 +102,7 @@ window.PgBackupsView = async function PgBackupsView() {
         const strip = document.getElementById('pgBackupRPOStrip');
         if (!strip || !walPayload?.risk) return;
         const risk = walPayload.risk;
-        const ageSec = risk.last_archived_age;
+        const ageSec = risk.last_archived_age_seconds;
         const lvl = risk.risk_level || 'low';
         const cls = lvl === 'critical' ? 'alert-danger' : lvl === 'high' ? 'alert-warning' : lvl === 'medium' ? 'alert-warning' : 'alert-success';
         const icon = lvl === 'critical' || lvl === 'high' ? 'fa-triangle-exclamation' : lvl === 'medium' ? 'fa-circle-info' : 'fa-circle-check';

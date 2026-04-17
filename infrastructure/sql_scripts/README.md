@@ -39,6 +39,7 @@ Apply in numeric order when upgrading an existing database. `009_postgres_system
 | `008_add_job_error_tracking.sql` | Job error tracking |
 | `009_postgres_system_stats_cpu_enhancement.sql` | Extended `postgres_system_stats` CPU columns |
 | `010_rule_engine_phase2_1.sql` | SQL Server rule-engine Epic 2.1 first-batch metadata refresh |
+| `011_log_shipping_health_epic2_2.sql` | SQL Server log-shipping health Timescale hypertable (Epic 2.2) |
 
 ## Usage
 

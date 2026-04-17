@@ -340,8 +340,6 @@ func buildPGGrantScript(username string, missingGrants []string) string {
 	b.WriteString("-- Run as a PostgreSQL superuser on the target database\n")
 	b.WriteString("-- ============================================================\n\n")
 	for _, g := range missingGrants {
-		line := strings.ReplaceAll(g, pgQuoteIdent(""), pgQuoteIdent("")) // noop, grants already substituted
-		_ = line
 		b.WriteString(strings.ReplaceAll(g, "{user}", quoted))
 		b.WriteString("\n")
 	}
@@ -559,8 +557,11 @@ func checkSQLServerPermissions(ctx context.Context, s servers.Server, cred serve
 			if !p.optional {
 				allOK = false
 			}
-			grant := strings.ReplaceAll(p.grant, "{user}", s.Username)
-			grant = strings.ReplaceAll(grant, "[{user}]", fmt.Sprintf("[%s]", escapeSQLBracket(s.Username)))
+			// Substitute []{user}] before plain {user} so the bracket-escaped
+			// identifier replacement always wins over the raw username fallback.
+			grant := strings.ReplaceAll(p.grant, "[{user}]", fmt.Sprintf("[%s]", escapeSQLBracket(s.Username)))
+			grant = strings.ReplaceAll(grant, "'{user}'", fmt.Sprintf("'%s'", escapeSQLStr(s.Username)))
+			grant = strings.ReplaceAll(grant, "{user}", escapeSQLStr(s.Username))
 			missingGrants = append(missingGrants, grant)
 		}
 		checks = append(checks, result)

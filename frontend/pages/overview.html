@@ -155,19 +155,20 @@
             <div class="charts-grid mt-3" style="display:grid; grid-template-columns:2fr 1fr 1fr; gap:0.75rem;">
                 <div class="chart-card glass-panel" style="padding:0.75rem;">
                     <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Database Throughput (TPS)</h3></div>
-                    <div class="chart-container" style="height:130px;"><canvas id="pgTpsChart"></canvas></div>
+                    <div class="chart-container" style="height:110px;"><canvas id="pgTpsChart"></canvas></div>
                 </div>
                 <div class="chart-card glass-panel" style="padding:0.75rem;">
                     <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Connection State</h3></div>
-                    <div class="chart-container doughnut-container" style="height:130px;"><canvas id="pgConnChart"></canvas></div>
+                    <div class="chart-container doughnut-container" style="height:110px;"><canvas id="pgConnChart"></canvas></div>
                 </div>
                 <div class="chart-card glass-panel" style="padding:0.75rem;">
                     <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Blocking (Mini)</h3></div>
-                    <div style="max-height:130px; overflow:auto;">
+                    <div style="height:110px; overflow:auto;">
                         <table class="table table-sm" style="margin:0; font-size:0.75rem;">
                             <thead><tr><th>PID</th><th>Wait</th><th>Query</th></tr></thead>
                             <tbody id="pgBlockingMiniTbody">
                                 <tr><td colspan="3" class="text-muted">Loading...</td></tr>
+
                             </tbody>
                         </table>
                     </div>
@@ -177,19 +178,19 @@
             <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:0.75rem;">
                 <div class="chart-card glass-panel" style="padding:0.75rem;">
                     <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">WAL Generation Trend</h3></div>
-                    <div class="chart-container" style="height:120px;"><canvas id="pgWalRateChart"></canvas></div>
+                    <div class="chart-container" style="height:110px;"><canvas id="pgWalRateChart"></canvas></div>
                 </div>
                 <div class="chart-card glass-panel" style="padding:0.75rem;">
                     <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Autovacuum Activity</h3></div>
-                    <div class="chart-container" style="height:120px;"><canvas id="pgAutovacChart"></canvas></div>
+                    <div class="chart-container" style="height:110px;"><canvas id="pgAutovacChart"></canvas></div>
                 </div>
                 <div class="chart-card glass-panel" style="padding:0.75rem;">
                     <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Dead Tuple Ratio</h3></div>
-                    <div class="chart-container" style="height:120px;"><canvas id="pgDeadTupleChart"></canvas></div>
+                    <div class="chart-container" style="height:110px;"><canvas id="pgDeadTupleChart"></canvas></div>
                 </div>
                 <div class="chart-card glass-panel" id="pgReplLagChartCard" style="padding:0.75rem; display:none;">
                     <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Replication Lag (Replicas)</h3></div>
-                    <div class="chart-container" style="height:120px;"><canvas id="pgReplLagDetailChart"></canvas></div>
+                    <div class="chart-container" style="height:110px;"><canvas id="pgReplLagDetailChart"></canvas></div>
                 </div>
             </div>
         </div>

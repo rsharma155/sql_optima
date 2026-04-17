@@ -375,8 +375,8 @@ window.PgReplicationView = async function() {
                 details.push(`Failed: <strong class="${risk.failed_count > 0 ? 'text-danger' : ''}">${Number(risk.failed_count).toLocaleString()}</strong> (${failRate}%)`);
             if (risk.last_archived_wal)
                 details.push(`Last WAL: <code style="font-size:0.75rem;">${window.escapeHtml ? window.escapeHtml(risk.last_archived_wal.slice(-20)) : risk.last_archived_wal.slice(-20)}</code>`);
-            if (risk.last_archived_age >= 0)
-                details.push(`Archive lag: <strong>${fmtAge(risk.last_archived_age)}</strong>`);
+            if (risk.last_archived_age_seconds >= 0)
+                details.push(`Archive lag: <strong>${fmtAge(risk.last_archived_age_seconds)}</strong>`);
             if (Number(retained) > 0)
                 details.push(`Slot retention: <strong class="${Number(retained) >= 1024 ? 'text-danger' : (Number(retained) >= 256 ? 'text-warning' : '')}">${retained} MB</strong> (${window.escapeHtml ? window.escapeHtml(risk.high_retention_slot || '') : (risk.high_retention_slot || '')})`);
             strip.innerHTML = `

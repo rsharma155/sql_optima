@@ -52,12 +52,12 @@ window.PgAutovacuumView = async function PgAutovacuumView() {
             </div>
 
             <!-- Tab Nav -->
-            <div class="tabs-container" style="margin-bottom:1rem;">
-                <button class="tab-btn active" data-tab="bloat">Table Bloat</button>
-                <button class="tab-btn" data-tab="idle">Idle In Transaction</button>
-                <button class="tab-btn" data-tab="xid">XID Wraparound Risk</button>
-                <button class="tab-btn" data-tab="longtxn">Long-Running Transactions</button>
-                <button class="tab-btn" data-tab="idxbloat">Index Bloat</button>
+            <div class="tabs-container">
+                <button class="tab-btn active" data-tab="bloat"><i class="fa-solid fa-database" style="margin-right:.35rem;opacity:.75;"></i>Table Bloat<span class="tab-badge" id="tabBadge-bloat">…</span></button>
+                <button class="tab-btn" data-tab="idle"><i class="fa-solid fa-hourglass-half" style="margin-right:.35rem;opacity:.75;"></i>Idle In Transaction<span class="tab-badge" id="tabBadge-idle">…</span></button>
+                <button class="tab-btn" data-tab="xid"><i class="fa-solid fa-rotate" style="margin-right:.35rem;opacity:.75;"></i>XID Wraparound Risk</button>
+                <button class="tab-btn" data-tab="longtxn"><i class="fa-solid fa-clock" style="margin-right:.35rem;opacity:.75;"></i>Long-Running Transactions<span class="tab-badge" id="tabBadge-longtxn">…</span></button>
+                <button class="tab-btn" data-tab="idxbloat"><i class="fa-solid fa-layer-group" style="margin-right:.35rem;opacity:.75;"></i>Index Bloat<span class="tab-badge" id="tabBadge-idxbloat">…</span></button>
             </div>
 
             <!-- Bloat Tab -->
@@ -407,6 +407,22 @@ window.PgAutovacuumView = async function PgAutovacuumView() {
                 if (meta) meta.textContent = 'Load error';
             }
         } catch (e) { console.error('Index bloat render error:', e); }
+
+        // ---- Update tab badges ----
+        try {
+            const bloatCount = document.getElementById('pgBloatTbody')?.querySelectorAll('tr:not(.text-muted)').length || 0;
+            const idleCount  = document.getElementById('pgIdleTbody')?.querySelectorAll('tr:not(.text-muted)').length || 0;
+            const longCount  = document.getElementById('pgLongTxnTbody')?.querySelectorAll('tr:not(.text-muted)').length || 0;
+            const idxCount   = document.getElementById('pgIdxBloatTbody')?.querySelectorAll('tr:not(.text-muted)').length || 0;
+            const bb = document.getElementById('tabBadge-bloat');
+            const bi = document.getElementById('tabBadge-idle');
+            const bl = document.getElementById('tabBadge-longtxn');
+            const bx = document.getElementById('tabBadge-idxbloat');
+            if (bb) bb.textContent = bloatCount;
+            if (bi) bi.textContent = idleCount;
+            if (bl) bl.textContent = longCount;
+            if (bx) bx.textContent = idxCount;
+        } catch (_) {}
     };
 
     document.getElementById('pgAvRefreshBtn')?.addEventListener('click', loadAll);

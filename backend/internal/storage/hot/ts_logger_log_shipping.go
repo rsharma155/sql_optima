@@ -132,20 +132,21 @@ func (tl *TimescaleLogger) GetLogShippingHealth(ctx context.Context, instanceNam
 			&restoreDelay, &restoreThreshold,
 			&status, &isPrimary,
 		); err != nil {
+			log.Printf("[LogShipping] scan error: %v", err)
 			continue
 		}
 
 		row := map[string]interface{}{
-			"capture_timestamp":        captureTs,
-			"primary_server":           primaryServer,
-			"primary_database":         primaryDB,
-			"secondary_server":         secondaryServer,
-			"secondary_database":       secondaryDB,
-			"last_backup_file":         lastBackupFile,
-			"restore_delay_minutes":    restoreDelay,
+			"capture_timestamp":         captureTs,
+			"primary_server":            primaryServer,
+			"primary_database":          primaryDB,
+			"secondary_server":          secondaryServer,
+			"secondary_database":        secondaryDB,
+			"last_backup_file":          lastBackupFile,
+			"restore_delay_minutes":     restoreDelay,
 			"restore_threshold_minutes": restoreThreshold,
-			"status":                   status,
-			"is_primary":               isPrimary,
+			"status":                    status,
+			"is_primary":                isPrimary,
 		}
 		if lastBackupDate != nil {
 			row["last_backup_date"] = *lastBackupDate

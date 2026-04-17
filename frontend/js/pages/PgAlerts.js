@@ -154,16 +154,20 @@ window.PgAlertsView = async function() {
         </div>
     `;
 
-    // Wire Ack/Resolve buttons without inline handlers (CSP-safe)
-    window.routerOutlet.addEventListener('click', function onAlertAction(e) {
+    // Wire Ack/Resolve buttons without inline handlers (CSP-safe).
+    // Remove any prior handler before registering so re-renders don't stack listeners.
+    if (window._pgAlertsActionHandler) {
+        window.routerOutlet.removeEventListener('click', window._pgAlertsActionHandler);
+    }
+    window._pgAlertsActionHandler = function onAlertAction(e) {
         const btn = e.target.closest('[data-alert-action]');
         if (!btn) return;
-        window.routerOutlet.removeEventListener('click', onAlertAction);
         const id = btn.dataset.alertId;
         const action = btn.dataset.alertAction;
         if (action === 'ack') window._alertAck(id);
         else if (action === 'resolve') window._alertResolve(id);
-    });
+    };
+    window.routerOutlet.addEventListener('click', window._pgAlertsActionHandler);
 };
 
 // ── Alert action helpers ──────────────────────────────────────

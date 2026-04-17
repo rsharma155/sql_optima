@@ -12,6 +12,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -111,7 +112,10 @@ func (h *AlertHandlers) AcknowledgeAlert(w http.ResponseWriter, r *http.Request)
 	var body struct {
 		Reason string `json:"reason"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body) // body is optional; ignore decode errors
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		jsonError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 
 	actor := actorFromRequest(r)
 
@@ -130,7 +134,10 @@ func (h *AlertHandlers) ResolveAlert(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Reason string `json:"reason"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body) // body is optional; ignore decode errors
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		jsonError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 
 	actor := actorFromRequest(r)
 
