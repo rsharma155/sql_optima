@@ -77,21 +77,28 @@ async function initPgSessions() {
     }
 
     window._pgSessionsData = sessions;
-    renderSessionsTable(sessions);
+
+    // Respect the currently selected filter when re-rendering after refresh/reload.
+    const filterEl = document.getElementById('sessionStateFilter');
+    const _applySessionFilter = (allSessions) => {
+        const filter = filterEl ? filterEl.value : 'all';
+        if (filter === 'active') {
+            return allSessions.filter(s => (s.state || '').toLowerCase() === 'active');
+        } else if (filter === 'idle in transaction') {
+            return allSessions.filter(s => (s.state || '').toLowerCase() === 'idle in transaction');
+        }
+        return allSessions;
+    };
+
+    renderSessionsTable(_applySessionFilter(sessions));
     renderSessionsSpotlight(sessions);
     renderSessionStateCharts(stateHist);
 
-    const filterEl = document.getElementById('sessionStateFilter');
-    if (filterEl) {
+    // Guard against duplicate listener attachment on auto-refresh re-runs.
+    if (filterEl && !filterEl._pgFilterBound) {
+        filterEl._pgFilterBound = true;
         filterEl.addEventListener('change', function() {
-            const filter = this.value;
-            let filtered = window._pgSessionsData || [];
-            if (filter === 'active') {
-                filtered = filtered.filter(s => (s.state || '').toLowerCase() === 'active');
-            } else if (filter === 'idle in transaction') {
-                filtered = filtered.filter(s => (s.state || '').toLowerCase() === 'idle in transaction');
-            }
-            renderSessionsTable(filtered);
+            renderSessionsTable(_applySessionFilter(window._pgSessionsData || []));
         });
     }
 
@@ -234,8 +241,8 @@ function renderSessionsTable(sessions) {
                 <td>${blockedBy}</td>
                 <td>${querySnippet}</td>
                 <td>
-                    <button class="btn btn-sm btn-outline" style="border-color:var(--danger); color:var(--danger)" onclick="window.killPgSession(${session.pid})">Kill</button>
-                    <button class="btn btn-sm btn-outline" onclick="window.showQueryModal('${window.escapeHtml((session.query || '').replace(/'/g, "\\'"))}')">Explain</button>
+                    <button class="btn btn-sm btn-outline" style="border-color:var(--danger); color:var(--danger)" data-action="call" data-fn="killPgSession" data-arg="${session.pid}">Kill</button>
+                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="showQueryModal" data-arg="${window.escapeHtml(session.query || '')}">Explain</button>
                 </td>
             </tr>
         `;

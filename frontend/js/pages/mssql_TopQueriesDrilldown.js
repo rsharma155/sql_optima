@@ -103,12 +103,12 @@ window.mssql_TopQueriesDrilldown = async function() {
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between">
                 <div>
-                    <button class="btn btn-sm btn-outline mb-2" onclick="window.appNavigate('dashboard')"><i class="fa-solid fa-arrow-left"></i> Back to Live Dashboard</button>
+                    <button class="btn btn-sm btn-outline mb-2" data-action="navigate" data-route="dashboard"><i class="fa-solid fa-arrow-left"></i> Back to Live Dashboard</button>
                     <h1><i class="fa-solid fa-code text-accent"></i> Top Query Details</h1>
                     <p class="subtitle">Extended Events Query Analysis [${window.escapeHtml(inst.name)}]</p>
                 </div>
                 <div class="custom-select-group">
-                    <button class="btn btn-accent btn-sm" onclick="navigator.clipboard.writeText('${sqlText.replace(/'/g, "\\'")}')"><i class="fa-solid fa-copy"></i> Copy SQL</button>
+                    <button class="btn btn-accent btn-sm" data-action="copy-text" data-text="${sqlText.replace(/'/g, '&#39;')}"><i class="fa-solid fa-copy"></i> Copy SQL</button>
                 </div>
             </div>
 
@@ -191,7 +191,7 @@ window.mssql_TopQueriesDrilldown = async function() {
                     <div class="card-header flex-between">
                         <h3><i class="fa-solid fa-clock text-accent"></i> Top 10 Long Running Queries History</h3>
                         <div class="flex-between" style="gap: 10px;">
-                            <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshTopQueriesData()">
+                            <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshTopQueriesData">
                                 <i class="fa-solid fa-refresh"></i> Refresh Data
                             </button>
                             <span class="badge badge-info">${(xeventMetrics.recent_events || []).length} Queries</span>
@@ -228,19 +228,19 @@ window.mssql_TopQueriesDrilldown = async function() {
                                             <td><span class="text-accent">${window.escapeHtml(group.clientAppName)}</span></td>
                                             <td><span class="text-warning">${window.escapeHtml(group.clientHostname)}</span></td>
                                             <td>${group.executionCount}</td>
-                                            <td class="metric-cell" onclick="event.stopPropagation(); window.showMetricDetail('cpu_time', '${group.avgCpuTime}', '${encodeURIComponent(JSON.stringify(sample))}')">
+                                            <td class="metric-cell" data-action="call" data-fn="showMetricDetail" data-metric="cpu_time" data-value="${group.avgCpuTime}" data-sample="${encodeURIComponent(JSON.stringify(sample))}" data-stop-propagation="1">
                                                 <span class="metric-value" style="font-size: 0.85rem;">${group.avgCpuTime}</span>
                                             </td>
                                             <td><span class="badge badge-info">${window.escapeHtml(group.databaseName)}</span></td>
-                                            <td class="metric-cell" onclick="event.stopPropagation(); window.showMetricDetail('duration', '${group.avgDuration}', '${encodeURIComponent(JSON.stringify(sample))}')">
+                                            <td class="metric-cell" data-action="call" data-fn="showMetricDetail" data-metric="duration" data-value="${group.avgDuration}" data-sample="${encodeURIComponent(JSON.stringify(sample))}" data-stop-propagation="1">
                                                 <span class="metric-value" style="font-size: 0.85rem;">${group.avgDuration}</span>
                                             </td>
-                                            <td class="metric-cell" onclick="event.stopPropagation(); window.showMetricDetail('logical_reads', '${group.avgLogicalReads}', '${encodeURIComponent(JSON.stringify(sample))}')">
+                                            <td class="metric-cell" data-action="call" data-fn="showMetricDetail" data-metric="logical_reads" data-value="${group.avgLogicalReads}" data-sample="${encodeURIComponent(JSON.stringify(sample))}" data-stop-propagation="1">
                                                 <span class="metric-value" style="font-size: 0.85rem;">${group.avgLogicalReads}</span>
                                             </td>
                                             <td><span class="text-success">${window.escapeHtml(group.username)}</span></td>
                                             <td>
-                                                <button class="btn btn-xs btn-accent" onclick="event.stopPropagation(); window.showQueryDetails('${encodeURIComponent(JSON.stringify(group.sampleEvent))}')" title="View Details">
+                                                <button class="btn btn-xs btn-accent" data-action="call" data-fn="showQueryDetails" data-arg="${encodeURIComponent(JSON.stringify(group.sampleEvent))}" data-stop-propagation="1" title="View Details">
                                                     <i class="fa-solid fa-eye"></i>
                                                 </button>
                                             </td>
@@ -311,7 +311,7 @@ window.mssql_TopQueriesDrilldown = async function() {
 
 // Refresh function for the top queries drilldown page
 window.refreshTopQueriesData = async function() {
-    const refreshBtn = document.querySelector('button[onclick="window.refreshTopQueriesData()"]');
+    const refreshBtn = document.querySelector('button[data-action="call" data-fn="refreshTopQueriesData"]');
     if (refreshBtn) {
         refreshBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Refreshing...';
         refreshBtn.disabled = true;

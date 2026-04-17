@@ -1,179 +1,142 @@
-# DB Monitor Pro
+# SQL Optima
 
-A production-grade, highly scalable, dual-engine (PostgreSQL & SQL Server) database monitoring Single Page Application (SPA). This system has been explicitly architected around Domain-Driven Design (DDD) to be 100% platform-independent, natively supporting **Windows**, **macOS**, and **Linux** identically.
+A production-grade, dual-engine (PostgreSQL & SQL Server) database monitoring platform with a single-page application UI. Built with Go and vanilla JavaScript, architected around Domain-Driven Design for cross-platform support (Windows, macOS, Linux).
 
-It now includes a PostgreSQL EXPLAIN plan analyzer with optimization and index advisor workflows, plus live SQL Server diagnostics and TimescaleDB-backed historical dashboards.
+Features include PostgreSQL EXPLAIN plan analysis with optimization and index advisor workflows, live SQL Server diagnostics, TimescaleDB-backed historical dashboards, a rules engine for best-practice checks, and a **cross-engine alert engine** with fingerprint-based deduplication, maintenance windows, and audit history.
 
 ---
 
-## 🖥️ UI Preview (Screenshots)
+## UI Preview
 
 ![SQL Server dashboard](docs/screenshots/sqlserver-dashboard.png)
 
 ![PostgreSQL dashboard](docs/screenshots/postgres-dashboard.png)
 
-## 🚀 Option 1: Running Everything with Docker Compose (Easiest)
-Use this option to spin up the entire application (Go Backend API + NGINX Frontend) instantly in isolated containers.
-
-### Execution Steps:
-1. Ensure you have [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine installed.
-2. Place the **`pg_explain_analyze`** module next to **`sql_monitoring_UI`** under the same parent folder (see `replace` in `backend/go.mod`). The Docker build runs `go mod download` and does **not** use a committed `vendor/` tree. For offline local builds only, you may run `cd backend && go mod vendor` (the `vendor/` directory is gitignored).
-3. From the **`sql_monitoring_UI`** directory, run:
-   ```bash
-   docker-compose -f docker/docker-compose.yml up --build -d
-   ```
-4. Access the web dashboard at `http://localhost:3000` (Nginx) or `http://localhost:8080` (Go API + static UI).
-
 ---
 
-## 🛠️ Option 2: Run Postgres/TimescaleDB via Docker & Start Server Manually
-Use this option to quickly spin up the backend's persistent data storage (TimescaleDB) via Docker while compiling and running the Go API manually on your local host for active development.
+## Quick Start — Docker Compose (recommended)
 
-### Phase 1: Start the PostgreSQL Infrastructure
-1. Navigate to the infrastructure folder and set up your initial credentials:
-   ```bash
-   cd infrastructure
-   cp docker/.env.example docker/.env
-   # Edit infrastructure/docker/.env to assign a secure DB_USER and DB_PASSWORD
-   ```
-2. Start the isolated TimescaleDB (and Backup Sidecar) engines:
-   ```bash
-   docker-compose -f docker/docker-compose.yml up -d
-   ```
-3. Verify the database started properly:
-   ```bash
-   docker logs dbmonitor_timescaledb
-   ```
+This brings up **TimescaleDB + Vault (Transit KMS) + Go API + static UI** with automatic schema bootstrap. You can then add monitored SQL Server / PostgreSQL targets from the web UI — no `config.yaml` editing required.
 
-### Phase 2: Start the Go Backend Server
-Ensure you have [Go 1.25+](https://go.dev/dl/) installed.
-1. Navigate back to the application's backend directory:
-   ```bash
-   cd ../backend
-   ```
-2. Download dependencies exactly once:
-   ```bash
-   go mod tidy
-   ```
-3. Launch the Application API Engine:
-   ```bash
-   # Add your target environment variables here (see SECRETS below)
-   go run cmd/server/main.go
-   ```
-4. View the raw operational Dashboard live at `http://localhost:8080`.
+### Prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine with Compose V2.
 
-### Phase 3: Stopping the Local Storage Sandbox
-When you finish testing and want to spin down your containerized TimescaleDB gracefully without losing persistent metrics:
-1. Navigate back to the infrastructure folder and stop the compose network:
-   ```bash
-   cd ../infrastructure
-   docker-compose -f docker/docker-compose.yml down
-   ```
-*(If deploying the entire suite via **Option 1**, you can simply run `docker-compose -f docker/docker-compose.yml down` directly from the repository root).*
+### Steps
 
----
-
-### Option 3: Using a Dedicated PostgreSQL/TimescaleDB Server (No Docker!)
-If you already maintain a dedicated PostgreSQL server locally or remotely and prefer **not** to use Docker for the metric storage backend, you can configure the app to connect directly to it!
-
-> [!IMPORTANT]
-> Your dedicated PostgreSQL server **must** have the [TimescaleDB extension installed](https://docs.timescale.com/install/latest/). 
-
-#### Step 1: Initialize Your Schema
-Connect to your dedicated PostgreSQL server as a superuser. You must manually execute the initialization scripts against your database:
 ```bash
-# 1. Create the database, user, and extension
-psql -h <your_host> -U postgres -f infrastructure/docker/init-scripts/01_init.sql
-
-# 2. Build the metric tables and hypertables
-psql -h <your_host> -U dbmonitor_user -d dbmonitor_metrics -f infrastructure/docker/init-scripts/02_timeseries_schema.sql
+cd docker
+cp .env.example .env          # optional — edit to change ports, passwords, or enable auth
+docker compose up --build
 ```
 
-#### Step 2: Configure Environment & Run
-When starting the Go backend, strictly define the TimescaleDB routing environment variables so it points to your dedicated host instead of assuming `localhost:5433`:
+Open **http://localhost:8080** — the Global Estate Overview loads immediately.
+
+### What starts automatically
+
+| Service | Purpose |
+|---------|---------|
+| **api** | Go backend serving the API + SPA UI on port 8080 |
+| **timescaledb** | TimescaleDB (pg16) for metric / time-series storage |
+| **vault** | HashiCorp Vault dev-mode (Transit KMS for credential encryption) |
+| **vault-setup** | One-shot: enables Transit engine and creates the encryption key |
+| **schema-setup** | One-shot: applies schema, rule engine, alert engine, seed data to TimescaleDB |
+
+### Adding monitored servers
+
+After the stack is running, add targets from the **Admin** panel in the UI or via the API:
+
+```bash
+# API example
+curl -X POST http://localhost:8080/api/admin/servers \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"PG-Prod","db_type":"postgres","host":"10.0.5.21","port":5432,"username":"monitor","password":"secret"}'
+```
+
+Credentials are encrypted at rest using Vault Transit.
+
+### Stopping
+
+```bash
+docker compose down            # data persists in the timescaledb_data volume
+docker compose down -v         # also removes stored data
+```
+
+### Create / reset admin user (local auth)
+
 ```bash
 cd backend
-
-# Point to your dedicated database user export for Mac/Linux
-export TIMESCALEDB_HOST="your_dedicated_ip_or_hostname"
-export TIMESCALEDB_PORT="5432"
-export DB_USER="dbmonitor_user"
-export DB_PASSWORD="your_secure_password"
-export DB_NAME="dbmonitor_metrics"
-export TIMESCALEDB_SSLMODE="disable" # Switch to 'require' for secure remote TLS
-
-# use the same variables for Windows PowerShell
-$env:TIMESCALEDB_HOST="your_dedicated_ip_or_hostname"
-$env:TIMESCALEDB_PORT="5432"
-$env:DB_USER="dbmonitor"
-$env:DB_PASSWORD="your_secure_password"
-$env:DB_NAME="dbmonitor_metrics"
-$env:TIMESCALEDB_SSLMODE="disable" # Switch to 'require' for secure remote TLS
-
-# (Also export your target monitored credential variables here as usual)
-
-# Launch the Application
-go run cmd/server/main.go
+NEW_ADMIN_PASSWORD="Admin123!ChangeMe" go run reset_password.go
 ```
 
 ---
 
-## ⚙️ Configuration & Adding Database Credentials
+## Option 2: TimescaleDB via Docker + Manual Go Server (dev workflow)
 
-The system coordinates parameters through your master `config.yaml` file natively at the repository root. Setting up servers is a two-step process to ensure passwords remain uncommitted and secure.
+Use this when you want to develop the Go backend locally but still need TimescaleDB.
 
-### 1. Update `config.yaml`
-Add your target PostgreSQL and SQL Server details to `config.yaml`.
-```yaml
-instances:
-  - name: "SQL-Prod-Primary"
-    type: "sqlserver"
-    host: "10.0.1.15"
-    port: 1433
-    databases: ["AppDB_Prod"]
+### Phase 1 — Start TimescaleDB
 
-  - name: "PG-Cluster-01"
-    type: "postgres"
-    host: "10.0.5.21"
-    port: 5432
-    databases: ["users_db"]
-```
-
-### 2. Supply Secure Passwords (Environment Variables)
-> [!IMPORTANT]
-> **Do not store passwords in plaintext inside `config.yaml`.** 
-
-The system automatically resolves environment variables to connect to these servers using a strict `DB_<INSTANCE_NAME>_USER` dynamic mapping structure (this maps instance names precisely to uppercase and replaces hyphens metrics with underscores `_`).
-
-**For Mac/Linux:**
 ```bash
-export DB_SQL_PROD_PRIMARY_USER="dbmonitor_admin"
-export DB_SQL_PROD_PRIMARY_PASSWORD="SuperSecretPassword!"
+cd infrastructure/docker
+cp ../../docker/.env.example .env    # adjust DB_PASSWORD
+docker compose up -d
+docker logs dbmonitor_timescaledb    # verify healthy
+```
 
-export DB_PG_CLUSTER_01_USER="postgres_admin"
-export DB_PG_CLUSTER_01_PASSWORD="StrongPGPassword123"
+### Phase 2 — Run the Go backend
 
-# Start the server afterward
+Requires [Go 1.25+](https://go.dev/dl/).
+
+```bash
+cd backend
+go mod tidy
+
+# Point at the Docker-managed TimescaleDB
+export DB_HOST=localhost DB_PORT=5432 DB_USER=dbmonitor \
+       DB_PASSWORD=change_me_in_production_use_strong_password \
+       DB_NAME=dbmonitor_metrics
+
 go run cmd/server/main.go
 ```
 
-**For Windows (PowerShell):**
-```powershell
-$env:DB_SQL_PROD_PRIMARY_USER="dbmonitor_admin"
-$env:DB_SQL_PROD_PRIMARY_PASSWORD="SuperSecretPassword!"
+Open **http://localhost:8080**.
 
-go run .\cmd\server\main.go
+### Phase 3 — Stop TimescaleDB
+
+```bash
+cd infrastructure/docker
+docker compose down
 ```
-
-If utilizing **Option 1 (Docker Compose Everything)**, you can inject these direct environment overrides directly into your `.env` shell so the containerized application can naturally assume them at runtime.
 
 ---
 
-## 📦 Build & run as a standalone executable (no “go run”)
-You can build a single backend binary that serves both the **API** and the **SPA UI** (static assets) so you don’t need to `cd backend` each time.
+## Option 3: Dedicated PostgreSQL / TimescaleDB (no Docker)
 
-### Build
-From the repo root:
+> Your PostgreSQL server **must** have the [TimescaleDB extension](https://docs.timescale.com/install/latest/) installed.
+
+### Initialize schema
+
+```bash
+psql -h <host> -U dbmonitor -d dbmonitor_metrics -f infrastructure/sql_scripts/00_timescale_schema.sql
+psql -h <host> -U dbmonitor -d dbmonitor_metrics -f infrastructure/sql_scripts/02_rule_engine.sql
+psql -h <host> -U dbmonitor -d dbmonitor_metrics -f infrastructure/sql_scripts/03_additional_pg_rules.sql
+psql -h <host> -U dbmonitor -d dbmonitor_metrics -f infrastructure/sql_scripts/04_alert_engine.sql
+psql -h <host> -U dbmonitor -d dbmonitor_metrics -f infrastructure/sql_scripts/01_seed_data.sql
+```
+
+### Run the backend
+
+```bash
+cd backend
+export DB_HOST=<host> DB_PORT=5432 DB_USER=dbmonitor \
+       DB_PASSWORD=<password> DB_NAME=dbmonitor_metrics
+
+go run cmd/server/main.go
+```
+
+---
+
+## Build a standalone binary
 
 ```bash
 cd backend
@@ -181,132 +144,190 @@ go test ./...
 go build -o ../dist/sql-optima ./cmd/server
 ```
 
-This produces: `dist/sql-optima`
+Run from anywhere (keep `frontend/` next to the binary or set `SQL_OPTIMA_FRONTEND_DIR`):
 
-### Run (from anywhere)
 ```bash
-export JWT_SECRET="change-this"
-export TIMESCALEDB_HOST="localhost"
-export TIMESCALEDB_PORT="5432"
-export DB_USER="dbmonitor"
-export DB_PASSWORD="your_password"
-export DB_NAME="dbmonitor_metrics"
-
-# Monitored instance credentials:
-export DB_SQL_PROD_01_USER="..."
-export DB_SQL_PROD_01_PASSWORD="..."
-export DB_PG_CLUSTER_01_USER="..."
-export DB_PG_CLUSTER_01_PASSWORD="..."
-
+export DB_HOST=localhost DB_PORT=5432 DB_USER=dbmonitor \
+       DB_PASSWORD=<password> DB_NAME=dbmonitor_metrics
 ./dist/sql-optima
 ```
 
-Open:
-- UI + API: `http://localhost:8080`
+---
 
-### Optional: put it on your PATH
-macOS/Linux:
+## Configuration
+
+### Adding monitored targets
+
+**Recommended (Docker & production):** Use the Admin panel in the web UI or the `POST /api/admin/servers` endpoint. Credentials are encrypted with Vault Transit and stored in TimescaleDB.
+
+**Alternative (bare-metal / config-file):** Edit `config.yaml` at the repo root and supply credentials via environment variables:
+
+```yaml
+# config.yaml
+instances:
+  - name: "SQL-Prod-01"
+    type: "sqlserver"
+    host: "10.0.1.15"
+    port: 1433
+
+  - name: "PG-Cluster-01"
+    type: "postgres"
+    host: "10.0.5.21"
+    port: 5432
+```
 
 ```bash
-sudo install -m 0755 dist/sql-optima /usr/local/bin/sql-optima
-sql-optima
+# Credentials (never store in config.yaml)
+export DB_SQL_PROD_01_USER="monitor" DB_SQL_PROD_01_PASSWORD="secret"
+export DB_PG_CLUSTER_01_USER="monitor" DB_PG_CLUSTER_01_PASSWORD="secret"
 ```
 
-Windows (PowerShell):
+The naming convention is `DB_<INSTANCE_NAME>_USER` / `DB_<INSTANCE_NAME>_PASSWORD` (hyphens become underscores, letters are uppercased).
+
+> `config.yaml` is **optional** in Docker mode — if missing, the backend starts with an empty instance list and expects targets to be registered via the UI/API.
+
+---
+
+## Platform Compose (production profile)
+
+For production-like deployments with Redis (Asynq worker queue), Prometheus, and Grafana:
+
+```bash
+# Requires JWT_SECRET to be set
+export JWT_SECRET=$(openssl rand -base64 32)
+docker compose -f docker-compose.platform.yml up -d
+```
+
+This starts: API, worker, TimescaleDB, Redis, Prometheus, and Grafana. Auth is enabled by default (`AUTH_REQUIRED=1`).
+
+---
+
+## Target database setup scripts
+
+Provision monitoring roles on your target databases so SQL Optima can collect telemetry.
+
+### SQL Server
 
 ```powershell
-# Example: copy to a folder in PATH (or add it)
-Copy-Item .\\dist\\sql-optima.exe $env:USERPROFILE\\bin\\sql-optima.exe
+sqlcmd -S <server> -i infrastructure/sql_scripts/sqlserver_init.sql
 ```
 
-### Notes
-- The binary serves UI assets from `frontend/`. If you move the binary elsewhere, keep the `frontend/` folder next to it or set the environment variable(s) supported by `config.ResolveDataPaths()` to point at the UI directory.
-- For Docker deployments, prefer the provided Compose setup.
+### PostgreSQL
+
+```bash
+psql -U postgres -f infrastructure/sql_scripts/pgsql_init.sql
+psql -U postgres -d <target_db> -c "SELECT grant_db_permissions();"
+```
 
 ---
 
-## ✨ Recent UI enhancements
-- **EXPLAIN Plan analyzer**: SSMS-style horizontal plan map, hover tooltips, per-edge thickness by row flow, and modal node details.
-- **Postgres index advisor**: new JSON plan + SQL workflow with HypoPG-aware recommendations, query rewrites, and index DDL suggestions.
-- **Live SQL Server diagnostics**: new `source=live` override support for direct DMV/live data when inspecting MSSQL dashboards and drilldowns.
-- **Storage & Index Health (Timescale-backed)**: cross-engine dashboard for index usage deltas, scan hotspots, unused-index candidates, duplicate-index candidates, and table/index growth trends with time-range + db/schema/table filters.
-- **SQL Insights**: always shows provided SQL; improved index DDL suggestions (schema-qualified tables + more condition sources).
-- **Optimization report**: now summarizes SQL-linked hints (matched excerpts + index DDL counts).
-- **SQL Server Performance Debt**: de-duplicated “latest per finding” so repeated recommendations don’t show twice.
-- **Postgres Advanced Enterprise Monitor**: BGWriter/Checkpoint dedupe + compact trend chart with a smaller table.
+## Repository layout
+
+| Path | Purpose |
+|------|---------|
+| `docker/docker-compose.yml` | **Primary** compose — API + TimescaleDB + Vault + schema bootstrap |
+| `docker-compose.platform.yml` | Production profile — adds worker, Redis, Prometheus, Grafana |
+| `Dockerfile` | Multi-stage build for the API server (distroless non-root image) |
+| `Dockerfile.worker` | Multi-stage build for the background worker |
+| `infrastructure/docker/` | Standalone TimescaleDB compose for local dev (Option 2) |
+| `infrastructure/sql_scripts/` | Schema, seed data, rule engine, alert engine, and target DB setup scripts |
+| `config.yaml` | Optional instance definitions (not needed when using server registry) |
+| `backend/` | Go API, collector, service layer, repository, middleware |
+| `frontend/` | Static SPA (HTML/CSS/JS) served by the Go backend |
+| `docs/` | API reference, threat model, architecture docs |
 
 ---
 
-## 📊 Storage & Index Health (Timescale-backed)
+## Alert Engine
+
+The built-in alert engine continuously evaluates rules against every monitored instance and creates deduplicated, auditable alerts.
+
+### Key design
+
+- **Fingerprint-based dedup** — each rule+instance combination produces a stable SHA-256 fingerprint. A partial unique index (`fingerprint WHERE status IN ('open', 'acknowledged')`) ensures only one active alert per fingerprint; subsequent evaluations bump `hit_count` and `last_seen_at` instead of creating duplicates.
+- **Singleton evaluation** — the background loop uses `pg_try_advisory_xact_lock` so that in multi-replica deployments only one process evaluates per tick.
+- **Maintenance windows** — suppress alert creation for a given instance + engine during scheduled maintenance.
+- **Audit trail** — every status transition (open → acknowledged → resolved) is recorded in `optima_alert_history` with actor, reason, and timestamp.
+- **Auth-derived actor** — mutation endpoints (`acknowledge`, `resolve`, `create maintenance window`) extract the actor identity from JWT claims; no client-supplied `actor` field is trusted.
+
+### Built-in evaluators
+
+| Evaluator | Engine | Category |
+|-----------|--------|----------|
+| Blocking sessions | SQL Server | blocking |
+| Failed agent jobs | SQL Server | jobs |
+| Disk space | SQL Server | storage |
+| Replication lag | PostgreSQL | replication |
+| Blocking queries | PostgreSQL | blocking |
+| Backup freshness | PostgreSQL | backup |
+| Disk space | PostgreSQL | storage |
+
+### API endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/alerts` | GET | List alerts (filter by status, instance, severity, engine) |
+| `/api/alerts/{id}` | GET | Get alert detail |
+| `/api/alerts/{id}/acknowledge` | POST | Acknowledge (body: `{"reason": "..."}`) |
+| `/api/alerts/{id}/resolve` | POST | Resolve (body: `{"reason": "..."}`) |
+| `/api/alerts/count` | GET | Count open alerts for an instance |
+| `/api/alerts/maintenance` | POST | Create maintenance window |
+| `/api/alerts/maintenance` | GET | List active maintenance windows |
+| `/api/alerts/maintenance/{id}` | DELETE | Delete maintenance window |
+
+---
+
+## Storage & Index Health (Timescale-backed)
+
 The **Storage & Index Health** dashboard is a cross-engine page (`storage-index-health`) that reads historical snapshots from TimescaleDB and surfaces:
 
-- **Index usage deltas** (seeks/scans/lookups/updates) and “unused index” candidates
+- **Index usage deltas** (seeks/scans/lookups/updates) and "unused index" candidates with index definition detail
 - **High-scan tables** (scan-to-seek ratios) and scan hotspots
 - **Largest tables / indexes** by size
 - **Growth trends** (table + index) with simple projections
 - **Duplicate index candidates** (requires index-definition snapshots)
 
 ### Backend endpoints
+
 All endpoints are **Timescale reads** and require `engine` and `instance` query parameters.
 
-- `GET /api/timescale/storage-index-health/filters`
-- `GET /api/timescale/storage-index-health/dashboard`
-- `GET /api/timescale/storage-index-health/index-usage`
-- `GET /api/timescale/storage-index-health/table-usage`
-- `GET /api/timescale/storage-index-health/growth`
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/timescale/storage-index-health/filters` | Distinct db/schema/table options |
+| `GET /api/timescale/storage-index-health/dashboard` | Pre-aggregated KPIs, hotspots, candidates |
+| `GET /api/timescale/storage-index-health/index-usage` | Index usage point series |
+| `GET /api/timescale/storage-index-health/table-usage` | Table usage point series |
+| `GET /api/timescale/storage-index-health/growth` | Table/index growth trends |
+| `GET /api/timescale/storage-index-health/index-definition` | Index CREATE statement details |
 
-### Timescale tables/hypertables
-These are created by `infrastructure/sql_scripts/00_timescale_schema.sql`:
-
-- `monitor.index_usage_stats`
-- `monitor.table_usage_stats`
-- `monitor.table_size_history`
-
-> Note: Right after first deploy, it’s normal for the page to be empty until the historical collector has run a few ticks (index/table usage snapshots are on a ~15 min cadence; growth snapshots are coarser).
-
-## 🛡️ Target Database Setup Scripts
-In order for DB Monitor Pro to capture system telemetry efficiently, you must provision specialized system-level monitoring roles. Setup scripts have been shipped for this explicitly.
-
-### SQL Server Role Setup
-```powershell
-sqlcmd -S <server> -i infrastructure\scripts\sqlserver\setup_dbmonitor_user.sql
-```
-
-### PostgreSQL Role Setup
-```bash
-psql -U postgres -f infrastructure/scripts/postgres/setup_dbmonitor_user.sql
-# Then, grant permissions inside each distinct database manually
-psql -U postgres -d <target_db> -c "SELECT grant_db_permissions();"
-```
-
----
-
-## Documentation map
-
-- **[project_details.md](./project_details.md)** — End-to-end application flow (backend handlers, SPA boot, **route → view** table for every dashboard, sidebar behavior, optional/unused pages).
-
----
-
-## Recent security and UX fixes
-
-- **SPA router**: Route IDs are validated before navigation (alphanumeric + hyphens, max length) to avoid odd or unsafe values. Unknown routes show an explicit **Page not found** screen instead of loading the SQL Server dashboard by mistake.
-- **XSS hardening**: Error paths that write to `innerHTML` use `window.escapeHtml` (e.g. router catch blocks, MSSQL dashboard and locks drilldown, jobs rendering errors). Sidebar highlighting compares `data-route` attributes instead of building a dynamic CSS selector from the route string.
-- **Auth navigation**: `login` and `incidents` routes are registered in the router (`incidents` opens the same view as **Alerts**, matching Reports shortcuts).
-- **Initial sidebar**: `index.html` shows only **Global Estate** until an instance is selected, matching runtime behavior and avoiding dead links before config loads.
+> After first deploy, dashboards will be empty until the historical collector has run a few ticks (~15 min cadence for index/table usage; growth snapshots are coarser).
 
 ---
 
 ## Security operations checklist
 
 1. **JWT**: Set `JWT_SECRET` to a long random value in any shared or production environment. The server logs a warning if it falls back to the development default.
-2. **API exposure**: Many read-only monitoring endpoints are **public** on the API router (same pattern as typical internal dashboards). Restrict access with network policy, VPN, or an authenticating reverse proxy if the API is Internet-facing.
-3. **Secrets**: Keep database passwords in environment variables, not in `config.yaml` (see above).
-4. **Login**: `POST /api/login` and `POST /api/auth/login` are the same rate-limited implementation (`AuthHandlers.Login`). Use either from API clients; the SPA uses `/api/login`.
+2. **API exposure**: Many read-only monitoring endpoints are public. Restrict access with network policy, VPN, or an authenticating reverse proxy if the API is Internet-facing.
+3. **Secrets**: Keep database passwords in environment variables, not in `config.yaml`.
+4. **Auth**: Set `AUTH_REQUIRED=1` in production. `POST /api/login` and `POST /api/auth/login` are the same rate-limited handler.
+5. **Vault**: For production, use external Vault with AppRole/policies — do not use dev-mode root tokens.
 
 ---
 
-## PostgreSQL and MSSQL UI (snapshot)
+## Documentation
 
-- **PostgreSQL**: Control Center, sessions, locks, queries, storage, replication/HA, best-practices (with rules engine + PG-specific API where applicable), CPU/memory, alerts. Optional routes: `pg-config`, `pg-cnpg`, `dynamic-dashboard` (see `project_details.md`).
-- **SQL Server**: Instance dashboard, CPU dashboard, live diagnostics, HA/AG, enterprise metrics, performance debt, agent jobs, alerts, best practices; drilldowns for CPU, queries, bottlenecks, growth, indexes, locks, deadlocks.
-- **Replication (PG)**: Standby and replication slot tables use a responsive **CSS grid** layout so headers and rows stay aligned on narrow viewports.
+| Document | Description |
+|----------|-------------|
+| [project_details.md](./project_details.md) | Application flow, SPA route map, sidebar behavior |
+| [docs/API.md](./docs/API.md) | API endpoint reference |
+| [docs/threat_model.md](./docs/threat_model.md) | Security threat model and mitigations |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture and trust boundaries |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Contribution guidelines |
+| [SECURITY.md](./SECURITY.md) | Security disclosure policy |
+
+---
+
+## PostgreSQL and SQL Server dashboards
+
+- **PostgreSQL**: Control Center, sessions, locks, queries, EXPLAIN analyzer, storage, replication/HA, enterprise monitor, best-practices, CPU/memory, alerts.
+- **SQL Server**: Instance dashboard, CPU dashboard, live diagnostics, HA/AG, enterprise metrics, performance debt, memory drilldown, agent jobs, alerts, best practices; drilldowns for CPU, queries, bottlenecks, growth, indexes, locks, deadlocks.

@@ -26,7 +26,7 @@ window.LiveDiagnosticsView = async function() {
                         <option value="10000">10s</option>
                         <option value="30000">30s</option>
                     </select>
-                    <button class="btn btn-sm btn-accent" onclick="window.refreshLiveDiagnostics()"><i class="fa-solid fa-refresh"></i> Refresh Now</button>
+                    <button class="btn btn-sm btn-accent" data-action="call" data-fn="refreshLiveDiagnostics"><i class="fa-solid fa-refresh"></i> Refresh Now</button>
                 </div>
             </div>
 
@@ -303,7 +303,9 @@ window.loadLiveRunningQueries = async function(instanceName) {
     errorDiv.style.display = 'none';
 
     try {
-        const res = await window.apiClient.authenticatedFetch(`/api/live/running-queries?instance=${encodeURIComponent(instanceName)}`);
+        const db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
+        const qs = db ? `&database=${encodeURIComponent(db)}` : '';
+        const res = await window.apiClient.authenticatedFetch(`/api/live/running-queries?instance=${encodeURIComponent(instanceName)}${qs}`);
         const data = await res.json();
 
         loader.style.display = 'none';
@@ -340,7 +342,7 @@ window.loadLiveRunningQueries = async function(instanceName) {
                     <td><span class="badge badge-outline">${window.escapeHtml(q.wait_type || '-')}</span></td>
                     <td>${q.blocking_session_id ? `<span class="badge badge-danger">${q.blocking_session_id}</span>` : '-'}</td>
                     <td style="max-width:200px; font-family:monospace; font-size:0.65rem; cursor:pointer; color:var(--accent);" 
-                        onclick="window.showFullQueryText('q${idx}')" 
+                        data-action="call" data-fn="showFullQueryText" data-arg="q${idx}" 
                         title="Click to see full query">${window.escapeHtml(truncated)}</td>
                 </tr>
             `;
@@ -366,7 +368,7 @@ window.showFullQueryText = function(key) {
         <div style="background:var(--bg-surface); margin:2%; padding:20px; border-radius:12px; width:95%; max-width:900px; max-height:80vh; overflow:auto; color:var(--text-primary);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom:1px solid var(--border-color); padding-bottom:0.75rem;">
                 <h3 style="margin:0; color:var(--accent);"><i class="fa-solid fa-code"></i> Full Query Text</h3>
-                <button onclick="document.getElementById('query-text-modal').remove()" style="background:transparent; border:1px solid var(--border-color); color:var(--text-primary); font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
+                <button data-action="close-id" data-target="query-text-modal" style="background:transparent; border:1px solid var(--border-color); color:var(--text-primary); font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
             </div>
             <pre style="background:var(--bg-base); padding:1rem; border-radius:8px; white-space:pre-wrap; word-wrap:break-word; font-family:'Courier New',monospace; font-size:0.8rem; line-height:1.5; max-height:60vh; overflow:auto;">${window.escapeHtml(queryText)}</pre>
             <div style="text-align:center; margin-top:1rem;">
@@ -404,7 +406,9 @@ window.loadLiveBlocking = async function(instanceName) {
     panel.style.borderWidth = '1px';
 
     try {
-        const res = await window.apiClient.authenticatedFetch(`/api/live/blocking?instance=${encodeURIComponent(instanceName)}`);
+        const db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
+        const qs = db ? `&database=${encodeURIComponent(db)}` : '';
+        const res = await window.apiClient.authenticatedFetch(`/api/live/blocking?instance=${encodeURIComponent(instanceName)}${qs}`);
         const data = await res.json();
 
         loader.style.display = 'none';
@@ -497,7 +501,9 @@ window.loadLiveWaits = async function(instanceName) {
     errorDiv.style.display = 'none';
 
     try {
-        const res = await window.apiClient.authenticatedFetch(`/api/live/waits?instance=${encodeURIComponent(instanceName)}`);
+        const db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
+        const qs = db ? `&database=${encodeURIComponent(db)}` : '';
+        const res = await window.apiClient.authenticatedFetch(`/api/live/waits?instance=${encodeURIComponent(instanceName)}${qs}`);
         const data = await res.json();
 
         loader.style.display = 'none';
@@ -538,7 +544,9 @@ window.loadLiveConnections = async function(instanceName) {
     errorDiv.style.display = 'none';
 
     try {
-        const res = await window.apiClient.authenticatedFetch(`/api/live/connections?instance=${encodeURIComponent(instanceName)}`);
+        const db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
+        const qs = db ? `&database=${encodeURIComponent(db)}` : '';
+        const res = await window.apiClient.authenticatedFetch(`/api/live/connections?instance=${encodeURIComponent(instanceName)}${qs}`);
         const data = await res.json();
 
         loader.style.display = 'none';

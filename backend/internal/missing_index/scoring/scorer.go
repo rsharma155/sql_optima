@@ -184,21 +184,6 @@ func buildIndexStatement(candidate types.IndexCandidate) string {
 	return "CREATE INDEX CONCURRENTLY ON " + candidate.Table.Schema + "." + candidate.Table.Name + " (" + cols + ")" + include
 }
 
-func getFirstFewCols(cols []types.IndexColumn) string {
-	result := ""
-	for i := 0; i < len(cols) && i < 3; i++ {
-		if i > 0 {
-			result += "_"
-		}
-		result += cols[i].Name
-	}
-	return result
-}
-
-func getFirstFewChars(cols []types.IndexColumn) string {
-	return getFirstFewCols(cols)
-}
-
 func buildReasoning(result types.VerificationResult, confidence float64) []string {
 	reasoning := []string{}
 

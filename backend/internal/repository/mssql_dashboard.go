@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/models"
 )
 
@@ -94,7 +93,7 @@ func (c *MssqlRepository) FetchLiveTelemetry(instanceName string, prev models.Da
 	}
 
 	sessionQuery := `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
-	db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
+	_ = db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
 
 	connQuery := `
 		SELECT 
@@ -317,50 +316,7 @@ func (c *MssqlRepository) FetchLiveTelemetry(instanceName string, prev models.Da
 		}
 	}
 
-	if config.GlobalQueries != nil && len(config.GlobalQueries.Metrics) > 0 {
-		metrics.PrometheusData = make(map[string][]map[string]interface{})
-
-		for _, q := range config.GlobalQueries.Metrics {
-			if q.MetricName == "mssql_cpu_usage_percent" || q.MetricName == "mssql_long_running_queries" {
-				continue
-			}
-
-			rows, err := db.Query(q.Query)
-			if err != nil {
-				continue
-			}
-
-			cols, _ := rows.Columns()
-			var queryResults []map[string]interface{}
-
-			for rows.Next() {
-				columns := make([]interface{}, len(cols))
-				columnPointers := make([]interface{}, len(cols))
-				for i := range columns {
-					columnPointers[i] = &columns[i]
-				}
-
-				if err := rows.Scan(columnPointers...); err == nil {
-					rowMap := make(map[string]interface{})
-					for i, colName := range cols {
-						val := columnPointers[i].(*interface{})
-						switch v := (*val).(type) {
-						case []byte:
-							rowMap[colName] = string(v)
-						default:
-							rowMap[colName] = v
-						}
-					}
-					queryResults = append(queryResults, rowMap)
-				}
-			}
-			rows.Close()
-
-			if len(queryResults) > 0 {
-				metrics.PrometheusData[q.MetricName] = queryResults
-			}
-		}
-	}
+	// queries.yml-driven dynamic sweep removed: all dashboard queries are now maintained in Go.
 
 	return metrics
 }
@@ -544,7 +500,7 @@ func (c *MssqlRepository) FetchDashboardTelemetry(instanceName string, prev mode
 
 	// 2. Active Sessions (mssql_active_sessions_by_status)
 	sessionQuery := `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
-	db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
+	_ = db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
 
 	// 2b. Connections grouping natively over physically bounded user target logical pools
 	connQuery := `
@@ -853,57 +809,12 @@ func (c *MssqlRepository) FetchDashboardTelemetry(instanceName string, prev mode
 		}
 	}
 
-	// 7. Dynamic Prometheus Sweep (queries.yml Engine)
-	if config.GlobalQueries != nil && len(config.GlobalQueries.Metrics) > 0 {
-		metrics.PrometheusData = make(map[string][]map[string]interface{})
-
-		for _, q := range config.GlobalQueries.Metrics {
-			// Skip physical overlaps explicitly bounded by the UI logic above
-			if q.MetricName == "mssql_cpu_usage_percent" || q.MetricName == "mssql_long_running_queries" {
-				continue
-			}
-
-			rows, err := db.Query(q.Query)
-			if err != nil {
-				continue // SQL version compatibility fail or permissions lock
-			}
-
-			cols, _ := rows.Columns()
-			var queryResults []map[string]interface{}
-
-			for rows.Next() {
-				columns := make([]interface{}, len(cols))
-				columnPointers := make([]interface{}, len(cols))
-				for i := range columns {
-					columnPointers[i] = &columns[i]
-				}
-
-				if err := rows.Scan(columnPointers...); err == nil {
-					rowMap := make(map[string]interface{})
-					for i, colName := range cols {
-						val := columnPointers[i].(*interface{})
-						switch v := (*val).(type) {
-						case []byte:
-							rowMap[colName] = string(v)
-						default:
-							rowMap[colName] = v
-						}
-					}
-					queryResults = append(queryResults, rowMap)
-				}
-			}
-			rows.Close()
-
-			if len(queryResults) > 0 {
-				metrics.PrometheusData[q.MetricName] = queryResults
-			}
-		}
-	}
+	// queries.yml-driven dynamic sweep removed: all dashboard queries are now maintained in Go.
 
 	return metrics
 }
 
-func (c *MssqlRepository) FetchTopCPUQueries(instanceName string, limit int) ([]map[string]interface{}, error) {
+func (c *MssqlRepository) FetchTopCPUQueries(instanceName string, limit int, database string) ([]map[string]interface{}, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[instanceName]
 	c.mutex.RUnlock()
@@ -915,6 +826,7 @@ func (c *MssqlRepository) FetchTopCPUQueries(instanceName string, limit int) ([]
 	if limit <= 0 {
 		limit = 20
 	}
+	dbFilter := strings.TrimSpace(database)
 
 	// Pull TOP 200 queries by CPU time executed in the last 5 minutes
 	query := `
@@ -1133,6 +1045,19 @@ func (c *MssqlRepository) FetchTopCPUQueries(instanceName string, limit int) ([]
 		deltaResults = deltaResults[:limit]
 	}
 
+	if dbFilter != "" {
+		filtered := make([]map[string]interface{}, 0, len(deltaResults))
+		for _, r := range deltaResults {
+			if r == nil {
+				continue
+			}
+			if v, ok := r["Database_Name"].(string); ok && strings.EqualFold(strings.TrimSpace(v), dbFilter) {
+				filtered = append(filtered, r)
+			}
+		}
+		deltaResults = filtered
+	}
+
 	// Swap the maps: The Go Garbage Collector will automatically clean up oldCache
 	c.mutex.Lock()
 	c.prevQueryCache[instanceName] = newCache
@@ -1155,20 +1080,20 @@ func (c *MssqlRepository) FetchLiveKPIs(instanceName string) map[string]interfac
 	return result
 }
 
-func (c *MssqlRepository) FetchLiveRunningQueries(instanceName string) ([]map[string]interface{}, error) {
+func (c *MssqlRepository) FetchLiveRunningQueries(instanceName string, database string) ([]map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("no connection")
 	}
-	return c.CollectLiveRunningQueries(context.Background(), db)
+	return c.CollectLiveRunningQueries(context.Background(), db, database)
 }
 
-func (c *MssqlRepository) FetchLiveBlockingChains(instanceName string) ([]map[string]interface{}, error) {
+func (c *MssqlRepository) FetchLiveBlockingChains(instanceName string, database string) ([]map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("no connection")
 	}
-	return c.CollectBlockingChains(db)
+	return c.CollectBlockingChains(db, database)
 }
 
 func (c *MssqlRepository) FetchLiveIOLatency(instanceName string) ([]map[string]interface{}, error) {
@@ -1195,18 +1120,18 @@ func (c *MssqlRepository) FetchLiveTempDBUsage(instanceName string) (map[string]
 	return summary, nil
 }
 
-func (c *MssqlRepository) FetchLiveWaitStats(instanceName string) ([]map[string]interface{}, error) {
+func (c *MssqlRepository) FetchLiveWaitStats(instanceName string, database string) ([]map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("no connection")
 	}
-	return c.CollectWaitStats(db)
+	return c.CollectWaitStats(db, database)
 }
 
-func (c *MssqlRepository) FetchLiveConnectionsByApp(instanceName string) ([]map[string]interface{}, error) {
+func (c *MssqlRepository) FetchLiveConnectionsByApp(instanceName string, database string) ([]map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("no connection")
 	}
-	return c.CollectConnectionStats(db)
+	return c.CollectConnectionStats(db, database)
 }

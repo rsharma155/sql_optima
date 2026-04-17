@@ -437,9 +437,11 @@
 
         async function fetchAndRender() {
             const lookback = Number(document.getElementById('perfDebtLookback')?.value || 2);
-            const url = `/api/mssql/performance-debt?instance=${encodeURIComponent(instance.name)}&lookback_hours=${encodeURIComponent(String(lookback))}`;
+            const db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
+            const dbQS = db ? `&database=${encodeURIComponent(db)}` : '';
+            const url = `/api/mssql/performance-debt?instance=${encodeURIComponent(instance.name)}&lookback_hours=${encodeURIComponent(String(lookback))}${dbQS}`;
             const t0 = Date.now();
-            const resp = await fetch(url);
+            const resp = await fetch(url, { cache: 'no-store' });
             window.updateSourceBadge('perfDebtSourceBadge', resp.headers.get('X-Data-Source'));
             let data;
             try {
@@ -516,6 +518,22 @@
 
             body.innerHTML = html || `<div class="glass-panel" style="padding:1rem;"><div class="text-muted">No findings available.</div></div>`;
         }
+
+        // If user changes global Target Database while staying on this page, refresh in-place.
+        // (Router also re-navigates, but this makes behavior reliable even if only the dropdown changes.)
+        try {
+            const dbSel = document.getElementById('database-select');
+            if (dbSel && !dbSel._perfDebtBound) {
+                dbSel._perfDebtBound = true;
+                dbSel.addEventListener('change', () => {
+                    const b = document.getElementById('perfDebtBody');
+                    if (b) b.innerHTML = `<div class="glass-panel" style="padding:1rem;"><div class="text-muted">Loading findings…</div></div>`;
+                    fetchAndRender().catch(() => {
+                        if (b) b.innerHTML = `<div class="glass-panel" style="padding:1rem;"><div class="text-danger">Failed to load findings.</div></div>`;
+                    });
+                });
+            }
+        } catch (e) { /* ignore */ }
 
         document.getElementById('perfDebtRefreshBtn').addEventListener('click', () => {
             body.innerHTML = `<div class="glass-panel" style="padding:1rem;"><div class="text-muted">Loading findings…</div></div>`;

@@ -9,10 +9,12 @@ package validation
 
 import "regexp"
 
-var instanceNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+// Letters and numbers in any script, plus a small set of punctuation common in display names.
+// Rejects path/query metacharacters, quotes, semicolons, and angle brackets.
+var instanceNameRe = regexp.MustCompile(`^[\p{L}\p{N} _.\-()@,]+$`)
 
 // ValidateInstanceName validates an instance identifier that is used in URLs and DB lookups.
-// It intentionally rejects whitespace, path separators, and HTML-like content.
+// Display names may include spaces and punctuation; characters that break URLs or SQL literals are rejected.
 func ValidateInstanceName(name string) error {
 	if name == "" {
 		return &Error{Message: "missing instance name"}

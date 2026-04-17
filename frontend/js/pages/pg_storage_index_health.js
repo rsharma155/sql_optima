@@ -17,7 +17,7 @@ window.PgStorageIndexHealthView = async function() {
                 <div class="alert alert-warning">
                     <h3>${dashTitle}</h3>
                     <p class="text-muted">Select a PostgreSQL instance to view index and table efficiency metrics.</p>
-                    <button class="btn btn-primary mt-2" onclick="window.appNavigate('global')"><i class="fa-solid fa-home"></i> Global Estate</button>
+                    <button class="btn btn-primary mt-2" data-action="navigate" data-route="global"><i class="fa-solid fa-home"></i> Global Estate</button>
                 </div>
             </div>`;
         return;

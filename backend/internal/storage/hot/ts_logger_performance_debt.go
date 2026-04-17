@@ -195,7 +195,8 @@ func (tl *TimescaleLogger) CleanupPerformanceDebtFindings(ctx context.Context, i
 }
 
 // GetLatestPerformanceDebtFindings returns latest snapshot within lookback window.
-func (tl *TimescaleLogger) GetLatestPerformanceDebtFindings(ctx context.Context, instanceName string, lookback time.Duration) ([]map[string]interface{}, error) {
+// If database is non-empty, scopes to that database only.
+func (tl *TimescaleLogger) GetLatestPerformanceDebtFindings(ctx context.Context, instanceName string, lookback time.Duration, database string) ([]map[string]interface{}, error) {
 	if lookback <= 0 {
 		lookback = 2 * time.Hour
 	}
@@ -212,11 +213,12 @@ func (tl *TimescaleLogger) GetLatestPerformanceDebtFindings(ctx context.Context,
 		FROM sqlserver_performance_debt_findings
 		WHERE server_instance_name = $1
 		  AND capture_timestamp >= NOW() - ($2::bigint * INTERVAL '1 second')
+		  AND ($3 = '' OR database_name = $3)
 		ORDER BY finding_key, capture_timestamp DESC
 		LIMIT 2000
 	`
 	secs := int64(lookback.Seconds())
-	rows, err := tl.pool.Query(ctx, q, instanceName, secs)
+	rows, err := tl.pool.Query(ctx, q, instanceName, secs, strings.TrimSpace(database))
 	if err != nil {
 		return nil, err
 	}

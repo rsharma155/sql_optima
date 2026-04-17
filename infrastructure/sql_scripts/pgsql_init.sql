@@ -34,27 +34,30 @@ BEGIN
 END
 $$;
 
+
 -- Grant required PostgreSQL system catalog permissions
 GRANT pg_read_all_settings TO dbmonitor_user;
 GRANT pg_read_all_stats TO dbmonitor_user;
 GRANT pg_stat_scan_tables TO dbmonitor_user;
 GRANT pg_monitor TO dbmonitor_user;
 
--- Grant execution on PostgreSQL monitoring functions
-GRANT EXECUTE ON FUNCTION pg_stat_activity TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_bgwriter TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_database TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_user_indexes TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_get_activity TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_get_bgwriter TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_show_all_settings TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_lock_status TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_locks TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_replication TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_replication_slots TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_control_checkpoint TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_control_system TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_control_database TO dbmonitor_user;
+-- Grant execution on PostgreSQL Statistics Views
+GRANT SELECT ON pg_stat_activity TO dbmonitor_user;
+GRANT SELECT ON pg_stat_bgwriter TO dbmonitor_user;
+GRANT SELECT ON pg_stat_database TO dbmonitor_user;
+GRANT SELECT ON pg_stat_user_indexes TO dbmonitor_user;
+GRANT SELECT ON pg_stat_replication TO dbmonitor_user;
+GRANT SELECT ON pg_replication_slots TO dbmonitor_user;
+GRANT SELECT ON pg_locks TO dbmonitor_user;
+
+-- Grant execution on PostgreSQL Monitoring Functions
+GRANT EXECUTE ON FUNCTION pg_stat_get_activity(integer) TO dbmonitor_user;
+--GRANT EXECUTE ON FUNCTION pg_stat_get_bgwriter() TO dbmonitor_user;
+GRANT EXECUTE ON FUNCTION pg_show_all_settings() TO dbmonitor_user;
+GRANT EXECUTE ON FUNCTION pg_lock_status() TO dbmonitor_user;
+GRANT EXECUTE ON FUNCTION pg_control_checkpoint() TO dbmonitor_user;
+GRANT EXECUTE ON FUNCTION pg_control_system() TO dbmonitor_user;
+--GRANT EXECUTE ON FUNCTION pg_control_database() TO dbmonitor_user;
 
 -- Grant access to system catalogs for monitoring
 GRANT SELECT ON pg_catalog.pg_stat_activity TO dbmonitor_user;
@@ -89,18 +92,9 @@ GRANT SELECT ON information_schema.routines TO dbmonitor_user;
 GRANT SELECT ON information_schema.table_privileges TO dbmonitor_user;
 GRANT SELECT ON information_schema.column_privileges TO dbmonitor_user;
 
--- Function for getting connection stats
-GRANT EXECUTE ON FUNCTION pg_stat_get_db_connections(oid) TO dbmonitor_user;
-
--- Functions for index stats
-GRANT EXECUTE ON FUNCTION pg_stat_get_numscans(oid) TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_get_tup_read(oid) TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_get_tup_fetch(oid) TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_get_tup_inserted(oid) TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_get_tup_updated(oid) TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_get_tup_deleted(oid) TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_get_live_tup(oid) TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_stat_get_dead_tup(oid) TO dbmonitor_user;
+-- This role was created specifically to solve the problem of 
+-- granting permissions to dozens of tiny internal functions.
+GRANT pg_read_all_stats TO dbmonitor_user;
 
 -- For pg_stat_statements extension (if installed)
 DO $$

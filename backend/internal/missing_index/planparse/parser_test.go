@@ -8,6 +8,7 @@
 package planparse
 
 import (
+	"context"
 	"testing"
 
 	"github.com/rsharma155/sql_optima/internal/missing_index/types"
@@ -23,7 +24,7 @@ func TestParseBasicSeqScan(t *testing.T) {
 		"Filter":        "tenant_id = 123",
 	}
 
-	analysis, err := Parse(nil, planJSON)
+	analysis, err := Parse(context.TODO(), planJSON)
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestParseWithNestedPlans(t *testing.T) {
 		},
 	}
 
-	analysis, err := Parse(nil, planJSON)
+	analysis, err := Parse(context.TODO(), planJSON)
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -66,7 +67,7 @@ func TestParseWithNestedPlans(t *testing.T) {
 }
 
 func TestParseEmptyPlan(t *testing.T) {
-	_, err := Parse(nil, nil)
+	_, err := Parse(context.TODO(), nil)
 	if err != nil {
 		t.Errorf("Expected no error for nil plan: %v", err)
 	}

@@ -66,7 +66,7 @@ func (r *UserRepository) AuthenticateUser(ctx context.Context, username, passwor
 	}
 	u.CreatedAt = createdAt
 
-	log.Printf("[UserAuth] Attempting login for user '%s' (hash prefix: %s)", username, hash[:15])
+	log.Printf("[UserAuth] Attempting login for user '%s'", username)
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
 		errMsg := fmt.Sprintf("Password mismatch for user '%s'. Time: %s, Error: %v", username, time.Now().Format(time.RFC3339), err)
 		log.Printf("[UserAuth] %s", errMsg)
@@ -96,6 +96,19 @@ func (r *UserRepository) CreateUser(ctx context.Context, username, password, rol
 
 	log.Printf("[UserRepo] Created user %s with role %s", username, role)
 	return &u, nil
+}
+
+// CountUsers returns the number of rows in optima_users.
+func (r *UserRepository) CountUsers(ctx context.Context) (int, error) {
+	if r == nil || r.pool == nil {
+		return 0, fmt.Errorf("user repository not configured")
+	}
+	var n int
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM optima_users`).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // GetAllUsers returns all users (without password hashes).

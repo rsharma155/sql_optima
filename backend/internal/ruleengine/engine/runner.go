@@ -167,6 +167,13 @@ func (r *Runner) processRule(ctx context.Context, workerID int, rule models.Rule
 	if len(results) > 0 {
 		env := results[0] // Use first row as environment
 
+		// Normalise nil values to float64(0) so expressions don't crash with <nil> operands.
+		for k, v := range env {
+			if v == nil {
+				env[k] = float64(0)
+			}
+		}
+
 		// Step A: Calculate Recommended Value using expected_calc
 		if rule.ExpectedCalc != "" {
 			program, err := expr.Compile(rule.ExpectedCalc, expr.Env(env))

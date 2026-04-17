@@ -72,7 +72,7 @@ window.DynamicDashboardView = async function(section) {
                             <strong>Admin Mode</strong>
                         </label>
                     ` : ''}
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshDynamicDashboard('${section || ''}')">
+                    <button class="btn btn-sm btn-outline text-accent" data-action="refresh-dynamic-dashboard" data-section="${section || ''}">
                         <i class="fa-solid fa-refresh"></i> Refresh
                     </button>
                 </div>
@@ -133,7 +133,7 @@ window.renderWidgetCard = function(widget) {
                 <div style="display:flex; align-items:center; gap:0.5rem;">
                     <span class="text-muted" style="font-size:0.65rem;" id="widget-status-${widget.widget_id}">Loading...</span>
                     ${isAdmin ? `
-                        <button class="btn btn-xs btn-outline" onclick="window.openWidgetEditor('${widget.widget_id}')" title="Edit Widget SQL" style="padding:2px 6px; font-size:0.7rem;">
+                        <button class="btn btn-xs btn-outline" data-action="open-widget-editor" data-id="${widget.widget_id}" title="Edit Widget SQL" style="padding:2px 6px; font-size:0.7rem;">
                             <i class="fa-solid fa-pen"></i> Edit
                         </button>
                     ` : ''}
@@ -423,7 +423,7 @@ window.showWidgetEditorModal = function(widget) {
                     <h3 style="margin:0;"><i class="fa-solid fa-pen-to-square text-accent"></i> Widget Editor</h3>
                     <p class="text-muted" style="font-size:0.8rem; margin:0.25rem 0 0 0;">${window.escapeHtml(widget.title)} (${window.escapeHtml(widget.chart_type)})</p>
                 </div>
-                <button onclick="window.closeWidgetEditor()" style="background:none;border:none;color:var(--text-muted);font-size:1.2rem;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
+                <button data-action="close-widget-editor" style="background:none;border:none;color:var(--text-muted);font-size:1.2rem;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
             </div>
 
             <div style="margin-bottom:1rem;">
@@ -442,13 +442,13 @@ window.showWidgetEditorModal = function(widget) {
             </div>
 
             <div style="display:flex; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap;">
-                <button class="btn btn-sm btn-accent" onclick="window.testWidgetQuery('${widget.widget_id}')">
+                <button class="btn btn-sm btn-accent" data-action="test-widget-query" data-id="${widget.widget_id}">
                     <i class="fa-solid fa-play"></i> Run Query
                 </button>
-                <button class="btn btn-sm btn-outline" onclick="window.saveWidgetSql('${widget.widget_id}')">
+                <button class="btn btn-sm btn-outline" data-action="save-widget-sql" data-id="${widget.widget_id}">
                     <i class="fa-solid fa-save"></i> Save to Dashboard
                 </button>
-                <button class="btn btn-sm btn-outline" style="border-color:var(--warning); color:var(--warning);" onclick="window.restoreWidgetDefault('${widget.widget_id}')">
+                <button class="btn btn-sm btn-outline" style="border-color:var(--warning); color:var(--warning);" data-action="restore-widget-default" data-id="${widget.widget_id}">
                     <i class="fa-solid fa-rotate-left"></i> Revert to Default
                 </button>
             </div>

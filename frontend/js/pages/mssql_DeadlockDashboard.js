@@ -57,7 +57,7 @@ window.mssql_DeadlockDashboard = async function() {
                     <td>${n.wait_time_ms} ms</td>
                     <td>${window.escapeHtml(n.database_name)}</td>
                     <td><span class="text-warning">${window.escapeHtml(n.host_name)}</span><br/><span style="font-size:0.7rem">${window.escapeHtml(n.program_name)}</span></td>
-                    <td><span class="code-snippet" style="cursor:pointer;" title="View Query" onclick="window.showQueryModalDirect(decodeURIComponent('${escQ}'))">${window.escapeHtml(n.query_text).substring(0, 30)}...</span></td>
+                    <td><span class="code-snippet" style="cursor:pointer;" title="View Query" data-action="show-query-modal-direct" data-encoded-query="${escQ}">${window.escapeHtml(n.query_text).substring(0, 30)}...</span></td>
                 </tr>`;
             n.children.forEach(c => renderNode(c, depth + 1));
         }
@@ -94,7 +94,7 @@ window.mssql_DeadlockDashboard = async function() {
                     <td><span class="text-accent">${window.escapeHtml(parsedData.client_app_name || 'N/A')}</span></td>
                     <td><span class="text-success">${window.escapeHtml(parsedData.username || 'N/A')}</span></td>
                     <td>
-                        <button class="btn btn-xs btn-accent" onclick="window.showDeadlockDetails('${encodeURIComponent(JSON.stringify(e))}')" title="View Deadlock Details">
+                        <button class="btn btn-xs btn-accent" data-action="call" data-fn="showDeadlockDetails" data-arg="${encodeURIComponent(JSON.stringify(e))}" title="View Deadlock Details">
                             <i class="fa-solid fa-eye"></i>
                         </button>
                     </td>
@@ -111,12 +111,12 @@ window.mssql_DeadlockDashboard = async function() {
             <div class="page-view active dashboard-sky-theme">
                 <div class="page-title flex-between">
                     <div>
-                        <button class="btn btn-sm btn-outline mb-2" onclick="window.appNavigate('dashboard')"><i class="fa-solid fa-arrow-left"></i> Back to Live Dashboard</button>
+                        <button class="btn btn-sm btn-outline mb-2" data-action="navigate" data-route="dashboard"><i class="fa-solid fa-arrow-left"></i> Back to Live Dashboard</button>
                         <h1><i class="fa-solid fa-lock text-danger"></i> Blocking & Deadlock Analysis</h1>
                         <p class="subtitle">Real-time blocking chains and deadlock history [${window.escapeHtml(inst.name)}]</p>
                     </div>
                     <div class="custom-select-group">
-                        <button class="btn btn-accent btn-sm" onclick="window.refreshDeadlockData()">
+                        <button class="btn btn-accent btn-sm" data-action="call" data-fn="refreshDeadlockData">
                             <i class="fa-solid fa-refresh"></i> Refresh Data
                         </button>
                     </div>
@@ -201,7 +201,7 @@ window.mssql_DeadlockDashboard = async function() {
         window.routerOutlet.innerHTML = `
             <div class="page-view active dashboard-sky-theme">
                 <div class="page-title">
-                    <button class="btn btn-sm btn-outline mb-2" onclick="window.appNavigate('dashboard')"><i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button>
+                    <button class="btn btn-sm btn-outline mb-2" data-action="navigate" data-route="dashboard"><i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button>
                     <h1>Error Loading Deadlock Data</h1>
                 </div>
                 <div class="alert alert-danger mt-4">
@@ -215,7 +215,7 @@ window.mssql_DeadlockDashboard = async function() {
 
 // Refresh function for deadlock dashboard
 window.refreshDeadlockData = async function() {
-    const refreshBtn = document.querySelector('button[onclick="window.refreshDeadlockData()"]');
+    const refreshBtn = document.querySelector('button[data-action="call" data-fn="refreshDeadlockData"]');
     if (refreshBtn) {
         refreshBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Refreshing...';
         refreshBtn.disabled = true;
@@ -261,7 +261,7 @@ window.showDeadlockDetails = function(encodedEventData) {
             <div class="modal-content" style="max-width: 800px;">
                 <div class="modal-header">
                     <h3><i class="fa-solid fa-skull-crossbones text-danger"></i> Deadlock Event Details</h3>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+                    <button class="modal-close" data-action="remove-closest" data-closest=".modal-overlay">&times;</button>
                 </div>
                 <div class="modal-body">
                     <div class="alert alert-danger">
@@ -316,7 +316,7 @@ window.showDeadlockDetails = function(encodedEventData) {
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Close</button>
+                    <button class="btn btn-secondary" data-action="remove-closest" data-closest=".modal-overlay">Close</button>
                 </div>
             </div>
         `;

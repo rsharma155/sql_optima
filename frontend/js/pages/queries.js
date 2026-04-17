@@ -343,7 +343,7 @@ function renderQueriesTable(queries, sortBy) {
             <tr>
                 <td>${escUser || '<span class="text-muted">-</span>'}</td>
                 <td style="max-width:520px">
-                    <div class="code-snippet w-100 pg-sql-preview" style="display:block; cursor:pointer; text-decoration:underline; text-underline-offset:2px;" title="View full SQL and capture time" onclick="window.pgOpenQuerySql('${window.escapeHtml(fingerprint)}')">
+                    <div class="code-snippet w-100 pg-sql-preview" style="display:block; cursor:pointer; text-decoration:underline; text-underline-offset:2px;" title="View full SQL and capture time" data-action="call" data-fn="pgOpenQuerySql" data-arg="${window.escapeHtml(fingerprint)}">
                         ${escPreview}
                     </div>
                 </td>

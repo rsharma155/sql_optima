@@ -9,18 +9,21 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/rsharma155/sql_optima/internal/middleware"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
 type AuthHandlers struct {
-	metricsSvc *service.MetricsService
+	metricsSvc   *service.MetricsService
+	loginLimiter *middleware.LoginRateLimiter
 }
 
-func NewAuthHandlers(metricsSvc *service.MetricsService) *AuthHandlers {
-	return &AuthHandlers{metricsSvc: metricsSvc}
+func NewAuthHandlers(metricsSvc *service.MetricsService, loginLimiter *middleware.LoginRateLimiter) *AuthHandlers {
+	return &AuthHandlers{metricsSvc: metricsSvc, loginLimiter: loginLimiter}
 }
 
 func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
@@ -35,9 +38,36 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB max login payload
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		return
+	}
+	// Reject requests with trailing garbage after the JSON object.
+	// dec.More() only checks inside arrays/objects; a second Decode that
+	// expects io.EOF is the standard pattern for top-level trailing data.
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "unexpected trailing data in request body"})
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || req.Password == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "username and password are required"})
+		return
+	}
+
+	// Per-username throttle: a tighter limit per target account regardless of
+	// source IP, protecting against distributed credential-stuffing.
+	if h.loginLimiter != nil && !h.loginLimiter.AllowUsername(req.Username) {
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]string{"error": "rate limit exceeded"})
 		return
 	}
 
@@ -55,6 +85,28 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set HttpOnly auth cookie (browser-safe, not accessible to JS).
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.AuthCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   86400, // 24h — matches JWT expiry
+	})
+
+	// Set CSRF token cookie (JS-readable, not HttpOnly).
+	csrfToken, csrfErr := middleware.GenerateCSRFToken()
+	if csrfErr != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "failed to generate CSRF token"})
+		return
+	}
+	middleware.SetCSRFCookie(w, r, csrfToken)
+
+	// Return user info in JSON body. The JWT is still included in the response
+	// for backward compatibility with API clients that use Authorization header.
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"token":    token,
 		"user_id":  user.UserID,
@@ -76,4 +128,30 @@ func (h *AuthHandlers) Me(w http.ResponseWriter, r *http.Request) {
 		"username": claims.Username,
 		"role":     claims.Role,
 	})
+}
+
+// Logout clears the auth and CSRF cookies.
+func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
+	// Expire the auth cookie.
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.AuthCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+	// Expire the CSRF cookie.
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.CSRFCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: false,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "logged out"})
 }

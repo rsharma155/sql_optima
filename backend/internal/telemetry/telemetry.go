@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -54,13 +55,24 @@ func MetricsHandler() http.Handler {
 	return promhttp.Handler()
 }
 
-// PrometheusMiddleware records request counts and latency (path label normalized to route template when possible).
+// PrometheusMiddleware records request counts and latency.
+// When registered via mux.Router.Use(), the matched route template is used as the
+// path label instead of the raw URL, preventing high-cardinality label explosion.
 func PrometheusMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, code: http.StatusOK}
 		next.ServeHTTP(sw, r)
+
+		// Prefer the route template (e.g. "/api/metrics/{instance}") over the
+		// raw path to keep Prometheus cardinality bounded.
 		path := r.URL.Path
+		if route := mux.CurrentRoute(r); route != nil {
+			if tpl, err := route.GetPathTemplate(); err == nil && tpl != "" {
+				path = tpl
+			}
+		}
+
 		HTTPRequests.WithLabelValues(r.Method, path, strconv.Itoa(sw.code)).Inc()
 		HTTPDuration.WithLabelValues(r.Method, path).Observe(time.Since(start).Seconds())
 	})

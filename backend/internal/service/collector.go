@@ -184,10 +184,6 @@ func (s *MetricsService) runLiveDiagnosticsForInstance(ctx context.Context, inst
 	)
 }
 
-func (s *MetricsService) runHistoricalStorage() {
-	s.runHistoricalStorageWithContext(context.Background())
-}
-
 func (s *MetricsService) runHistoricalStorageWithContext(ctx context.Context) {
 	var wg sync.WaitGroup
 
@@ -373,7 +369,7 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 		log.Printf("[Collector] WARNING: LogSQLServerDiskHistory failed: %v", err)
 	}
 
-	topQueries, err := s.MsRepo.FetchTopCPUQueries(instanceName, 20)
+	topQueries, err := s.MsRepo.FetchTopCPUQueries(instanceName, 20, "")
 	if err != nil {
 		log.Printf("[Collector] WARNING: FetchTopCPUQueries failed: %v", err)
 	} else {
@@ -515,14 +511,6 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 	return nil
 }
 
-func (s *MetricsService) logSQLServerMetricsToTimescale(instanceName string, metrics models.DashboardMetrics) error {
-	return s.logSQLServerHistoricalToTimescaleWithContext(context.Background(), instanceName)
-}
-
-func (s *MetricsService) logPostgresMetricsToTimescale(instanceName string, cache models.PgCoreDashboardCache) error {
-	return s.logPostgresMetricsToTimescaleWithContext(context.Background(), instanceName, cache)
-}
-
 func (s *MetricsService) logPostgresMetricsToTimescaleWithContext(ctx context.Context, instanceName string, cache models.PgCoreDashboardCache) error {
 	if s.tsLogger == nil {
 		return fmt.Errorf("tsLogger is nil")
@@ -641,10 +629,6 @@ func (s *MetricsService) logPostgresMetricsToTimescaleWithContext(ctx context.Co
 	return nil
 }
 
-func (s *MetricsService) fetchAndLogQueryStoreStats(instanceName string) error {
-	return s.fetchAndLogQueryStoreStatsWithContext(context.Background(), instanceName)
-}
-
 func (s *MetricsService) fetchAndLogQueryStoreStatsWithContext(ctx context.Context, instanceName string) error {
 	if s.tsLogger == nil {
 		return fmt.Errorf("tsLogger is nil")
@@ -688,10 +672,6 @@ func (s *MetricsService) fetchAndLogQueryStoreStatsWithContext(ctx context.Conte
 
 	log.Printf("[Collector] Successfully logged %d Query Store stats for %s", len(rows), instanceName)
 	return nil
-}
-
-func (s *MetricsService) fetchAndLogLongRunningQueries(instanceName string, minDurationSeconds int) error {
-	return s.fetchAndLogLongRunningQueriesWithContext(context.Background(), instanceName, minDurationSeconds)
 }
 
 func (s *MetricsService) fetchAndLogLongRunningQueriesWithContext(ctx context.Context, instanceName string, minDurationSeconds int) error {
@@ -743,10 +723,6 @@ func (s *MetricsService) fetchAndLogLongRunningQueriesWithContext(ctx context.Co
 	return nil
 }
 
-func (s *MetricsService) fetchAndLogAGHealthStats(instanceName string) error {
-	return s.fetchAndLogAGHealthStatsWithContext(context.Background(), instanceName)
-}
-
 func (s *MetricsService) fetchAndLogAGHealthStatsWithContext(ctx context.Context, instanceName string) error {
 	if s.tsLogger == nil {
 		return fmt.Errorf("tsLogger is nil")
@@ -794,10 +770,6 @@ func (s *MetricsService) fetchAndLogAGHealthStatsWithContext(ctx context.Context
 
 	log.Printf("[Collector] Successfully logged %d AG Health stats for %s", len(rows), instanceName)
 	return nil
-}
-
-func (s *MetricsService) fetchAndLogAgentJobsMetrics(instanceName string) error {
-	return s.fetchAndLogAgentJobsMetricsWithContext(context.Background(), instanceName)
 }
 
 func (s *MetricsService) fetchAndLogAgentJobsMetricsWithContext(ctx context.Context, instanceName string) error {
@@ -977,10 +949,6 @@ func (s *MetricsService) GetCachedPgThroughputDashboard(instanceName string, dat
 	return resp
 }
 
-func (s *MetricsService) fetchAndLogCPUSchedulerStats(instanceName string) error {
-	return s.fetchAndLogCPUSchedulerStatsWithContext(context.Background(), instanceName)
-}
-
 func (s *MetricsService) fetchAndLogCPUSchedulerStatsWithContext(ctx context.Context, instanceName string) error {
 	if s.tsLogger == nil {
 		return fmt.Errorf("tsLogger is nil")
@@ -1031,10 +999,6 @@ func (s *MetricsService) fetchAndLogCPUSchedulerStatsWithContext(ctx context.Con
 
 	log.Printf("[Collector] Successfully logged CPU Scheduler stats for %s", instanceName)
 	return nil
-}
-
-func (s *MetricsService) fetchAndLogServerProperties(instanceName string) error {
-	return s.fetchAndLogServerPropertiesWithContext(context.Background(), instanceName)
 }
 
 func (s *MetricsService) fetchAndLogServerPropertiesWithContext(ctx context.Context, instanceName string) error {

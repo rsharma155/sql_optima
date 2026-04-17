@@ -26,8 +26,9 @@ timescaledb_data/
 *.dylib
 dbmonitor
 dbmonitor.exe
-server
-server.exe
+/backend/server
+/backend/migrate
+/backend/sql_optima
 
 # Go build artifacts
 bin/
@@ -106,3 +107,5 @@ run/
 **/*_test_report.json
 **/*_final_report.json
 
+# Local planning docs
+project_backlog.md

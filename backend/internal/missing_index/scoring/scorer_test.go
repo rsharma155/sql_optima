@@ -8,6 +8,7 @@
 package scoring
 
 import (
+	"context"
 	"testing"
 
 	"github.com/rsharma155/sql_optima/internal/missing_index/catalog"
@@ -42,7 +43,7 @@ func TestScoreCandidates(t *testing.T) {
 		MinImprovementPct: 15.0,
 	}
 
-	scored := ScoreCandidates(nil, verificationResults, tableInfos, options)
+	scored := ScoreCandidates(context.TODO(), verificationResults, tableInfos, options)
 
 	if len(scored) == 0 {
 		t.Error("Expected scored candidates to be returned")

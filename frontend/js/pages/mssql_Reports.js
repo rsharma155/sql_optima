@@ -80,7 +80,7 @@ window.AlertsView = async function() {
                     </div>
                     <div style="display:flex; align-items:center; gap:1rem;">
                         ${window.renderStatusStrip({ lastUpdateId: 'alertsLastRefreshTime', sourceBadgeId: 'alertsDataSourceBadge', includeHealth: false, includeFreshness: false, autoRefreshText: 'Auto-refresh: every 30s' })}
-                        <button class="btn btn-sm btn-outline text-accent" onclick="window.AlertsView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                        <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="AlertsView"><i class="fa-solid fa-refresh"></i> Refresh</button>
                     </div>
                 </div>
                 <div style="display:flex; justify-content:center; align-items:center; height:50vh;">
@@ -146,7 +146,7 @@ window.AlertsView = async function() {
                                         <p style="margin:0; color:var(--text); font-size:0.9rem;">${alert.description}</p>
                                         <small style="color:var(--text-muted); display:block; margin-top:0.5rem;"><i class="fa-regular fa-clock"></i> Detected ${alert.timestamp}</small>
                                     </div>
-                                    ${alert.action ? `<button class="btn btn-outline" style="border-color:var(--danger); color:var(--danger);" onclick="${alert.action}">${alert.actionText || 'Investigate'}</button>` : ''}
+                                    ${alert.route ? `<button class="btn btn-outline" style="border-color:var(--danger); color:var(--danger);" data-action="navigate" data-route="${alert.route}">${alert.actionText || 'Investigate'}</button>` : ''}
                                 </div>
                             `).join('')}
                         </div>
@@ -165,7 +165,7 @@ window.AlertsView = async function() {
                                     <p style="margin:0; color:var(--text); font-size:0.85rem;">${alert.description}</p>
                                     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.75rem;">
                                         <small style="color:var(--text-muted);"><i class="fa-regular fa-clock"></i> ${alert.timestamp}</small>
-                                        ${alert.action ? `<button class="btn btn-sm" style="background:transparent; border:1px solid var(--warning); color:var(--warning);" onclick="${alert.action}">${alert.actionText || 'View'}</button>` : ''}
+                                        ${alert.route ? `<button class="btn btn-sm" style="background:transparent; border:1px solid var(--warning); color:var(--warning);" data-action="navigate" data-route="${alert.route}">${alert.actionText || 'View'}</button>` : ''}
                                     </div>
                                 </div>
                             `).join('')}
@@ -214,7 +214,7 @@ window.AlertsView = async function() {
                             <label class="flex-between" style="align-items:center; gap:0.5rem; font-size:0.8rem; cursor:pointer;">
                                 <input type="checkbox" id="alertsAutoRefresh" checked style="width:16px; height:16px;"> Auto-refresh
                             </label>
-                            <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshAlerts()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                            <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshAlerts"><i class="fa-solid fa-refresh"></i> Refresh</button>
                         </div>
                     </div>
                     <div class="mt-4" style="display:grid; gap:1rem;">
@@ -251,7 +251,7 @@ window.AlertsView = async function() {
                         <div class="table-card glass-panel" style="padding:1rem;">
                             <h3 style="font-size:0.85rem; margin:0 0 1rem 0; color:var(--text-muted);"><i class="fa-solid fa-chart-line text-accent"></i> Metrics Summary</h3>
                             <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
-                                <div class="glass-panel" style="padding:0.75rem; text-align:center; cursor:pointer;" role="button" tabindex="0" title="Open CPU drilldown" onclick="window.appNavigate('drilldown-cpu')">
+                                <div class="glass-panel" style="padding:0.75rem; text-align:center; cursor:pointer;" role="button" tabindex="0" title="Open CPU drilldown" data-action="navigate" data-route="drilldown-cpu">
                                     <i class="fa-solid fa-microchip text-accent" style="font-size:1.5rem; margin-bottom:0.5rem;"></i>
                                     <div style="font-size:1.5rem; font-weight:bold;">${(metrics.avg_cpu_load || 0).toFixed(1)}%</div>
                                     <div style="font-size:0.7rem; color:var(--text-muted);">CPU Usage <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.6rem; opacity:0.7;"></i></div>
@@ -274,7 +274,7 @@ window.AlertsView = async function() {
                                     <div style="font-size:1.5rem; font-weight:bold; color:${metrics.deadlocks > 0 ? 'var(--danger)' : 'inherit'};">${metrics.deadlocks || 0}</div>
                                     <div style="font-size:0.7rem; color:var(--text-muted);">Deadlocks</div>
                                 </div>
-                                <div class="glass-panel" style="padding:0.75rem; text-align:center; cursor:pointer;" role="button" tabindex="0" title="Open Memory drilldown" onclick="window.appNavigate('drilldown-memory')">
+                                <div class="glass-panel" style="padding:0.75rem; text-align:center; cursor:pointer;" role="button" tabindex="0" title="Open Memory drilldown" data-action="navigate" data-route="drilldown-memory">
                                     <i class="fa-solid fa-memory text-info" style="font-size:1.5rem; margin-bottom:0.5rem;"></i>
                                     <div style="font-size:1.5rem; font-weight:bold;">${(metrics.memory_usage || 0).toFixed(1)}%</div>
                                     <div style="font-size:0.7rem; color:var(--text-muted);">Memory Usage <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.6rem; opacity:0.7;"></i></div>
@@ -350,7 +350,7 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
                 title: inc.category || 'Incident',
                 description: inc.description || '',
                 timestamp: inc.time ? new Date(inc.time).toLocaleString() : now,
-                action: "window.appNavigate('incidents')",
+                route: 'incidents',
                 actionText: 'View Details'
             };
             if (inc.severity === 'CRITICAL' || inc.severity === 'critical') {
@@ -373,7 +373,7 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
             title: 'Critical CPU Usage',
             description: `CPU utilization at ${cpuLoad.toFixed(1)}% - system may become unresponsive`,
             timestamp: now,
-            action: "window.appNavigate('drilldown-cpu')",
+            route: 'drilldown-cpu',
             actionText: 'View CPU Details'
         });
         anomalies.healthScore -= 30;
@@ -382,7 +382,7 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
             title: 'High CPU Usage',
             description: `CPU utilization at ${cpuLoad.toFixed(1)}% - monitor for performance impact`,
             timestamp: now,
-            action: "window.appNavigate('drilldown-cpu')",
+            route: 'drilldown-cpu',
             actionText: 'View CPU Details'
         });
         anomalies.healthScore -= 15;
@@ -395,7 +395,7 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
             title: 'Active Deadlocks Detected',
             description: `${deadlocks} deadlock(s) currently active - immediate attention required`,
             timestamp: now,
-            action: "window.appNavigate('drilldown-deadlocks')",
+            route: 'drilldown-deadlocks',
             actionText: 'View Deadlock Analysis'
         });
         anomalies.healthScore -= 25;
@@ -417,7 +417,7 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
                 title: 'Recent Deadlock Events',
                 description: `${recentDeadlocks.length} deadlock(s) detected in the last hour`,
                 timestamp: now,
-                action: "window.appNavigate('drilldown-deadlocks')",
+                route: 'drilldown-deadlocks',
                 actionText: 'View Deadlock History'
             });
             anomalies.healthScore -= 10;
@@ -431,7 +431,7 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
             title: 'Severe Blocking Chain',
             description: `${activeBlocks} sessions currently blocked - major performance impact`,
             timestamp: now,
-            action: "window.appNavigate('drilldown-locks')",
+            route: 'drilldown-locks',
             actionText: 'View Blocking & Waits'
         });
         anomalies.healthScore -= 20;
@@ -440,7 +440,7 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
             title: 'Active Blocking Detected',
             description: `${activeBlocks} sessions currently blocked`,
             timestamp: now,
-            action: "window.appNavigate('drilldown-locks')",
+            route: 'drilldown-locks',
             actionText: 'View Blocking & Waits'
         });
         anomalies.healthScore -= 10;
@@ -454,7 +454,7 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
             title: 'High Lock Count',
             description: `${totalLocks} active locks - potential performance bottleneck`,
             timestamp: now,
-            action: "window.appNavigate('drilldown-locks')",
+            route: 'drilldown-locks',
             actionText: 'View Lock Analysis'
         });
         anomalies.healthScore -= 5;
@@ -486,7 +486,7 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
                 title: 'Low Page Life Expectancy',
                 description: `Average PLE is ${avgPLE.toFixed(0)} seconds - buffer pool under pressure`,
                 timestamp: now,
-                action: "window.appNavigate('dashboard')",
+                route: 'dashboard',
                 actionText: 'View PLE Chart'
             });
             anomalies.healthScore -= 8;
@@ -568,8 +568,8 @@ window.updateSqlDashboardAlertBanner = function() {
                 </div>
             </div>
             <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-                <button type="button" class="btn btn-sm btn-accent" onclick="window.appNavigate('alerts')"><i class="fa-solid fa-arrow-right"></i> Open alerts</button>
-                <button type="button" class="btn btn-sm btn-outline" onclick="window.dismissSqlDashboardAlertBanner(1)" title="Hide this banner for 1 hour">Dismiss 1h</button>
+                <button type="button" class="btn btn-sm btn-accent" data-action="navigate" data-route="alerts"><i class="fa-solid fa-arrow-right"></i> Open alerts</button>
+                <button type="button" class="btn btn-sm btn-outline" data-action="call" data-fn="dismissSqlDashboardAlertBanner" data-arg="1" title="Hide this banner for 1 hour">Dismiss 1h</button>
             </div>
         </div>`;
 };
@@ -589,7 +589,7 @@ function getHealthStatus(score) {
 
 // Refresh alerts function
 window.refreshAlerts = async function() {
-    const refreshBtn = document.querySelector('button[onclick="window.refreshAlerts()"]');
+    const refreshBtn = document.querySelector('button[data-action="call" data-fn="refreshAlerts"]');
     if (refreshBtn) {
         refreshBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analyzing...';
         refreshBtn.disabled = true;
@@ -803,7 +803,7 @@ window.BestPracticesView = async function() {
                     </div>
                     <div class="flex-between" style="align-items:center; gap: 1rem;">
                         <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="bpLastRefreshTime">${new Date().toLocaleTimeString()}</span></span>
-                        <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshBestPractices()">
+                        <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshBestPractices">
                             <i class="fa-solid fa-refresh"></i> Refresh Audit
                         </button>
                     </div>
@@ -857,7 +857,7 @@ window.BestPracticesView = async function() {
                     ${guardrailsData.summary && guardrailsData.summary.map((s) => {
                         const safeCatId = s.category.replace(/\s+/g, '-');
                         return `
-                        <div class="glass-panel" style="padding: 0.75rem; cursor: pointer; border-left: 3px solid ${s.severity === 'CRITICAL' ? 'var(--danger)' : s.severity === 'WARNING' ? 'var(--warning)' : 'var(--success)'}; transition: background 0.2s;" onclick="window.showGuardrailsModal('${s.category}', '${safeCatId}')">
+                        <div class="glass-panel" style="padding: 0.75rem; cursor: pointer; border-left: 3px solid ${s.severity === 'CRITICAL' ? 'var(--danger)' : s.severity === 'WARNING' ? 'var(--warning)' : 'var(--success)'}; transition: background 0.2s;" data-action="guardrails-modal" data-category="${s.category}" data-catid="${safeCatId}">
                             <div style="display: flex; justify-content: space-between; align-items: center;">
                                 <div style="font-weight: 600; font-size: 0.85rem;">${s.category}</div>
                                 <i class="fa-solid fa-eye" style="font-size: 0.75rem;"></i>
@@ -992,7 +992,7 @@ window.showGuardrailsModal = function(category, safeCatId) {
                     ${summary ? `<span class="${summary.severity === 'CRITICAL' ? 'text-danger' : summary.severity === 'WARNING' ? 'text-warning' : 'text-success'}">${summary.critical} Critical | ${summary.warning} Warnings</span>` : ''}
                 </div>
             </div>
-            <button onclick="document.getElementById('guardrails-modal').remove()" style="background:transparent; border:1px solid #555; color:#e0e0e0; font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
+            <button data-action="close-id" data-target="guardrails-modal" style="background:transparent; border:1px solid #555; color:#e0e0e0; font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
         </div>
         <div style="max-height: 70vh; overflow-y: auto;">
             ${itemsHtml}
@@ -1156,7 +1156,7 @@ function renderGuardrailsItems(items, category) {
                     <div style="padding: 0.25rem; border-bottom: 1px solid #333;">
                         <span class="${severityClass}">●</span> ${content}
                         ${item.message ? `<div style="color: var(--text-muted);">${item.message}</div>` : ''}
-                        ${remediation ? `<div style="margin-top: 0.25rem; font-size: 0.7rem;"><button class="btn btn-sm btn-outline" style="padding: 0.1rem 0.3rem; font-size: 0.65rem;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">SQL Fix</button><pre style="display: none; background: #222; padding: 0.25rem; margin: 0.25rem 0 0 0; overflow-x: auto; font-size: 0.65rem;">${remediation}</pre></div>` : ''}
+                        ${remediation ? `<div style="margin-top: 0.25rem; font-size: 0.7rem;"><button class="btn btn-sm btn-outline" style="padding: 0.1rem 0.3rem; font-size: 0.65rem;" data-action="toggle-next">SQL Fix</button><pre style="display: none; background: #222; padding: 0.25rem; margin: 0.25rem 0 0 0; overflow-x: auto; font-size: 0.65rem;">${remediation}</pre></div>` : ''}
                     </div>
                 `;
             }).join('')}

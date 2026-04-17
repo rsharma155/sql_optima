@@ -8,11 +8,15 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/rsharma155/sql_optima/internal/config"
+	"github.com/rsharma155/sql_optima/internal/middleware"
+	"github.com/rsharma155/sql_optima/internal/security/redact"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
@@ -61,22 +65,10 @@ func (h *DashboardHandlers) ExecuteQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	if !instanceInConfig(h.cfg, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-
 	var req struct {
-		SQL     string `json:"sql"`
-		Timeout int    `json:"timeout"`
+		WidgetID    string            `json:"widget_id"`
+		Parameters  map[string]string `json:"parameters"`
+		TimeoutSecs int               `json:"timeout_secs"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -85,30 +77,41 @@ func (h *DashboardHandlers) ExecuteQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if req.SQL == "" {
+	if req.WidgetID == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "sql is required"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "widget_id is required"})
 		return
 	}
 
-	if req.Timeout <= 0 {
-		req.Timeout = 30
+	// Default params and enforce server-side timeout.
+	if req.Parameters == nil {
+		req.Parameters = map[string]string{}
+	}
+	if req.TimeoutSecs <= 0 {
+		req.TimeoutSecs = 30
+	}
+	if req.TimeoutSecs > 60 {
+		req.TimeoutSecs = 60
 	}
 
-	results, err := h.metricsSvc.ExecuteQuery(instance, req.SQL, req.Timeout)
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(req.TimeoutSecs)*time.Second)
+	defer cancel()
+
+	rows, err := h.metricsSvc.ExecuteWidgetQuery(ctx, req.WidgetID, req.Parameters)
 	if err != nil {
-		log.Printf("[API] Query execution error for %s: %v", instance, err)
+		log.Printf("[API] Widget query execution error for widget=%s: %s", req.WidgetID, redact.String(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":   err.Error(),
-			"success": false,
+			"success":    false,
+			"error":      "widget query failed",
+			"request_id": middleware.RequestIDFromContext(r.Context()),
 		})
 		return
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"results": results,
-		"count":   len(results),
+		"rows":    rows,
+		"count":   len(rows),
 	})
 }

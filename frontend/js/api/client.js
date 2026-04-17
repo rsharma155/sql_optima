@@ -19,40 +19,47 @@ window.appState = {
 };
 
 window.apiClient = {
-    // Token management
-    getToken() {
-        return localStorage.getItem('auth_token');
+    /** Read the csrf_token cookie (not HttpOnly). */
+    _csrfToken() {
+        const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+        return m ? decodeURIComponent(m[1]) : '';
     },
 
-    setToken(token) {
-        localStorage.setItem('auth_token', token);
+    // Token management — JWT is now in an HttpOnly cookie.
+    getToken() {
+        return null; // legacy compat — cookie handles transport
+    },
+
+    setToken(_token) {
         window.appState.isAuthenticated = true;
     },
 
     clearToken() {
-        localStorage.removeItem('auth_token');
         window.appState.isAuthenticated = false;
     },
 
-    // Authenticated fetch wrapper
+    // Authenticated fetch wrapper — cookie sent automatically; add CSRF header.
     async authenticatedFetch(url, options = {}) {
-        const token = this.getToken();
-        if (!token) {
-            this.showLoginModal();
-            throw new Error('No authentication token available');
-        }
-
         const headers = {
-            'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
             ...options.headers
         };
 
-        const response = await fetch(url, { ...options, headers });
+        const csrf = this._csrfToken();
+        if (csrf) {
+            headers['X-CSRF-Token'] = csrf;
+        }
+
+        const response = await fetch(url, { ...options, headers, credentials: 'same-origin' });
 
         if (response.status === 401) {
             // Token expired or invalid
             this.clearToken();
+            if (window._auth) {
+                window._auth.token = null;
+                window._auth.user = null;
+                localStorage.removeItem('auth_user');
+            }
             this.showLoginModal();
             throw new Error('Authentication required');
         }
@@ -86,12 +93,14 @@ window.apiClient = {
                 headers: {
                     'Content-Type': 'application/json'
                 },
+                credentials: 'same-origin',
                 body: JSON.stringify({ username, password })
             });
 
             if (response.ok) {
                 const data = await response.json();
-                this.setToken(data.token);
+                // JWT is stored in HttpOnly cookie by the server.
+                this.setToken(null);
                 return { success: true };
             } else {
                 const error = await response.json();
@@ -186,7 +195,7 @@ window.showQueryModal = function(queryText) {
         <div style="background: var(--bg-secondary, #1a1a1a); margin: 2%; padding: 20px; border: 1px solid var(--border-color, #333); border-radius: 12px; width: 95%; max-width: 1000px; max-height: 90vh; overflow-y: auto; color: var(--text-primary, #e0e0e0); font-family: inherit; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color, #333); padding-bottom: 0.75rem;">
                 <h3 style="margin: 0; color: var(--accent, #3b82f6); font-size: 1.1rem;"><i class="fa-solid fa-code"></i> query text details</h3>
-                <button onclick="document.getElementById('query-modal').remove()" style="background: transparent; border: 1px solid var(--border-color, #555); color: var(--text-primary, #e0e0e0); font-size: 1.25rem; cursor: pointer; padding: 0.25rem 0.6rem; border-radius: 4px; line-height: 1;">&times;</button>
+                <button data-action="close-id" data-target="query-modal" style="background: transparent; border: 1px solid var(--border-color, #555); color: var(--text-primary, #e0e0e0); font-size: 1.25rem; cursor: pointer; padding: 0.25rem 0.6rem; border-radius: 4px; line-height: 1;">&times;</button>
             </div>
             <div style="background: var(--bg-primary, #141414); padding: 1rem; border-radius: 8px; max-height: 60vh; overflow: auto; border: 1px solid var(--border-color, #333);">
                 <pre style="margin: 0; white-space: pre-wrap; word-wrap: break-word; color: var(--text-primary, #e0e0e0); font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.5;">${safeText}</pre>
@@ -229,7 +238,7 @@ window.showQueryModalFromData = function(queryText) {
         <div style="background: var(--bg-secondary, #1a1a1a); margin: 2%; padding: 20px; border: 1px solid var(--border-color, #333); border-radius: 12px; width: 95%; max-width: 1000px; max-height: 90vh; overflow-y: auto; color: var(--text-primary, #e0e0e0); font-family: inherit; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color, #333); padding-bottom: 0.75rem;">
                 <h3 style="margin: 0; color: var(--accent, #3b82f6); font-size: 1.1rem;"><i class="fa-solid fa-code"></i> query text details</h3>
-                <button onclick="document.getElementById('query-modal').remove()" style="background: transparent; border: 1px solid var(--border-color, #555); color: var(--text-primary, #e0e0e0); font-size: 1.25rem; cursor: pointer; padding: 0.25rem 0.6rem; border-radius: 4px; line-height: 1;">&times;</button>
+                <button data-action="close-id" data-target="query-modal" style="background: transparent; border: 1px solid var(--border-color, #555); color: var(--text-primary, #e0e0e0); font-size: 1.25rem; cursor: pointer; padding: 0.25rem 0.6rem; border-radius: 4px; line-height: 1;">&times;</button>
             </div>
             <div style="background: var(--bg-primary, #141414); padding: 1rem; border-radius: 8px; max-height: 60vh; overflow: auto; border: 1px solid var(--border-color, #333);">
                 <pre style="margin: 0; white-space: pre-wrap; word-wrap: break-word; color: var(--text-primary, #e0e0e0); font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.5;">${safeText}</pre>

@@ -17,10 +17,11 @@ import (
 	"syscall"
 
 	"github.com/rsharma155/sql_optima/internal/config"
+	"github.com/rsharma155/sql_optima/internal/domain/servers"
 	"github.com/rsharma155/sql_optima/internal/queue"
 	"github.com/rsharma155/sql_optima/internal/repository"
+	"github.com/rsharma155/sql_optima/internal/security"
 	"github.com/rsharma155/sql_optima/internal/service"
-	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
 func main() {
@@ -29,20 +30,55 @@ func main() {
 		log.Fatal("REDIS_ADDR is required for cmd/worker")
 	}
 
-	configPath, _, _ := config.ResolveDataPaths()
+	configPath, _ := config.ResolveDataPaths()
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
 
+	jwtSecret, err := config.ResolveJWTSecret(configPath)
+	if err != nil {
+		log.Fatalf("JWT secret initialization failed: %v", err)
+	}
+	if os.Getenv("JWT_SECRET") == "" {
+		log.Printf("[worker/auth] JWT_SECRET not set; using persisted local secret from data/")
+	}
+
+	tsHotStorage, usingEnvTimescale, err := config.ConnectMetricsTimescale(configPath, jwtSecret)
+	if err != nil {
+		log.Printf("[worker] Timescale: %v", err)
+		tsHotStorage = nil
+		usingEnvTimescale = false
+	}
+
+	var kms servers.KeyManagementService
+	if tsHotStorage != nil {
+		kms, _ = config.InitServerRegistryKMS(jwtSecret)
+	}
+
+	if tsHotStorage == nil {
+		cfg.Instances = nil
+	} else if kms != nil {
+		loaded, lerr := repository.LoadInstancesFromServerRegistry(context.Background(), tsHotStorage.Pool(), kms, security.NewEnvelopeSecretBox())
+		if lerr != nil {
+			log.Printf("[worker] registry load: %v", lerr)
+			cfg.Instances = nil
+		} else if len(loaded) > 0 {
+			cfg.Instances = loaded
+			log.Printf("[worker] loaded %d instance(s) from server registry", len(loaded))
+		} else if !usingEnvTimescale && !config.DeploymentIsDocker() {
+			cfg.Instances = nil
+			log.Println("[worker] no active servers in registry; config.yaml instances ignored (same as API)")
+		}
+	} else {
+		cfg.Instances = nil
+		log.Println("[worker] KMS unavailable; instance list cleared")
+	}
+
 	pgRepo := repository.NewPgRepository(cfg)
 	msRepo := repository.NewMssqlRepository(cfg)
-	tsHotStorage, err := hot.New(nil)
-	if err != nil {
-		log.Printf("Timescale optional: %v", err)
-		tsHotStorage = nil
-	}
 	metricsSvc := service.NewMetricsService(pgRepo, msRepo, cfg, tsHotStorage)
+	metricsSvc.ServerKMS = kms
 
 	srv, mux := queue.NewServerWithMux(redisAddr, metricsSvc)
 

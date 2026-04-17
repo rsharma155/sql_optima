@@ -10,8 +10,9 @@ services:
       - "${API_PORT:-8080}:8080"
     environment:
       PORT: ":8080"
-      JWT_SECRET: ${JWT_SECRET:-change-me-to-32chars-minimum-for-prod}
-      AUTH_REQUIRED: ${AUTH_REQUIRED:-0}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set to a random string of at least 32 characters}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-1}
+      DISABLE_PUBLIC_SETUP: ${DISABLE_PUBLIC_SETUP:-1}
       REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
       DB_HOST: timescaledb
       DB_PORT: "5432"
@@ -49,6 +50,14 @@ services:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - tsdata:/var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - log_statement=none
+      - -c
+      - log_min_duration_statement=5000
+      - -c
+      - log_min_error_statement=error
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-dbmonitor} -d ${DB_NAME:-dbmonitor_metrics}"]
       interval: 10s

@@ -28,8 +28,8 @@ window.PgExplainView = function PgExplainView() {
                     <span class="subtitle">Instance: <span class="text-accent">${esc(inst.name)}</span> — paste a JSON plan and SQL for analysis, optimization report, and optional <strong>index advisor</strong> (HypoPG when the server can reach your DB).</span>
                 </div>
                 <div class="flex-between dashboard-page-title-actions" style="gap:0.5rem; flex-wrap:wrap;">
-                    <button type="button" class="btn btn-sm btn-outline" onclick="window.appNavigate('pg-queries')"><i class="fa-solid fa-bolt"></i> Query Performance</button>
-                    <button type="button" class="btn btn-sm btn-outline text-accent" onclick="window.PgExplainView()"><i class="fa-solid fa-rotate-right"></i> Reset</button>
+                    <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="pg-queries"><i class="fa-solid fa-bolt"></i> Query Performance</button>
+                    <button type="button" class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgExplainView"><i class="fa-solid fa-rotate-right"></i> Reset</button>
                 </div>
             </div>
 

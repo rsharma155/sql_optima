@@ -12,6 +12,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -19,11 +20,14 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// JWTSecret is the signing key for JWT tokens. Set via environment variable.
-var JWTSecret = []byte("sql-optima-jwt-secret-change-in-production")
+// JWTSecret is the signing key for JWT tokens. It must be set at startup.
+var JWTSecret []byte
 
 // SetJWTSecret sets the JWT secret for authentication.
 func SetJWTSecret(secret []byte) {
+	if len(secret) < 32 {
+		panic("JWT secret must be at least 32 bytes")
+	}
 	JWTSecret = secret
 }
 
@@ -37,6 +41,10 @@ type AuthClaims struct {
 
 // GenerateToken creates a signed JWT for the given user.
 func GenerateToken(userID int, username, role string) (string, error) {
+	if len(JWTSecret) < 32 {
+		return "", errors.New("jwt secret is not configured")
+	}
+
 	claims := AuthClaims{
 		UserID:   userID,
 		Username: username,
@@ -66,7 +74,14 @@ func ValidateTokenWithContext(ctx context.Context, tokenString string) (*AuthCla
 }
 
 func validateLocalJWT(tokenString string) (*AuthClaims, error) {
+	if len(JWTSecret) < 32 {
+		return nil, errors.New("jwt secret is not configured")
+	}
+
 	token, err := jwt.ParseWithClaims(tokenString, &AuthClaims{}, func(t *jwt.Token) (interface{}, error) {
+		if t.Method != jwt.SigningMethodHS256 {
+			return nil, jwt.ErrTokenUnverifiable
+		}
 		return JWTSecret, nil
 	})
 	if err != nil {
@@ -86,29 +101,45 @@ type contextKey string
 
 const authContextKey contextKey = "auth_claims"
 
+const (
+	// AuthCookieName is the HttpOnly cookie that carries the JWT for browser clients.
+	AuthCookieName = "sql_optima_token"
+)
+
 // RequireAuth is middleware that validates JWT and optionally checks role.
 // Usage: RequireAuth("") for any authenticated user, RequireAuth("admin") for admin only.
+//
+// Token resolution order:
+//  1. Authorization: Bearer <token> header (API clients, curl, SDKs).
+//  2. HttpOnly cookie "sql_optima_token" (browser clients).
 func RequireAuth(requiredRole string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
+			var tokenString string
+
+			// 1. Prefer Authorization header (API / non-browser callers).
+			if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+				parts := strings.SplitN(authHeader, " ", 2)
+				if len(parts) == 2 && parts[0] == "Bearer" {
+					tokenString = parts[1]
+				}
+			}
+
+			// 2. Fall back to HttpOnly cookie (browser callers).
+			if tokenString == "" {
+				if c, err := r.Cookie(AuthCookieName); err == nil {
+					tokenString = c.Value
+				}
+			}
+
+			if tokenString == "" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]string{"error": "missing authorization header"})
+				json.NewEncoder(w).Encode(map[string]string{"error": "missing authorization header or cookie"})
 				return
 			}
 
-			// Extract "Bearer <token>"
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || parts[0] != "Bearer" {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]string{"error": "invalid authorization format"})
-				return
-			}
-
-			claims, err := ValidateTokenWithContext(r.Context(), parts[1])
+			claims, err := ValidateTokenWithContext(r.Context(), tokenString)
 			if err != nil {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
@@ -138,6 +169,12 @@ func GetAuthClaims(r *http.Request) *AuthClaims {
 		return nil
 	}
 	return claims
+}
+
+// WithAuthClaims returns a new context carrying the given claims.
+// Intended for handler tests that need to simulate authenticated requests.
+func WithAuthClaims(ctx context.Context, claims *AuthClaims) context.Context {
+	return context.WithValue(ctx, authContextKey, claims)
 }
 
 // AuthRequired is the legacy middleware (any authenticated user, no role check).

@@ -125,6 +125,7 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 		sr.HandleFunc("/timescale/storage-index-health/growth", sih.Growth).Methods("GET")
 		sr.HandleFunc("/timescale/storage-index-health/dashboard", sih.Dashboard).Methods("GET")
 		sr.HandleFunc("/timescale/storage-index-health/filters", sih.Filters).Methods("GET")
+		sr.HandleFunc("/timescale/storage-index-health/index-definition", sih.IndexDefinition).Methods("GET")
 	}
 	sr.HandleFunc("/live/kpis", l.KPIs).Methods("GET")
 	sr.HandleFunc("/live/running-queries", l.RunningQueries).Methods("GET")

@@ -129,6 +129,7 @@ func mergeDashboardCacheWithTimescale(cached interface{}, tsData map[string]inte
 // DashboardV2 returns the Phase-1 DBA homepage payload.
 // It is intentionally cached-only in Phase-1 to keep latency low and behavior predictable.
 func (h *MssqlHandlers) DashboardV2(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -140,8 +141,11 @@ func (h *MssqlHandlers) DashboardV2(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
+	if !instanceType(h.cfg, instance, "sqlserver") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
+		return
+	}
 	// On-demand refresh: live dashboard cache is updated only at startup by default.
 	// Refreshing here ensures charts like PLE and Disk I/O Latency are not blank when users load the page.
 	{
@@ -164,6 +168,7 @@ func (h *MssqlHandlers) DashboardV2(w http.ResponseWriter, r *http.Request) {
 // PerformanceDebt returns maintenance/risk findings collected into TimescaleDB (hourly snapshots).
 func (h *MssqlHandlers) PerformanceDebt(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
+	dbFilter := strings.TrimSpace(r.URL.Query().Get("database"))
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -197,7 +202,7 @@ func (h *MssqlHandlers) PerformanceDebt(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	out, err := h.metricsSvc.GetTimescalePerformanceDebtFindings(r.Context(), instance, time.Duration(lookback)*time.Hour)
+	out, err := h.metricsSvc.GetTimescalePerformanceDebtFindings(r.Context(), instance, time.Duration(lookback)*time.Hour, dbFilter)
 	if err != nil {
 		w.Header().Set("X-Data-Source", "timescale_error")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -308,6 +313,7 @@ func (h *MssqlHandlers) Guardrails(w http.ResponseWriter, r *http.Request) {
 func (h *MssqlHandlers) CPUDrilldown(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	limitStr := r.URL.Query().Get("limit")
+	dbFilter := strings.TrimSpace(r.URL.Query().Get("database"))
 
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -353,7 +359,7 @@ func (h *MssqlHandlers) CPUDrilldown(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !preferLive && h.metricsSvc.IsTimescaleConnected() && fromQ != "" && toQ != "" {
-		queries, err := h.metricsSvc.GetTimescaleSQLServerTopQueries(instance, limit, fromQ, toQ)
+		queries, err := h.metricsSvc.GetTimescaleSQLServerTopQueries(instance, limit, fromQ, toQ, dbFilter)
 		if err == nil {
 			normalizeTopQueryTimestamps(queries)
 			w.Header().Set("X-Data-Source", "timescale")
@@ -364,7 +370,7 @@ func (h *MssqlHandlers) CPUDrilldown(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !preferLive && h.metricsSvc.IsTimescaleConnected() {
-		queries, err := h.metricsSvc.GetTimescaleSQLServerTopQueriesLatest(instance, limit)
+		queries, err := h.metricsSvc.GetTimescaleSQLServerTopQueriesLatest(instance, limit, dbFilter)
 		if err == nil {
 			normalizeTopQueryTimestamps(queries)
 			w.Header().Set("X-Data-Source", "timescale")
@@ -374,7 +380,7 @@ func (h *MssqlHandlers) CPUDrilldown(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[Router] Timescale top queries failed for %s, using live DMV: %v", instance, err)
 	}
 
-	queries, err := h.metricsSvc.MsRepo.FetchTopCPUQueries(instance, limit)
+	queries, err := h.metricsSvc.MsRepo.FetchTopCPUQueries(instance, limit, dbFilter)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

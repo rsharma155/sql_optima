@@ -276,8 +276,18 @@ func (tl *TimescaleLogger) logPostgresReplicationSlots(ctx context.Context, inst
 			r.SlotName, r.SlotType, r.Active, r.Temporary,
 			fmt.Sprintf("%.3f", r.RetainedWalMB),
 			r.RestartLSN, r.ConfirmedFlushLSN,
-			func() any { if r.Xmin == nil { return "" }; return *r.Xmin }(),
-			func() any { if r.CatalogXmin == nil { return "" }; return *r.CatalogXmin }(),
+			func() any {
+				if r.Xmin == nil {
+					return ""
+				}
+				return *r.Xmin
+			}(),
+			func() any {
+				if r.CatalogXmin == nil {
+					return ""
+				}
+				return *r.CatalogXmin
+			}(),
 		)
 	}
 	tl.mu.Lock()
@@ -641,7 +651,7 @@ func (tl *TimescaleLogger) GetPostgresQueryStatsWindowDelta(ctx context.Context,
 	).Scan(&startTS)
 
 	note := ""
-	startT := time.Time{}
+	var startT time.Time
 	if startTS.Valid && startTS.Time.Before(endTS.Time) {
 		startT = startTS.Time
 	} else {
@@ -686,18 +696,7 @@ func (tl *TimescaleLogger) GetPostgresQueryStatsWindowDelta(ctx context.Context,
 		if d.Calls <= 0 && d.TotalTimeMs <= 0 {
 			continue
 		}
-		deltas = append(deltas, PostgresQueryStatsDelta{
-			QueryID:         d.QueryID,
-			QueryText:       d.QueryText,
-			Calls:           d.Calls,
-			TotalTimeMs:     d.TotalTimeMs,
-			MeanTimeMs:      d.MeanTimeMs,
-			Rows:            d.Rows,
-			TempBlksRead:    d.TempBlksRead,
-			TempBlksWritten: d.TempBlksWritten,
-			BlkReadTimeMs:   d.BlkReadTimeMs,
-			BlkWriteTimeMs:  d.BlkWriteTimeMs,
-		})
+		deltas = append(deltas, PostgresQueryStatsDelta(d))
 	}
 
 	sort.Slice(deltas, func(i, j int) bool {

@@ -10,6 +10,7 @@ package repository
 import (
 	"database/sql"
 	"log"
+	"strings"
 )
 
 // CollectDatabaseThroughput fetches database throughput metrics
@@ -54,7 +55,8 @@ func (c *MssqlRepository) CollectDatabaseThroughput(db *sql.DB) ([]map[string]in
 }
 
 // CollectConnectionStats fetches connection statistics by application (Real-Time Diagnostics: user DB workloads only).
-func (c *MssqlRepository) CollectConnectionStats(db *sql.DB) ([]map[string]interface{}, error) {
+// If database is non-empty, scopes to that DB only.
+func (c *MssqlRepository) CollectConnectionStats(db *sql.DB, database string) ([]map[string]interface{}, error) {
 	query := `
 		SELECT TOP 20
 			ISNULL(program_name, 'Unknown') AS program_name,
@@ -64,13 +66,14 @@ func (c *MssqlRepository) CollectConnectionStats(db *sql.DB) ([]map[string]inter
 		WHERE s.is_user_process = 1
 		  AND s.database_id > 4
 		  AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
+		  AND (@p1 = '' OR DB_NAME(s.database_id) = @p1)
 		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		GROUP BY program_name
 		ORDER BY connection_count DESC
 	`
 
-	rows, err := db.Query(query)
+	rows, err := db.Query(query, strings.TrimSpace(database))
 	if err != nil {
 		return nil, err
 	}

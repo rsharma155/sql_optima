@@ -15,33 +15,33 @@ import (
 )
 
 type PgSessionSnapshotRow struct {
-	CollectedAt      time.Time
-	ServerID         string
-	PID              int
-	UserName         string
-	DatabaseName     string
-	ApplicationName  string
-	ClientAddr       string
-	State            string
-	WaitEventType    string
-	WaitEvent        string
-	XactStart        *time.Time
-	QueryStart       *time.Time
-	StateChange      *time.Time
-	Query            string
-}
-
-type PgLockSnapshotRow struct {
 	CollectedAt     time.Time
 	ServerID        string
 	PID             int
-	LockType        string
-	Mode            string
-	Granted         bool
-	RelationOID     uint32 // oid fits uint32; 0 means "virtual/no relation"
-	RelationName    string
-	TransactionID   string
-	WaitingSeconds  float64
+	UserName        string
+	DatabaseName    string
+	ApplicationName string
+	ClientAddr      string
+	State           string
+	WaitEventType   string
+	WaitEvent       string
+	XactStart       *time.Time
+	QueryStart      *time.Time
+	StateChange     *time.Time
+	Query           string
+}
+
+type PgLockSnapshotRow struct {
+	CollectedAt    time.Time
+	ServerID       string
+	PID            int
+	LockType       string
+	Mode           string
+	Granted        bool
+	RelationOID    uint32 // oid fits uint32; 0 means "virtual/no relation"
+	RelationName   string
+	TransactionID  string
+	WaitingSeconds float64
 }
 
 type PgBlockingPairRow struct {
@@ -52,14 +52,14 @@ type PgBlockingPairRow struct {
 }
 
 type PgBlockingIncident struct {
-	IncidentID         int64      `json:"incident_id"`
-	ServerID           string     `json:"server_id"`
-	StartedAt          time.Time  `json:"started_at"`
-	EndedAt            *time.Time `json:"ended_at,omitempty"`
-	RootBlockerPID     *int       `json:"root_blocker_pid,omitempty"`
-	RootBlockerQuery   string     `json:"root_blocker_query,omitempty"`
-	PeakBlockedSessions int       `json:"peak_blocked_sessions"`
-	Status             string     `json:"status"`
+	IncidentID          int64      `json:"incident_id"`
+	ServerID            string     `json:"server_id"`
+	StartedAt           time.Time  `json:"started_at"`
+	EndedAt             *time.Time `json:"ended_at,omitempty"`
+	RootBlockerPID      *int       `json:"root_blocker_pid,omitempty"`
+	RootBlockerQuery    string     `json:"root_blocker_query,omitempty"`
+	PeakBlockedSessions int        `json:"peak_blocked_sessions"`
+	Status              string     `json:"status"`
 }
 
 func (tl *TimescaleLogger) LogPgSessionSnapshot(ctx context.Context, rows []PgSessionSnapshotRow) error {
@@ -248,9 +248,9 @@ func (tl *TimescaleLogger) GetPgBlockingIncidentsRange(ctx context.Context, serv
 }
 
 type PgTopLockedTable struct {
-	RelationName  string  `json:"relation_name"`
-	WaitingCount  int     `json:"waiting_count"`
-	MaxWaitSec    float64 `json:"max_wait_seconds"`
+	RelationName string  `json:"relation_name"`
+	WaitingCount int     `json:"waiting_count"`
+	MaxWaitSec   float64 `json:"max_wait_seconds"`
 }
 
 func (tl *TimescaleLogger) GetPgTopLockedTables(ctx context.Context, serverID string, lookback time.Duration, limit int) ([]PgTopLockedTable, error) {
@@ -305,15 +305,15 @@ func (tl *TimescaleLogger) GetPgTopLockedTablesRange(ctx context.Context, server
 }
 
 type PgBlockingKpis struct {
-	CollectedAt            time.Time `json:"collected_at"`
-	ActiveBlockingSessions int       `json:"active_blocking_sessions"`
-	IdleInTxnRiskCount     int       `json:"idle_in_txn_risk_count"`
-	RootBlockerPID         *int      `json:"root_blocker_pid,omitempty"`
-	RootBlockerQuery       string    `json:"root_blocker_query,omitempty"`
-	IncidentID             *int64    `json:"incident_id,omitempty"`
+	CollectedAt            time.Time  `json:"collected_at"`
+	ActiveBlockingSessions int        `json:"active_blocking_sessions"`
+	IdleInTxnRiskCount     int        `json:"idle_in_txn_risk_count"`
+	RootBlockerPID         *int       `json:"root_blocker_pid,omitempty"`
+	RootBlockerQuery       string     `json:"root_blocker_query,omitempty"`
+	IncidentID             *int64     `json:"incident_id,omitempty"`
 	IncidentStartedAt      *time.Time `json:"incident_started_at,omitempty"`
-	IncidentDurationMins   int       `json:"incident_duration_mins"`
-	ChainDepth             int       `json:"chain_depth"`
+	IncidentDurationMins   int        `json:"incident_duration_mins"`
+	ChainDepth             int        `json:"chain_depth"`
 }
 
 func (tl *TimescaleLogger) GetPgBlockingKpis(ctx context.Context, serverID string) (*PgBlockingKpis, error) {
@@ -379,7 +379,7 @@ func (tl *TimescaleLogger) GetPgBlockingKpis(ctx context.Context, serverID strin
 	// Chain depth: approximate from most recent pairs in last 2 minutes.
 	// This runs in SQL via recursive traversal; bounded to prevent runaway.
 	qDepth := `
-		WITH latest AS (
+		WITH RECURSIVE latest AS (
 		  SELECT collected_at
 		  FROM monitor.pg_blocking_pairs
 		  WHERE server_id = $1
@@ -450,21 +450,21 @@ type PgBlockingSessionAt struct {
 
 // PgBlockingNodeAt mirrors repository.PgBlockingNode but is generated from Timescale snapshots.
 type PgBlockingNodeAt struct {
-	PID        int               `json:"pid"`
-	User       string            `json:"user,omitempty"`
-	Database   string            `json:"database,omitempty"`
-	State      string            `json:"state"`
-	QueryStart *time.Time        `json:"query_start,omitempty"`
-	Duration   string            `json:"duration"`
-	WaitEvent  string            `json:"wait_event"`
-	Query      string            `json:"query"`
+	PID        int                `json:"pid"`
+	User       string             `json:"user,omitempty"`
+	Database   string             `json:"database,omitempty"`
+	State      string             `json:"state"`
+	QueryStart *time.Time         `json:"query_start,omitempty"`
+	Duration   string             `json:"duration"`
+	WaitEvent  string             `json:"wait_event"`
+	Query      string             `json:"query"`
 	BlockedBy  []PgBlockingNodeAt `json:"blocked_by"`
 }
 
 type PgBlockingDetailsResponse struct {
-	CollectedAt time.Time           `json:"collected_at"`
-	ServerID    string              `json:"server_id"`
-	BlockingTree []PgBlockingNodeAt  `json:"blocking_tree"`
+	CollectedAt  time.Time          `json:"collected_at"`
+	ServerID     string             `json:"server_id"`
+	BlockingTree []PgBlockingNodeAt `json:"blocking_tree"`
 }
 
 // GetPgBlockingDetailsInRange picks the latest capture within [from,to] and reconstructs a blocking tree
@@ -640,4 +640,3 @@ func intSliceKeys(m map[int]struct{}) []int {
 	}
 	return out
 }
-

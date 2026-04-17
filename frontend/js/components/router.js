@@ -91,21 +91,77 @@ window.appNavigate = function(route, skipHistory = false) {
     }
     
     window.appState.activeViewId = route;
+
+    if (route === 'setup-schema') {
+        if (typeof window.SetupSchemaProgressView === 'function') {
+            window.SetupSchemaProgressView();
+        } else {
+            window.routerOutlet.innerHTML = '<div class="page-view active"><h3 class="text-warning">Setup schema view not loaded</h3></div>';
+        }
+        return;
+    }
+
+    if (route === 'setup') {
+        if (typeof window.SetupWizardView === 'function') {
+            window.SetupWizardView();
+        } else {
+            window.routerOutlet.innerHTML = '<div class="page-view active"><h3 class="text-warning">Setup wizard not loaded</h3></div>';
+        }
+        return;
+    }
+
+    if (route === 'onboarding-servers') {
+        const isLoggedIn = !!(window._auth && typeof window._auth.isLoggedIn === 'function' && window._auth.isLoggedIn());
+        const isAdmin = !!(window._auth && typeof window._auth.isAdmin === 'function' && window._auth.isAdmin());
+        if (!isLoggedIn) {
+            if (typeof window.LoginView === 'function') window.LoginView();
+            else window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-warning">Login required</h3></div>`;
+            return;
+        }
+        if (!isAdmin) {
+            window.routerOutlet.innerHTML = `<div class="page-view active" style="display:flex;align-items:center;justify-content:center;min-height:60vh;">
+                <div style="text-align:center;">
+                    <h2 class="text-muted">Access denied</h2>
+                    <p class="text-muted">Only administrators can register monitoring servers.</p>
+                    <a href="/" class="btn btn-accent" style="margin-top:1rem;">Home</a>
+                </div></div>`;
+            return;
+        }
+        if (typeof window.OnboardingMonitoredServersView === 'function') {
+            window.OnboardingMonitoredServersView();
+        } else {
+            window.routerOutlet.innerHTML = '<div class="page-view active"><h3 class="text-warning">Onboarding view not loaded</h3></div>';
+        }
+        return;
+    }
     
     // Admin panel only accessible via /admin URL and requires admin role
     if (route === 'admin') {
-        if (window._auth && window._auth.isLoggedIn() && window._auth.isAdmin()) {
-            if (window.AdminPanelView) { window.AdminPanelView(); }
-        } else {
+        const isLoggedIn = !!(window._auth && typeof window._auth.isLoggedIn === 'function' && window._auth.isLoggedIn());
+        const isAdmin = !!(window._auth && typeof window._auth.isAdmin === 'function' && window._auth.isAdmin());
+
+        if (!isLoggedIn) {
+            // Better UX: prompt login instead of a dead-end "denied" message.
+            if (typeof window.LoginView === 'function') {
+                window.LoginView();
+            } else {
+                window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-warning">Login required</h3></div>`;
+            }
+            return;
+        }
+        if (!isAdmin) {
             window.routerOutlet.innerHTML = `<div class="page-view active" style="display:flex; align-items:center; justify-content:center; min-height:60vh;">
                 <div style="text-align:center;">
                     <i class="fa-solid fa-ban" style="font-size:4rem; color:var(--danger); opacity:0.5;"></i>
                     <h2 style="margin-top:1rem; color:var(--text-muted);">Access Denied</h2>
-                    <p class="text-muted">Admin privileges required. Navigate to <code>/admin</code> after logging in as admin.</p>
+                    <p class="text-muted">Admin privileges required.</p>
                     <a href="/" class="btn btn-accent" style="margin-top:1rem;"><i class="fa-solid fa-home"></i> Go to Dashboard</a>
                 </div>
             </div>`;
+            return;
         }
+
+        if (window.AdminPanelView) { window.AdminPanelView(); }
         return;
     }
 
@@ -138,6 +194,10 @@ window.appNavigate = function(route, skipHistory = false) {
                     <h3 class="text-warning">Please select an instance first</h3>
                     <p>Go to the instance dropdown above and select a SQL Server instance.</p>
                 </div>`;
+                return;
+            }
+            if (instance.type === 'postgres') {
+                window.appNavigate('pg-dashboard');
                 return;
             }
             // Wait for DashboardView to be defined (in case scripts haven't loaded yet)
@@ -182,7 +242,7 @@ window.appNavigate = function(route, skipHistory = false) {
                     window.routerOutlet.innerHTML = `<div class="page-view active">
                         <h3 class="text-warning">DBA War Room unavailable</h3>
                         <p>Script failed to load. Please check console.</p>
-                        <button onclick="location.reload()" class="btn btn-primary">Refresh Page</button>
+                        <button data-action="reload" class="btn btn-primary">Refresh Page</button>
                     </div>`;
                 }
             }
@@ -268,7 +328,15 @@ window.appNavigate = function(route, skipHistory = false) {
         case 'live-diagnostics': window.LiveDiagnosticsView(); break;
         
         // Postgres
-        case 'pg-dashboard': window.PgDashboardView(); break;
+        case 'pg-dashboard': {
+            const pgInst = window.appState.config?.instances?.[window.appState.currentInstanceIdx];
+            if (pgInst && pgInst.type === 'sqlserver') {
+                window.appNavigate('dashboard');
+                return;
+            }
+            window.PgDashboardView();
+            break;
+        }
         case 'pg-sessions': window.PgSessionsView(); break;
         case 'pg-locks': window.PgLocksView(); break;
         case 'pg-queries': window.PgQueriesView(); break;
@@ -298,12 +366,12 @@ window.appNavigate = function(route, skipHistory = false) {
             if (typeof window.SentinelMockView === 'function') {
                 window.SentinelMockView();
             } else {
-                window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-muted">Sentinel mock not loaded</h3><p class="text-muted">This optional demo view is not bundled by default. To enable: add <code>&lt;script src="js/pages/ui_SentinelMock.js"&gt;&lt;/script&gt;</code> to <code>index.html</code> (after <code>router.js</code>), then open <code>sentinel-mock</code> again.</p><p><button type="button" class="btn btn-primary" onclick="window.appNavigate('global')">Global Estate</button></p></div>`;
+                window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-muted">Sentinel mock not loaded</h3><p class="text-muted">This optional demo view is not bundled by default. To enable: add <code>&lt;script src="js/pages/ui_SentinelMock.js"&gt;&lt;/script&gt;</code> to <code>index.html</code> (after <code>router.js</code>), then open <code>sentinel-mock</code> again.</p><p><button type="button" class="btn btn-primary" data-action="navigate" data-route="global">Global Estate</button></p></div>`;
             }
             break;
         default:
             console.warn('[Router] Unknown route:', route);
-            window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-warning">Page not found</h3><p class="text-muted">No view is registered for <code>${window.escapeHtml(route)}</code>.</p><p><button type="button" class="btn btn-primary" onclick="window.appNavigate('global')">Go to Global Estate</button></p></div>`;
+            window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-warning">Page not found</h3><p class="text-muted">No view is registered for <code>${window.escapeHtml(route)}</code>.</p><p><button type="button" class="btn btn-primary" data-action="navigate" data-route="global">Go to Global Estate</button></p></div>`;
     }
 };
 
@@ -342,11 +410,14 @@ window.router = {
         const dbSel = document.getElementById('database-select');
         const brand = document.getElementById('brand-icon');
         const sidebarNav = document.getElementById('sidebar-nav');
+        const adminLi = (window._auth && typeof window._auth.isAdmin === 'function' && window._auth.isAdmin())
+            ? '<li data-route="admin" id="nav-admin"><i class="fa-solid fa-user-shield"></i> Admin</li>'
+            : '';
 
         if (window.appState.currentInstanceIdx === -1) {
             dbSel.innerHTML = '<option value="all">-- N/A --</option>';
             brand.className = 'fa-solid fa-earth-americas xl-icon logo-icon text-accent';
-            sidebarNav.innerHTML = '<li data-route="global" class="active"><i class="fa-solid fa-globe"></i> Global Estate Overview</li>';
+            sidebarNav.innerHTML = '<li data-route="global" class="active"><i class="fa-solid fa-globe"></i> Global Estate Overview</li>' + adminLi;
             // Click handling is delegated globally.
             return;
         }
@@ -419,6 +490,7 @@ window.router = {
                 <li data-route="pg-cpu"><i class="fa-solid fa-microchip"></i> CPU Usage</li>
                 <li data-route="pg-memory"><i class="fa-solid fa-memory"></i> Memory Usage</li>
                 <li data-route="pg-alerts"><i class="fa-solid fa-bell text-danger"></i> Alerts & Events</li>
+                ${adminLi}
             `;
         } else { 
             brand.className='fa-brands fa-microsoft xl-icon logo-icon text-accent'; 
@@ -435,6 +507,7 @@ window.router = {
                 <li data-route="jobs" id="nav-agent-jobs"><i class="fa-solid fa-briefcase"></i> SQL Agent Jobs</li>
                 <li data-route="alerts"><i class="fa-solid fa-triangle-exclamation"></i> Alerts <span id="alerts-badge" class="badge badge-danger">0</span></li>
                 <li data-route="best-practices"><i class="fa-solid fa-shield-halved"></i> Best Practices</li>
+                ${adminLi}
             `;
         }
     }

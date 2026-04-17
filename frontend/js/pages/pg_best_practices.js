@@ -26,7 +26,7 @@ window.PgBestPracticesView = async function() {
                     <h1><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices Dashboard</h1>
                     <p class="subtitle">Instance: ${window.escapeHtml(inst.name)}</p>
                 </div>
-                <button class="btn btn-sm btn-outline text-accent" onclick="window.PgBestPracticesView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgBestPracticesView"><i class="fa-solid fa-refresh"></i> Refresh</button>
             </div>
             <div style="display:flex; justify-content:center; align-items:center; height:50vh;">
                 <div class="spinner"></div><span style="margin-left:1rem;">Loading best practices…</span>
@@ -155,7 +155,7 @@ function renderPgSettingsBestPracticesAudit(inst, data, sourceHeader) {
                 </div>
                 <div style="display:flex; align-items:center; gap:1rem;">
                     ${typeof window.renderStatusStrip === 'function' ? window.renderStatusStrip({ lastUpdateId: 'pgBpLastRefreshTime', sourceBadgeId: 'pgBpDataSourceBadge', includeHealth: false, includeFreshness: false, autoRefreshText: '' }) : ''}
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.PgBestPracticesView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgBestPracticesView"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
 
@@ -191,7 +191,7 @@ function renderPgSettingsBestPracticesAudit(inst, data, sourceHeader) {
 
         html += `
             <div class="table-card glass-panel mt-3" style="padding:0.75rem;">
-                <div class="card-header" onclick="this.nextElementSibling.classList.toggle('hidden'); this.querySelector('i.fa-chevron').classList.toggle('fa-chevron-down'); this.querySelector('i.fa-chevron').classList.toggle('fa-chevron-up');" style="cursor:pointer;">
+                <div class="card-header" data-action="toggle-section" style="cursor:pointer;">
                     <h3 style="font-size:0.85rem; margin:0; display:flex; align-items:center; gap:0.5rem;">
                         <i class="fa-solid fa-chevron-up fa-chevron" style="transition:transform 0.2s;"></i>
                         <span class="text-accent">${window.escapeHtml(category)}</span>
@@ -244,7 +244,7 @@ function renderPgSettingsBestPracticesAudit(inst, data, sourceHeader) {
                     ${pgBpEffectiveValueCell(check)}
                     <td style="color:${msgColor}; font-size:0.72rem; word-wrap:break-word;">${window.escapeHtml(check.message)}</td>
                     <td style="text-align:center;">
-                        <button type="button" class="btn btn-xs btn-outline" onclick="window.showRuleDrawerById('${drawerId}')">
+                        <button type="button" class="btn btn-xs btn-outline" data-action="call" data-fn="showRuleDrawerById" data-arg="${drawerId}">
                             <i class="fa-solid fa-info-circle"></i> Details
                         </button>
                     </td>

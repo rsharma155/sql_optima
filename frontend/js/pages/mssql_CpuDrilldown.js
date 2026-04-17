@@ -25,7 +25,7 @@ window.CpuDrilldown = async function() {
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between">
                 <div class="flex-between" style="align-items:center; gap:1rem;">
-                    <button class="btn btn-sm btn-outline" style="padding:0.3rem 0.6rem; font-size:1.1rem;" onclick="window.appNavigate('dashboard')" title="Back to Dashboard"><i class="fa-solid fa-arrow-left"></i></button>
+                    <button class="btn btn-sm btn-outline" style="padding:0.3rem 0.6rem; font-size:1.1rem;" data-action="navigate" data-route="dashboard" title="Back to Dashboard"><i class="fa-solid fa-arrow-left"></i></button>
                     <h1 style="font-size: 1.5rem;">CPU Drilldown <span class="subtitle">- Instance: ${window.escapeHtml(inst.name)}</span></h1>
                 </div>
                 <div style="display: flex; align-items: center; gap: 1rem;">
@@ -37,8 +37,8 @@ window.CpuDrilldown = async function() {
                         <label style="font-size: 0.8rem; color: var(--text-muted);">to:</label>
                         <input type="datetime-local" id="cpuDrillTo" class="custom-select" style="padding: 0.25rem; font-size: 0.8rem;">
                     </div>
-                    <button class="btn btn-sm btn-accent" onclick="window.applyCpuDrilldownRange()"><i class="fa-solid fa-filter"></i> Apply</button>
-                    <button class="btn btn-sm btn-outline" onclick="window.refreshCpuDrilldown()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-accent" data-action="call" data-fn="applyCpuDrilldownRange"><i class="fa-solid fa-filter"></i> Apply</button>
+                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="refreshCpuDrilldown"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
             
@@ -54,7 +54,7 @@ window.CpuDrilldown = async function() {
                 <div class="card-header flex-between" style="flex-wrap: wrap; gap: 0.5rem;">
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
                         <h3>Top Queries</h3>
-                        <select id="queryMetricSelect" class="custom-select" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onchange="window.changeQueryMetric()">
+                        <select id="queryMetricSelect" class="custom-select" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" data-change-action="changeQueryMetric">
                             <option value="cpu">CPU Time</option>
                             <option value="duration">Duration</option>
                             <option value="reads">Logical Reads</option>
@@ -70,15 +70,15 @@ window.CpuDrilldown = async function() {
                     <table class="data-table" style="border-collapse: separate; border-spacing: 0;" id="cpuQueriesTable">
                         <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-surface, #1a1a2e);">
                             <tr>
-                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(0)">#</th>
-                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(1)">Time</th>
-                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(2)">Database <i class="fa-solid fa-sort"></i></th>
+                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" data-action="call" data-fn="sortCpuTable" data-arg="0">#</th>
+                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" data-action="call" data-fn="sortCpuTable" data-arg="1">Time</th>
+                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" data-action="call" data-fn="sortCpuTable" data-arg="2">Database <i class="fa-solid fa-sort"></i></th>
                                 <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e);">Query Text</th>
-                                <th id="cpuDrillMetricTotalTh" style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(4)">Total CPU (ms) <i class="fa-solid fa-sort"></i></th>
-                                <th id="cpuDrillMetricAvgTh" style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(5)">Avg CPU (ms) <i class="fa-solid fa-sort"></i></th>
-                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(6)">Execs <i class="fa-solid fa-sort"></i></th>
-                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(7)">Login <i class="fa-solid fa-sort"></i></th>
-                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" onclick="window.sortCpuTable(8)">Client App <i class="fa-solid fa-sort"></i></th>
+                                <th id="cpuDrillMetricTotalTh" style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" data-action="call" data-fn="sortCpuTable" data-arg="4">Total CPU (ms) <i class="fa-solid fa-sort"></i></th>
+                                <th id="cpuDrillMetricAvgTh" style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" data-action="call" data-fn="sortCpuTable" data-arg="5">Avg CPU (ms) <i class="fa-solid fa-sort"></i></th>
+                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" data-action="call" data-fn="sortCpuTable" data-arg="6">Execs <i class="fa-solid fa-sort"></i></th>
+                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" data-action="call" data-fn="sortCpuTable" data-arg="7">Login <i class="fa-solid fa-sort"></i></th>
+                                <th style="position: sticky; top: 0; background: var(--bg-surface, #1a1a2e); cursor:pointer;" data-action="call" data-fn="sortCpuTable" data-arg="8">Client App <i class="fa-solid fa-sort"></i></th>
                             </tr>
                         </thead>
                         <tbody id="cpuQueriesBody">
@@ -274,6 +274,10 @@ window.loadCpuDrilldownData = async function(instanceName, fromTime, toTime) {
         let cpuUrl = `/api/timescale/mssql/cpu-history?instance=${encodeURIComponent(instanceName)}`;
         // Top queries: API prefers TimescaleDB (/api/mssql/cpu-drilldown); use Real-Time Diagnostics for live DMV.
         let queriesUrl = `/api/mssql/cpu-drilldown?instance=${encodeURIComponent(instanceName)}&limit=200`;
+        const db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
+        if (db) {
+            queriesUrl += `&database=${encodeURIComponent(db)}`;
+        }
         
         if (fromTime && toTime) {
             cpuUrl += `&from=${encodeURIComponent(fromTime)}&to=${encodeURIComponent(toTime)}`;
@@ -465,7 +469,7 @@ window.renderCpuDrilldownTable = function(queries, fromTime, toTime) {
         filtered = queries.filter(q => {
             const ts = q.capture_timestamp || q.Capture_Timestamp || '';
             if (!ts) return true;
-            const d = new Date(ts).getTime();
+            const d = new Date(String(ts).replace(' ', 'T')).getTime();
             return d >= fromMs && d <= toMs;
         });
     }
@@ -475,6 +479,17 @@ window.renderCpuDrilldownTable = function(queries, fromTime, toTime) {
         const dbName = (q.database_name || q.Database_Name || q['database_name'] || '').toLowerCase();
         return !excludedDbs.includes(dbName);
     });
+
+    // If the global Target Database dropdown is set, scope Top Queries to that DB only.
+    const selectedDb = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all')
+        ? String(window.appState.currentDatabase).toLowerCase()
+        : '';
+    if (selectedDb) {
+        filtered = filtered.filter(q => {
+            const dbName = (q.database_name || q.Database_Name || q['database_name'] || '').toLowerCase();
+            return dbName === selectedDb;
+        });
+    }
 
     function normalizeQuery(qt) {
         if (!qt) return '';
@@ -534,7 +549,7 @@ window.renderCpuDrilldownTable = function(queries, fromTime, toTime) {
         const truncatedText = g.queryText.length > 80 ? g.queryText.substring(0, 80) + '...' : g.queryText;
         window.appState.queryCache['q' + idx] = g.queryText;
         
-        const ts = g.capture_timestamp ? new Date(g.capture_timestamp) : null;
+        const ts = g.capture_timestamp ? new Date(String(g.capture_timestamp).replace(' ', 'T')) : null;
         const tsStr = ts ? ts.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'}) : '';
 
         return `
@@ -545,7 +560,7 @@ window.renderCpuDrilldownTable = function(queries, fromTime, toTime) {
                 <td style="max-width: 350px;">
                     <span class="code-snippet" style="cursor: pointer; display: inline-block; max-width: 330px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;" 
                           title="${window.escapeHtml(g.queryText)}"
-                          onclick="window.showQueryModalDirect(window.appState.queryCache['q${idx}'])">
+                          data-action="show-query-modal-direct" data-key="q${idx}">
                         ${window.escapeHtml(truncatedText)}
                     </span>
                 </td>
@@ -582,6 +597,16 @@ window.renderCpuDrilldownDashboardTable = function(queries, fromTime, toTime) {
         return !excludedDbs.includes(dbName);
     });
 
+    const selectedDb = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all')
+        ? String(window.appState.currentDatabase).toLowerCase()
+        : '';
+    if (selectedDb) {
+        filtered = filtered.filter(q => {
+            const dbName = (q.database_name || q.Database_Name || '').toLowerCase();
+            return dbName === selectedDb;
+        });
+    }
+
     const sorted = [...filtered].sort((a, b) => (parseFloat(b.metric_value) || 0) - (parseFloat(a.metric_value) || 0));
     document.getElementById('queryCount').textContent = sorted.length + ' queries';
 
@@ -610,7 +635,7 @@ window.renderCpuDrilldownDashboardTable = function(queries, fromTime, toTime) {
                 <td style="max-width: 350px;">
                     <span class="code-snippet" style="cursor: pointer; display: inline-block; max-width: 330px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;"
                           title="${window.escapeHtml(rawText)}"
-                          onclick="window.showQueryModalDirect(window.appState.queryCache['q${idx}'])">
+                          data-action="show-query-modal-direct" data-key="q${idx}">
                         ${window.escapeHtml(truncatedText)}
                     </span>
                 </td>
@@ -685,7 +710,7 @@ window.showQueryModalDirect = function(queryText) {
         <div style="background: var(--bg-surface); margin: 2%; padding: 20px; border: 1px solid var(--border-color, #333); border-radius: 12px; width: 95%; max-width: 1000px; max-height: 90vh; overflow-y: auto; color: var(--text-primary, #e0e0e0); font-family: inherit; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color, #333); padding-bottom: 0.75rem;">
                 <h3 style="margin: 0; color: var(--accent, #3b82f6); font-size: 1.1rem;"><i class="fa-solid fa-code"></i> Query Details</h3>
-                <button onclick="document.getElementById('query-modal').remove()" style="background: transparent; border: 1px solid var(--border-color, #555); color: var(--text-primary, #e0e0e0); font-size: 1.25rem; cursor: pointer; padding: 0.25rem 0.6rem; border-radius: 4px; line-height: 1;">&times;</button>
+                <button data-action="close-id" data-target="query-modal" style="background: transparent; border: 1px solid var(--border-color, #555); color: var(--text-primary, #e0e0e0); font-size: 1.25rem; cursor: pointer; padding: 0.25rem 0.6rem; border-radius: 4px; line-height: 1;">&times;</button>
             </div>
             <div style="background: var(--bg-base); padding: 1rem; border-radius: 8px; max-height: 60vh; overflow: auto; border: 1px solid var(--border-color, #333);">
                 <pre id="queryModalText" style="margin: 0; white-space: pre-wrap; word-wrap: break-word; color: var(--text-primary, #e0e0e0); font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.5;"></pre>

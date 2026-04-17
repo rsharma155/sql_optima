@@ -22,7 +22,7 @@ window.HADashboardView = function() {
                 </div>
                 <div style="display:flex; align-items:center; gap: 1rem;">
                     ${window.renderStatusStrip({ lastUpdateId: 'haLastRefreshTime', sourceBadgeId: 'haDataSourceBadge', includeHealth: false, includeFreshness: false, autoRefreshText: '' })}
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.HADashboardView()">
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="HADashboardView">
                         <i class="fa-solid fa-refresh"></i> Refresh
                     </button>
                 </div>

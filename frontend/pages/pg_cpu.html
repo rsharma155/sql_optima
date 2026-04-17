@@ -1,14 +1,14 @@
         <div class="page-view active dashboard-sky-theme pg-cpu-page">
             <div class="page-title flex-between">
                 <div>
-                    <button class="btn btn-secondary btn-sm" onclick="window.appNavigateBack()" style="margin-right:1rem;">
+                    <button class="btn btn-secondary btn-sm" data-action="navigate-back" style="margin-right:1rem;">
                         <i class="fa-solid fa-arrow-left"></i> Back
                     </button>
                     <h1><i class="fa-solid fa-microchip text-accent"></i> PostgreSQL CPU Dashboard</h1>
                     <p class="subtitle">Host vs. Postgres CPU, saturation, execution time by database, and top statements.</p>
                 </div>
                 <div class="flex gap-2">
-                    <button class="btn btn-secondary" onclick="window.appNavigate('pg-memory')">
+                    <button class="btn btn-secondary" data-action="navigate" data-route="pg-memory">
                         <i class="fa-solid fa-memory"></i> View Memory
                     </button>
                     <div class="time-picker glass-panel p-2 rounded custom-select-group text-right">

@@ -10,6 +10,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -37,9 +38,9 @@ func (h *HealthHandlers) Score(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var score float64 = 100.0
-	var cpuDeviation float64 = 1.0
-	var blockedCount int = 0
+	var score = 100.0
+	var cpuDeviation = 1.0
+	var blockedCount int
 
 	var currentCPU, baselineCPU float64
 	pool := h.metricsSvc.GetTimescaleDBPool()
@@ -56,12 +57,14 @@ func (h *HealthHandlers) Score(w http.ResponseWriter, r *http.Request) {
 	`, instance).Scan(&currentCPU)
 
 	if err == nil && currentCPU > 0 {
-		err = pool.QueryRow(r.Context(), `
+		if err := pool.QueryRow(r.Context(), `
 			SELECT COALESCE(AVG(avg_hourly_cpu), 50)
 			FROM (SELECT time_bucket('1 hour', capture_timestamp) AS hb, AVG(avg_cpu_load) AS avg_hourly_cpu
 			      FROM sqlserver_metrics WHERE server_instance_name = $1 AND capture_timestamp >= NOW() - INTERVAL '7 days'
 			      GROUP BY hb) t
-		`, instance).Scan(&baselineCPU)
+		`, instance).Scan(&baselineCPU); err != nil {
+			log.Printf("[HEALTH] baseline CPU query failed for %s: %v", instance, err)
+		}
 		if baselineCPU > 0 {
 			cpuDeviation = currentCPU / baselineCPU
 		}
@@ -73,13 +76,15 @@ func (h *HealthHandlers) Score(w http.ResponseWriter, r *http.Request) {
 		score -= 10
 	}
 
-	err = pool.QueryRow(r.Context(), `
+	if err := pool.QueryRow(r.Context(), `
 		SELECT COUNT(DISTINCT blocked_session_id)
 		FROM sqlserver_connection_history
 		WHERE server_instance_name = $1 AND active_requests > 0
 		  AND blocked_session_id IS NOT NULL AND blocked_session_id > 0
 		  AND capture_timestamp >= NOW() - INTERVAL '15 minutes'
-	`, instance).Scan(&blockedCount)
+	`, instance).Scan(&blockedCount); err != nil {
+		log.Printf("[HEALTH] blocked sessions query failed for %s: %v", instance, err)
+	}
 
 	if blockedCount > 0 {
 		score -= 15
@@ -427,28 +432,34 @@ func (h *HealthHandlers) MetricsHistory(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var cpuBaseline, batchBaseline, diskBaseline float64
-	pool.QueryRow(r.Context(), `
+	if err := pool.QueryRow(r.Context(), `
 		SELECT COALESCE(AVG(avg_cpu_load), 50) FROM sqlserver_metrics
 		WHERE server_instance_name = $1 AND capture_timestamp >= NOW() - INTERVAL '7 days'
-	`, instance).Scan(&cpuBaseline)
+	`, instance).Scan(&cpuBaseline); err != nil {
+		log.Printf("[HEALTH] baseline CPU history query failed for %s: %v", instance, err)
+	}
 
-	pool.QueryRow(r.Context(), `
+	if err := pool.QueryRow(r.Context(), `
 		SELECT COALESCE(AVG(total_tps), 100) FROM (
 			SELECT time_bucket('1 hour', capture_timestamp) AS hour, SUM(avg_tps) AS total_tps
 			FROM sqlserver_db_throughput_metrics
 			WHERE server_instance_name = $1 AND capture_timestamp >= NOW() - INTERVAL '7 days'
 			GROUP BY hour
 		) t
-	`, instance).Scan(&batchBaseline)
+	`, instance).Scan(&batchBaseline); err != nil {
+		log.Printf("[HEALTH] baseline batch history query failed for %s: %v", instance, err)
+	}
 
-	pool.QueryRow(r.Context(), `
+	if err := pool.QueryRow(r.Context(), `
 		SELECT COALESCE(AVG(avg_read_latency), 10) FROM (
 			SELECT time_bucket('1 hour', capture_timestamp) AS hour, AVG(disk_read_ms_per_sec) AS avg_read_latency
 			FROM sqlserver_wait_history
 			WHERE server_instance_name = $1 AND capture_timestamp >= NOW() - INTERVAL '7 days'
 			GROUP BY hour
 		) t
-	`, instance).Scan(&diskBaseline)
+	`, instance).Scan(&diskBaseline); err != nil {
+		log.Printf("[HEALTH] baseline disk history query failed for %s: %v", instance, err)
+	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"cpu_history":   cpuHistory,

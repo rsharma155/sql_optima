@@ -1,0 +1,33 @@
+version: "2"
+
+linters:
+  default: standard
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        - (net/http.ResponseWriter).Write
+        - (*encoding/json.Encoder).Encode
+        - (*github.com/jackc/pgx/v5/pgxpool.Pool).Close
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF1001"   # De Morgan's law — original form is more readable
+        - "-QF1003"   # tagged switch — if-else chains are fine for 2-3 branches
+        - "-ST1000"   # package comment format — project uses file-level copyright headers
+        - "-ST1003"   # naming conventions — renaming exported types is a breaking change
+        - "-ST1022"   # comment form — project uses different comment style
+  exclusions:
+    rules:
+      # defer Close / Rollback — idiomatic Go, return value rarely actionable
+      - linters: [errcheck]
+        source: "defer "
+      # test files — more lenient
+      - linters: [errcheck, ineffassign]
+        path: "_test\\.go"
+    paths:
+      - third_party
+      - vendor

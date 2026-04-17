@@ -72,7 +72,7 @@ func (l *Logger) log(ctx context.Context, level Level, msg string, fields map[st
 	}
 
 	data, _ := json.Marshal(entry)
-	l.output.Write(append(data, '\n'))
+	_, _ = l.output.Write(append(data, '\n'))
 }
 
 func (l *Logger) Debug(ctx context.Context, msg string, fields map[string]any) {
@@ -101,7 +101,9 @@ func getRequestID(ctx context.Context) string {
 	return ""
 }
 
-var RequestIDKey = struct{}{}
+type requestIDKeyType struct{}
+
+var RequestIDKey = requestIDKeyType{}
 
 func WithRequestID(ctx context.Context) context.Context {
 	return context.WithValue(ctx, RequestIDKey, uuid.New().String())

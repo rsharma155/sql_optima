@@ -26,12 +26,12 @@ func (h *PostgresHandlers) CPUHistory(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -65,12 +65,12 @@ func (h *PostgresHandlers) CPUSaturation(w http.ResponseWriter, r *http.Request)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -89,12 +89,12 @@ func (h *PostgresHandlers) CPUDatabase(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -126,12 +126,12 @@ func (h *PostgresHandlers) CPUTopQueries(w http.ResponseWriter, r *http.Request)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return

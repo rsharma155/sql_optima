@@ -64,9 +64,9 @@ func (c *PgRepository) HasConnection(instanceName string) bool {
 // It supports environment variable overrides for credentials and automatic database discovery.
 func NewPgRepository(cfg *config.Config) *PgRepository {
 	c := &PgRepository{
-		conns:  make(map[string]*sql.DB),
-		status: make(map[string]string),
-		cfg:    cfg,
+		conns:           make(map[string]*sql.DB),
+		status:          make(map[string]string),
+		cfg:             cfg,
 		lastDbSizeBytes: make(map[string]int64),
 		lastDbSizeAt:    make(map[string]time.Time),
 	}
@@ -100,8 +100,13 @@ func NewPgRepository(cfg *config.Config) *PgRepository {
 				sslmode = "disable"
 			}
 
+			dbname := strings.TrimSpace(inst.Database)
+			if dbname == "" {
+				dbname = "postgres"
+			}
+
 			// Build connection string with optional SSL certificates
-			connStr := fmt.Sprintf("host=%s port=%d user=%s dbname=postgres sslmode=%s", inst.Host, port, user, sslmode)
+			connStr := fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=%s", inst.Host, port, user, dbname, sslmode)
 
 			if password != "" {
 				connStr += fmt.Sprintf(" password=%s", password)
@@ -153,8 +158,14 @@ func NewPgRepository(cfg *config.Config) *PgRepository {
 						var discoverDbs []string
 						for rows.Next() {
 							var dbName string
-							rows.Scan(&dbName)
+							if err := rows.Scan(&dbName); err != nil {
+								log.Printf("[POSTGRES] Failed to scan discovered database row for %s: %v", instName, err)
+								continue
+							}
 							discoverDbs = append(discoverDbs, dbName)
+						}
+						if err := rows.Err(); err != nil {
+							log.Printf("[POSTGRES] Error during database discovery iteration for %s: %v", instName, err)
 						}
 						rows.Close()
 						cfg.Instances[idx].Databases = discoverDbs
@@ -245,7 +256,12 @@ func (c *PgRepository) reconnectInstance(instanceName string) bool {
 		sslmode = "disable"
 	}
 
-	connStr := fmt.Sprintf("host=%s port=%d user=%s dbname=postgres sslmode=%s", inst.Host, port, user, sslmode)
+	dbname := strings.TrimSpace(inst.Database)
+	if dbname == "" {
+		dbname = "postgres"
+	}
+
+	connStr := fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=%s", inst.Host, port, user, dbname, sslmode)
 	if password != "" {
 		connStr += fmt.Sprintf(" password=%s", password)
 	}
@@ -1685,7 +1701,10 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 			var pid int
 			var duration float64
 			var query string
-			rows.Scan(&pid, &duration, &query)
+			if err := rows.Scan(&pid, &duration, &query); err != nil {
+				log.Printf("[POSTGRES] Failed to scan long transaction row: %v", err)
+				continue
+			}
 			alerts = append(alerts, models.PgAlert{
 				Severity:   "CRITICAL",
 				Metric:     fmt.Sprintf("Idle in Transaction (PID %d)", pid),
@@ -1699,10 +1718,14 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 
 	// Check connection count threshold
 	var connCount int
-	db.QueryRow("SELECT count(*) FROM pg_stat_activity").Scan(&connCount)
+	if err := db.QueryRow("SELECT count(*) FROM pg_stat_activity").Scan(&connCount); err != nil {
+		log.Printf("[POSTGRES] Failed to query connection count: %v", err)
+	}
 
 	var maxConn int
-	db.QueryRow("SELECT setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConn)
+	if err := db.QueryRow("SELECT setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConn); err != nil {
+		log.Printf("[POSTGRES] Failed to query max_connections: %v", err)
+	}
 
 	if maxConn > 0 && float64(connCount)/float64(maxConn) > 0.8 {
 		alerts = append(alerts, models.PgAlert{
@@ -1747,7 +1770,7 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 			var tableName string
 			var deadTuples int
 			var bloatPct float64
-			bloatRows.Scan(&tableName, &deadTuples, &bloatPct)
+			_ = bloatRows.Scan(&tableName, &deadTuples, &bloatPct)
 			if bloatPct > 20 {
 				alerts = append(alerts, models.PgAlert{
 					Severity:   "WARNING",

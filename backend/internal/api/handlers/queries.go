@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/rsharma155/sql_optima/internal/config"
+	"github.com/rsharma155/sql_optima/internal/middleware"
+	"github.com/rsharma155/sql_optima/internal/security/redact"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
@@ -113,8 +115,12 @@ func (h *QueryHandlers) QueryStoreSQLText(w http.ResponseWriter, r *http.Request
 
 	txt, err := h.metricsSvc.GetMssqlQueryStoreSQLText(r.Context(), instance, database, queryHash)
 	if err != nil {
+		log.Printf("[API] Query store sql-text error for %s: %s", instance, redact.String(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":      "failed to fetch query text",
+			"request_id": middleware.RequestIDFromContext(r.Context()),
+		})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

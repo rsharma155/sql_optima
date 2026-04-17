@@ -1,14 +1,14 @@
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between">
                 <div>
-                    <button class="btn btn-secondary btn-sm" onclick="window.appNavigateBack()" style="margin-right:1rem;">
+                    <button class="btn btn-secondary btn-sm" data-action="navigate-back" style="margin-right:1rem;">
                         <i class="fa-solid fa-arrow-left"></i> Back
                     </button>
                     <h1><i class="fa-solid fa-memory text-accent"></i> Memory Usage Details</h1>
                     <p class="subtitle">OS Memory vs PostgreSQL Memory consumption with historical trends.</p>
                 </div>
                 <div class="flex gap-2">
-                    <button class="btn btn-secondary" onclick="window.appNavigate('pg-cpu')">
+                    <button class="btn btn-secondary" data-action="navigate" data-route="pg-cpu">
                         <i class="fa-solid fa-microchip"></i> View CPU
                     </button>
                     <div class="time-picker glass-panel p-2 rounded custom-select-group text-right">

@@ -17,7 +17,11 @@ window.runStorageIndexHealthDashboard = async function(opts) {
     const backRoute = (inst.type === 'postgres') ? 'pg-dashboard' : 'dashboard';
     const dashTitle = (engine === 'postgres') ? 'Index & Table Health' : 'Storage & Index Health';
     state.timeRange = state.timeRange || '24h';
-    state.db = state.db || 'all';
+    // Always scope this dashboard to the global Target Database dropdown (top-left).
+    // If global is set to a specific DB, force this dashboard to that DB.
+    state.db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all')
+        ? window.appState.currentDatabase
+        : (state.db || 'all');
     state.schema = state.schema || 'all';
     state.table = state.table || 'all';
 
@@ -56,7 +60,7 @@ window.runStorageIndexHealthDashboard = async function(opts) {
                         <div class="text-muted" style="font-size:0.75rem;">Instance</div>
                         <div style="font-weight:600;">${window.escapeHtml(inst.name)}</div>
                     </div>
-                    <button class="btn btn-sm btn-outline" onclick="window.appNavigate('${backRoute}')"><i class="fa-solid fa-arrow-left"></i> Back</button>
+                    <button class="btn btn-sm btn-outline" data-action="navigate" data-route="${backRoute}"><i class="fa-solid fa-arrow-left"></i> Back</button>
                 </div>
             </div>
             <div class="glass-panel mt-2" style="padding:0.75rem;">
@@ -76,10 +80,12 @@ window.runStorageIndexHealthDashboard = async function(opts) {
                             <option value="30d" ${state.timeRange==='30d'?'selected':''}>30d</option>
                         </select>
                     </div>
+                    ${engine === 'postgres' ? '' : `
                     <div style="min-width:220px;">
                         <div class="text-muted" style="font-size:0.75rem;">Database</div>
                         <select id="sihDb" class="custom-select"><option value="all">All</option></select>
                     </div>
+                    `}
                     <div style="min-width:220px;">
                         <div class="text-muted" style="font-size:0.75rem;">Schema</div>
                         <select id="sihSchema" class="custom-select"><option value="all">All</option></select>
@@ -105,7 +111,9 @@ window.runStorageIndexHealthDashboard = async function(opts) {
             const $ = (id) => document.getElementById(id);
             const sync = () => {
                 state.timeRange = ($('sihRange')?.value || '24h');
-                state.db = ($('sihDb')?.value || 'all');
+                const globalDb = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
+                // For PostgreSQL, the DB selector is hidden; always use globalDb or the state default.
+                state.db = engine === 'postgres' ? (globalDb || state.db || 'all') : (globalDb || ($('sihDb')?.value || 'all'));
                 state.schema = ($('sihSchema')?.value || 'all');
                 state.table = ($('sihTable')?.value || 'all');
             };
@@ -225,8 +233,8 @@ window.runStorageIndexHealthDashboard = async function(opts) {
                             <div class="text-muted" style="font-size:0.75rem;">Instance</div>
                             <div style="font-weight:600;">${window.escapeHtml(inst.name)}</div>
                         </div>
-                        <button class="btn btn-sm btn-outline" onclick="window.appNavigate('${backRoute}')"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                        <button class="btn btn-sm btn-outline text-accent" onclick="window.appNavigate(window.appState.activeViewId)"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                        <button class="btn btn-sm btn-outline" data-action="navigate" data-route="${backRoute}"><i class="fa-solid fa-arrow-left"></i> Back</button>
+                        <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="appNavigate" data-arg-from="appState.activeViewId"><i class="fa-solid fa-refresh"></i> Refresh</button>
                     </div>
                 </div>
                 ${dataHealthBanner}
@@ -246,6 +254,7 @@ window.runStorageIndexHealthDashboard = async function(opts) {
                                 <option value="30d" ${state.timeRange==='30d'?'selected':''}>30d</option>
                             </select>
                         </div>
+                        ${engine === 'postgres' ? '' : `
                         <div style="min-width:220px;">
                             <div class="text-muted" style="font-size:0.75rem;">Database</div>
                             <select id="sihDb" class="custom-select">
@@ -253,6 +262,7 @@ window.runStorageIndexHealthDashboard = async function(opts) {
                                 ${dbs.map(d => `<option value="${window.escapeHtml(d)}" ${state.db===d?'selected':''}>${window.escapeHtml(d)}</option>`).join('')}
                             </select>
                         </div>
+                        `}
                         <div style="min-width:220px;">
                             <div class="text-muted" style="font-size:0.75rem;">Schema</div>
                             <select id="sihSchema" class="custom-select">
@@ -325,6 +335,7 @@ window.runStorageIndexHealthDashboard = async function(opts) {
                                             <th>DB</th><th>Schema</th><th>Table</th><th>Index</th>
                                             <th class="text-right">${engine==='postgres'?'Wr Δ':'Upd Δ'}</th>
                                             <th class="text-right">MB</th><th>${engine === 'postgres' ? 'Last seek/scan' : 'Last seek'}</th>
+                                            <th>Def</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -337,9 +348,17 @@ window.runStorageIndexHealthDashboard = async function(opts) {
                                                 <td class="text-right">${fmt(r.value, 0)}</td>
                                                 <td class="text-right">${fmt(r.value2, 1)}</td>
                                                 <td>${r.last_user_seek ? window.escapeHtml(new Date(r.last_user_seek).toLocaleDateString()) : '—'}</td>
+                                                <td><button class="btn btn-xs btn-outline text-accent sih-show-def-btn"
+                                                    title="Show index definition"
+                                                    data-engine="${window.escapeHtml(engine)}"
+                                                    data-instance="${window.escapeHtml(inst.name)}"
+                                                    data-db="${window.escapeHtml(r.db_name)}"
+                                                    data-schema="${window.escapeHtml(r.schema_name)}"
+                                                    data-index="${window.escapeHtml(r.index_name || '')}"
+                                                    style="padding:0.1rem 0.35rem; font-size:0.65rem;">Def</button></td>
                                             </tr>
                                         `).join('')}
-                                        ${unusedIndexes.length===0 ? `<tr><td colspan="7" class="text-muted">No rows in window.</td></tr>` : ``}
+                                        ${unusedIndexes.length===0 ? `<tr><td colspan="8" class="text-muted">No rows in window.</td></tr>` : ``}
                                     </tbody>
                                 </table>
                             </div>
@@ -489,7 +508,89 @@ window.runStorageIndexHealthDashboard = async function(opts) {
             </div>
         `;
 
+        // Post-render: keep the in-page DB selector aligned to the global Target Database selection.
+        // (Postgres hides the selector entirely; this block handles SQL Server only.)
+        try {
+            if (engine !== 'postgres') {
+                const globalDb = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
+                const dbSel = document.getElementById('sihDb');
+                if (dbSel && globalDb) {
+                    dbSel.value = globalDb;
+                    dbSel.disabled = true;
+                    dbSel.title = 'Controlled by the global Target Database dropdown';
+                } else if (dbSel) {
+                    dbSel.disabled = false;
+                }
+            }
+        } catch (e) { /* ignore */ }
+
         applyHandlers();
+
+        // Index definition modal handler: delegated click on "Def" buttons (once per page).
+        if (!window._sihDefBtnHandlerBound) {
+            window._sihDefBtnHandlerBound = true;
+            document.addEventListener('click', async function(e) {
+                const btn = e.target && e.target.closest ? e.target.closest('button.sih-show-def-btn') : null;
+                if (!btn) return;
+            const defEngine = btn.getAttribute('data-engine');
+            const defInstance = btn.getAttribute('data-instance');
+            const defDb = btn.getAttribute('data-db');
+            const defSchema = btn.getAttribute('data-schema');
+            const defIndex = btn.getAttribute('data-index');
+
+            // Create/reuse modal.
+            let modal = document.getElementById('sihIndexDefModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'sihIndexDefModal';
+                modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);';
+                modal.innerHTML = `
+                    <div style="background:var(--bg-surface,#1e293b);border:1px solid var(--border-color,#334155);border-radius:12px;padding:1.25rem 1.5rem;max-width:640px;width:94vw;max-height:80vh;display:flex;flex-direction:column;gap:0.75rem;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;">
+                            <h3 id="sihIndexDefTitle" style="margin:0;font-size:0.95rem;"></h3>
+                            <button id="sihIndexDefClose" style="background:transparent;border:none;cursor:pointer;font-size:1.1rem;color:var(--text-muted);">✕</button>
+                        </div>
+                        <div id="sihIndexDefBody" style="flex:1;overflow:auto;"></div>
+                    </div>`;
+                document.body.appendChild(modal);
+                document.getElementById('sihIndexDefClose').addEventListener('click', () => { modal.style.display = 'none'; });
+                modal.addEventListener('click', (ev) => { if (ev.target === modal) modal.style.display = 'none'; });
+            }
+            modal.style.display = 'flex';
+            const titleEl = document.getElementById('sihIndexDefTitle');
+            const bodyEl = document.getElementById('sihIndexDefBody');
+            if (titleEl) titleEl.textContent = `Index Definition: ${defIndex}`;
+            if (bodyEl) bodyEl.innerHTML = '<div class="text-muted" style="font-size:0.8rem;">Loading…</div>';
+
+            try {
+                const qs = `engine=${encodeURIComponent(defEngine)}&instance=${encodeURIComponent(defInstance)}&db=${encodeURIComponent(defDb)}&schema=${encodeURIComponent(defSchema)}&index_name=${encodeURIComponent(defIndex)}`;
+                const res = await window.apiClient.authenticatedFetch(`/api/timescale/storage-index-health/index-definition?${qs}`);
+                const payload = await res.json();
+                const defs = payload.definitions || [];
+                if (!defs.length) {
+                    bodyEl.innerHTML = `<div class="text-muted" style="font-size:0.8rem;">No definition found in Timescale for this index.<br><small>Index definitions are collected once per 24h — check if the daily snapshot has run.</small></div>`;
+                    return;
+                }
+                const d = defs[0];
+                const unique = d.is_unique ? 'UNIQUE ' : '';
+                const filtered = d.filter_definition ? `\n    WHERE ${d.filter_definition}` : '';
+                const include = d.include_columns ? `\n    INCLUDE (${d.include_columns})` : '';
+                const stmt = `CREATE ${unique}INDEX ${d.index_name}\n    ON ${d.schema_name}.${d.table_name} (${d.key_columns})${include}${filtered};`;
+                bodyEl.innerHTML = `
+                    <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.4rem;">${window.escapeHtml(d.db_name)} · Type: ${window.escapeHtml(d.index_type || 'btree')} · ${d.is_pk ? 'Primary Key' : (d.is_unique ? 'Unique' : 'Non-unique')}</div>
+                    <pre style="background:rgba(0,0,0,0.25);border-radius:6px;padding:0.75rem;font-size:0.75rem;white-space:pre-wrap;overflow-x:auto;line-height:1.5;">${window.escapeHtml(stmt)}</pre>
+                    <button class="btn btn-sm btn-outline text-accent" id="sihDefCopyBtn" style="margin-top:0.35rem;">Copy</button>`;
+                document.getElementById('sihDefCopyBtn')?.addEventListener('click', async () => {
+                    try {
+                        await navigator.clipboard.writeText(stmt);
+                        document.getElementById('sihDefCopyBtn').textContent = 'Copied!';
+                    } catch (err) { /* ignore */ }
+                });
+            } catch (err) {
+                if (bodyEl) bodyEl.innerHTML = `<div class="text-danger" style="font-size:0.8rem;">Error: ${window.escapeHtml(err?.message || String(err))}</div>`;
+            }
+            });
+        } // end _sihDefBtnHandlerBound guard
 
         // Charts
         setTimeout(() => {
@@ -572,8 +673,8 @@ window.runStorageIndexHealthDashboard = async function(opts) {
                     <h3>${dashTitle} unavailable</h3>
                     <div class="text-muted">Error: ${window.escapeHtml(msg)}</div>
                     <div style="margin-top:0.75rem;">
-                        <button class="btn btn-primary" onclick="window.appNavigate('global')"><i class="fa-solid fa-home"></i> Home</button>
-                        <button class="btn btn-outline" onclick="window.appNavigate(window.appState.activeViewId)"><i class="fa-solid fa-refresh"></i> Retry</button>
+                        <button class="btn btn-primary" data-action="navigate" data-route="global"><i class="fa-solid fa-home"></i> Home</button>
+                        <button class="btn btn-outline" data-action="call" data-fn="appNavigate" data-arg-from="appState.activeViewId"><i class="fa-solid fa-refresh"></i> Retry</button>
                     </div>
                 </div>
             </div>

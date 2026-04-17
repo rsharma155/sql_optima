@@ -31,8 +31,8 @@ window.PgEnterpriseDashboardView = function() {
                 <span class="subtitle">Raw/enterprise Timescale-backed metrics (drilldown)</span>
             </div>
             <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
-                <button class="btn btn-sm btn-outline" onclick="window.appNavigate('pg-dashboard')"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                <button class="btn btn-sm btn-outline text-accent" onclick="window.PgEnterpriseDashboardView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                <button class="btn btn-sm btn-outline" data-action="navigate" data-route="pg-dashboard"><i class="fa-solid fa-arrow-left"></i> Back</button>
+                <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgEnterpriseDashboardView"><i class="fa-solid fa-refresh"></i> Refresh</button>
             </div>
         </div>
 
@@ -40,7 +40,7 @@ window.PgEnterpriseDashboardView = function() {
             <!-- BGWriter/Checkpoint Statistics Card -->
             <div class="card">
                 <div class="card-header">
-                    <h3><i class="fa-solid fa-database"></i> BGWriter / Checkpoint Statistics</h3>
+                    <h3 title="Background writer and checkpoint statistics from pg_stat_bgwriter. Shows how PostgreSQL flushes dirty buffers to disk. Rising 'req' checkpoints may indicate max_wal_size is too low."><i class="fa-solid fa-database"></i> BGWriter / Checkpoint Statistics</h3>
                 </div>
                 <div class="card-body">
                     <div id="bgwriter-section">
@@ -52,7 +52,7 @@ window.PgEnterpriseDashboardView = function() {
             <!-- WAL Archiver Statistics Card -->
             <div class="card">
                 <div class="card-header">
-                    <h3><i class="fa-solid fa-archive"></i> WAL Archiver Statistics</h3>
+                    <h3 title="WAL archiver statistics from pg_stat_archiver. Monitors continuous archiving health — failures mean WAL files are not being shipped to the backup destination."><i class="fa-solid fa-archive"></i> WAL Archiver Statistics</h3>
                 </div>
                 <div class="card-body">
                     <div id="archiver-section">
@@ -64,7 +64,7 @@ window.PgEnterpriseDashboardView = function() {
             <!-- Contention: Wait Events -->
             <div class="card">
                 <div class="card-header">
-                    <h3><i class="fa-solid fa-road-barrier"></i> Contention: Wait Events (history)</h3>
+                    <h3 title="Wait event type distribution over time from pg_stat_activity snapshots. Helps identify contention bottlenecks (Lock, IO, LWLock, BufferPin, etc.)."><i class="fa-solid fa-road-barrier"></i> Contention: Wait Events (history)</h3>
                 </div>
                 <div class="card-body">
                     <div id="waits-section">
@@ -76,7 +76,7 @@ window.PgEnterpriseDashboardView = function() {
             <!-- IO: per DB IO/temp -->
             <div class="card">
                 <div class="card-header">
-                    <h3><i class="fa-solid fa-hard-drive"></i> IO: Per-DB Reads / Temp Spill (history)</h3>
+                    <h3 title="Per-database I/O and temp file usage from pg_stat_database. blks_read shows physical reads (not served from cache). temp_bytes shows sorts/hashes spilling to disk."><i class="fa-solid fa-hard-drive"></i> IO: Per-DB Reads / Temp Spill (history)</h3>
                 </div>
                 <div class="card-body">
                     <div id="io-section">
@@ -88,7 +88,7 @@ window.PgEnterpriseDashboardView = function() {
             <!-- Config drift -->
             <div class="card">
                 <div class="card-header">
-                    <h3><i class="fa-solid fa-sliders"></i> Config Drift (latest vs previous snapshot)</h3>
+                    <h3 title="Detects postgresql.conf / ALTER SYSTEM parameter changes between consecutive collector snapshots. Useful for auditing configuration drift."><i class="fa-solid fa-sliders"></i> Config Drift (latest vs previous snapshot)</h3>
                 </div>
                 <div class="card-body">
                     <div id="drift-section">
@@ -100,7 +100,7 @@ window.PgEnterpriseDashboardView = function() {
             <!-- Query internals (pg_stat_statements) -->
             <div class="card">
                 <div class="card-header">
-                    <h3><i class="fa-solid fa-magnifying-glass-chart"></i> Query Internals (pg_stat_statements)</h3>
+                    <h3 title="Top queries from pg_stat_statements sorted by temp block writes. Identifies queries spilling to disk — raising work_mem for these queries can improve performance."><i class="fa-solid fa-magnifying-glass-chart"></i> Query Internals (pg_stat_statements)</h3>
                 </div>
                 <div class="card-body">
                     <div id="qint-section">
@@ -272,7 +272,7 @@ function loadConfigDrift(instanceName) {
             }
             section.innerHTML = `
                 <table class="data-table" style="font-size:0.75rem;">
-                    <thead><tr><th>Setting</th><th>Old</th><th>New</th><th>Unit</th><th>Source</th></tr></thead>
+                    <thead><tr><th title="The PostgreSQL configuration parameter name (from pg_settings)">Setting</th><th title="Previous value from the older snapshot">Old</th><th title="Current value from the latest snapshot — changed since the previous capture">New</th><th title="Unit of the setting (e.g. kB, ms, s, min)">Unit</th><th title="Source of the setting (e.g. postgresql.conf → ALTER SYSTEM). Shows how the change was applied.">Source</th></tr></thead>
                     <tbody>
                         ${changes.map(c => `
                             <tr>
@@ -341,7 +341,7 @@ function loadQueryInternals(instanceName) {
                 <table class="data-table" style="font-size:0.72rem;">
                     <thead>
                         <tr>
-                            <th>User</th><th>Calls</th><th>Total ms</th><th>Temp wr</th><th>Shared rd</th><th>WAL bytes</th><th>SQL</th>
+                            <th title="PostgreSQL user/role that executed the query">User</th><th title="Total number of times this query was executed in the window">Calls</th><th title="Cumulative wall-clock execution time in milliseconds">Total ms</th><th title="Number of temp blocks written — high values indicate sorts/hashes spilling to disk (consider increasing work_mem)">Temp wr</th><th title="Shared buffer blocks read from disk (not cache). High values suggest the working set exceeds shared_buffers.">Shared rd</th><th title="Total WAL bytes generated by this query. High WAL volume may cause replication lag.">WAL bytes</th><th title="Query text from pg_stat_statements (click to view full SQL)">SQL</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -355,7 +355,7 @@ function loadQueryInternals(instanceName) {
                                 <td class="text-right">${Number(q.wal_bytes||0).toLocaleString()}</td>
                                 <td style="max-width:520px;">
                                     <div class="code-snippet pg-sql-preview" style="cursor:pointer; text-decoration:underline;"
-                                         onclick="window.pgEnterpriseOpenSql('${window.escapeHtml(String(q.query_id||''))}')">
+                                         data-action="call" data-fn="pgEnterpriseOpenSql" data-arg="${window.escapeHtml(String(q.query_id||''))}">
                                         ${window.escapeHtml(q.query || '').slice(0, 220)}
                                     </div>
                                 </td>
@@ -430,11 +430,11 @@ function loadBGWriterData(instanceName) {
                         <table class="data-table" style="font-size:0.78rem;">
                             <thead>
                                 <tr>
-                                    <th>Time</th>
-                                    <th class="text-right">Timed</th>
-                                    <th class="text-right">Req</th>
-                                    <th class="text-right">Write ms</th>
-                                    <th class="text-right">Bufs ckpt</th>
+                                    <th title="Capture timestamp from the collector snapshot">Time</th>
+                                    <th class="text-right" title="Number of scheduled (timed) checkpoints triggered by checkpoint_timeout. High counts are normal; rising rapidly may indicate heavy WAL generation.">Timed</th>
+                                    <th class="text-right" title="Number of requested (forced) checkpoints triggered by checkpoint_segments/max_wal_size. If this is high relative to Timed, consider raising max_wal_size.">Req</th>
+                                    <th class="text-right" title="Total time (ms) spent writing buffers to disk during checkpoints. High values indicate disk I/O pressure during checkpoints.">Write ms</th>
+                                    <th class="text-right" title="Number of buffers written during checkpoints. Spikes indicate large data modifications flushed to disk.">Bufs ckpt</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -542,11 +542,11 @@ function loadArchiverData(instanceName) {
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th>Time</th>
-                            <th>Total Archived</th>
-                            <th>Total Failed</th>
-                            <th>Max Failed in Period</th>
-                            <th>Has Failures</th>
+                            <th title="Time bucket for the aggregated archiver statistics">Time</th>
+                            <th title="Cumulative count of WAL files successfully archived. Steady growth indicates WAL archiving is healthy.">Total Archived</th>
+                            <th title="Cumulative count of WAL files that failed to archive. Non-zero means archive_command is failing — check disk space or backup target.">Total Failed</th>
+                            <th title="Maximum failed archive count observed in this time bucket.">Max Failed in Period</th>
+                            <th title="Whether any archive failures were detected in this bucket. A 'Yes' badge indicates the archive pipeline needs attention.">Has Failures</th>
                         </tr>
                     </thead>
                     <tbody>

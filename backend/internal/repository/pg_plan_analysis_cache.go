@@ -90,6 +90,5 @@ func stringsContains(s, sub string) bool {
 	if s == "" || sub == "" {
 		return false
 	}
-	return strings.Index(s, sub) >= 0
+	return strings.Contains(s, sub)
 }
-

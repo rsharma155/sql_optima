@@ -36,7 +36,7 @@ window.MssqlCpuDashboardView = async function() {
                         <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="cpuDashboardLastUpdate">--:--:--</span></span>
                         <span class="text-muted" style="font-size:0.65rem; display:block;">Auto-refresh: every 60s</span>
                     </div>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshMssqlCpuDashboard()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshMssqlCpuDashboard"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
             <div style="display:flex; justify-content:center; align-items:center; height:50vh;">
@@ -131,7 +131,7 @@ function renderCpuDashboard(inst, serverProps, schedulerStats) {
                         <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="cpuDashboardLastUpdate">${new Date().toLocaleTimeString()}</span></span>
                         <span class="text-muted" style="font-size:0.65rem; display:block;">Auto-refresh: every 60s</span>
                     </div>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshMssqlCpuDashboard()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshMssqlCpuDashboard"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
 

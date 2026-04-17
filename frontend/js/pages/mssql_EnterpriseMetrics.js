@@ -42,7 +42,7 @@ window.EnterpriseMetricsView = async function() {
                     <label class="flex-between" style="align-items:center; gap:0.5rem; font-size:0.8rem; cursor:pointer;">
                         <input type="checkbox" id="enterpriseMetricsAutoRefresh" checked style="width:16px; height:16px;"> Auto-refresh (10s)
                     </label>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.EnterpriseMetricsView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="EnterpriseMetricsView"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
             <div style="display:flex; justify-content:center; align-items:center; height:50vh;">
@@ -199,7 +199,7 @@ function updateEnterpriseDataSourceBadge(source) {
         modal.innerHTML = `<div style="background:var(--bg-surface); margin:2%; padding:20px; border:1px solid var(--border-color,#333); border-radius:12px; width:95%; max-width:1000px; max-height:90vh; overflow-y:auto; color:var(--text-primary,#e0e0e0);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
                 <h3 style="margin:0; color:var(--accent,#3b82f6);">Query Details</h3>
-                <button type="button" onclick="document.getElementById('query-modal').remove()" style="background:transparent; border:1px solid #555; color:#e0e0e0; font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
+                <button type="button" data-action="close-id" data-target="query-modal" style="background:transparent; border:1px solid #555; color:#e0e0e0; font-size:1.25rem; cursor:pointer; padding:0.25rem 0.6rem; border-radius:4px;">&times;</button>
             </div>
             <div style="background:var(--bg-base); padding:1rem; border-radius:8px; max-height:60vh; overflow:auto; border:1px solid var(--border-color,#333);">
                 <pre style="margin:0; white-space:pre-wrap; font-family:monospace; font-size:0.85rem;">${window.escapeHtml(queryText)}</pre>
@@ -341,7 +341,7 @@ function renderEnterpriseMetrics(inst, metrics) {
         emQueryCache[qKey] = fullQ;
         const shortQ = fullQ ? (fullQ.length > 72 ? fullQ.slice(0, 72) + '…' : fullQ) : '(no text)';
         const qCell = fullQ
-            ? `<span class="code-snippet" style="cursor:pointer; max-width:320px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="View full query" onclick="window.showQueryModalDirect(window.appState.emQueryCache['${qKey}'])">${window.escapeHtml(shortQ)}</span>`
+            ? `<span class="code-snippet" style="cursor:pointer; max-width:320px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="View full query" data-action="show-query-modal-direct" data-cache="emQueryCache" data-key="${qKey}">${window.escapeHtml(shortQ)}</span>`
             : `<span class="text-muted">${window.escapeHtml(shortQ)}</span>`;
         return `
         <tr>
@@ -360,7 +360,7 @@ function renderEnterpriseMetrics(inst, metrics) {
         emQueryCache[qKey] = fullQ;
         const shortQ = fullQ ? (fullQ.length > 72 ? fullQ.slice(0, 72) + '…' : fullQ) : '(no text)';
         const qCell = fullQ
-            ? `<span class="code-snippet" style="cursor:pointer; max-width:320px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="View full query" onclick="window.showQueryModalDirect(window.appState.emQueryCache['${qKey}'])">${window.escapeHtml(shortQ)}</span>`
+            ? `<span class="code-snippet" style="cursor:pointer; max-width:320px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="View full query" data-action="show-query-modal-direct" data-cache="emQueryCache" data-key="${qKey}">${window.escapeHtml(shortQ)}</span>`
             : `<span class="text-muted">${window.escapeHtml(shortQ)}</span>`;
         return `
         <tr>
@@ -401,7 +401,7 @@ function renderEnterpriseMetrics(inst, metrics) {
                     <label class="flex-between" style="align-items:center; gap:0.5rem; font-size:0.8rem; cursor:pointer;">
                         <input type="checkbox" id="enterpriseMetricsAutoRefresh" checked style="width:16px; height:16px;"> Auto-refresh (10s)
                     </label>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.EnterpriseMetricsView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="EnterpriseMetricsView"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
             <style>

@@ -28,6 +28,7 @@ func pgStatStatementsExcludedRoleNames() []string {
 	add("dbmonitor")
 	add("sql_optima")
 	add("sqloptima")
+	add("postgres") // superuser — exclude by default; override via SQL_OPTIMA_PG_STATEMENTS_EXCLUDE_USERS
 	if extra := os.Getenv("SQL_OPTIMA_PG_STATEMENTS_EXCLUDE_USERS"); extra != "" {
 		for _, p := range strings.Split(extra, ",") {
 			add(p)
@@ -51,7 +52,6 @@ func buildPgStatStatementsFilters() string {
 		  AND s.query NOT ILIKE '%sqloptima%'
 		  AND s.query NOT ILIKE '%SQLOptima%'
 		  AND s.query NOT ILIKE '%DeltaCollector%'
-		  AND s.query NOT ILIKE '%dbmonitor_metrics%'
 		  AND s.query NOT ILIKE 'autovacuum:%'
 		  AND s.query NOT ILIKE 'analyze %'
 		  AND s.query NOT ILIKE 'vacuum %'

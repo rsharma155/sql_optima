@@ -29,7 +29,6 @@ func (tl *TimescaleLogger) sihMssqlHighScanTableCount(ctx context.Context, engin
 	if f.TableLike != "" {
 		where += fmt.Sprintf(" AND table_name ILIKE $%d", argN)
 		args = append(args, "%"+f.TableLike+"%")
-		argN++
 	}
 	q := fmt.Sprintf(`
 		SELECT COUNT(*)::int
@@ -96,7 +95,6 @@ func (tl *TimescaleLogger) sihMssqlSeekScanLookup(ctx context.Context, engine, s
 	if f.TableLike != "" {
 		where += fmt.Sprintf(" AND table_name ILIKE $%d", argN)
 		args = append(args, "%"+f.TableLike+"%")
-		argN++
 	}
 
 	q := fmt.Sprintf(`
@@ -145,7 +143,6 @@ func (tl *TimescaleLogger) sihMssqlHighScanTables(ctx context.Context, engine, s
 	if f.TableLike != "" {
 		where += fmt.Sprintf(" AND table_name ILIKE $%d", n)
 		args = append(args, "%"+f.TableLike+"%")
-		n++
 	}
 	q := fmt.Sprintf(`
 		SELECT db_name, schema_name, table_name,

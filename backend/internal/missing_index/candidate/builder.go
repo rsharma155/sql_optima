@@ -418,8 +418,6 @@ const (
 )
 
 type CombinedCandidateBuilder struct {
-	queryVariants   []QueryVariant
-	indexCandidates []types.IndexCandidate
 }
 
 type QueryVariant struct {

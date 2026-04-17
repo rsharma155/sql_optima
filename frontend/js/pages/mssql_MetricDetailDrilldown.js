@@ -49,12 +49,12 @@ window.mssql_MetricDetailDrilldown = async function() {
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between">
                 <div>
-                    <button class="btn btn-sm btn-outline mb-2" onclick="window.appNavigate('dashboard')"><i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button>
+                    <button class="btn btn-sm btn-outline mb-2" data-action="navigate" data-route="dashboard"><i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button>
                     <h1><i class="fa-solid fa-chart-line text-accent"></i> ${metricData.label} Analysis</h1>
                     <p class="subtitle">Performance Metric Details [${window.escapeHtml(inst.name)}]</p>
                 </div>
                 <div class="custom-select-group">
-                    <button class="btn btn-accent btn-sm" onclick="navigator.clipboard.writeText('${sqlText.replace(/'/g, "\\'")}')"><i class="fa-solid fa-copy"></i> Copy SQL</button>
+                    <button class="btn btn-accent btn-sm" data-action="copy-text" data-text="${window.escapeHtml(sqlText)}"><i class="fa-solid fa-copy"></i> Copy SQL</button>
                 </div>
             </div>
 

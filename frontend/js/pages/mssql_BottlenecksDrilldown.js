@@ -133,7 +133,7 @@ window.HistoricalBottlenecksView = async function() {
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between">
                 <div class="flex-between" style="align-items:center; gap:1rem; flex-wrap:wrap;">
-                    <button type="button" class="btn btn-sm btn-outline" style="padding:0.3rem 0.6rem;" onclick="window.appNavigate('dashboard')" title="Back to dashboard"><i class="fa-solid fa-arrow-left"></i> Back</button>
+                    <button type="button" class="btn btn-sm btn-outline" style="padding:0.3rem 0.6rem;" data-action="navigate" data-route="dashboard" title="Back to dashboard"><i class="fa-solid fa-arrow-left"></i> Back</button>
                     <div>
                         <h1 style="font-size:1.35rem; margin:0;">Historical Query Bottlenecks</h1>
                         <p class="subtitle" style="margin:0.25rem 0 0 0;">Instance: ${window.escapeHtml(inst.name)} · Query Store · click column headers to sort</p>
@@ -148,7 +148,7 @@ window.HistoricalBottlenecksView = async function() {
                         <option value="24h" ${sel24}>Last 24 hours</option>
                         <option value="7d" ${sel7}>Last 7 days</option>
                     </select>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="window.refreshBottlenecks()">
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshBottlenecks">
                         <i class="fa-solid fa-refresh"></i> Refresh
                     </button>
                 </div>
@@ -326,10 +326,10 @@ window.renderBottlenecksTable = function(queries) {
         const appTd = bottleneckSessionTd(vis.showApp, appName || '—');
         
         return `
-            <tr onclick="window.showBottleneckDetail(${idx})" style="cursor: pointer;">
+            <tr data-action="call" data-fn="showBottleneckDetail" data-arg="${idx}" style="cursor: pointer;">
                 <td><strong>${idx + 1}</strong></td>
                 <td style="max-width: 250px;">
-                    <span class="code-snippet" style="cursor: pointer; color: var(--accent);" title="${window.escapeHtml(queryText)}" onclick="event.stopPropagation(); window.showBottleneckModal('${window.escapeHtml(queryText.replace(/'/g, "\\'"))}', ${idx})">
+                    <span class="code-snippet" style="cursor: pointer; color: var(--accent);" title="${window.escapeHtml(queryText)}" data-action="call" data-fn="showBottleneckDetail" data-idx="${idx}" data-stop-propagation="1">
                         ${window.escapeHtml(truncatedText)}
                     </span>
                 </td>
@@ -360,8 +360,8 @@ window.showBottleneckModal = function(queryText, queryIdx) {
     const existingModal = document.getElementById('bottleneck-modal');
     if (existingModal) existingModal.remove();
     
-    // Handle case where queryIdx might be a number (new) or undefined/string (old)
-    const queryData = (typeof queryIdx === 'number') ? (window.bottleneckQueryData && window.bottleneckQueryData[queryIdx]) : null;
+    // Handle case where queryIdx might be a number, string, or undefined
+    const queryData = (queryIdx != null) ? (window.bottleneckQueryData && window.bottleneckQueryData[queryIdx]) : null;
     
     const hasLogin = queryData && typeof queryData === 'object' && bottleneckRowHasLogin(queryData);
     const hasApp = queryData && typeof queryData === 'object' && bottleneckRowHasApp(queryData);
@@ -381,7 +381,7 @@ window.showBottleneckModal = function(queryText, queryIdx) {
         <div style="background: var(--bg-surface); margin: 2%; padding: 20px; border: 1px solid var(--border-color, #333); border-radius: 12px; width: 95%; max-width: 1000px; max-height: 90vh; overflow-y: auto; color: var(--text-primary, #e0e0e0); font-family: inherit; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color, #333); padding-bottom: 0.75rem;">
                 <h3 style="margin: 0; color: var(--accent, #3b82f6); font-size: 1.1rem;"><i class="fa-solid fa-code"></i> Query Details</h3>
-                <button onclick="document.getElementById('bottleneck-modal').remove()" style="background: transparent; border: 1px solid var(--border-color, #555); color: var(--text-primary, #e0e0e0); font-size: 1.25rem; cursor: pointer; padding: 0.25rem 0.6rem; border-radius: 4px; line-height: 1;">&times;</button>
+                <button data-action="close-id" data-target="bottleneck-modal" style="background: transparent; border: 1px solid var(--border-color, #555); color: var(--text-primary, #e0e0e0); font-size: 1.25rem; cursor: pointer; padding: 0.25rem 0.6rem; border-radius: 4px; line-height: 1;">&times;</button>
             </div>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
                 ${(hasLogin || hasApp) ? `

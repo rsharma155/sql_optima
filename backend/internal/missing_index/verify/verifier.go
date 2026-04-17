@@ -184,7 +184,7 @@ func checkIndexUsed(planJSON string, candidate types.IndexCandidate) bool {
 }
 
 func resetHypoPG(ctx context.Context, pool *pgxpool.Pool) {
-	pool.Exec(ctx, "SELECT hypopg_reset()")
+	_, _ = pool.Exec(ctx, "SELECT hypopg_reset()")
 }
 
 func buildCreateIndexSQL(candidate types.IndexCandidate) string {

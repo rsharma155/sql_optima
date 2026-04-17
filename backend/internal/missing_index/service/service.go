@@ -25,13 +25,6 @@ import (
 	"github.com/rsharma155/sql_optima/internal/missing_index/verify"
 )
 
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 type Service struct {
 	rewriteEngine     *rewrite.Engine
 	joinOptimizer     *joinoptimizer.JoinOrderOptimizer
@@ -145,10 +138,7 @@ func (s *Service) Analyze(ctx context.Context, req *types.AnalysisRequest) (*typ
 		for _, table := range planAnalysis.TargetTables {
 			info, err := catalog.GetTableInfo(ctx, pool, table)
 			if err == nil {
-				var existingIdx []types.ExistingIndex
-				for _, idx := range info.IndexStats {
-					existingIdx = append(existingIdx, idx)
-				}
+				existingIdx := append([]types.ExistingIndex{}, info.IndexStats...)
 				tableInfoMap[table.Name] = existingIdx
 
 				if len(queryAnalysis.JoinInfo) > 1 {

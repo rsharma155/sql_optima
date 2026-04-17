@@ -101,18 +101,30 @@ func NewMssqlRepository(cfg *config.Config) *MssqlRepository {
 				password = os.Getenv(envPrefix + "_PASSWORD")
 			}
 
+			catalog := strings.TrimSpace(inst.Database)
+			if catalog == "" {
+				catalog = "master"
+			}
+			// Default to encrypt=true (required for Azure SQL / MI / cloud).
+			// On-prem instances without TLS can set encrypt: false in config.
+			encrypt := "true"
+			if inst.Encrypt != nil && !*inst.Encrypt {
+				encrypt = "false"
+			}
 			// Construct DSN
 			var connStr string
 			if inst.IntegratedSecurity {
 				// Windows Authentication (Passwordless / Active Directory)
-				connStr = fmt.Sprintf("server=%s;port=%d;database=master;Integrated Security=true;", inst.Host, port)
+				connStr = fmt.Sprintf("server=%s;port=%d;database=%s;Integrated Security=true;encrypt=%s;", inst.Host, port, catalog, encrypt)
 			} else {
 				// SQL Authentication natively
-				connStr = fmt.Sprintf("server=%s;port=%d;database=master;user id=%s;password=%s;", inst.Host, port, user, password)
+				connStr = fmt.Sprintf("server=%s;port=%d;database=%s;user id=%s;password=%s;encrypt=%s;", inst.Host, port, catalog, user, password, encrypt)
 			}
 
 			if inst.TrustServerCertificate {
 				connStr += "TrustServerCertificate=true;"
+			} else {
+				connStr += "TrustServerCertificate=false;"
 			}
 
 			db, err := sqlserver.OpenMetricsPool(connStr)
@@ -143,7 +155,7 @@ func NewMssqlRepository(cfg *config.Config) *MssqlRepository {
 					var discoverDbs []string
 					for rows.Next() {
 						var dbName string
-						rows.Scan(&dbName)
+						_ = rows.Scan(&dbName)
 						discoverDbs = append(discoverDbs, dbName)
 					}
 					rows.Close()
@@ -476,6 +488,11 @@ func queryStoreStatsSelectSQL(dbPrefix string) string {
 		LEFT JOIN %s.sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
 		WHERE q.is_internal_query = 0
 		  AND ISNULL(rs.count_executions, 0) > 0
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sql_optima%%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sqloptima%%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sys.dm_%%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sys.query_store_%%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sp_server_diagnostics%%'
 		  AND (
 			rs.last_execution_time >= DATEADD(day, -7, SYSDATETIMEOFFSET())
 			OR rsi.end_time >= DATEADD(day, -7, GETDATE())
@@ -580,6 +597,11 @@ func (c *MssqlRepository) fetchQueryStoreStatsSingleDB(db *sql.DB, labelDB strin
 		LEFT JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
 		WHERE q.is_internal_query = 0
 		  AND ISNULL(rs.count_executions, 0) > 0
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sql_optima%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sqloptima%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sys.dm_%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sys.query_store_%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sp_server_diagnostics%'
 		  AND (
 			rs.last_execution_time >= DATEADD(day, -7, SYSDATETIMEOFFSET())
 			OR rsi.end_time >= DATEADD(day, -7, GETDATE())
@@ -711,7 +733,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 	var query string
 	if !hasSecondaryLag || !hasLastRedoneTime || !hasLastHardenedTime || !hasLogSendRate || !hasUndoRate || !hasUndoQueueSize {
 		log.Printf("[MSSQL] FetchAGHealthStats: Using minimal fallback query for %s (missing columns detected)", instanceName)
-		query = fmt.Sprintf(`
+		query = `
 			SELECT 
 				ag.name AS ag_name,
 				ar.replica_server_name,
@@ -732,7 +754,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 			FROM sys.availability_groups ag
 			INNER JOIN sys.availability_replicas ar ON ag.group_id = ar.group_id
 			ORDER BY ag.name, ar.replica_server_name
-		`)
+		`
 	} else if hasDbStates {
 		query = `
 			SELECT 
@@ -792,7 +814,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 		// If query fails due to missing columns, retry with an ultra-minimal query using only literals
 		if strings.Contains(err.Error(), "Invalid column name") {
 			log.Printf("[MSSQL] FetchAGHealthStats: Retrying with ultra-minimal fallback query for %s", instanceName)
-			query = fmt.Sprintf(`
+			query = `
 				SELECT 
 					ag.name AS ag_name,
 					ar.replica_server_name,
@@ -813,7 +835,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 				FROM sys.availability_groups ag
 				INNER JOIN sys.availability_replicas ar ON ag.group_id = ar.group_id
 				ORDER BY ag.name, ar.replica_server_name
-			`)
+			`
 			rows, err = db.Query(query)
 			if err != nil {
 				log.Printf("[MSSQL] FetchAGHealthStats Fallback Error for %s: %v", instanceName, err)
@@ -1034,10 +1056,10 @@ func (c *MssqlRepository) FetchSchedulerWG(instanceName string) ([]map[string]in
 			continue
 		}
 		results = append(results, map[string]interface{}{
-			"pool_name":        poolName,
-			"group_name":       groupName,
-			"active_requests":  active,
-			"queued_requests":  queued,
+			"pool_name":         poolName,
+			"group_name":        groupName,
+			"active_requests":   active,
+			"queued_requests":   queued,
 			"cpu_usage_percent": cpuPct,
 		})
 	}

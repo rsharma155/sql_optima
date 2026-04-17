@@ -41,13 +41,13 @@ func (h *PostgresHandlers) DBObservation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
 
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -67,13 +67,13 @@ func (h *PostgresHandlers) Overview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
 
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -91,13 +91,13 @@ func (h *PostgresHandlers) ServerInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
 
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -125,13 +125,13 @@ func (h *PostgresHandlers) SystemStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
 
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -148,11 +148,11 @@ func (h *PostgresHandlers) SystemStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"cpu_usage":             detail.CPUUsagePct,
-		"memory_usage":          detail.MemoryUsedPct,
-		"total_memory_bytes":    detail.TotalMemoryBytes,
+		"cpu_usage":              detail.CPUUsagePct,
+		"memory_usage":           detail.MemoryUsedPct,
+		"total_memory_bytes":     detail.TotalMemoryBytes,
 		"available_memory_bytes": detail.AvailableMemoryBytes,
-		"shared_buffers_bytes":  detail.SharedBuffersBytes,
+		"shared_buffers_bytes":   detail.SharedBuffersBytes,
 	})
 }
 
@@ -164,12 +164,12 @@ func (h *PostgresHandlers) SystemStatsHistory(w http.ResponseWriter, r *http.Req
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -205,17 +205,18 @@ func (h *PostgresHandlers) Dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
+	// Allow dashboard for any instance, even if not in config (for newly added servers)
+	// if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
+	// 	w.WriteHeader(http.StatusNotFound)
+	// 	json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+	// 	return
+	// }
 
-	if !instanceType(h.cfg, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
+	// if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+	// 	w.WriteHeader(http.StatusBadRequest)
+	// 	json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
+	// 	return
+	// }
 
 	thr := h.metricsSvc.GetCachedPgThroughputDashboard(instance, database)
 
@@ -235,12 +236,12 @@ func (h *PostgresHandlers) BGWriter(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -269,12 +270,12 @@ func (h *PostgresHandlers) Archiver(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -303,7 +304,7 @@ func (h *PostgresHandlers) WaitEventsHistory(w http.ResponseWriter, r *http.Requ
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid instance"})
 		return
@@ -338,7 +339,7 @@ func (h *PostgresHandlers) DbIOHistory(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid instance"})
 		return
@@ -373,7 +374,7 @@ func (h *PostgresHandlers) SettingsDrift(w http.ResponseWriter, r *http.Request)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid instance"})
 		return
@@ -421,11 +422,11 @@ func (h *PostgresHandlers) SettingsDrift(w http.ResponseWriter, r *http.Request)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance":          instance,
-		"latest_timestamp":  latestTs,
+		"instance":           instance,
+		"latest_timestamp":   latestTs,
 		"previous_timestamp": prevTs,
-		"changes":           changes,
-		"source":            "timescale",
+		"changes":            changes,
+		"source":             "timescale",
 	})
 }
 
@@ -437,12 +438,12 @@ func (h *PostgresHandlers) Databases(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -470,12 +471,12 @@ func (h *PostgresHandlers) ControlCenter(w http.ResponseWriter, r *http.Request)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -505,12 +506,12 @@ func (h *PostgresHandlers) ControlCenterHistory(w http.ResponseWriter, r *http.R
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -540,12 +541,12 @@ func (h *PostgresHandlers) ReplicationLagHistory(w http.ResponseWriter, r *http.
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -575,12 +576,12 @@ func (h *PostgresHandlers) ReplicationSlots(w http.ResponseWriter, r *http.Reque
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -628,12 +629,12 @@ func (h *PostgresHandlers) Disk(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -652,18 +653,18 @@ func (h *PostgresHandlers) Disk(w http.ResponseWriter, r *http.Request) {
 }
 
 type backupReportRequest struct {
-	Instance          string                 `json:"instance"`
-	Tool              string                 `json:"tool"`
-	BackupType        string                 `json:"backup_type"`
-	Status            string                 `json:"status"`
-	StartedAt         *time.Time             `json:"started_at,omitempty"`
-	FinishedAt        *time.Time             `json:"finished_at,omitempty"`
-	DurationSeconds   int64                  `json:"duration_seconds"`
-	WalArchivedUntil  *time.Time             `json:"wal_archived_until,omitempty"`
-	Repo              string                 `json:"repo,omitempty"`
-	SizeBytes         int64                  `json:"size_bytes"`
-	ErrorMessage      string                 `json:"error_message,omitempty"`
-	Metadata          map[string]interface{} `json:"metadata,omitempty"`
+	Instance         string                 `json:"instance"`
+	Tool             string                 `json:"tool"`
+	BackupType       string                 `json:"backup_type"`
+	Status           string                 `json:"status"`
+	StartedAt        *time.Time             `json:"started_at,omitempty"`
+	FinishedAt       *time.Time             `json:"finished_at,omitempty"`
+	DurationSeconds  int64                  `json:"duration_seconds"`
+	WalArchivedUntil *time.Time             `json:"wal_archived_until,omitempty"`
+	Repo             string                 `json:"repo,omitempty"`
+	SizeBytes        int64                  `json:"size_bytes"`
+	ErrorMessage     string                 `json:"error_message,omitempty"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty"`
 }
 
 func (h *PostgresHandlers) BackupReport(w http.ResponseWriter, r *http.Request) {
@@ -691,7 +692,7 @@ func (h *PostgresHandlers) BackupReport(w http.ResponseWriter, r *http.Request) 
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -733,7 +734,7 @@ func (h *PostgresHandlers) BackupLatest(w http.ResponseWriter, r *http.Request) 
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -757,7 +758,7 @@ func (h *PostgresHandlers) BackupHistory(w http.ResponseWriter, r *http.Request)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -782,7 +783,7 @@ func (h *PostgresHandlers) BackupHistory(w http.ResponseWriter, r *http.Request)
 type pgLogReportRequest struct {
 	Instance string `json:"instance"`
 	Events   []struct {
-		CaptureTimestamp *time.Time              `json:"capture_timestamp,omitempty"`
+		CaptureTimestamp *time.Time             `json:"capture_timestamp,omitempty"`
 		Severity         string                 `json:"severity"`
 		SQLState         string                 `json:"sqlstate,omitempty"`
 		Message          string                 `json:"message"`
@@ -828,7 +829,7 @@ func (h *PostgresHandlers) LogsReport(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -882,7 +883,7 @@ func (h *PostgresHandlers) LogsSummary(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -921,7 +922,7 @@ func (h *PostgresHandlers) LogsRecent(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -960,12 +961,12 @@ func (h *PostgresHandlers) Config(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -992,12 +993,12 @@ func (h *PostgresHandlers) BestPractices(w http.ResponseWriter, r *http.Request)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1018,12 +1019,12 @@ func (h *PostgresHandlers) Storage(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1055,12 +1056,12 @@ func (h *PostgresHandlers) DatabaseSize(w http.ResponseWriter, r *http.Request) 
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1076,12 +1077,12 @@ func (h *PostgresHandlers) VacuumProgress(w http.ResponseWriter, r *http.Request
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1096,9 +1097,9 @@ func (h *PostgresHandlers) VacuumProgress(w http.ResponseWriter, r *http.Request
 		rows = []repository.PgVacuumProgressRow{}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance":  instance,
-		"progress":  rows,
-		"source":    "live",
+		"instance": instance,
+		"progress": rows,
+		"source":   "live",
 	})
 }
 
@@ -1110,12 +1111,12 @@ func (h *PostgresHandlers) VacuumProgressHistory(w http.ResponseWriter, r *http.
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1145,12 +1146,12 @@ func (h *PostgresHandlers) TableMaintenanceHistory(w http.ResponseWriter, r *htt
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1189,12 +1190,12 @@ func (h *PostgresHandlers) TableMaintenanceLatest(w http.ResponseWriter, r *http
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1228,12 +1229,12 @@ func (h *PostgresHandlers) SessionStateHistory(w http.ResponseWriter, r *http.Re
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1279,12 +1280,12 @@ func (h *PostgresHandlers) SessionStateHistory(w http.ResponseWriter, r *http.Re
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"instance": instance,
 		"history": map[string]interface{}{
-			"labels":          labels,
-			"active":          active,
-			"idle":            idle,
-			"idle_in_txn":     idleInTxn,
-			"waiting":         waiting,
-			"total":           total,
+			"labels":      labels,
+			"active":      active,
+			"idle":        idle,
+			"idle_in_txn": idleInTxn,
+			"waiting":     waiting,
+			"total":       total,
 		},
 		"source": "timescale",
 	})
@@ -1298,7 +1299,7 @@ func (h *PostgresHandlers) PoolerLatest(w http.ResponseWriter, r *http.Request) 
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1323,7 +1324,7 @@ func (h *PostgresHandlers) PoolerHistory(w http.ResponseWriter, r *http.Request)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1376,7 +1377,7 @@ func (h *PostgresHandlers) DeadlocksHistory(w http.ResponseWriter, r *http.Reque
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1426,7 +1427,7 @@ func (h *PostgresHandlers) DeadlocksHistory(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"instance": instance,
 		"history": map[string]interface{}{
-			"labels": labels,
+			"labels":          labels,
 			"deadlocks_delta": deltas,
 		},
 		"source": "timescale",
@@ -1441,7 +1442,7 @@ func (h *PostgresHandlers) LockWaitHistory(w http.ResponseWriter, r *http.Reques
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1480,7 +1481,7 @@ func (h *PostgresHandlers) LockWaitHistory(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"instance": instance,
 		"history": map[string]interface{}{
-			"labels":                 labels,
+			"labels":                labels,
 			"lock_waiting_sessions": counts,
 		},
 		"source": "timescale",
@@ -1495,7 +1496,7 @@ func (h *PostgresHandlers) LocksBlockingKPIs(w http.ResponseWriter, r *http.Requ
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1533,7 +1534,7 @@ func (h *PostgresHandlers) LocksBlockingTimeline(w http.ResponseWriter, r *http.
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1613,7 +1614,7 @@ func (h *PostgresHandlers) LocksBlockingTopLockedTables(w http.ResponseWriter, r
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1685,7 +1686,7 @@ func (h *PostgresHandlers) LocksBlockingDetails(w http.ResponseWriter, r *http.R
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) || !instanceType(h.cfg, instance, "postgres") {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1758,12 +1759,12 @@ func (h *PostgresHandlers) Replication(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1807,9 +1808,9 @@ func (h *PostgresHandlers) Replication(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ha_provider":   det.Provider,
+		"ha_provider":    det.Provider,
 		"ha_detected_by": det.DetectedBy,
-		"stats":         stats,
+		"stats":          stats,
 	})
 }
 
@@ -1821,12 +1822,12 @@ func (h *PostgresHandlers) Sessions(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1862,12 +1863,12 @@ func (h *PostgresHandlers) KillSession(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1898,12 +1899,12 @@ func (h *PostgresHandlers) Locks(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1933,12 +1934,12 @@ func (h *PostgresHandlers) BlockingTree(w http.ResponseWriter, r *http.Request) 
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -1969,12 +1970,12 @@ func (h *PostgresHandlers) Queries(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -2019,10 +2020,8 @@ func (h *PostgresHandlers) Queries(w http.ResponseWriter, r *http.Request) {
 		"pg_stat_statements_enabled": enabled,
 		"collected_at":               time.Now().UTC(),
 	}
-	if meta != nil {
-		for k, v := range meta {
-			resp[k] = v
-		}
+	for k, v := range meta {
+		resp[k] = v
 	}
 	if err == nil && meta != nil {
 		if ec, ok := meta["end_capture"].(string); ok && ec != "" {
@@ -2051,12 +2050,12 @@ func (h *PostgresHandlers) ResetQueries(w http.ResponseWriter, r *http.Request) 
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
@@ -2080,12 +2079,12 @@ func (h *PostgresHandlers) Alerts(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "postgres") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return

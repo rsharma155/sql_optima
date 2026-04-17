@@ -31,7 +31,6 @@ func (tl *TimescaleLogger) sihDuplicateIndexCandidates(ctx context.Context, engi
 	if f.TableLike != "" {
 		where += fmt.Sprintf(" AND table_name ILIKE $%d", n)
 		args = append(args, "%"+f.TableLike+"%")
-		n++
 	}
 
 	q := `
@@ -153,4 +152,3 @@ func (tl *TimescaleLogger) sihDuplicateIndexCandidates(ctx context.Context, engi
 	}
 	return dup, nil
 }
-

@@ -14,15 +14,20 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/collector/pghostcpu"
 	"github.com/rsharma155/sql_optima/internal/config"
+	"github.com/rsharma155/sql_optima/internal/domain/servers"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/repository"
+	appsec "github.com/rsharma155/sql_optima/internal/security"
+	"github.com/rsharma155/sql_optima/internal/security/sqlsandbox"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 	"github.com/rsharma155/sql_optima/pkg/dashboard"
 )
@@ -32,7 +37,12 @@ type MetricsService struct {
 	MsRepo           *repository.MssqlRepository
 	WidgetRepo       *repository.WidgetRepository
 	UserRepo         *repository.UserRepository
+	ServerRepo       servers.ServerStore
+	AuditRepo        *repository.AuditLogRepository
+	ServerKMS        servers.KeyManagementService
+	ServerSecretBox  servers.SecretBox
 	Config           *config.Config
+	RegistryReload   func() // optional: reload cfg.Instances + DB pools after registry CRUD (wired by appserver)
 	cacheMutex       sync.RWMutex
 	dashboardCache   map[string]models.DashboardMetrics
 	pgDashboardCache map[string]models.PgCoreDashboardCache
@@ -62,10 +72,18 @@ func NewMetricsService(pg *repository.PgRepository, ms *repository.MssqlReposito
 
 	var widgetRepo *repository.WidgetRepository
 	var userRepo *repository.UserRepository
+	var serverRepo servers.ServerStore
+	var auditRepo *repository.AuditLogRepository
+	var secretBox servers.SecretBox
 	if tsStorage != nil {
 		widgetRepo = repository.NewWidgetRepository(tsStorage.Pool())
 		userRepo = repository.NewUserRepository(tsStorage.Pool())
 		log.Println("[MetricsService] Widget registry and user management initialized")
+
+		serverRepo = repository.NewServerRegistryRepository(tsStorage.Pool())
+		auditRepo = repository.NewAuditLogRepository(tsStorage.Pool())
+		secretBox = appsec.NewEnvelopeSecretBox()
+		log.Println("[MetricsService] Server registry initialized")
 	}
 
 	return &MetricsService{
@@ -73,6 +91,9 @@ func NewMetricsService(pg *repository.PgRepository, ms *repository.MssqlReposito
 		MsRepo:           ms,
 		WidgetRepo:       widgetRepo,
 		UserRepo:         userRepo,
+		ServerRepo:       serverRepo,
+		AuditRepo:        auditRepo,
+		ServerSecretBox:  secretBox,
 		Config:           cfg,
 		dashboardCache:   make(map[string]models.DashboardMetrics),
 		pgDashboardCache: make(map[string]models.PgCoreDashboardCache),
@@ -83,6 +104,75 @@ func NewMetricsService(pg *repository.PgRepository, ms *repository.MssqlReposito
 		sihLastTable15m:  make(map[string]time.Time),
 		sihLastGrowth6h:  make(map[string]time.Time),
 		sihLastDefsDaily: make(map[string]time.Time),
+	}
+}
+
+// ReplaceInstanceRepositories swaps SQL connection pools after cfg.Instances changes (e.g. registry reload).
+func (s *MetricsService) ReplaceInstanceRepositories(pg *repository.PgRepository, ms *repository.MssqlRepository) {
+	if s == nil {
+		return
+	}
+	if pg != nil {
+		s.PgRepo = pg
+	}
+	if ms != nil {
+		s.MsRepo = ms
+	}
+}
+
+// RebindTimescale replaces the Timescale pool and dependent repositories (used after first-run setup).
+func (s *MetricsService) RebindTimescale(ts *hot.HotStorage) {
+	if s == nil {
+		return
+	}
+	if s.tsHotStorage != nil {
+		s.tsHotStorage.Close()
+	}
+	s.tsHotStorage = ts
+	if ts != nil {
+		s.tsLogger = hot.NewTimescaleLogger(ts.Pool())
+		s.WidgetRepo = repository.NewWidgetRepository(ts.Pool())
+		s.UserRepo = repository.NewUserRepository(ts.Pool())
+		s.ServerRepo = repository.NewServerRegistryRepository(ts.Pool())
+		s.AuditRepo = repository.NewAuditLogRepository(ts.Pool())
+		s.ServerSecretBox = appsec.NewEnvelopeSecretBox()
+		log.Println("[MetricsService] TimescaleDB rebound; application tables reattached")
+		return
+	}
+	s.tsLogger = nil
+	s.WidgetRepo = nil
+	s.UserRepo = nil
+	s.ServerRepo = nil
+	s.AuditRepo = nil
+	s.ServerSecretBox = nil
+	log.Println("[MetricsService] TimescaleDB detached")
+}
+
+// EnsureServerKMS initializes Vault Transit or local envelope KMS when Timescale was attached
+// after process start (e.g. first-run /setup) and KMS was never wired.
+func (s *MetricsService) EnsureServerKMS(jwtSecret []byte) {
+	if s == nil || s.ServerKMS != nil || s.GetTimescaleDBPool() == nil {
+		return
+	}
+	vaultAddr := strings.TrimSpace(os.Getenv("VAULT_ADDR"))
+	if vaultAddr != "" {
+		vTok := strings.TrimSpace(os.Getenv("VAULT_TOKEN"))
+		vKey := strings.TrimSpace(os.Getenv("VAULT_TRANSIT_KEY"))
+		vNs := strings.TrimSpace(os.Getenv("VAULT_NAMESPACE"))
+		vMount := strings.TrimSpace(os.Getenv("VAULT_TRANSIT_MOUNT"))
+		if k, err := appsec.InitVaultClient(appsec.VaultConfig{Addr: vaultAddr, Token: vTok, Namespace: vNs, TransitMount: vMount, TransitKey: vKey}); err == nil {
+			s.ServerKMS = k
+			log.Println("[kms] Vault Transit enabled after Timescale attach")
+			return
+		} else {
+			log.Printf("[vault] KMS init after Timescale attach: %v", err)
+		}
+	}
+	if lk, err := appsec.NewLocalEnvelopeKMS(jwtSecret); err == nil {
+		s.ServerKMS = lk
+		log.Println("[kms] local envelope KMS enabled after Timescale attach")
+	} else {
+		log.Printf("[kms] could not enable local KMS after Timescale attach: %v", err)
 	}
 }
 
@@ -137,6 +227,13 @@ func (s *MetricsService) TimescaleStorageIndexHealthFilterOptions(ctx context.Co
 		return nil, fmt.Errorf("timescale not configured")
 	}
 	return s.tsLogger.QueryStorageIndexHealthFilterOptions(ctx, engine, instance, from, to, dbName, schemaName)
+}
+
+func (s *MetricsService) TimescaleStorageIndexDefinition(ctx context.Context, engine, instance, dbName, schemaName, indexName string) ([]hot.IndexDefinitionRow, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not configured")
+	}
+	return s.tsLogger.QueryIndexDefinition(ctx, engine, instance, dbName, schemaName, indexName)
 }
 
 func (s *MetricsService) GetAllInstanceStatuses() map[string]string {
@@ -317,11 +414,11 @@ func (s *MetricsService) GetTimescaleWaitCategoryAgg(ctx context.Context, instan
 }
 
 // GetTimescalePerformanceDebtFindings returns recent Performance Debt findings (Timescale snapshot).
-func (s *MetricsService) GetTimescalePerformanceDebtFindings(ctx context.Context, instanceName string, lookback time.Duration) ([]map[string]interface{}, error) {
+func (s *MetricsService) GetTimescalePerformanceDebtFindings(ctx context.Context, instanceName string, lookback time.Duration, database string) ([]map[string]interface{}, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	return s.tsLogger.GetLatestPerformanceDebtFindings(ctx, instanceName, lookback)
+	return s.tsLogger.GetLatestPerformanceDebtFindings(ctx, instanceName, lookback, database)
 }
 
 func (s *MetricsService) GetTimescaleSchedulerWG(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
@@ -818,19 +915,19 @@ func (s *MetricsService) GetPostgresDeadlocksHistory(ctx context.Context, instan
 	return s.tsLogger.GetPostgresDeadlocksHistory(ctx, instanceName, minutes, limit)
 }
 
-func (s *MetricsService) GetTimescaleSQLServerTopQueries(instanceName string, limit int, from, to string) ([]map[string]interface{}, error) {
+func (s *MetricsService) GetTimescaleSQLServerTopQueries(instanceName string, limit int, from, to string, database string) ([]map[string]interface{}, error) {
 	if s.tsLogger == nil {
 		return nil, fmt.Errorf("TimescaleDB not connected")
 	}
-	return s.tsLogger.GetSQLServerTopQueriesWithRange(context.Background(), instanceName, limit, from, to)
+	return s.tsLogger.GetSQLServerTopQueriesWithRange(context.Background(), instanceName, limit, from, to, database)
 }
 
 // GetTimescaleSQLServerTopQueriesLatest returns recent top-query rows (includes query_text) for CPU drilldown and similar UIs.
-func (s *MetricsService) GetTimescaleSQLServerTopQueriesLatest(instanceName string, limit int) ([]map[string]interface{}, error) {
+func (s *MetricsService) GetTimescaleSQLServerTopQueriesLatest(instanceName string, limit int, database string) ([]map[string]interface{}, error) {
 	if s.tsLogger == nil {
 		return nil, fmt.Errorf("TimescaleDB not connected")
 	}
-	return s.tsLogger.GetSQLServerTopQueries(context.Background(), instanceName, limit)
+	return s.tsLogger.GetSQLServerTopQueries(context.Background(), instanceName, limit, database)
 }
 
 // GetTimescaleSQLServerConnectionStats returns latest per-database connection snapshots from Timescale.
@@ -1008,7 +1105,7 @@ func (s *MetricsService) GetDashboardFromTimescale(instanceName string) (map[str
 		return nil, err
 	}
 
-	topQueries, err := s.tsLogger.GetSQLServerTopQueries(ctx, instanceName, 20)
+	topQueries, err := s.tsLogger.GetSQLServerTopQueries(ctx, instanceName, 20, "")
 	if err != nil {
 		topQueries = []map[string]interface{}{}
 	}
@@ -1019,11 +1116,11 @@ func (s *MetricsService) GetDashboardFromTimescale(instanceName string) (map[str
 	}
 
 	result := map[string]interface{}{
-		"metrics":           metrics,
-		"top_queries":       topQueries,
-		"connection_stats":  connStats,
-		"connections":       connStats, // legacy key for older clients
-		"instance_name":     instanceName,
+		"metrics":          metrics,
+		"top_queries":      topQueries,
+		"connection_stats": connStats,
+		"connections":      connStats, // legacy key for older clients
+		"instance_name":    instanceName,
 	}
 
 	return result, nil
@@ -1140,11 +1237,11 @@ func (s *MetricsService) GetDashboardHomepageV2(instanceName string) dashboard.H
 			}(),
 		},
 		WorkloadCapacity: map[string]any{
-			"avg_cpu_load":  d.AvgCPULoad,
-			"memory_usage":  d.MemoryUsage,
-			"active_users":  d.ActiveUsers,
-			"total_locks":   d.TotalLocks,
-			"deadlocks":     d.Deadlocks,
+			"avg_cpu_load": d.AvgCPULoad,
+			"memory_usage": d.MemoryUsage,
+			"active_users": d.ActiveUsers,
+			"total_locks":  d.TotalLocks,
+			"deadlocks":    d.Deadlocks,
 			"batch_requests_per_sec": func() any {
 				if tsRisk == nil {
 					return nil
@@ -1206,11 +1303,11 @@ func (s *MetricsService) GetDashboardHomepageV2(instanceName string) dashboard.H
 			}(),
 		},
 		LiveDiagnostics: map[string]any{
-			"active_blocks":     d.ActiveBlocks,
-			"top_queries":       d.TopQueries,
-			"connection_stats":  d.ConnectionStats,
-			"xevent_metrics":    d.XEventMetrics,
-			"locks_by_db":       d.LocksByDB,
+			"active_blocks":    d.ActiveBlocks,
+			"top_queries":      d.TopQueries,
+			"connection_stats": d.ConnectionStats,
+			"xevent_metrics":   d.XEventMetrics,
+			"locks_by_db":      d.LocksByDB,
 		},
 		Compat: map[string]any{
 			// Keep legacy dashboard payload available so the frontend can migrate incrementally.
@@ -1288,7 +1385,53 @@ func (s *MetricsService) ExecuteQuery(instanceName string, sql string, timeoutSe
 	if s.WidgetRepo == nil {
 		return nil, fmt.Errorf("widget registry not configured")
 	}
-	return nil, fmt.Errorf("query execution not implemented")
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 30
+	}
+	if timeoutSeconds > 60 {
+		timeoutSeconds = 60
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+	// Execute ad-hoc SQL against TimescaleDB only (never against monitored target DBs).
+	wrapped, err := sqlsandbox.WrapWithRowLimit("postgres", sql, sqlsandbox.DefaultMaxRows)
+	if err != nil {
+		return nil, fmt.Errorf("sql sandbox: %w", err)
+	}
+
+	rows, err := s.WidgetRepo.Pool().Query(ctx, wrapped)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	fds := rows.FieldDescriptions()
+	cols := make([]string, len(fds))
+	for i, fd := range fds {
+		cols[i] = string(fd.Name)
+	}
+
+	out := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		vals, err := rows.Values()
+		if err != nil {
+			continue
+		}
+		m := make(map[string]interface{}, len(cols))
+		for i, c := range cols {
+			m[c] = vals[i]
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ExecuteWidgetQuery executes a stored widget query against TimescaleDB with sandboxing.
+func (s *MetricsService) ExecuteWidgetQuery(ctx context.Context, widgetID string, params map[string]string) ([]map[string]interface{}, error) {
+	if s.WidgetRepo == nil {
+		return nil, fmt.Errorf("widget registry not configured")
+	}
+	return s.WidgetRepo.ExecuteWidgetQuery(ctx, widgetID, params)
 }
 
 func (s *MetricsService) GetQueryBottlenecks(instanceName string, limit int) ([]map[string]interface{}, error) {
@@ -1357,13 +1500,4 @@ func (s *MetricsService) GetPostgresQueriesForAPI(ctx context.Context, instanceN
 	meta["end_capture"] = time.Now().UTC().Format(time.RFC3339)
 	meta["stats_note"] = "pg_stat_statements holds cumulative counters since the last reset or server start — not limited to the selected time range. “Total time” is the sum of all executions for that statement (many runs add up). “Avg time” is mean milliseconds per execution. For true time-range stats, enable TimescaleDB and the enterprise collector (postgres_query_stats snapshots)."
 	return live, meta, nil
-}
-
-func (s *MetricsService) instanceType(name string) string {
-	for _, inst := range s.Config.Instances {
-		if inst.Name == name {
-			return inst.Type
-		}
-	}
-	return ""
 }

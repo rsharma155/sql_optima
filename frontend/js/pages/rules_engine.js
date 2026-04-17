@@ -22,7 +22,7 @@ window.RulesEngineView = async function() {
                     <h1><i class="fa-solid fa-list-check text-accent"></i> Best Practices Dashboard</h1>
                     <p class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Rule Engine Results</p>
                 </div>
-                <button class="btn btn-sm btn-outline text-accent" onclick="window.RulesEngineView()"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="RulesEngineView"><i class="fa-solid fa-refresh"></i> Refresh</button>
             </div>
             <div style="display:flex; justify-content:center; align-items:center; height:50vh;">
                 <div class="spinner"></div><span style="margin-left:1rem;">Loading best practices...</span>
@@ -103,7 +103,7 @@ function renderBestPracticesDashboard(inst, data) {
                 </div>
                 <div style="display:flex; align-items:center; gap:1rem;">
                     ${window.renderStatusStrip({ lastUpdateId: 'bpLastRefreshTime', sourceBadgeId: 'bpDataSourceBadge', includeHealth: false, includeFreshness: false, autoRefreshText: '' })}
-                    <button class="btn btn-sm btn-outline text-accent" onclick="${inst && inst.type === 'postgres' && typeof window.PgBestPracticesView === 'function' ? 'window.PgBestPracticesView()' : 'window.RulesEngineView()'}"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="${inst && inst.type === 'postgres' && typeof window.PgBestPracticesView === 'function' ? 'PgBestPracticesView' : 'RulesEngineView'}"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
 
@@ -144,7 +144,7 @@ function renderBestPracticesDashboard(inst, data) {
 
         html += `
             <div class="table-card glass-panel mt-3" style="padding:0.75rem;">
-                <div class="card-header" onclick="this.nextElementSibling.classList.toggle('hidden'); this.querySelector('i').classList.toggle('fa-chevron-down'); this.querySelector('i').classList.toggle('fa-chevron-up');" style="cursor:pointer;">
+                <div class="card-header" data-action="toggle-section" style="cursor:pointer;">
                     <h3 style="font-size:0.85rem; margin:0; display:flex; align-items:center; gap:0.5rem;">
                         <i class="fa-solid fa-chevron-up" style="transition:transform 0.2s;"></i>
                         <span class="text-accent">${window.escapeHtml(category)}</span>
@@ -205,7 +205,7 @@ function renderBestPracticesDashboard(inst, data) {
                     <td style="text-align:center;"><code style="background:var(--bg-tertiary); padding:2px 4px; border-radius:4px; font-size:0.65rem; display:inline-block; width:100%;">${safeCurr}</code></td>
                     <td style="text-align:center;"><code style="background:var(--bg-tertiary); padding:2px 4px; border-radius:4px; font-size:0.65rem; display:inline-block; width:100%;">${safeRec}</code></td>
                     <td style="text-align:center;">
-                        <button class="btn btn-xs btn-outline" onclick="window.showRuleDrawerById('${drawerId}')">
+                        <button class="btn btn-xs btn-outline" data-action="call" data-fn="showRuleDrawerById" data-arg="${drawerId}">
                             <i class="fa-solid fa-info-circle"></i> Details
                         </button>
                     </td>
@@ -300,13 +300,13 @@ window.showRuleDrawer = function(ruleName, description, fixScript, status, curre
         // Hide fix script for OK status
         const showFixScript = statusKey !== 'OK' && safeFix;
 
-        const copyBtn = showFixScript ? `<button class="btn btn-sm btn-outline" onclick="navigator.clipboard.writeText(this.closest('.drawer-content').dataset.fix).then(()=>{this.innerHTML='<i class=\\'fa-solid fa-check\\'></i> Copied';setTimeout(()=>this.innerHTML='<i class=\\'fa-solid fa-copy\\'></i> Copy',2000);})"><i class="fa-solid fa-copy"></i> Copy</button>` : '';
+        const copyBtn = showFixScript ? `<button class="btn btn-sm btn-outline" data-action="copy-closest-fix"><i class="fa-solid fa-copy"></i> Copy</button>` : '';
 
         drawer.innerHTML = `
             <div class="drawer-content" data-fix="${safeFix}" style="font-size:0.85rem; color:#1f2937;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem; border-bottom:1px solid #e5e7eb; padding-bottom:1rem;">
                     <h2 style="margin:0;font-size:1.1rem;color:#111827; font-weight:600;">${safeRuleName}</h2>
-                    <button class="btn btn-sm btn-outline" onclick="document.getElementById('rule-drawer-overlay').remove()" style="border:1px solid #d1d5db; border-radius:4px; padding:4px 8px; cursor:pointer;"><i class="fa-solid fa-times"></i></button>
+                    <button class="btn btn-sm btn-outline" data-action="close-id" data-target="rule-drawer-overlay" style="border:1px solid #d1d5db; border-radius:4px; padding:4px 8px; cursor:pointer;"><i class="fa-solid fa-times"></i></button>
                 </div>
                 <div style="margin-bottom:1rem;">
                     <span class="badge badge-${style.badge}" style="background:${style.bg}; color:${style.color}; padding:4px 12px; border-radius:12px; font-size:0.75rem; font-weight:600;">${statusKey}</span>
