@@ -31,7 +31,7 @@ func (e *PgBlockingEvaluator) Evaluate(ctx context.Context, instanceName string)
 	const q = `
 		SELECT count(DISTINCT blocked_pid) AS blocked_count
 		FROM monitor.pg_blocking_pairs
-		WHERE server_id = $1
+		WHERE server_instance_name = $1
 		  AND collected_at >= now() - INTERVAL '5 minutes'`
 
 	var blockedCount int

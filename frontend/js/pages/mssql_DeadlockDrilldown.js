@@ -32,14 +32,14 @@ window.DeadlockDrilldown = function() {
                                 <td><strong>SPID 114</strong> (SalesPortal)</td>
                                 <td><strong>SPID 92</strong> (SQL Agent)</td>
                                 <td>Object: dbo.Orders</td>
-                                <td><button class="btn btn-sm btn-outline" ><i class="fa-solid fa-sitemap"></i> View Graph</button></td>
+                                <td><button class="btn btn-sm btn-outline" data-action="view-deadlock-graph" data-spid="114"><i class="fa-solid fa-sitemap"></i> View Graph</button></td>
                             </tr>
                             <tr>
                                 <td>Yesterday (21:15)</td>
                                 <td><strong>SPID 65</strong> (Reporting)</td>
                                 <td><strong>SPID 81</strong> (Web_App)</td>
                                 <td>Page: 1:45210</td>
-                                <td><button class="btn btn-sm btn-outline" ><i class="fa-solid fa-sitemap"></i> View Graph</button></td>
+                                <td><button class="btn btn-sm btn-outline" data-action="view-deadlock-graph" data-spid="65"><i class="fa-solid fa-sitemap"></i> View Graph</button></td>
                             </tr>
                         </tbody>
                     </table>

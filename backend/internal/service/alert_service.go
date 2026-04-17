@@ -11,6 +11,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/domain/alerts"
@@ -75,7 +76,11 @@ func (s *AlertService) RunEvaluation(ctx context.Context, instanceName string, e
 		}
 		results, err := ev.Evaluate(ctx, instanceName)
 		if err != nil {
-			// Log but continue with other evaluators
+			slog.WarnContext(ctx, "alert evaluator failed",
+				"engine", engine,
+				"instance", instanceName,
+				"error", err,
+			)
 			continue
 		}
 		for _, r := range results {

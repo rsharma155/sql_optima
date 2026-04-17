@@ -81,7 +81,6 @@ func SetupRateLimitMiddleware(l *SetupRateLimiter, next http.Handler) http.Handl
 		if !l.Allow(ip) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
-			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many setup attempts; try again later"})
 			return
 		}
