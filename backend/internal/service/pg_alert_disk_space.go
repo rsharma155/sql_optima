@@ -39,7 +39,13 @@ func (e *PgDiskSpaceEvaluator) Evaluate(ctx context.Context, instanceName string
 	var exists bool
 	if err := e.tsPool.QueryRow(ctx,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'system_stats_detail')`,
-	).Scan(&exists); err != nil || !exists {
+	).Scan(&exists); err != nil {
+		if isNoDataError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("pg_disk_space (table check): %w", err)
+	}
+	if !exists {
 		return nil, nil
 	}
 
@@ -52,7 +58,10 @@ func (e *PgDiskSpaceEvaluator) Evaluate(ctx context.Context, instanceName string
 
 	var totalGB, usedGB float64
 	if err := e.tsPool.QueryRow(ctx, q, instanceName).Scan(&totalGB, &usedGB); err != nil {
-		return nil, nil
+		if isNoDataError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("pg_disk_space: %w", err)
 	}
 	if totalGB <= 0 {
 		return nil, nil

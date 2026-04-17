@@ -46,7 +46,10 @@ func (e *MssqlDiskSpaceEvaluator) Evaluate(ctx context.Context, instanceName str
 
 	rows, err := e.tsPool.Query(ctx, q, instanceName)
 	if err != nil {
-		return nil, nil
+		if isNoDataError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("mssql_disk_space: %w", err)
 	}
 	defer rows.Close()
 

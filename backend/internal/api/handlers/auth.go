@@ -9,6 +9,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -46,7 +47,9 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Reject requests with trailing garbage after the JSON object.
-	if dec.More() {
+	// dec.More() only checks inside arrays/objects; a second Decode that
+	// expects io.EOF is the standard pattern for top-level trailing data.
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "unexpected trailing data in request body"})
 		return

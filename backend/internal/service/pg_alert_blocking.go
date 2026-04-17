@@ -70,7 +70,10 @@ func (e *PgBlockingEvaluator) evaluateFromLockStats(ctx context.Context, instanc
 
 	var waiting int
 	if err := e.tsPool.QueryRow(ctx, q, instanceName).Scan(&waiting); err != nil {
-		return nil, nil
+		if isNoDataError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("pg_blocking (lock_stats): %w", err)
 	}
 	if waiting == 0 {
 		return nil, nil

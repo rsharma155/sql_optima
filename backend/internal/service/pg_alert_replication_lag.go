@@ -43,7 +43,10 @@ func (e *PgReplicationLagEvaluator) Evaluate(ctx context.Context, instanceName s
 
 	var lagMB float64
 	if err := e.tsPool.QueryRow(ctx, q, instanceName).Scan(&lagMB); err != nil {
-		return nil, nil
+		if isNoDataError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("pg_replication_lag: %w", err)
 	}
 
 	var sev alerts.Severity

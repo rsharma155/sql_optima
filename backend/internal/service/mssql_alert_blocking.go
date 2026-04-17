@@ -37,7 +37,10 @@ func (e *MssqlBlockingEvaluator) Evaluate(ctx context.Context, instanceName stri
 
 	var blocking int
 	if err := e.tsPool.QueryRow(ctx, q, instanceName).Scan(&blocking); err != nil {
-		return nil, nil // no data yet — not an error
+		if isNoDataError(err) {
+			return nil, nil // no data yet
+		}
+		return nil, fmt.Errorf("mssql_blocking: %w", err)
 	}
 	if blocking == 0 {
 		return nil, nil

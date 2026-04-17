@@ -37,7 +37,10 @@ func (e *MssqlFailedJobsEvaluator) Evaluate(ctx context.Context, instanceName st
 
 	var failedJobs int
 	if err := e.tsPool.QueryRow(ctx, q, instanceName).Scan(&failedJobs); err != nil {
-		return nil, nil
+		if isNoDataError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("mssql_failed_jobs: %w", err)
 	}
 	if failedJobs == 0 {
 		return nil, nil

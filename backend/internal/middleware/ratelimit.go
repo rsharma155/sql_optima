@@ -102,6 +102,9 @@ func (l *LoginRateLimiter) allow(key string, limit int) bool {
 			kept = append(kept, t)
 		}
 	}
+	if len(kept) == 0 {
+		delete(l.windows, key)
+	}
 	if len(kept) >= limit {
 		l.windows[key] = kept
 		return false

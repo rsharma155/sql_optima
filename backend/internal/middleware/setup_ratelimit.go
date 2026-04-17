@@ -62,7 +62,11 @@ func (l *SetupRateLimiter) Allow(ip string) bool {
 			kept = append(kept, t)
 		}
 	}
+	if len(kept) == 0 {
+		delete(l.attempts, ip)
+	}
 	if len(kept) >= l.max {
+		l.attempts[ip] = kept
 		return false
 	}
 	kept = append(kept, now)

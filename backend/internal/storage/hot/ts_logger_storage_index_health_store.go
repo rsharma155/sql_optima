@@ -375,8 +375,9 @@ type IndexDefinitionRow struct {
 	IndexType        string
 }
 
-// QueryIndexDefinition returns the latest stored definition for a specific index from monitor.index_definitions.
-// At least one of (dbName, indexName) must be non-empty.
+// QueryIndexDefinition returns the latest stored definitions from monitor.index_definitions
+// for the given engine and serverID. The dbName, schemaName, and indexName parameters are
+// optional filters; when none are provided the query returns all definitions for the instance.
 func (tl *TimescaleLogger) QueryIndexDefinition(ctx context.Context, engine, serverID, dbName, schemaName, indexName string) ([]IndexDefinitionRow, error) {
 	if engine == "" || serverID == "" {
 		return nil, fmt.Errorf("engine and serverID are required")

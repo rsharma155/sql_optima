@@ -105,14 +105,20 @@ func NewMssqlRepository(cfg *config.Config) *MssqlRepository {
 			if catalog == "" {
 				catalog = "master"
 			}
-			// Construct DSN (encrypt=true for Azure SQL / MI / cloud endpoints)
+			// Default to encrypt=true (required for Azure SQL / MI / cloud).
+			// On-prem instances without TLS can set encrypt: false in config.
+			encrypt := "true"
+			if inst.Encrypt != nil && !*inst.Encrypt {
+				encrypt = "false"
+			}
+			// Construct DSN
 			var connStr string
 			if inst.IntegratedSecurity {
 				// Windows Authentication (Passwordless / Active Directory)
-				connStr = fmt.Sprintf("server=%s;port=%d;database=%s;Integrated Security=true;encrypt=true;", inst.Host, port, catalog)
+				connStr = fmt.Sprintf("server=%s;port=%d;database=%s;Integrated Security=true;encrypt=%s;", inst.Host, port, catalog, encrypt)
 			} else {
 				// SQL Authentication natively
-				connStr = fmt.Sprintf("server=%s;port=%d;database=%s;user id=%s;password=%s;encrypt=true;", inst.Host, port, catalog, user, password)
+				connStr = fmt.Sprintf("server=%s;port=%d;database=%s;user id=%s;password=%s;encrypt=%s;", inst.Host, port, catalog, user, password, encrypt)
 			}
 
 			if inst.TrustServerCertificate {
