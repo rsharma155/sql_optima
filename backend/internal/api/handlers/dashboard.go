@@ -100,10 +100,10 @@ func (h *DashboardHandlers) ExecuteQuery(w http.ResponseWriter, r *http.Request)
 	rows, err := h.metricsSvc.ExecuteWidgetQuery(ctx, req.WidgetID, req.Parameters)
 	if err != nil {
 		log.Printf("[API] Widget query execution error for widget=%s: %s", req.WidgetID, redact.String(err.Error()))
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   redact.String(err.Error()),
+			"success":    false,
+			"error":      "widget query failed",
 			"request_id": middleware.RequestIDFromContext(r.Context()),
 		})
 		return

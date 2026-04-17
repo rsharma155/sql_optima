@@ -34,21 +34,6 @@ func NewPgDiskSpaceEvaluator(tsPool *pgxpool.Pool) *PgDiskSpaceEvaluator {
 func (e *PgDiskSpaceEvaluator) Engine() alerts.Engine { return alerts.EnginePostgres }
 
 func (e *PgDiskSpaceEvaluator) Evaluate(ctx context.Context, instanceName string) ([]AlertEvaluatorResult, error) {
-	// Check whether the system_stats_detail table exists before querying.
-	// The table is not yet created by any migration — silently skip until it is.
-	var exists bool
-	if err := e.tsPool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'system_stats_detail')`,
-	).Scan(&exists); err != nil {
-		if isNoDataError(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("pg_disk_space (table check): %w", err)
-	}
-	if !exists {
-		return nil, nil
-	}
-
 	const q = `
 		SELECT COALESCE(disk_total_gb, 0), COALESCE(disk_used_gb, 0)
 		FROM system_stats_detail

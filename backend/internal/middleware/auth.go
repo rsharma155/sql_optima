@@ -74,6 +74,10 @@ func ValidateTokenWithContext(ctx context.Context, tokenString string) (*AuthCla
 }
 
 func validateLocalJWT(tokenString string) (*AuthClaims, error) {
+	if len(JWTSecret) < 32 {
+		return nil, errors.New("jwt secret is not configured")
+	}
+
 	token, err := jwt.ParseWithClaims(tokenString, &AuthClaims{}, func(t *jwt.Token) (interface{}, error) {
 		if t.Method != jwt.SigningMethodHS256 {
 			return nil, jwt.ErrTokenUnverifiable

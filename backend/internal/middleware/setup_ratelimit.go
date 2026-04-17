@@ -31,11 +31,18 @@ func NewSetupRateLimiter(maxPerWindow int, window time.Duration) *SetupRateLimit
 	}
 }
 
+// TrustProxy controls whether clientIPKey honours X-Forwarded-For.
+// Set to true only when the app sits behind a trusted reverse proxy
+// that overwrites the header (e.g. nginx, AWS ALB).
+var TrustProxy bool
+
 func clientIPKey(r *http.Request) string {
-	if xf := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xf != "" {
-		parts := strings.Split(xf, ",")
-		if len(parts) > 0 {
-			return strings.TrimSpace(parts[0])
+	if TrustProxy {
+		if xf := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xf != "" {
+			parts := strings.Split(xf, ",")
+			if len(parts) > 0 {
+				return strings.TrimSpace(parts[0])
+			}
 		}
 	}
 	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))

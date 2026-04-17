@@ -423,7 +423,7 @@ func (tl *TimescaleLogger) QueryIndexDefinition(ctx context.Context, engine, ser
 		var r IndexDefinitionRow
 		if err := rows.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.IndexName,
 			&r.KeyColumns, &r.IncludeColumns, &r.FilterDefinition, &r.IsUnique, &r.IsPK, &r.IndexType); err != nil {
-			continue
+			return nil, fmt.Errorf("index_definitions scan: %w", err)
 		}
 		out = append(out, r)
 	}
