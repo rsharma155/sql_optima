@@ -81,9 +81,11 @@ window.PgBackupsView = async function PgBackupsView() {
     const limit = parseInt(els.limit.value || '100', 10) || 100;
     let payload;
     try {
-      payload = await window.apiClient.authenticatedFetch(
+      const resp = await window.apiClient.authenticatedFetch(
         `/api/postgres/backups/history?instance=${encodeURIComponent(instanceName)}&limit=${encodeURIComponent(String(limit))}`
       );
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      payload = await resp.json();
     } catch (e) {
       els.meta.textContent = 'Failed to load backup history';
       els.tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger">Error: ${esc(e?.message || 'request failed')}</td></tr>`;
@@ -92,6 +94,38 @@ window.PgBackupsView = async function PgBackupsView() {
     cached = Array.isArray(payload?.runs) ? payload.runs : (Array.isArray(payload) ? payload : []);
     els.meta.textContent = `${cached.length} run(s)`;
     applyFilter();
+
+    // RPO / WAL Archiver Risk strip
+    window.apiClient.authenticatedFetch(`/api/postgres/wal/archiver-risk?instance=${encodeURIComponent(instanceName)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(walPayload => {
+        const strip = document.getElementById('pgBackupRPOStrip');
+        if (!strip || !walPayload?.risk) return;
+        const risk = walPayload.risk;
+        const ageSec = risk.last_archived_age_seconds;
+        const lvl = risk.risk_level || 'low';
+        const cls = lvl === 'critical' ? 'alert-danger' : lvl === 'high' ? 'alert-warning' : lvl === 'medium' ? 'alert-warning' : 'alert-success';
+        const icon = lvl === 'critical' || lvl === 'high' ? 'fa-triangle-exclamation' : lvl === 'medium' ? 'fa-circle-info' : 'fa-circle-check';
+        const fmtAge = (s) => {
+          if (!isFinite(s) || s < 0) return '—';
+          if (s < 60) return `${Math.round(s)}s`;
+          if (s < 3600) return `${(s/60).toFixed(1)}m`;
+          return `${(s/3600).toFixed(2)}h`;
+        };
+        const rpoColor = ageSec < 300 ? 'text-success' : ageSec < 1800 ? 'text-warning' : 'text-danger';
+        strip.innerHTML = `
+          <div class="alert ${cls}" style="padding:.5rem .75rem;border-radius:6px;font-size:0.82rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
+            <i class="fa-solid ${icon}"></i>
+            <strong>RPO Posture: ${lvl.toUpperCase()}</strong>
+            <span>WAL archive lag: <strong class="${rpoColor}">${fmtAge(ageSec)}</strong></span>
+            <span class="text-muted">&nbsp;|&nbsp; Archived: <strong>${Number(risk.archived_count || 0).toLocaleString()}</strong></span>
+            <span class="text-muted">&nbsp;|&nbsp; Failed: <strong class="${Number(risk.failed_count) > 0 ? 'text-danger' : ''}">${Number(risk.failed_count || 0)}</strong></span>
+            ${Number(risk.max_retained_slot_mb || 0) > 0
+              ? `<span class="text-muted">&nbsp;|&nbsp; Slot retention: <strong class="${Number(risk.max_retained_slot_mb) >= 256 ? 'text-warning' : ''}">${Number(risk.max_retained_slot_mb).toFixed(1)} MB</strong></span>`
+              : ''}
+          </div>`;
+      })
+      .catch(() => {});
   };
 
   els.limit.addEventListener('change', refresh);

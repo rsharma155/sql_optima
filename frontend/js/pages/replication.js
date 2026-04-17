@@ -137,6 +137,9 @@ window.PgReplicationView = async function() {
                 </div>
             </div>
 
+            <!-- WAL Archiver Risk Strip (populated async) -->
+            <div id="pgWALArchiverRiskStrip" style="margin-top:0.5rem;"></div>
+
             <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 2fr; gap:0.75rem;">
                 <div class="chart-card glass-panel" style="padding:0.75rem;">
                     <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Replication Lag Trend</h3></div>
@@ -250,12 +253,14 @@ window.PgReplicationView = async function() {
             if (window.currentCharts.pgSlotTrend) { window.currentCharts.pgSlotTrend.destroy(); delete window.currentCharts.pgSlotTrend; }
         } catch (e) { /* ignore */ }
 
+        const toLocalTime = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? iso : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); };
+
         const replCtx = document.getElementById('pgReplCtx');
         if (replCtx) {
             // Prefer per-replica lag series when available, otherwise fall back to CC max lag seconds series.
             if (replLagSeries && Object.keys(replLagSeries).length) {
                 const seriesArr = Object.values(replLagSeries);
-                const labels = seriesArr[0]?.labels || [];
+                const labels = (seriesArr[0]?.labels || []).map(toLocalTime);
                 const palette = ['#3b82f6','#10b981','#f59e0b','#ef4444','#a855f7'];
                 const datasets = seriesArr.map((s, idx) => ({
                     label: s.replica_name,
@@ -274,7 +279,7 @@ window.PgReplicationView = async function() {
                 window.currentCharts.pgRepl = new Chart(replCtx.getContext('2d'), {
                     type: 'line',
                     data: {
-                        labels: ccHistory.labels,
+                        labels: ccHistory.labels.map(toLocalTime),
                         datasets: [{
                             label: 'Max replication lag (sec)',
                             data: ccHistory.replication_lag_seconds || [],
@@ -296,7 +301,7 @@ window.PgReplicationView = async function() {
                 window.currentCharts.pgChk = new Chart(checkCtx.getContext('2d'), {
                     type: 'line',
                     data: {
-                        labels: ccHistory.labels,
+                        labels: ccHistory.labels.map(toLocalTime),
                         datasets: [{
                             label: 'Checkpoint pressure (req/timed)',
                             data: (ccHistory.checkpoint_req_ratio || []),
@@ -344,4 +349,43 @@ window.PgReplicationView = async function() {
             });
         });
     }, 50);
+
+    // --- WAL Archiver Risk Strip (Epic 3.2) ---
+    window.apiClient.authenticatedFetch(`/api/postgres/wal/archiver-risk?instance=${encodeURIComponent(inst.name)}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(payload => {
+            const strip = document.getElementById('pgWALArchiverRiskStrip');
+            if (!strip || !payload?.risk) return;
+            const risk = payload.risk;
+            const lvl = risk.risk_level || 'low';
+            const cls = lvl === 'critical' ? 'alert-danger' : lvl === 'high' ? 'alert-warning' : lvl === 'medium' ? 'alert-warning' : 'alert-success';
+            const icon = lvl === 'critical' || lvl === 'high' ? 'fa-triangle-exclamation' : lvl === 'medium' ? 'fa-circle-info' : 'fa-circle-check';
+            const fmtAge = (s) => {
+                if (!isFinite(s) || s < 0) return '—';
+                if (s < 60) return `${Math.round(s)}s`;
+                if (s < 3600) return `${(s/60).toFixed(1)}m`;
+                return `${(s/3600).toFixed(2)}h`;
+            };
+            const failRate = (risk.failure_rate_pct || 0).toFixed(1);
+            const retained = (risk.max_retained_slot_mb || 0).toFixed(1);
+            const details = [];
+            if (risk.archived_count !== undefined)
+                details.push(`Archived: <strong>${Number(risk.archived_count).toLocaleString()}</strong>`);
+            if (risk.failed_count !== undefined)
+                details.push(`Failed: <strong class="${risk.failed_count > 0 ? 'text-danger' : ''}">${Number(risk.failed_count).toLocaleString()}</strong> (${failRate}%)`);
+            if (risk.last_archived_wal)
+                details.push(`Last WAL: <code style="font-size:0.75rem;">${window.escapeHtml ? window.escapeHtml(risk.last_archived_wal.slice(-20)) : risk.last_archived_wal.slice(-20)}</code>`);
+            if (risk.last_archived_age_seconds >= 0)
+                details.push(`Archive lag: <strong>${fmtAge(risk.last_archived_age_seconds)}</strong>`);
+            if (Number(retained) > 0)
+                details.push(`Slot retention: <strong class="${Number(retained) >= 1024 ? 'text-danger' : (Number(retained) >= 256 ? 'text-warning' : '')}">${retained} MB</strong> (${window.escapeHtml ? window.escapeHtml(risk.high_retention_slot || '') : (risk.high_retention_slot || '')})`);
+            strip.innerHTML = `
+                <div class="alert ${cls}" style="padding:.5rem .75rem;border-radius:6px;font-size:0.82rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
+                    <i class="fa-solid ${icon}"></i>
+                    <strong>WAL Archiver Risk: ${lvl.toUpperCase()}</strong>
+                    <span class="text-muted" style="flex:1;">${details.join(' &nbsp;|&nbsp; ')}</span>
+                    ${risk.last_failed_wal ? `<span class="text-danger small">Last failed WAL: <code>${window.escapeHtml ? window.escapeHtml(risk.last_failed_wal.slice(-24)) : risk.last_failed_wal.slice(-24)}</code></span>` : ''}
+                </div>`;
+        })
+        .catch(() => {});
 }

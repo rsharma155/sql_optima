@@ -325,6 +325,8 @@ func (s *MetricsService) collectEnterpriseMetrics() {
 			defer wg.Done()
 			s.collectAGHealthForInstance(instanceName)
 			s.collectDatabaseThroughputForInstance(instanceName)
+			s.collectJobsForInstance(instanceName)
+			s.collectLogShippingForInstance(instanceName)
 		}(inst.Name)
 	}
 
@@ -433,6 +435,32 @@ func (s *MetricsService) GetAGHealthSummary(ctx context.Context, instanceName st
 		return nil, nil
 	}
 	return s.tsLogger.GetAGHealthSummary(ctx, instanceName, limit)
+}
+
+// GetJobsFromTimescale reconstructs a job view from hot storage.
+// Returns nil when no recent data is available (signals caller to fall back to live MSDB).
+func (s *MetricsService) GetJobsFromTimescale(ctx context.Context, instanceName string) (map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, nil
+	}
+
+	metrics, err := s.tsLogger.GetSQLServerJobMetrics(ctx, instanceName, 1)
+	if err != nil || len(metrics) == 0 {
+		return nil, err
+	}
+
+	details, _ := s.tsLogger.GetSQLServerJobDetails(ctx, instanceName)
+	schedules, _ := s.tsLogger.GetSQLServerJobSchedules(ctx, instanceName)
+	failures, _ := s.tsLogger.GetSQLServerJobFailures(ctx, instanceName, 100)
+
+	summary := metrics[0]
+	return map[string]interface{}{
+		"Summary":   summary,
+		"Jobs":      details,
+		"Schedules": schedules,
+		"Failures":  failures,
+		"LastError": "",
+	}, nil
 }
 
 // GetDatabaseThroughputSummary returns database throughput summary
@@ -633,7 +661,7 @@ func (s *MetricsService) collectPostgresDiskStatsForInstance(instanceName string
 			CaptureTimestamp:   time.Now().UTC(),
 			ServerInstanceName: instanceName,
 			MountName:          st.mount,
-			Path:              st.path,
+			Path:               st.path,
 			TotalBytes:         int64(st.total),
 			FreeBytes:          int64(st.free),
 			AvailBytes:         int64(st.avail),
@@ -936,14 +964,14 @@ func postgresControlCenterHistoryFromRow(r *hot.PostgresControlCenterRow) *hot.P
 		ts = time.Now().UTC()
 	}
 	return &hot.PostgresControlCenterHistory{
-		Labels:               []string{ts.Format("15:04")},
-		WALRateMBPerMin:      []float64{r.WALRateMBPerMin},
-		ReplLagSeconds:       []float64{r.MaxReplicationLagSecond},
-		CheckpointReqRatio:   []float64{r.CheckpointReqRatio},
-		Autovacuum:           []int{r.AutovacuumWorkers},
-		DeadTupleRatio:       []float64{r.DeadTupleRatioPct},
-		BlockingSessions:     []int{r.BlockingSessions},
-		HealthScore:          []int{r.HealthScore},
+		Labels:             []string{ts.UTC().Format(time.RFC3339)},
+		WALRateMBPerMin:    []float64{r.WALRateMBPerMin},
+		ReplLagSeconds:     []float64{r.MaxReplicationLagSecond},
+		CheckpointReqRatio: []float64{r.CheckpointReqRatio},
+		Autovacuum:         []int{r.AutovacuumWorkers},
+		DeadTupleRatio:     []float64{r.DeadTupleRatioPct},
+		BlockingSessions:   []int{r.BlockingSessions},
+		HealthScore:        []int{r.HealthScore},
 	}
 }
 
@@ -1180,7 +1208,12 @@ func (s *MetricsService) collectPostgresQueryStatsSnapshotForInstance(instanceNa
 		return
 	}
 	stats, err := s.PgRepo.GetQueryStatsForSnapshot(instanceName)
-	if err != nil || len(stats) == 0 {
+	if err != nil {
+		log.Printf("[PostgresQueryStatsSnapshot] skipping %s: %v", instanceName, err)
+		return
+	}
+	if len(stats) == 0 {
+		log.Printf("[PostgresQueryStatsSnapshot] no statements found for %s (pg_stat_statements may be empty or extension not installed)", instanceName)
 		return
 	}
 	ts := time.Now().UTC()
@@ -1287,4 +1320,189 @@ func (s *MetricsService) GetPostgresSettingsSnapshotLatestTwo(ctx context.Contex
 		return time.Time{}, time.Time{}, []hot.PostgresSettingSnapshotRow{}, []hot.PostgresSettingSnapshotRow{}, nil
 	}
 	return s.tsLogger.GetPostgresSettingsSnapshotLatestTwo(ctx, instanceName)
+}
+
+// collectJobsForInstance persists SQL Agent job metrics, details, schedules, and failures
+// to TimescaleDB. Change detection in the TimescaleDB logger keeps insert volume low.
+func (s *MetricsService) collectJobsForInstance(instanceName string) {
+	if s.tsLogger == nil {
+		return
+	}
+	t0 := time.Now()
+
+	jobData := s.MsRepo.FetchAgentJobs(instanceName)
+	ctx := context.Background()
+
+	summaryMap := map[string]interface{}{
+		"total_jobs":      jobData.Summary.TotalJobs,
+		"enabled_jobs":    jobData.Summary.EnabledJobs,
+		"disabled_jobs":   jobData.Summary.DisabledJobs,
+		"running_jobs":    jobData.Summary.RunningJobs,
+		"failed_jobs_24h": jobData.Summary.FailedJobs,
+		"error_message":   jobData.LastError,
+	}
+	if err := s.tsLogger.LogSQLServerJobMetrics(ctx, instanceName, summaryMap); err != nil {
+		log.Printf("[EnterpriseCollector] Job metrics insert error for %s: %v", instanceName, err)
+	}
+
+	if len(jobData.Jobs) > 0 {
+		jobMaps := make([]map[string]interface{}, len(jobData.Jobs))
+		for i, j := range jobData.Jobs {
+			jobMaps[i] = map[string]interface{}{
+				"job_name":        j.JobName,
+				"enabled":         j.Enabled,
+				"owner":           j.Owner,
+				"created_date":    j.CreatedDate,
+				"current_status":  j.CurrentStatus,
+				"last_run_date":   j.LastRunDate,
+				"last_run_time":   j.LastRunTime,
+				"last_run_status": j.LastRunStatus,
+			}
+		}
+		if err := s.tsLogger.LogSQLServerJobDetails(ctx, instanceName, jobMaps); err != nil {
+			log.Printf("[EnterpriseCollector] Job details insert error for %s: %v", instanceName, err)
+		}
+	}
+
+	if len(jobData.Schedules) > 0 {
+		schedMaps := make([]map[string]interface{}, len(jobData.Schedules))
+		for i, sc := range jobData.Schedules {
+			var nextRun interface{}
+			if sc.NextRunDateTime != nil {
+				nextRun = *sc.NextRunDateTime
+			}
+			schedMaps[i] = map[string]interface{}{
+				"job_name":          sc.JobName,
+				"job_enabled":       sc.JobEnabled,
+				"schedule_name":     sc.ScheduleName,
+				"status":            sc.Status,
+				"next_run_datetime": nextRun,
+			}
+		}
+		if err := s.tsLogger.LogSQLServerJobSchedules(ctx, instanceName, schedMaps); err != nil {
+			log.Printf("[EnterpriseCollector] Job schedules insert error for %s: %v", instanceName, err)
+		}
+	}
+
+	if len(jobData.Failures) > 0 {
+		failMaps := make([]map[string]interface{}, len(jobData.Failures))
+		for i, f := range jobData.Failures {
+			failMaps[i] = map[string]interface{}{
+				"job_name":  f.JobName,
+				"step_name": f.StepName,
+				"message":   f.Message,
+				"run_date":  f.RunDate,
+				"run_time":  f.RunTime,
+			}
+		}
+		if err := s.tsLogger.LogSQLServerJobFailures(ctx, instanceName, failMaps); err != nil {
+			log.Printf("[EnterpriseCollector] Job failures insert error for %s: %v", instanceName, err)
+		}
+	}
+
+	log.Printf("[EnterpriseCollector] Collected job data for %s (%d jobs, %d failures) in %v",
+		instanceName, len(jobData.Jobs), len(jobData.Failures), time.Since(t0))
+}
+
+// collectLogShippingForInstance persists log shipping health to TimescaleDB.
+// On instances without log shipping configured this is a fast no-op.
+func (s *MetricsService) collectLogShippingForInstance(instanceName string) {
+	if s.tsLogger == nil {
+		return
+	}
+	t0 := time.Now()
+
+	lsStats, err := s.MsRepo.FetchLogShippingHealth(instanceName)
+	if err != nil {
+		log.Printf("[EnterpriseCollector] Log shipping health error for %s: %v", instanceName, err)
+		return
+	}
+	if len(lsStats) == 0 {
+		return
+	}
+
+	timestamp := time.Now().UTC()
+	rows := make([]hot.LogShippingRow, len(lsStats))
+	for i, ls := range lsStats {
+		r := hot.LogShippingRow{
+			CaptureTimestamp:        timestamp,
+			ServerInstanceName:      instanceName,
+			PrimaryServer:           ls.PrimaryServer,
+			PrimaryDatabase:         ls.PrimaryDatabase,
+			SecondaryServer:         ls.SecondaryServer,
+			SecondaryDatabase:       ls.SecondaryDatabase,
+			LastBackupFile:          ls.LastBackupFile,
+			RestoreDelayMinutes:     ls.RestoreDelayMinutes,
+			RestoreThresholdMinutes: ls.RestoreThresholdMinutes,
+			Status:                  ls.Status,
+			IsPrimary:               ls.IsPrimary,
+		}
+		if ls.LastBackupDate.Valid {
+			t := ls.LastBackupDate.Time
+			r.LastBackupDate = &t
+		}
+		if ls.LastRestoreDate.Valid {
+			t := ls.LastRestoreDate.Time
+			r.LastRestoreDate = &t
+		}
+		if ls.LastCopiedDate.Valid {
+			t := ls.LastCopiedDate.Time
+			r.LastCopiedDate = &t
+		}
+		rows[i] = r
+	}
+
+	ctx := context.Background()
+	if err := s.tsLogger.LogLogShippingHealth(ctx, instanceName, rows); err != nil {
+		log.Printf("[EnterpriseCollector] Log shipping insert error for %s: %v", instanceName, err)
+		return
+	}
+
+	log.Printf("[EnterpriseCollector] Collected %d log shipping rows for %s in %v", len(rows), instanceName, time.Since(t0))
+}
+
+// GetLogShippingHealth returns the most recent log shipping health from TimescaleDB,
+// falling back to a live MSDB query when Timescale is unavailable.
+func (s *MetricsService) GetLogShippingHealth(ctx context.Context, instanceName string) ([]map[string]interface{}, string, error) {
+	if s.tsLogger != nil {
+		rows, err := s.tsLogger.GetLogShippingHealth(ctx, instanceName)
+		if err == nil && len(rows) > 0 {
+			return rows, "timescale", nil
+		}
+	}
+
+	// Live fallback
+	lsStats, err := s.MsRepo.FetchLogShippingHealth(instanceName)
+	if err != nil {
+		return nil, "live_error", err
+	}
+	if len(lsStats) == 0 {
+		return []map[string]interface{}{}, "live_dmv", nil
+	}
+
+	rows := make([]map[string]interface{}, len(lsStats))
+	for i, ls := range lsStats {
+		row := map[string]interface{}{
+			"primary_server":            ls.PrimaryServer,
+			"primary_database":          ls.PrimaryDatabase,
+			"secondary_server":          ls.SecondaryServer,
+			"secondary_database":        ls.SecondaryDatabase,
+			"last_backup_file":          ls.LastBackupFile,
+			"restore_delay_minutes":     ls.RestoreDelayMinutes,
+			"restore_threshold_minutes": ls.RestoreThresholdMinutes,
+			"status":                    ls.Status,
+			"is_primary":                ls.IsPrimary,
+		}
+		if ls.LastBackupDate.Valid {
+			row["last_backup_date"] = ls.LastBackupDate.Time
+		}
+		if ls.LastRestoreDate.Valid {
+			row["last_restore_date"] = ls.LastRestoreDate.Time
+		}
+		if ls.LastCopiedDate.Valid {
+			row["last_copied_date"] = ls.LastCopiedDate.Time
+		}
+		rows[i] = row
+	}
+	return rows, "live_dmv", nil
 }

@@ -191,6 +191,7 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 				r.rule_id,
 				r.rule_name,
 				r.category,
+				r.severity,
 				UPPER(COALESCE(e.status, 'OK')) AS status,
 				e.current_value,
 				COALESCE(e.recommended, r.recommended_value) AS recommended_value,
@@ -224,6 +225,7 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 				r.rule_id,
 				r.rule_name,
 				r.category,
+				r.severity,
 				UPPER(COALESCE(e.status, 'OK')) AS status,
 				e.current_value,
 				COALESCE(e.recommended, r.recommended_value) AS recommended_value,
@@ -255,6 +257,7 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 				r.rule_id,
 				r.rule_name,
 				r.category,
+				r.severity,
 				UPPER(COALESCE(e.status, 'OK')) AS status,
 				e.current_value,
 				COALESCE(e.recommended, r.recommended_value) AS recommended_value,
@@ -287,6 +290,7 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 				r.rule_id,
 				r.rule_name,
 				r.category,
+				r.severity,
 				UPPER(COALESCE(e.status, 'OK')) AS status,
 				e.current_value,
 				COALESCE(e.recommended, r.recommended_value) AS recommended_value,
@@ -329,6 +333,7 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 			&e.RuleID,
 			&e.RuleName,
 			&e.Category,
+			&e.Severity,
 			&e.Status,
 			&currentValue,
 			&recommendedValue,
@@ -347,6 +352,8 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 		if fixScript.Valid {
 			e.FixScript = fixScript.String
 		}
+		e.Impact = e.Description
+		e.Remediation = renderRuleRemediation(e.FixScript, e.RecommendedValue)
 		if lastCheck.Valid {
 			e.LastCheck = lastCheck.Time
 		}
@@ -357,7 +364,105 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 		entries = []models.DashboardEntry{}
 	}
 
+	if serverID > 0 && dbType != "" && len(entries) > 0 {
+		if err := h.enrichDashboardEntries(ctx, serverID, dbType, entries); err != nil {
+			log.Printf("[RulesHandler] Failed to enrich best practices payload: %v", err)
+		}
+	}
+
 	return entries, nil
+}
+
+func (h *RulesHandler) enrichDashboardEntries(ctx context.Context, serverID int, dbType string, entries []models.DashboardEntry) error {
+	if h.pgPool == nil || len(entries) == 0 {
+		return nil
+	}
+
+	evidenceByRule := map[string]string{}
+	evidenceRows, err := h.pgPool.Query(ctx, `
+		SELECT DISTINCT ON (rr.rule_id)
+			rr.rule_id,
+			rr.raw_payload
+		FROM ruleengine.rule_results_raw rr
+		WHERE rr.server_id = $1
+		  AND EXISTS (
+			SELECT 1
+			FROM ruleengine.rules r
+			WHERE r.rule_id = rr.rule_id
+			  AND r.target_db_type = $2
+		  )
+		ORDER BY rr.rule_id, rr.collected_at DESC
+	`, serverID, dbType)
+	if err != nil {
+		return err
+	}
+	defer evidenceRows.Close()
+
+	for evidenceRows.Next() {
+		var ruleID string
+		var rawPayload []byte
+		if err := evidenceRows.Scan(&ruleID, &rawPayload); err != nil {
+			continue
+		}
+		evidenceByRule[ruleID] = buildRuleEvidence(rawPayload)
+	}
+	if err := evidenceRows.Err(); err != nil {
+		return err
+	}
+
+	historyByRule := map[string][]models.RuleHistoryPoint{}
+	historyRows, err := h.pgPool.Query(ctx, `
+		SELECT rule_id, status, current_value, evaluated_at
+		FROM (
+			SELECT
+				rule_id,
+				UPPER(status) AS status,
+				current_value,
+				evaluated_at,
+				ROW_NUMBER() OVER (PARTITION BY rule_id ORDER BY evaluated_at DESC) AS rn
+			FROM ruleengine.rule_results_evaluated
+			WHERE server_id = $1 AND target_db_type = $2
+		) history
+		WHERE rn <= 8
+		ORDER BY rule_id, evaluated_at DESC
+	`, serverID, dbType)
+	if err != nil {
+		return err
+	}
+	defer historyRows.Close()
+
+	for historyRows.Next() {
+		var ruleID string
+		var point models.RuleHistoryPoint
+		var currentValue sql.NullString
+		if err := historyRows.Scan(&ruleID, &point.Status, &currentValue, &point.EvaluatedAt); err != nil {
+			continue
+		}
+		if currentValue.Valid {
+			point.CurrentValue = currentValue.String
+		}
+		historyByRule[ruleID] = append(historyByRule[ruleID], point)
+	}
+	if err := historyRows.Err(); err != nil {
+		return err
+	}
+
+	for i := range entries {
+		if evidence := strings.TrimSpace(evidenceByRule[entries[i].RuleID]); evidence != "" {
+			entries[i].Evidence = evidence
+		} else {
+			entries[i].Evidence = fallbackRuleEvidence(entries[i])
+		}
+		entries[i].History = historyByRule[entries[i].RuleID]
+		if strings.TrimSpace(entries[i].Remediation) == "" {
+			entries[i].Remediation = renderRuleRemediation(entries[i].FixScript, entries[i].RecommendedValue)
+		}
+		if strings.TrimSpace(entries[i].Impact) == "" {
+			entries[i].Impact = entries[i].Description
+		}
+	}
+
+	return nil
 }
 
 func (h *RulesHandler) Close() {
@@ -752,6 +857,15 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 		}
 
 		_, err = h.pgPool.Exec(ctx, `
+			INSERT INTO ruleengine.rule_results_raw
+			(run_id, server_id, rule_id, raw_payload, collected_at)
+			VALUES ($1, $2, $3, $4::jsonb, NOW())
+		`, runID, serverID, r.RuleID, string(buildRawRulePayload(results, currentValue, recommendedValue, status)))
+		if err != nil {
+			log.Printf("[RulesHandler] Failed to store raw result for %s: %v", r.RuleID, err)
+		}
+
+		_, err = h.pgPool.Exec(ctx, `
 			INSERT INTO ruleengine.rule_results_evaluated 
 			(run_id, server_id, rule_id, target_db_type, status, current_value, recommended, evaluated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
@@ -784,4 +898,162 @@ func safeExprEnv(env map[string]interface{}) map[string]interface{} {
 		}
 	}
 	return safe
+}
+
+func buildRawRulePayload(results []map[string]interface{}, currentValue, recommendedValue, status string) []byte {
+	payload := map[string]interface{}{
+		"rows":              results,
+		"CurrentValue":      currentValue,
+		"recommended_value": recommendedValue,
+		"EvaluatedStatus":   status,
+	}
+	if evidence := summariseEvidenceRows(results); evidence != "" {
+		payload["EvidenceSummary"] = evidence
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return b
+}
+
+func buildRuleEvidence(rawPayload []byte) string {
+	if len(rawPayload) == 0 {
+		return ""
+	}
+
+	var payloadMap map[string]interface{}
+	if err := json.Unmarshal(rawPayload, &payloadMap); err == nil {
+		if evidence, ok := payloadMap["EvidenceSummary"].(string); ok && strings.TrimSpace(evidence) != "" {
+			return evidence
+		}
+		if rows, ok := payloadMap["rows"].([]interface{}); ok {
+			return summariseEvidenceInterfaces(rows)
+		}
+	}
+
+	var rows []interface{}
+	if err := json.Unmarshal(rawPayload, &rows); err == nil {
+		return summariseEvidenceInterfaces(rows)
+	}
+
+	return ""
+}
+
+func summariseEvidenceInterfaces(rows []interface{}) string {
+	items := make([]map[string]interface{}, 0, len(rows))
+	for _, row := range rows {
+		if m, ok := row.(map[string]interface{}); ok {
+			items = append(items, m)
+		}
+	}
+	return summariseEvidenceRows(items)
+}
+
+func summariseEvidenceRows(rows []map[string]interface{}) string {
+	if len(rows) == 0 {
+		return ""
+	}
+
+	first := rows[0]
+	parts := make([]string, 0, 4)
+	for _, key := range []string{
+		"failing_jobs_24h", "disabled_count", "memory_grants", "single_use_pct",
+		"affected_databases", "unhealthy_replicas", "sample_jobs", "sample_databases",
+		"page_verify_mode", "sample_replicas", "health_states",
+	} {
+		if val, ok := first[key]; ok {
+			formatted := formatEvidenceValue(val)
+			if formatted == "" {
+				continue
+			}
+			parts = append(parts, fmt.Sprintf("%s: %s", humanizeEvidenceKey(key), formatted))
+		}
+		if len(parts) == 4 {
+			break
+		}
+	}
+
+	if len(parts) == 0 {
+		for key, val := range first {
+			switch strings.ToLower(key) {
+			case "currentvalue", "evaluatedstatus", "recommended", "recommended_value":
+				continue
+			}
+			formatted := formatEvidenceValue(val)
+			if formatted == "" {
+				continue
+			}
+			parts = append(parts, fmt.Sprintf("%s: %s", humanizeEvidenceKey(key), formatted))
+			if len(parts) == 4 {
+				break
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	if len(rows) > 1 {
+		parts = append(parts, fmt.Sprintf("rows: %d", len(rows)))
+	}
+	return strings.Join(parts, " | ")
+}
+
+func formatEvidenceValue(val interface{}) string {
+	switch v := val.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case []byte:
+		return strings.TrimSpace(string(v))
+	case float64:
+		return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", v), "0"), ".")
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", v))
+	}
+}
+
+func humanizeEvidenceKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	key = strings.ReplaceAll(key, "_", " ")
+	key = strings.ReplaceAll(key, "-", " ")
+	words := strings.Fields(strings.ToLower(key))
+	for i, word := range words {
+		if word == "" {
+			continue
+		}
+		words[i] = strings.ToUpper(word[:1]) + word[1:]
+	}
+	return strings.Join(words, " ")
+}
+
+func renderRuleRemediation(fixScript, recommendedValue string) string {
+	fix := strings.TrimSpace(fixScript)
+	rec := strings.TrimSpace(recommendedValue)
+	if fix != "" && rec != "" {
+		replacer := strings.NewReplacer("<RecommendedMB>", rec, "<Recommended>", rec, "<Value>", rec)
+		return replacer.Replace(fix)
+	}
+	if fix != "" {
+		return fix
+	}
+	if rec != "" {
+		return fmt.Sprintf("Set the configuration to %s.", rec)
+	}
+	return ""
+}
+
+func fallbackRuleEvidence(entry models.DashboardEntry) string {
+	if strings.TrimSpace(entry.CurrentValue) == "" && strings.TrimSpace(entry.RecommendedValue) == "" {
+		return ""
+	}
+	if strings.TrimSpace(entry.RecommendedValue) == "" {
+		return fmt.Sprintf("Current value observed: %s", entry.CurrentValue)
+	}
+	return fmt.Sprintf("Current value observed: %s | Recommended baseline: %s", entry.CurrentValue, entry.RecommendedValue)
 }

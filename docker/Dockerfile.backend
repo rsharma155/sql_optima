@@ -1,0 +1,26 @@
+# Stage 1: Build the Go Backend
+# Build context: repo root (sql_monitoring_UI/).
+FROM golang:1.25.7 AS builder
+
+WORKDIR /build/backend
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+COPY backend/ ./
+COPY config.yaml ../
+COPY frontend/ ../frontend/
+
+RUN CGO_ENABLED=0 GOOS=linux go build -o /dbmonitor ./cmd/server
+
+# Stage 2: Minimal Runtime
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /srv
+
+COPY --from=builder /build/config.yaml ./
+COPY --from=builder /build/frontend/ ./frontend/
+COPY --from=builder /dbmonitor ./backend/dbmonitor
+
+WORKDIR /srv/backend
+USER nonroot:nonroot
+EXPOSE 8080
+
+CMD ["./dbmonitor"]

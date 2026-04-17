@@ -76,7 +76,9 @@ func (m *memServerStore) UpdateMetadata(ctx context.Context, id string, name, ho
 func (m *memServerStore) UpdateCredentials(ctx context.Context, id string, encryptedSecret, encryptedDEK []byte) error {
 	return nil
 }
-func (m *memServerStore) TouchLastTest(ctx context.Context, id string, at time.Time) error { return nil }
+func (m *memServerStore) TouchLastTest(ctx context.Context, id string, at time.Time) error {
+	return nil
+}
 
 func TestAdminServers_AddServer_ValidatesAndDoesNotEchoPassword(t *testing.T) {
 	store := &memServerStore{}
@@ -192,5 +194,66 @@ func TestAdminServers_TestServer_DecryptsAndInvokesTester(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestTestServerDraft_SSLModeDisable verifies that a sql_mode="disable" payload is accepted
+// and routed to the tester without being upgraded to encrypt=true.
+func TestTestServerDraft_SSLModeDisable_ReachesSuccess(t *testing.T) {
+	h := &AdminServerHandlers{
+		tester: fakeTester{err: nil}, // mock succeeds — proves ssl_mode=disable was not rejected
+	}
+
+	payload := map[string]interface{}{
+		"name":                     "dev-sql",
+		"db_type":                  "sqlserver",
+		"host":                     "127.0.0.1",
+		"port":                     1433,
+		"username":                 "sa",
+		"password":                 "DevPass1!",
+		"ssl_mode":                 "disable",
+		"trust_server_certificate": true,
+		"database":                 "master",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/servers/test-draft", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.TestServerDraft(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["success"] != true {
+		t.Fatalf("expected success=true, got %v", resp)
+	}
+}
+
+// TestSanitizeDBError_TLSNotMaskedAsAuth ensures TLS handshake errors are reported
+// as SSL errors, not mis-classified as authentication failures.
+func TestSanitizeDBError_TLSNotMaskedAsAuth(t *testing.T) {
+	tlsErr := errors.New("mssql: connection error: tls: failed to verify certificate: x509")
+	got := sanitizeDBError(tlsErr, "sqlserver")
+	if got == nil {
+		t.Fatal("expected non-nil error")
+	}
+	if got.Error() != "SSL/TLS error - check SSL mode or certificates" {
+		t.Fatalf("unexpected message: %q", got.Error())
+	}
+}
+
+// TestSanitizeDBError_LoginFailedIsAuth verifies genuine login failures are still
+// reported as authentication errors.
+func TestSanitizeDBError_LoginFailedIsAuth(t *testing.T) {
+	authErr := errors.New("mssql: login failed for user 'sa'")
+	got := sanitizeDBError(authErr, "sqlserver")
+	if got == nil {
+		t.Fatal("expected non-nil error")
+	}
+	if got.Error() != "authentication failed - check username and password" {
+		t.Fatalf("unexpected message: %q", got.Error())
 	}
 }

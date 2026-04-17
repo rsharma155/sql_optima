@@ -160,6 +160,135 @@ func (tl *TimescaleLogger) LogSQLServerJobMetrics(ctx context.Context, instanceN
 	return err
 }
 
+// GetSQLServerJobDetails returns the most recent distinct job details from TimescaleDB.
+func (tl *TimescaleLogger) GetSQLServerJobDetails(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
+	rows, err := tl.pool.Query(ctx, `
+		SELECT DISTINCT ON (job_name)
+			capture_timestamp, job_name, job_enabled, job_owner, created_date,
+			current_status, last_run_date, last_run_time, last_run_status
+		FROM sqlserver_job_details
+		WHERE server_instance_name = $1
+		  AND capture_timestamp >= NOW() - INTERVAL '4 hours'
+		ORDER BY job_name, capture_timestamp DESC
+	`, instanceName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var (
+			ts            time.Time
+			jobName       string
+			enabled       bool
+			owner         string
+			createdDate   string
+			currentStatus string
+			lastRunDate   int
+			lastRunTime   int
+			lastRunStatus string
+		)
+		if err := rows.Scan(&ts, &jobName, &enabled, &owner, &createdDate,
+			&currentStatus, &lastRunDate, &lastRunTime, &lastRunStatus); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"capture_timestamp": ts,
+			"job_name":          jobName,
+			"enabled":           enabled,
+			"owner":             owner,
+			"created_date":      createdDate,
+			"current_status":    currentStatus,
+			"last_run_date":     lastRunDate,
+			"last_run_time":     lastRunTime,
+			"last_run_status":   lastRunStatus,
+		})
+	}
+	return results, rows.Err()
+}
+
+// GetSQLServerJobSchedules returns the most recent schedule rows from TimescaleDB.
+func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
+	rows, err := tl.pool.Query(ctx, `
+		SELECT DISTINCT ON (job_name, schedule_name)
+			capture_timestamp, job_name, job_enabled, schedule_name, status
+		FROM sqlserver_agent_schedules
+		WHERE server_instance_name = $1
+		  AND capture_timestamp >= NOW() - INTERVAL '4 hours'
+		ORDER BY job_name, schedule_name, capture_timestamp DESC
+	`, instanceName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var (
+			ts           time.Time
+			jobName      string
+			jobEnabled   bool
+			scheduleName string
+			status       string
+		)
+		if err := rows.Scan(&ts, &jobName, &jobEnabled, &scheduleName, &status); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"capture_timestamp": ts,
+			"job_name":          jobName,
+			"job_enabled":       jobEnabled,
+			"schedule_name":     scheduleName,
+			"status":            status,
+		})
+	}
+	return results, rows.Err()
+}
+
+// GetSQLServerJobFailures returns recent job failure rows from TimescaleDB.
+func (tl *TimescaleLogger) GetSQLServerJobFailures(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := tl.pool.Query(ctx, `
+		SELECT capture_timestamp, job_name, step_name, error_message, run_date, run_time
+		FROM sqlserver_job_failures
+		WHERE server_instance_name = $1
+		  AND capture_timestamp >= NOW() - INTERVAL '24 hours'
+		ORDER BY capture_timestamp DESC
+		LIMIT $2
+	`, instanceName, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var (
+			ts      time.Time
+			jobName string
+			step    string
+			msg     string
+			runDate string
+			runTime string
+		)
+		if err := rows.Scan(&ts, &jobName, &step, &msg, &runDate, &runTime); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"capture_timestamp": ts,
+			"job_name":          jobName,
+			"step_name":         step,
+			"message":           msg,
+			"run_date":          runDate,
+			"run_time":          runTime,
+		})
+	}
+	return results, rows.Err()
+}
+
 func (tl *TimescaleLogger) GetSQLServerJobMetrics(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 100

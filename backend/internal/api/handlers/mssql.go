@@ -232,9 +232,64 @@ func (h *MssqlHandlers) Jobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	// Jobs currently query MSDB live (not Timescale-backed yet).
-	w.Header().Set("X-Data-Source", "live_dmv")
+	preferLive := mssqlPreferLiveSource(r)
+	ctx := r.Context()
+
+	// Timescale-first: reconstruct job view from hot storage.
+	if !preferLive && h.metricsSvc.IsTimescaleConnected() {
+		jobData, err := h.metricsSvc.GetJobsFromTimescale(ctx, instance)
+		if err == nil && jobData != nil {
+			w.Header().Set("X-Data-Source", "timescale")
+			json.NewEncoder(w).Encode(jobData)
+			return
+		}
+		log.Printf("[Router] Timescale jobs failed for %s, falling back to live: %v", instance, err)
+	}
+
+	if preferLive {
+		w.Header().Set("X-Data-Source", "live_dmv")
+	} else {
+		w.Header().Set("X-Data-Source", "live_dmv_fallback")
+	}
 	json.NewEncoder(w).Encode(h.metricsSvc.MsRepo.FetchAgentJobs(instance))
+}
+
+// LogShipping returns log shipping health — Timescale-first with live MSDB fallback.
+func (h *MssqlHandlers) LogShipping(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if !instanceInConfig(h.cfg, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+
+	if !instanceType(h.cfg, instance, "sqlserver") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	ctx := r.Context()
+
+	rows, source, err := h.metricsSvc.GetLogShippingHealth(ctx, instance)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "failed to retrieve log shipping health"})
+		return
+	}
+	w.Header().Set("X-Data-Source", source)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"log_shipping_enabled": len(rows) > 0,
+		"log_shipping":         rows,
+	})
 }
 
 func (h *MssqlHandlers) XEvents(w http.ResponseWriter, r *http.Request) {

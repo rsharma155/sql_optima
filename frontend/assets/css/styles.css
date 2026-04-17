@@ -2865,3 +2865,74 @@ th.sortable i { margin-left: 4px; font-size: 0.7em; }
     }
     .setup-ref-ms__icon { margin: 0; }
 }
+
+/* ── Tab Navigation ───────────────────────────────────────────── */
+.tabs-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0.35rem 0.5rem;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 10px;
+    margin-bottom: 1rem;
+}
+
+.tab-btn {
+    position: relative;
+    padding: 0.45rem 1rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-secondary, #a0a8b8);
+    cursor: pointer;
+    transition: color 0.18s, background 0.18s, border-color 0.18s, box-shadow 0.18s;
+    white-space: nowrap;
+    letter-spacing: 0.01em;
+}
+
+.tab-btn:hover:not(.active) {
+    color: var(--text-primary, #e2e8f0);
+    background: rgba(255,255,255,0.07);
+    border-color: rgba(255,255,255,0.12);
+}
+
+.tab-btn.active {
+    color: var(--accent, #38bdf8);
+    background: rgba(56,189,248,0.12);
+    border-color: rgba(56,189,248,0.35);
+    box-shadow: 0 0 0 1px rgba(56,189,248,0.15) inset;
+}
+
+.tab-btn .tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 0.3rem;
+    margin-left: 0.4rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.1);
+    color: inherit;
+    vertical-align: middle;
+    transition: background 0.18s;
+}
+
+.tab-btn.active .tab-badge {
+    background: rgba(56,189,248,0.25);
+    color: var(--accent, #38bdf8);
+}
+
+.tab-panel {
+    animation: tabFadeIn 0.2s ease;
+}
+
+@keyframes tabFadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}

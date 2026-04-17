@@ -346,6 +346,7 @@ window.appNavigate = function(route, skipHistory = false) {
         case 'pg-logs': window.PgLogsView(); break;
         case 'pg-backups': window.PgBackupsView(); break;
         case 'pg-alerts': window.PgAlertsView(); break;
+        case 'pg-autovacuum': if (window.PgAutovacuumView) window.PgAutovacuumView(); break;
         // pg-config removed from sidebar (still callable if needed)
         case 'pg-config': window.PgConfigView(); break;
         case 'pg-cpu': window.PgCpuView(); break;
@@ -484,6 +485,7 @@ window.router = {
                 <li data-route="pg-queries"><i class="fa-solid fa-bolt"></i> Query Performance</li>
                 <li data-route="pg-explain"><i class="fa-solid fa-diagram-project"></i> EXPLAIN Analyzer</li>
                 <li data-route="pg-storage"><i class="fa-solid fa-hard-drive"></i> Storage & Vacuum</li>
+                <li data-route="pg-autovacuum"><i class="fa-solid fa-broom"></i> Autovacuum & Bloat</li>
                 <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Index & Table Health</li>
                 <li data-route="pg-replication"><i class="fa-solid fa-clone"></i> Replication, HA & Cluster</li>
                 <li data-route="pg-best-practices"><i class="fa-solid fa-shield-halved"></i> Best Practices</li>

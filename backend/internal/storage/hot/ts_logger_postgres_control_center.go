@@ -167,14 +167,14 @@ func (tl *TimescaleLogger) LogPostgresReplicationLagDetail(ctx context.Context, 
 }
 
 type PostgresControlCenterHistory struct {
-	Labels           []string  `json:"labels"`
-	WALRateMBPerMin  []float64 `json:"wal_rate_mb_per_min"`
-	ReplLagSeconds   []float64 `json:"replication_lag_seconds"`
+	Labels             []string  `json:"labels"`
+	WALRateMBPerMin    []float64 `json:"wal_rate_mb_per_min"`
+	ReplLagSeconds     []float64 `json:"replication_lag_seconds"`
 	CheckpointReqRatio []float64 `json:"checkpoint_req_ratio"`
-	Autovacuum       []int     `json:"autovacuum_workers"`
-	DeadTupleRatio   []float64 `json:"dead_tuple_ratio_pct"`
-	BlockingSessions []int     `json:"blocking_sessions"`
-	HealthScore      []int     `json:"health_score"`
+	Autovacuum         []int     `json:"autovacuum_workers"`
+	DeadTupleRatio     []float64 `json:"dead_tuple_ratio_pct"`
+	BlockingSessions   []int     `json:"blocking_sessions"`
+	HealthScore        []int     `json:"health_score"`
 }
 
 func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, instanceName string, limit int) (*PostgresControlCenterHistory, error) {
@@ -227,7 +227,7 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 	out := &PostgresControlCenterHistory{}
 	for i := len(tmp) - 1; i >= 0; i-- {
 		r := tmp[i]
-		out.Labels = append(out.Labels, r.ts.Format("15:04"))
+		out.Labels = append(out.Labels, r.ts.UTC().Format(time.RFC3339))
 		out.WALRateMBPerMin = append(out.WALRateMBPerMin, r.wal)
 		out.ReplLagSeconds = append(out.ReplLagSeconds, r.lagS)
 		out.CheckpointReqRatio = append(out.CheckpointReqRatio, r.cp)
@@ -284,7 +284,7 @@ func (tl *TimescaleLogger) GetPostgresReplicationLagDetail(ctx context.Context, 
 		r := tmp[i]
 		s := out[r.name]
 		s.ReplicaName = r.name
-		s.Labels = append(s.Labels, r.ts.Format("15:04"))
+		s.Labels = append(s.Labels, r.ts.UTC().Format(time.RFC3339))
 		s.LagMB = append(s.LagMB, r.mb)
 		out[r.name] = s
 	}
@@ -311,4 +311,3 @@ func (tl *TimescaleLogger) ComputeWalRateMBPerMin(instanceName string, walBytesT
 	mb := float64(deltaBytes) / 1024.0 / 1024.0
 	return mb * (60.0 / intervalSec), true
 }
-

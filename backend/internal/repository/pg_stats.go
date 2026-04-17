@@ -14,6 +14,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -105,18 +107,25 @@ func NewPgRepository(cfg *config.Config) *PgRepository {
 				dbname = "postgres"
 			}
 
-			// Build connection string with optional SSL certificates
-			connStr := fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=%s", inst.Host, port, user, dbname, sslmode)
-
-			if password != "" {
-				connStr += fmt.Sprintf(" password=%s", password)
+			// Build connection URL so special characters in username/password are
+			// safely percent-encoded (prevents DSN injection via ; = @ / etc.).
+			pgURL := &url.URL{
+				Scheme: "postgres",
+				User:   url.UserPassword(user, password),
+				Host:   net.JoinHostPort(inst.Host, fmt.Sprintf("%d", port)),
+				Path:   dbname,
 			}
+			q := pgURL.Query()
+			q.Set("sslmode", sslmode)
 			if inst.SSLCert != "" && inst.SSLKey != "" {
-				connStr += fmt.Sprintf(" sslcert=%s sslkey=%s", inst.SSLCert, inst.SSLKey)
+				q.Set("sslcert", inst.SSLCert)
+				q.Set("sslkey", inst.SSLKey)
 			}
 			if inst.SSLRootCert != "" {
-				connStr += fmt.Sprintf(" sslrootcert=%s", inst.SSLRootCert)
+				q.Set("sslrootcert", inst.SSLRootCert)
 			}
+			pgURL.RawQuery = q.Encode()
+			connStr := pgURL.String()
 
 			db, err := sql.Open("postgres", connStr)
 			if err != nil {
@@ -261,18 +270,24 @@ func (c *PgRepository) reconnectInstance(instanceName string) bool {
 		dbname = "postgres"
 	}
 
-	connStr := fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=%s", inst.Host, port, user, dbname, sslmode)
-	if password != "" {
-		connStr += fmt.Sprintf(" password=%s", password)
+	rcURL := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(user, password),
+		Host:   net.JoinHostPort(inst.Host, fmt.Sprintf("%d", port)),
+		Path:   dbname,
 	}
+	rcQ := rcURL.Query()
+	rcQ.Set("sslmode", sslmode)
 	if inst.SSLCert != "" && inst.SSLKey != "" {
-		connStr += fmt.Sprintf(" sslcert=%s sslkey=%s", inst.SSLCert, inst.SSLKey)
+		rcQ.Set("sslcert", inst.SSLCert)
+		rcQ.Set("sslkey", inst.SSLKey)
 	}
 	if inst.SSLRootCert != "" {
-		connStr += fmt.Sprintf(" sslrootcert=%s", inst.SSLRootCert)
+		rcQ.Set("sslrootcert", inst.SSLRootCert)
 	}
+	rcURL.RawQuery = rcQ.Encode()
 
-	newDb, err := sql.Open("postgres", connStr)
+	newDb, err := sql.Open("postgres", rcURL.String())
 	if err != nil {
 		log.Printf("[POSTGRES] reconnectInstance: failed to open connection for %s: %v", instanceName, err)
 		c.mutex.Lock()
@@ -350,18 +365,24 @@ func (c *PgRepository) OpenConnForDatabase(ctx context.Context, instanceName, db
 		sslmode = "disable"
 	}
 
-	connStr := fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=%s", inst.Host, port, user, dbName, sslmode)
-	if password != "" {
-		connStr += fmt.Sprintf(" password=%s", password)
+	ctdbURL := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(user, password),
+		Host:   net.JoinHostPort(inst.Host, fmt.Sprintf("%d", port)),
+		Path:   dbName,
 	}
+	ctdbQ := ctdbURL.Query()
+	ctdbQ.Set("sslmode", sslmode)
 	if inst.SSLCert != "" && inst.SSLKey != "" {
-		connStr += fmt.Sprintf(" sslcert=%s sslkey=%s", inst.SSLCert, inst.SSLKey)
+		ctdbQ.Set("sslcert", inst.SSLCert)
+		ctdbQ.Set("sslkey", inst.SSLKey)
 	}
 	if inst.SSLRootCert != "" {
-		connStr += fmt.Sprintf(" sslrootcert=%s", inst.SSLRootCert)
+		ctdbQ.Set("sslrootcert", inst.SSLRootCert)
 	}
+	ctdbURL.RawQuery = ctdbQ.Encode()
 
-	db, err := sql.Open("postgres", connStr)
+	db, err := sql.Open("postgres", ctdbURL.String())
 	if err != nil {
 		return nil, err
 	}
