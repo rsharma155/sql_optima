@@ -26,4 +26,3 @@ func statfsBytes(path string) (total uint64, free uint64, avail uint64, err erro
 	avail = st.Bavail * bsize
 	return total, free, avail, nil
 }
-

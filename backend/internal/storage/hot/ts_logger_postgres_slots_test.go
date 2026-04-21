@@ -18,4 +18,3 @@ func TestLogPostgresReplicationSlots_DedupSignatureStable(t *testing.T) {
 		t.Fatalf("expected signature to differ when retained wal differs")
 	}
 }
-

@@ -9,6 +9,7 @@ package hot
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 )
@@ -26,6 +27,8 @@ func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, instanceN
 
 	for _, job := range jobs {
 		jobName := getStr(job, "job_name")
+		category := getStr(job, "category")
+		description := getStr(job, "description")
 		enabled := getBool(job, "enabled")
 		owner := getStr(job, "owner")
 		createdDate := getStr(job, "created_date")
@@ -42,17 +45,18 @@ func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, instanceN
 				getStr(prevJob, "current_status") == currentStatus &&
 				getInt(prevJob, "last_run_date") == lastRunDate &&
 				getInt(prevJob, "last_run_time") == lastRunTime &&
-				getStr(prevJob, "last_run_status") == lastRunStatus {
+				getStr(prevJob, "last_run_status") == lastRunStatus &&
+				getStr(prevJob, "category") == category {
 				shouldInsert = false
 			}
 		}
 
 		if shouldInsert {
 			_, err := tl.pool.Exec(ctx, `
-				INSERT INTO sqlserver_job_details (capture_timestamp, server_instance_name, job_name, job_enabled, job_owner, created_date, current_status, last_run_date, last_run_time, last_run_status)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+				INSERT INTO mssql_job_details (capture_timestamp, server_instance_name, job_name, job_category, job_description, job_enabled, job_owner, created_date, current_status, last_run_date, last_run_time, last_run_status)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 				timestamp, instanceName,
-				jobName, enabled, owner, createdDate,
+				jobName, category, description, enabled, owner, createdDate,
 				currentStatus, lastRunDate, lastRunTime, lastRunStatus)
 			if err != nil {
 				return err
@@ -61,6 +65,7 @@ func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, instanceN
 		}
 
 		tl.prevJobDetails[jobName] = map[string]interface{}{
+			"category":        category,
 			"enabled":         enabled,
 			"owner":           owner,
 			"current_status":  currentStatus,
@@ -87,7 +92,7 @@ func (tl *TimescaleLogger) LogSQLServerJobSchedules(ctx context.Context, instanc
 	timestamp := time.Now().UTC()
 	for _, sched := range schedules {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO sqlserver_agent_schedules (capture_timestamp, server_instance_name, job_name, job_enabled, schedule_name, status)
+			INSERT INTO mssql_agent_schedules (capture_timestamp, server_instance_name, job_name, job_enabled, schedule_name, status)
 			VALUES ($1, $2, $3, $4, $5, $6)`,
 			timestamp, instanceName,
 			getStr(sched, "job_name"), getBool(sched, "job_enabled"), getStr(sched, "schedule_name"), getStr(sched, "status"))
@@ -127,7 +132,7 @@ func (tl *TimescaleLogger) LogSQLServerJobFailures(ctx context.Context, instance
 
 		if shouldInsert {
 			_, err := tl.pool.Exec(ctx, `
-				INSERT INTO sqlserver_job_failures (capture_timestamp, server_instance_name, job_name, step_name, error_message, run_date, run_time)
+				INSERT INTO mssql_job_failures (capture_timestamp, server_instance_name, job_name, step_name, error_message, run_date, run_time)
 				VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 				timestamp, instanceName,
 				jobName, stepName, message, runDate, runTime)
@@ -148,7 +153,7 @@ func (tl *TimescaleLogger) LogSQLServerJobMetrics(ctx context.Context, instanceN
 	timestamp := time.Now().UTC()
 
 	_, err := tl.pool.Exec(ctx, `
-		INSERT INTO sqlserver_job_metrics (capture_timestamp, server_instance_name, total_jobs, enabled_jobs, disabled_jobs, running_jobs, failed_jobs_24h, error_message)
+		INSERT INTO mssql_job_metrics (capture_timestamp, server_instance_name, total_jobs, enabled_jobs, disabled_jobs, running_jobs, failed_jobs_24h, error_message)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		timestamp, instanceName,
 		getInt(jobMetrics, "total_jobs"),
@@ -160,19 +165,29 @@ func (tl *TimescaleLogger) LogSQLServerJobMetrics(ctx context.Context, instanceN
 	return err
 }
 
-// GetSQLServerJobDetails returns the most recent distinct job details from TimescaleDB.
-func (tl *TimescaleLogger) GetSQLServerJobDetails(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
-	rows, err := tl.pool.Query(ctx, `
-		SELECT DISTINCT ON (job_name)
-			capture_timestamp, job_name, job_enabled, job_owner, created_date,
-			current_status, last_run_date, last_run_time, last_run_status
-		FROM sqlserver_job_details
-		WHERE server_instance_name = $1
-		  AND capture_timestamp >= NOW() - INTERVAL '4 hours'
-		ORDER BY job_name, capture_timestamp DESC
-	`, instanceName)
+// GetSQLServerJobDetails returns the state of all jobs at the end of the window.
+func (tl *TimescaleLogger) GetSQLServerJobDetails(ctx context.Context, instanceName string, from, to string) ([]map[string]interface{}, error) {
+	_, end, err := parseTimeRange(from, to)
 	if err != nil {
 		return nil, err
+	}
+
+	// We want the latest state for every job as of the 'end' timestamp.
+	// We don't filter by 'start' here because a job might not have changed during the window.
+	// However, we only care about jobs that have been seen relatively recently (e.g. last 7 days)
+	// to avoid showing long-deleted jobs.
+	rows, err := tl.pool.Query(ctx, `
+		SELECT DISTINCT ON (job_name)
+			capture_timestamp, job_name, job_category, job_description, job_enabled, job_owner, created_date,
+			current_status, last_run_date, last_run_time, last_run_status
+		FROM mssql_job_details
+		WHERE server_instance_name = $1
+		  AND capture_timestamp <= $2
+		  AND capture_timestamp >= $2 - INTERVAL '7 days'
+		ORDER BY job_name, capture_timestamp DESC
+	`, instanceName, end)
+	if err != nil {
+		return nil, fmt.Errorf("GetSQLServerJobDetails: %w", err)
 	}
 	defer rows.Close()
 
@@ -181,6 +196,8 @@ func (tl *TimescaleLogger) GetSQLServerJobDetails(ctx context.Context, instanceN
 		var (
 			ts            time.Time
 			jobName       string
+			category      string
+			description   string
 			enabled       bool
 			owner         string
 			createdDate   string
@@ -189,13 +206,15 @@ func (tl *TimescaleLogger) GetSQLServerJobDetails(ctx context.Context, instanceN
 			lastRunTime   int
 			lastRunStatus string
 		)
-		if err := rows.Scan(&ts, &jobName, &enabled, &owner, &createdDate,
+		if err := rows.Scan(&ts, &jobName, &category, &description, &enabled, &owner, &createdDate,
 			&currentStatus, &lastRunDate, &lastRunTime, &lastRunStatus); err != nil {
 			continue
 		}
 		results = append(results, map[string]interface{}{
 			"capture_timestamp": ts,
 			"job_name":          jobName,
+			"category":          category,
+			"description":       description,
 			"enabled":           enabled,
 			"owner":             owner,
 			"created_date":      createdDate,
@@ -208,18 +227,24 @@ func (tl *TimescaleLogger) GetSQLServerJobDetails(ctx context.Context, instanceN
 	return results, rows.Err()
 }
 
-// GetSQLServerJobSchedules returns the most recent schedule rows from TimescaleDB.
-func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
+// GetSQLServerJobSchedules returns the state of all job schedules at the end of the window.
+func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, instanceName string, from, to string) ([]map[string]interface{}, error) {
+	_, end, err := parseTimeRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := tl.pool.Query(ctx, `
 		SELECT DISTINCT ON (job_name, schedule_name)
 			capture_timestamp, job_name, job_enabled, schedule_name, status
-		FROM sqlserver_agent_schedules
+		FROM mssql_agent_schedules
 		WHERE server_instance_name = $1
-		  AND capture_timestamp >= NOW() - INTERVAL '4 hours'
+		  AND capture_timestamp <= $2
+		  AND capture_timestamp >= $2 - INTERVAL '7 days'
 		ORDER BY job_name, schedule_name, capture_timestamp DESC
-	`, instanceName)
+	`, instanceName, end)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("GetSQLServerJobSchedules: %w", err)
 	}
 	defer rows.Close()
 
@@ -246,19 +271,24 @@ func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, instanc
 	return results, rows.Err()
 }
 
-// GetSQLServerJobFailures returns recent job failure rows from TimescaleDB.
-func (tl *TimescaleLogger) GetSQLServerJobFailures(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+// GetSQLServerJobFailures returns recent job failure rows from TimescaleDB within a time range.
+func (tl *TimescaleLogger) GetSQLServerJobFailures(ctx context.Context, instanceName string, from, to string, limit int) ([]map[string]interface{}, error) {
+	start, end, err := parseTimeRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+
 	if limit <= 0 {
 		limit = 100
 	}
 	rows, err := tl.pool.Query(ctx, `
 		SELECT capture_timestamp, job_name, step_name, error_message, run_date, run_time
-		FROM sqlserver_job_failures
+		FROM mssql_job_failures
 		WHERE server_instance_name = $1
-		  AND capture_timestamp >= NOW() - INTERVAL '24 hours'
+		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		ORDER BY capture_timestamp DESC
-		LIMIT $2
-	`, instanceName, limit)
+		LIMIT $4
+	`, instanceName, start, end, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -289,20 +319,26 @@ func (tl *TimescaleLogger) GetSQLServerJobFailures(ctx context.Context, instance
 	return results, rows.Err()
 }
 
-func (tl *TimescaleLogger) GetSQLServerJobMetrics(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerJobMetrics(ctx context.Context, instanceName string, from, to string, limit int) ([]map[string]interface{}, error) {
+	start, end, err := parseTimeRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+
 	if limit <= 0 {
 		limit = 100
 	}
 
 	query := `
 		SELECT capture_timestamp, total_jobs, enabled_jobs, disabled_jobs, running_jobs, failed_jobs_24h, error_message
-		FROM sqlserver_job_metrics
+		FROM mssql_job_metrics
 		WHERE server_instance_name = $1
+		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		ORDER BY capture_timestamp DESC
-		LIMIT $2
+		LIMIT $4
 	`
 
-	rows, err := tl.pool.Query(ctx, query, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, query, instanceName, start, end, limit)
 	if err != nil {
 		return nil, err
 	}

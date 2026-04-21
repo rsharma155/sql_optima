@@ -19,7 +19,7 @@ type PostgresDiskStatRow struct {
 	CaptureTimestamp   time.Time `json:"capture_timestamp"`
 	ServerInstanceName string    `json:"server_instance_name"`
 	MountName          string    `json:"mount_name"`
-	Path              string    `json:"path"`
+	Path               string    `json:"path"`
 	TotalBytes         int64     `json:"total_bytes"`
 	FreeBytes          int64     `json:"free_bytes"`
 	AvailBytes         int64     `json:"avail_bytes"`
@@ -97,4 +97,3 @@ func (tl *TimescaleLogger) GetPostgresDiskStats(ctx context.Context, instanceNam
 	}
 	return out, rows.Err()
 }
-

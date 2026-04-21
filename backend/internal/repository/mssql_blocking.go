@@ -18,7 +18,7 @@ import (
 func (c *MssqlRepository) CollectBlockingChains(db *sql.DB, database string) ([]map[string]interface{}, error) {
 	query := `
 		WITH BlockingTree AS (
-			SELECT r.session_id AS Blocked_SPID,
+			SELECT /* SQL_OPTIMA */   r.session_id AS Blocked_SPID,
 				r.blocking_session_id AS Blocking_SPID,
 				r.wait_time
 			FROM sys.dm_exec_requests r
@@ -32,7 +32,7 @@ func (c *MssqlRepository) CollectBlockingChains(db *sql.DB, database string) ([]
 		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 		)
-		SELECT TOP 50
+		SELECT /* SQL_OPTIMA */   TOP 50
 			b.Blocking_SPID AS Lead_Blocker,
 			ISNULL(s.login_name, 'Unknown') AS Blocker_Login,
 			ISNULL(s.program_name, 'Unknown') AS Blocker_App,
@@ -72,7 +72,7 @@ func (c *MssqlRepository) CollectBlockingChains(db *sql.DB, database string) ([]
 
 // CollectLocks fetches lock statistics from sys.dm_tran_locks
 func (c *MssqlRepository) CollectLocks(db *sql.DB) (int, int, map[string]int, error) {
-	totalLocksQuery := `SELECT COUNT(*) FROM sys.dm_tran_locks WHERE request_session_id > 50`
+	totalLocksQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_tran_locks WHERE request_session_id > 50`
 	var totalLocks int
 	if err := db.QueryRow(totalLocksQuery).Scan(&totalLocks); err != nil {
 		log.Printf("[MSSQL] Total Locks Query Error: %v", err)
@@ -80,14 +80,14 @@ func (c *MssqlRepository) CollectLocks(db *sql.DB) (int, int, map[string]int, er
 
 	deadlockQuery := `
 		WITH CTE AS (
-			SELECT ROW_NUMBER() OVER(PARTITION BY blocked ORDER BY blocked DESC) AS rn, blocked, blocking
+			SELECT /* SQL_OPTIMA */   ROW_NUMBER() OVER(PARTITION BY blocked ORDER BY blocked DESC) AS rn, blocked, blocking
 			FROM (
-				SELECT blocked, 0 AS blocking FROM sys.dm_exec_requests WHERE blocked > 0
+				SELECT /* SQL_OPTIMA */   blocked, 0 AS blocking FROM sys.dm_exec_requests WHERE blocked > 0
 				UNION ALL
-				SELECT 0, blocking_session_id FROM sys.dm_exec_requests WHERE blocking_session_id > 0
+				SELECT /* SQL_OPTIMA */   0, blocking_session_id FROM sys.dm_exec_requests WHERE blocking_session_id > 0
 			) a(bblocked, bblocking)
 		)
-		SELECT COUNT(*) FROM CTE WHERE rn > 1
+		SELECT /* SQL_OPTIMA */   COUNT(*) FROM CTE WHERE rn > 1
 	`
 	var deadlocks int
 	if err := db.QueryRow(deadlockQuery).Scan(&deadlocks); err != nil {
@@ -96,7 +96,7 @@ func (c *MssqlRepository) CollectLocks(db *sql.DB) (int, int, map[string]int, er
 
 	locksByDB := make(map[string]int)
 	dbLockQuery := `
-		SELECT ISNULL(DB_NAME(resource_database_id), 'Unknown'), COUNT(*)
+		SELECT /* SQL_OPTIMA */   ISNULL(DB_NAME(resource_database_id), 'Unknown'), COUNT(*)
 		FROM sys.dm_tran_locks
 		WHERE request_session_id > 50
 		GROUP BY resource_database_id
@@ -119,7 +119,7 @@ func (c *MssqlRepository) CollectLocks(db *sql.DB) (int, int, map[string]int, er
 // CollectSpinlockStats fetches spinlock statistics
 func (c *MssqlRepository) CollectSpinlockStats(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT TOP 20 
+		SELECT /* SQL_OPTIMA */   TOP 20 
 			name AS spinlock_type, 
 			collisions, 
 			spins, 

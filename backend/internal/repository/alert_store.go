@@ -75,7 +75,7 @@ func (r *AlertRepository) Upsert(ctx context.Context, a alerts.Alert) (alerts.Al
 // FindOpenByFingerprint returns the existing open alert for a given fingerprint, if any.
 func (r *AlertRepository) FindOpenByFingerprint(ctx context.Context, fp string) (alerts.Alert, bool, error) {
 	const q = `
-		SELECT id, fingerprint, server_id, instance_name, engine,
+		SELECT  id, fingerprint, server_id, instance_name, engine,
 		       severity, status, category, title, description,
 		       evidence, first_seen_at, last_seen_at, hit_count,
 		       acknowledged_by, acknowledged_at, resolved_by, resolved_at,
@@ -109,7 +109,7 @@ func (r *AlertRepository) FindOpenByFingerprint(ctx context.Context, fp string) 
 // GetByID fetches a single alert by its UUID.
 func (r *AlertRepository) GetByID(ctx context.Context, id uuid.UUID) (alerts.Alert, error) {
 	const q = `
-		SELECT id, fingerprint, server_id, instance_name, engine,
+		SELECT  id, fingerprint, server_id, instance_name, engine,
 		       severity, status, category, title, description,
 		       evidence, first_seen_at, last_seen_at, hit_count,
 		       acknowledged_by, acknowledged_at, resolved_by, resolved_at,
@@ -174,7 +174,7 @@ func (r *AlertRepository) List(ctx context.Context, f alerts.AlertFilter) ([]ale
 	}
 
 	// Count total
-	countQ := "SELECT count(*) FROM optima_alerts " + whereClause
+	countQ := "SELECT  count(*) FROM optima_alerts " + whereClause
 	var total int
 	if err := r.pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, err
@@ -191,7 +191,7 @@ func (r *AlertRepository) List(ctx context.Context, f alerts.AlertFilter) ([]ale
 	}
 
 	dataQ := fmt.Sprintf(`
-		SELECT id, fingerprint, server_id, instance_name, engine,
+		SELECT  id, fingerprint, server_id, instance_name, engine,
 		       severity, status, category, title, description,
 		       evidence, first_seen_at, last_seen_at, hit_count,
 		       acknowledged_by, acknowledged_at, resolved_by, resolved_at,
@@ -241,7 +241,7 @@ func (r *AlertRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status
 	// Fetch current status
 	var oldStatus string
 	err = tx.QueryRow(ctx,
-		"SELECT status FROM optima_alerts WHERE id = $1 FOR UPDATE", id,
+		"SELECT  status FROM optima_alerts WHERE id = $1 FOR UPDATE", id,
 	).Scan(&oldStatus)
 	if err != nil {
 		if err.Error() == "no rows in result set" {
@@ -290,7 +290,7 @@ func (r *AlertRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status
 func (r *AlertRepository) CountOpen(ctx context.Context, instanceName string) (int, error) {
 	var count int
 	err := r.pool.QueryRow(ctx,
-		"SELECT count(*) FROM optima_alerts WHERE instance_name = $1 AND status != 'resolved'",
+		"SELECT  count(*) FROM optima_alerts WHERE instance_name = $1 AND status != 'resolved'",
 		instanceName,
 	).Scan(&count)
 	return count, err

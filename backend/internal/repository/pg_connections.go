@@ -15,7 +15,7 @@ import (
 // CollectPgConnections fetches PostgreSQL connection stats
 func (c *PgRepository) CollectPgConnections(db *sql.DB) (int, int, int, error) {
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			COALESCE(SUM(CASE WHEN state = 'active' THEN 1 ELSE 0 END), 0) AS active_connections,
 			COALESCE(SUM(CASE WHEN state = 'idle' THEN 1 ELSE 0 END), 0) AS idle_connections,
 			COUNT(*) AS total_connections
@@ -34,7 +34,7 @@ func (c *PgRepository) CollectPgConnections(db *sql.DB) (int, int, int, error) {
 // CollectPgDatabases fetches list of databases
 func (c *PgRepository) CollectPgDatabases(db *sql.DB) ([]string, error) {
 	query := `
-		SELECT datname 
+		SELECT /* SQL_OPTIMA */   datname 
 		FROM pg_database 
 		WHERE datistemplate = false 
 		ORDER BY datname

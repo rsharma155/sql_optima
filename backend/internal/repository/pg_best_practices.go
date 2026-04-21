@@ -61,7 +61,7 @@ func (c *PgRepository) queryPgSettings(db *sql.DB) ([]PgConfigRow, error) {
 	// default_value: reset_val is what RESET / postgresql.conf would use; boot_val is bootstrap default.
 	// Using reset_val avoids showing the same text as "setting" when the instance is still at file defaults.
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			name, 
 			setting, 
 			unit, 
@@ -118,17 +118,17 @@ func (c *PgRepository) queryPgSettings(db *sql.DB) ([]PgConfigRow, error) {
 
 // pgRemediationByParam offers copy-paste-style hints for the pg_settings audit (fallback when Rule Engine is unused).
 var pgRemediationByParam = map[string]string{
-	"shared_buffers":       "ALTER SYSTEM SET shared_buffers = '256MB';  -- size for your RAM; often requires restart\n-- Then: SELECT pg_reload_conf();  (restart if parameter is not SIGHUP)",
-	"work_mem":             "ALTER SYSTEM SET work_mem = '16MB';  -- scale with RAM / max_connections\nSELECT pg_reload_conf();",
-	"maintenance_work_mem": "ALTER SYSTEM SET maintenance_work_mem = '512MB';\nSELECT pg_reload_conf();",
-	"max_connections":      "ALTER SYSTEM SET max_connections = '200';  -- lower if possible; prefer pooler\nSELECT pg_reload_conf();  -- restart if required",
-	"random_page_cost":     "ALTER SYSTEM SET random_page_cost = '1.1';  -- typical for SSD / cloud storage\nSELECT pg_reload_conf();",
-	"effective_cache_size": "ALTER SYSTEM SET effective_cache_size = '8GB';  -- ~50–75% of RAM for planner\nSELECT pg_reload_conf();",
-	"checkpoint_completion_target": "ALTER SYSTEM SET checkpoint_completion_target = '0.9';\nSELECT pg_reload_conf();",
-	"wal_buffers":          "ALTER SYSTEM SET wal_buffers = '16MB';  -- or -1 for auto\nSELECT pg_reload_conf();",
-	"autovacuum":           "ALTER SYSTEM SET autovacuum = on;\nSELECT pg_reload_conf();",
-	"default_statistics_target": "ALTER SYSTEM SET default_statistics_target = 100;  -- increase for important tables\nSELECT pg_reload_conf();",
-	"log_min_duration_statement": "ALTER SYSTEM SET log_min_duration_statement = 1000;  -- ms; tune for workload\nSELECT pg_reload_conf();",
+	"shared_buffers":               "ALTER SYSTEM SET shared_buffers = '256MB';  -- size for your RAM; often requires restart\n-- Then: SELECT /* SQL_OPTIMA */   pg_reload_conf();  (restart if parameter is not SIGHUP)",
+	"work_mem":                     "ALTER SYSTEM SET work_mem = '16MB';  -- scale with RAM / max_connections\nSELECT /* SQL_OPTIMA */   pg_reload_conf();",
+	"maintenance_work_mem":         "ALTER SYSTEM SET maintenance_work_mem = '512MB';\nSELECT /* SQL_OPTIMA */   pg_reload_conf();",
+	"max_connections":              "ALTER SYSTEM SET max_connections = '200';  -- lower if possible; prefer pooler\nSELECT /* SQL_OPTIMA */   pg_reload_conf();  -- restart if required",
+	"random_page_cost":             "ALTER SYSTEM SET random_page_cost = '1.1';  -- typical for SSD / cloud storage\nSELECT /* SQL_OPTIMA */   pg_reload_conf();",
+	"effective_cache_size":         "ALTER SYSTEM SET effective_cache_size = '8GB';  -- ~50–75% of RAM for planner\nSELECT /* SQL_OPTIMA */   pg_reload_conf();",
+	"checkpoint_completion_target": "ALTER SYSTEM SET checkpoint_completion_target = '0.9';\nSELECT /* SQL_OPTIMA */   pg_reload_conf();",
+	"wal_buffers":                  "ALTER SYSTEM SET wal_buffers = '16MB';  -- or -1 for auto\nSELECT /* SQL_OPTIMA */   pg_reload_conf();",
+	"autovacuum":                   "ALTER SYSTEM SET autovacuum = on;\nSELECT /* SQL_OPTIMA */   pg_reload_conf();",
+	"default_statistics_target":    "ALTER SYSTEM SET default_statistics_target = 100;  -- increase for important tables\nSELECT /* SQL_OPTIMA */   pg_reload_conf();",
+	"log_min_duration_statement":   "ALTER SYSTEM SET log_min_duration_statement = 1000;  -- ms; tune for workload\nSELECT /* SQL_OPTIMA */   pg_reload_conf();",
 }
 
 func canonicalPgParamName(configurationName string) string {
@@ -154,10 +154,10 @@ func attachPgRemediationHints(checks []models.ServerConfigCheck) {
 // Built-in PostgreSQL defaults for health checks (do not use reset_val for these comparisons:
 // when the cluster is tuned, setting and reset_val are often equal, and "setting <= reset" would false-positive).
 const (
-	pgBuiltinDefaultSharedBuffers = 128 * 1024 * 1024       // 16384 × 8kB pages
-	pgBuiltinDefaultWorkMemKB     = 4096                    // 4 MB
+	pgBuiltinDefaultSharedBuffers  = 128 * 1024 * 1024      // 16384 × 8kB pages
+	pgBuiltinDefaultWorkMemKB      = 4096                   // 4 MB
 	pgBuiltinDefaultMaintWorkMemKB = 65536                  // 64 MB in kB (pg_settings)
-	pgBuiltinDefaultEffCache      = 4 * 1024 * 1024 * 1024 // typical shipped default ~4GB
+	pgBuiltinDefaultEffCache       = 4 * 1024 * 1024 * 1024 // typical shipped default ~4GB
 )
 
 // evaluatePgRules applies DBA health checks to PostgreSQL configurations.

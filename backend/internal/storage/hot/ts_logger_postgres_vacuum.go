@@ -97,4 +97,3 @@ func (tl *TimescaleLogger) GetPostgresVacuumProgress(ctx context.Context, instan
 	}
 	return out, rows.Err()
 }
-

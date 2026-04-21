@@ -15,7 +15,7 @@ import (
 // CollectPgBlocking fetches PostgreSQL blocking queries
 func (c *PgRepository) CollectPgBlocking(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			blocked.pid AS blocked_pid,
 			blocked.query AS blocked_query,
 			blocked.state AS blocked_state,
@@ -61,7 +61,7 @@ func (c *PgRepository) CollectPgBlocking(db *sql.DB) ([]map[string]interface{}, 
 // CollectPgLocks fetches PostgreSQL lock statistics
 func (c *PgRepository) CollectPgLocks(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			locktype,
 			database::regclass::text AS relation,
 			mode,

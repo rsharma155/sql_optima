@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -22,14 +23,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/models"
+	"github.com/rsharma155/sql_optima/internal/reliability"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
-// StartQueryStoreCollector starts a background worker that extracts Query Store data every 15 minutes
+// StartQueryStoreCollector starts a background worker that extracts Query Store data
 func (s *MetricsService) StartQueryStoreCollector(ctx context.Context) {
-	log.Printf("[QueryStoreCollector] Starting Query Store collector (interval: %v)...", config.QueryStoreCollectionInterval)
+	interval := s.getInterval(ctx, "SQL Server Query Store", config.QueryStoreCollectionInterval)
+	log.Printf("[QueryStoreCollector] Starting Query Store collector (interval: %v)...", interval)
 
-	ticker := time.NewTicker(config.QueryStoreCollectionInterval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Run immediately on start
@@ -94,16 +97,19 @@ func (s *MetricsService) collectQueryStoreForInstance(instanceName string) {
 			dbn = "unknown"
 		}
 		rows[i] = hot.QueryStoreStatsRow{
-			CaptureTimestamp: timestamp,
-			ServerName:       instanceName,
-			DatabaseName:     dbn,
-			QueryHash:        qs.QueryHash,
-			QueryText:        qs.QueryText,
-			Executions:       qs.Executions,
-			AvgDurationMs:    qs.AvgDurationMs,
-			AvgCpuMs:         qs.AvgCpuMs,
-			AvgLogicalReads:  qs.AvgLogicalReads,
-			TotalCpuMs:       qs.TotalCpuMs,
+			CaptureTimestamp:  timestamp,
+			ServerName:        instanceName,
+			DatabaseName:      dbn,
+			QueryHash:         qs.QueryHash,
+			QueryText:         qs.QueryText,
+			PlanID:            qs.PlanID,
+			IntervalID:        qs.IntervalID,
+			Executions:        qs.Executions,
+			AvgDurationMs:     qs.AvgDurationMs,
+			AvgCpuMs:          qs.AvgCpuMs,
+			AvgLogicalReads:   qs.AvgLogicalReads,
+			TotalCpuMs:        qs.TotalCpuMs,
+			LastExecutionTime: qs.LastExecutionTime,
 		}
 	}
 
@@ -434,24 +440,24 @@ func (s *MetricsService) GetAGHealthSummary(ctx context.Context, instanceName st
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	return s.tsLogger.GetAGHealthSummary(ctx, instanceName, limit)
+	return s.tsLogger.GetAGHealthSummary(ctx, instanceName, "", "", limit)
 }
 
 // GetJobsFromTimescale reconstructs a job view from hot storage.
 // Returns nil when no recent data is available (signals caller to fall back to live MSDB).
-func (s *MetricsService) GetJobsFromTimescale(ctx context.Context, instanceName string) (map[string]interface{}, error) {
+func (s *MetricsService) GetJobsFromTimescale(ctx context.Context, instanceName string, from, to string) (map[string]interface{}, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
 
-	metrics, err := s.tsLogger.GetSQLServerJobMetrics(ctx, instanceName, 1)
+	metrics, err := s.tsLogger.GetSQLServerJobMetrics(ctx, instanceName, from, to, 1)
 	if err != nil || len(metrics) == 0 {
 		return nil, err
 	}
 
-	details, _ := s.tsLogger.GetSQLServerJobDetails(ctx, instanceName)
-	schedules, _ := s.tsLogger.GetSQLServerJobSchedules(ctx, instanceName)
-	failures, _ := s.tsLogger.GetSQLServerJobFailures(ctx, instanceName, 100)
+	details, _ := s.tsLogger.GetSQLServerJobDetails(ctx, instanceName, from, to)
+	schedules, _ := s.tsLogger.GetSQLServerJobSchedules(ctx, instanceName, from, to)
+	failures, _ := s.tsLogger.GetSQLServerJobFailures(ctx, instanceName, from, to, 100)
 
 	summary := metrics[0]
 	return map[string]interface{}{
@@ -503,6 +509,21 @@ func (s *MetricsService) StartPostgresEnterpriseCollector(ctx context.Context) {
 	}
 }
 
+// safeRunCollector executes a collector function with panic recovery so a single
+// failing collector does not prevent subsequent collectors from running.
+func safeRunCollector(name, instanceName string, fn func(string)) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("collector_panic",
+				"collector", name,
+				"instance", instanceName,
+				"panic", fmt.Sprintf("%v", r),
+			)
+		}
+	}()
+	fn(instanceName)
+}
+
 // collectPostgresEnterpriseMetrics collects PostgreSQL enterprise metrics for all PG instances
 func (s *MetricsService) collectPostgresEnterpriseMetrics() {
 	if s.tsLogger == nil {
@@ -519,21 +540,29 @@ func (s *MetricsService) collectPostgresEnterpriseMetrics() {
 		wg.Add(1)
 		go func(instanceName string) {
 			defer wg.Done()
-			s.collectPostgresBGWriterForInstance(instanceName)
-			s.collectPostgresArchiverForInstance(instanceName)
-			s.collectPostgresWaitEventsForInstance(instanceName)
-			s.collectPostgresDbIOForInstance(instanceName)
-			s.collectPostgresSettingsSnapshotForInstance(instanceName)
-			s.collectPostgresQueryDictionaryForInstance(instanceName)
-			s.collectPostgresQueryStatsSnapshotForInstance(instanceName)
-			s.collectPostgresControlCenterForInstance(instanceName)
-			s.collectPostgresReplicationSlotsForInstance(instanceName)
-			s.collectPostgresDiskStatsForInstance(instanceName)
-			s.collectPostgresVacuumProgressForInstance(instanceName)
-			s.collectPostgresTableMaintenanceForInstance(instanceName)
-			s.collectPostgresSessionStateCountsForInstance(instanceName)
-			s.collectPostgresPoolerStatsForInstance(instanceName)
-			s.collectPostgresDeadlocksForInstance(instanceName)
+			pgCollectors := []struct {
+				name string
+				fn   func(string)
+			}{
+				{"pg_bgwriter", s.collectPostgresBGWriterForInstance},
+				{"pg_archiver", s.collectPostgresArchiverForInstance},
+				{"pg_wait_events", s.collectPostgresWaitEventsForInstance},
+				{"pg_db_io", s.collectPostgresDbIOForInstance},
+				{"pg_settings_snapshot", s.collectPostgresSettingsSnapshotForInstance},
+				{"pg_query_dictionary", s.collectPostgresQueryDictionaryForInstance},
+				{"pg_query_stats_snapshot", s.collectPostgresQueryStatsSnapshotForInstance},
+				{"pg_control_center", s.collectPostgresControlCenterForInstance},
+				{"pg_replication_slots", s.collectPostgresReplicationSlotsForInstance},
+				{"pg_disk_stats", s.collectPostgresDiskStatsForInstance},
+				{"pg_vacuum_progress", s.collectPostgresVacuumProgressForInstance},
+				{"pg_table_maintenance", s.collectPostgresTableMaintenanceForInstance},
+				{"pg_session_state_counts", s.collectPostgresSessionStateCountsForInstance},
+				{"pg_pooler_stats", s.collectPostgresPoolerStatsForInstance},
+				{"pg_deadlocks", s.collectPostgresDeadlocksForInstance},
+			}
+			for _, c := range pgCollectors {
+				safeRunCollector(c.name, instanceName, c.fn)
+			}
 		}(inst.Name)
 	}
 
@@ -544,31 +573,54 @@ func (s *MetricsService) collectPostgresTableMaintenanceForInstance(instanceName
 	if s.tsLogger == nil {
 		return
 	}
-	// Capture top N largest tables (good default for daily checks).
-	stats, err := s.PgRepo.GetTableMaintenanceStats(instanceName, 200)
-	if err != nil || len(stats) == 0 {
+
+	dbs, err := s.PgRepo.GetDatabases(instanceName)
+	if err != nil || len(dbs) == 0 {
 		return
 	}
-	rows := make([]hot.PostgresTableMaintRow, 0, len(stats))
-	for _, r := range stats {
-		rows = append(rows, hot.PostgresTableMaintRow{
-			CaptureTimestamp:   r.CaptureTimestamp,
-			ServerInstanceName: instanceName,
-			SchemaName:         r.SchemaName,
-			TableName:          r.TableName,
-			TotalBytes:         r.TotalBytes,
-			LiveTuples:         r.LiveTuples,
-			DeadTuples:         r.DeadTuples,
-			DeadPct:            r.DeadPct,
-			SeqScans:           r.SeqScans,
-			IdxScans:           r.IdxScans,
-			LastVacuum:         r.LastVacuum,
-			LastAutovacuum:     r.LastAutovacuum,
-			LastAnalyze:        r.LastAnalyze,
-			LastAutoanalyze:    r.LastAutoanalyze,
-		})
+
+	for _, dbName := range dbs {
+		// Avoid blocking on one bad DB
+		dbCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		pgdb, derr := s.PgRepo.OpenConnForDatabase(dbCtx, instanceName, dbName)
+		if derr != nil {
+			cancel()
+			continue
+		}
+
+		// Capture top N largest tables for this DB
+		stats, err := s.PgRepo.GetTableMaintenanceStatsForDB(pgdb, 100)
+		_ = pgdb.Close()
+		cancel()
+
+		if err != nil || len(stats) == 0 {
+			continue
+		}
+
+		rows := make([]hot.PostgresTableMaintRow, 0, len(stats))
+		for _, r := range stats {
+			rows = append(rows, hot.PostgresTableMaintRow{
+				CaptureTimestamp:   r.CaptureTimestamp,
+				ServerInstanceName: instanceName,
+				SchemaName:         r.SchemaName,
+				TableName:          r.TableName,
+				DatabaseName:       dbName,
+				TotalBytes:         r.TotalBytes,
+				LiveTuples:         r.LiveTuples,
+				DeadTuples:         r.DeadTuples,
+				DeadPct:            r.DeadPct,
+				SeqScans:           r.SeqScans,
+				IdxScans:           r.IdxScans,
+				LastVacuum:         r.LastVacuum,
+				LastAutovacuum:     r.LastAutovacuum,
+				LastAnalyze:        r.LastAnalyze,
+				LastAutoanalyze:    r.LastAutoanalyze,
+			})
+		}
+		if len(rows) > 0 {
+			_ = s.tsLogger.LogPostgresTableMaintenance(context.Background(), instanceName, rows)
+		}
 	}
-	_ = s.tsLogger.LogPostgresTableMaintenance(context.Background(), instanceName, rows)
 }
 
 func (s *MetricsService) collectPostgresVacuumProgressForInstance(instanceName string) {
@@ -1209,32 +1261,63 @@ func (s *MetricsService) collectPostgresQueryStatsSnapshotForInstance(instanceNa
 	}
 	stats, err := s.PgRepo.GetQueryStatsForSnapshot(instanceName)
 	if err != nil {
-		log.Printf("[PostgresQueryStatsSnapshot] skipping %s: %v", instanceName, err)
+		slog.Warn("pgss_snapshot_skip", "instance", instanceName, "error", err)
 		return
 	}
 	if len(stats) == 0 {
-		log.Printf("[PostgresQueryStatsSnapshot] no statements found for %s (pg_stat_statements may be empty or extension not installed)", instanceName)
+		slog.Debug("pgss_snapshot_empty", "instance", instanceName, "hint", "pg_stat_statements may be empty or extension not installed")
 		return
 	}
 	ts := time.Now().UTC()
 	rows := make([]hot.PostgresQueryStatsSnapRow, 0, len(stats))
 	for _, q := range stats {
 		rows = append(rows, hot.PostgresQueryStatsSnapRow{
-			QueryID:         q.QueryID,
-			QueryText:       q.Query,
-			Calls:           q.Calls,
-			TotalTimeMs:     q.TotalTime,
-			MeanTimeMs:      q.MeanTime,
-			Rows:            q.Rows,
-			TempBlksRead:    q.TempBlksRead,
-			TempBlksWritten: q.TempBlksWritten,
-			BlkReadTimeMs:   q.BlkReadTime,
-			BlkWriteTimeMs:  q.BlkWriteTime,
+			QueryID:           q.QueryID,
+			QueryText:         q.Query,
+			Calls:             q.Calls,
+			TotalTimeMs:       q.TotalTime,
+			MeanTimeMs:        q.MeanTime,
+			Rows:              q.Rows,
+			TempBlksRead:      q.TempBlksRead,
+			TempBlksWritten:   q.TempBlksWritten,
+			BlkReadTimeMs:     q.BlkReadTime,
+			BlkWriteTimeMs:    q.BlkWriteTime,
+			SharedBlksHit:     q.SharedBlksHit,
+			SharedBlksRead:    q.SharedBlksRead,
+			SharedBlksDirtied: q.SharedBlksDirtied,
+			SharedBlksWritten: q.SharedBlksWritten,
+			WalBytes:          q.WalBytes,
+			WalRecords:        q.WalRecords,
+			WalFpi:            q.WalFpi,
+			TotalPlanTime:     q.TotalPlanTime,
+			MeanPlanTime:      q.MeanPlanTime,
+			Plans:             q.Plans,
 		})
 	}
 	ctx := context.Background()
+
+	retryCfg := reliability.RetryConfig{
+		MaxRetries:      3,
+		InitialInterval: 1 * time.Second,
+		MaxElapsed:      15 * time.Second,
+	}
+
+	// Upsert query text dimension table
+	if err := reliability.Do(ctx, retryCfg, "pgss_query_dim_upsert", func() error {
+		return s.tsLogger.UpsertPgssQueryDim(ctx, instanceName, rows)
+	}); err != nil {
+		slog.Error("pgss_query_dim_upsert_error", "instance", instanceName, "error", err)
+	}
+
 	if err := s.tsLogger.LogPostgresQueryStatsSnapshot(ctx, instanceName, ts, rows); err != nil {
-		log.Printf("[PostgresEnterpriseCollector] postgres_query_stats snapshot error for %s: %v", instanceName, err)
+		slog.Error("pgss_snapshot_error", "instance", instanceName, "error", err)
+	}
+
+	// Compute and store per-minute deltas for the dashboard
+	if err := reliability.Do(ctx, retryCfg, "pgss_delta_1m_compute", func() error {
+		return s.tsLogger.ComputeAndStorePgssDelta1m(ctx, instanceName, ts)
+	}); err != nil {
+		slog.Error("pgss_delta_1m_error", "instance", instanceName, "error", err)
 	}
 }
 
@@ -1271,11 +1354,11 @@ func (s *MetricsService) GetLatestPostgresControlCenterStats(ctx context.Context
 	return live, nil
 }
 
-func (s *MetricsService) GetPostgresControlCenterHistory(ctx context.Context, instanceName string, limit int) (*hot.PostgresControlCenterHistory, error) {
+func (s *MetricsService) GetPostgresControlCenterHistory(ctx context.Context, instanceName string, from, to string, limit int) (*hot.PostgresControlCenterHistory, error) {
 	var hist *hot.PostgresControlCenterHistory
 	var err error
 	if s.tsLogger != nil {
-		hist, err = s.tsLogger.GetPostgresControlCenterHistory(ctx, instanceName, limit)
+		hist, err = s.tsLogger.GetPostgresControlCenterHistory(ctx, instanceName, from, to, limit)
 		if err != nil {
 			log.Printf("[MetricsService] GetPostgresControlCenterHistory timescale: %v", err)
 			hist = nil
@@ -1294,11 +1377,11 @@ func (s *MetricsService) GetPostgresControlCenterHistory(ctx context.Context, in
 	return postgresControlCenterHistoryFromRow(live), nil
 }
 
-func (s *MetricsService) GetPostgresReplicationLagDetail(ctx context.Context, instanceName string, limit int) (map[string]hot.PostgresReplicationLagSeries, error) {
+func (s *MetricsService) GetPostgresReplicationLagDetail(ctx context.Context, instanceName string, from, to string, limit int) (map[string]hot.PostgresReplicationLagSeries, error) {
 	if s.tsLogger == nil {
-		return nil, nil
+		return nil, fmt.Errorf("tsLogger is nil")
 	}
-	return s.tsLogger.GetPostgresReplicationLagDetail(ctx, instanceName, limit)
+	return s.tsLogger.GetPostgresReplicationLagDetail(ctx, instanceName, from, to, limit)
 }
 
 func (s *MetricsService) GetPostgresWaitEventsHistory(ctx context.Context, instanceName string, limit int) ([]hot.PostgresWaitEventRow, error) {

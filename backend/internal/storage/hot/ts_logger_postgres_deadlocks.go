@@ -123,4 +123,3 @@ func (tl *TimescaleLogger) GetPostgresDeadlocksHistory(ctx context.Context, inst
 	}
 	return out, rows.Err()
 }
-

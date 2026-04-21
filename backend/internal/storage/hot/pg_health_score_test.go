@@ -46,4 +46,3 @@ func TestComputePgHealthScore_StatusBands(t *testing.T) {
 		t.Fatalf("expected At Risk <70, got %d %s", score3, status3)
 	}
 }
-

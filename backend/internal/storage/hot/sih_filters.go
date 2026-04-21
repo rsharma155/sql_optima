@@ -49,4 +49,3 @@ func sihAppendFilters(where string, args []interface{}, f SIHFilters, argStart i
 	}
 	return where, args, n
 }
-

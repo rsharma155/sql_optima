@@ -23,4 +23,3 @@ func TestNormalizeBackupStatus(t *testing.T) {
 		t.Fatalf("expected unknown")
 	}
 }
-

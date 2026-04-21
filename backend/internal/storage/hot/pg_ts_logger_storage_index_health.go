@@ -96,11 +96,12 @@ func (tl *TimescaleLogger) sihPgSeekScanLookup(ctx context.Context, engine, serv
 		where += fmt.Sprintf(" AND table_name ILIKE $%d", argN)
 		args = append(args, "%"+f.TableLike+"%")
 	}
+	// Note: We're abusing StorageIndexHealthSeekScanLookupRow to pass row_count for PG
 	q := fmt.Sprintf(`
 		SELECT db_name, schema_name, table_name,
 		       SUM(COALESCE(idx_scans,0))::float8 AS seeks,
 		       SUM(COALESCE(seq_scans,0))::float8 AS scans,
-		       0::float8 AS lookups
+		       MAX(COALESCE(row_count,0))::float8 AS row_count
 		FROM monitor.table_usage_stats
 		WHERE %s
 		GROUP BY db_name, schema_name, table_name

@@ -8,6 +8,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -19,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rsharma155/sql_optima/internal/collectors"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/sqlserver"
@@ -52,7 +54,7 @@ func (c *MssqlRepository) ListSQLServerUserDatabases(instanceName string) ([]str
 		return nil, fmt.Errorf("connection not found")
 	}
 	const q = `
-		SELECT d.name
+		SELECT /* SQL_OPTIMA */   d.name
 		FROM sys.databases d
 		WHERE d.database_id > 4
 		  AND d.state = 0
@@ -173,7 +175,7 @@ func NewMssqlRepository(cfg *config.Config) *MssqlRepository {
 
 			// Auto-Discover Database Arrays if explicitly omitted from config.yaml dynamically
 			if len(inst.Databases) == 0 {
-				query := "SELECT name FROM sys.databases WHERE database_id > 4 AND state_desc = 'ONLINE'"
+				query := "SELECT /* SQL_OPTIMA */   name FROM sys.databases WHERE database_id > 4 AND state_desc = 'ONLINE'"
 				rows, err := db.Query(query)
 				if err == nil {
 					var discoverDbs []string
@@ -220,6 +222,32 @@ func (c *MssqlRepository) GetConn(instanceName string) (*sql.DB, bool) {
 	defer c.mutex.RUnlock()
 	db, ok := c.conns[instanceName]
 	return db, ok
+}
+
+// AsQueryer returns a Queryer that ensures 'USE [db]' is executed if needed.
+// Note: Since SQL Server connections can be reused, we use a simple wrapper that
+// prepends 'USE [db];' to every query. This is a common pattern for multi-DB collectors.
+func (c *MssqlRepository) AsQueryer(instanceName, dbName string) collectors.Queryer {
+	db, ok := c.GetConn(instanceName)
+	if !ok {
+		return nil
+	}
+	return &dbWrapper{db: db, dbName: dbName}
+}
+
+type dbWrapper struct {
+	db     *sql.DB
+	dbName string
+}
+
+func (w *dbWrapper) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	q := fmt.Sprintf("USE [%s]; %s", strings.ReplaceAll(w.dbName, "]", "]]"), query)
+	return w.db.ExecContext(ctx, q, args...)
+}
+
+func (w *dbWrapper) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	q := fmt.Sprintf("USE [%s]; %s", strings.ReplaceAll(w.dbName, "]", "]]"), query)
+	return w.db.QueryContext(ctx, q, args...)
 }
 
 func (c *MssqlRepository) GetInstanceStatus(instanceName string) string {
@@ -282,10 +310,10 @@ func (c *MssqlRepository) GetGlobalMetric(name string, base models.GlobalInstanc
 
 	// 1. Fetch Physical CPU Utilization safely via ring buffers natively parsed into XML
 	cpuQuery := `
-		SELECT TOP 1 
+		SELECT /* SQL_OPTIMA */   TOP 1 
 			record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') AS [SQLProcessUtilization]
 		FROM (
-			SELECT [timestamp], CONVERT(xml, record) AS [record]
+			SELECT /* SQL_OPTIMA */   [timestamp], CONVERT(xml, record) AS [record]
 			FROM sys.dm_os_ring_buffers
 			WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR'
 			AND record LIKE '%<SystemHealth>%'
@@ -305,14 +333,17 @@ func (c *MssqlRepository) GetGlobalMetric(name string, base models.GlobalInstanc
 
 // QueryStoreStats represents a row from SQL Server Query Store
 type QueryStoreStats struct {
-	DatabaseName    string
-	QueryHash       string
-	QueryText       string
-	Executions      int64
-	AvgDurationMs   float64
-	AvgCpuMs        float64
-	AvgLogicalReads float64
-	TotalCpuMs      float64
+	DatabaseName      string
+	QueryHash         string
+	QueryText         string
+	PlanID            int64
+	IntervalID        int64
+	Executions        int64
+	AvgDurationMs     float64
+	AvgCpuMs          float64
+	AvgLogicalReads   float64
+	TotalCpuMs        float64
+	LastExecutionTime time.Time
 }
 
 type LongRunningQueryStats struct {
@@ -342,7 +373,7 @@ func (c *MssqlRepository) FetchLongRunningQueries(instanceName string, minDurati
 	}
 
 	query := `
-		SELECT TOP 50
+		SELECT /* SQL_OPTIMA */   TOP 50
 			r.session_id,
 			r.request_id,
 			DB_NAME(r.database_id) AS database_name,
@@ -446,6 +477,64 @@ func (c *MssqlRepository) FetchLongRunningQueries(instanceName string, minDurati
 	return results, rows.Err()
 }
 
+// FetchReplicationStatus returns basic Transactional/Merge replication metadata from the instance.
+func (c *MssqlRepository) FetchReplicationStatus(instanceName string) ([]map[string]interface{}, error) {
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
+	}
+
+	dbNames, err := c.ListSQLServerUserDatabases(instanceName)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []map[string]interface{}
+	for _, dbn := range dbNames {
+		qb := sqlServerQuoteBracket(dbn)
+		query := fmt.Sprintf(`
+			SELECT /* SQL_OPTIMA */  
+				'Publication' as type,
+				p.name as name,
+				%s as database_name,
+				CASE p.repl_freq WHEN 0 THEN 'Continuous' ELSE 'Scheduled' END as details,
+				(SELECT /* SQL_OPTIMA */   COUNT(*) FROM %s.dbo.sysarticles WHERE pubid = p.pubid) as article_count,
+				'N/A' as status
+			FROM %s.dbo.syspublications p
+			UNION ALL
+			SELECT /* SQL_OPTIMA */   
+				'Subscription' as type,
+				s.dest_db as name,
+				%s as database_name,
+				s.srvname as details,
+				0 as article_count,
+				CASE s.status WHEN 0 THEN 'Inactive' WHEN 1 THEN 'Subscribed' WHEN 2 THEN 'Active' ELSE 'Unknown' END as status
+			FROM %s.dbo.syssubscriptions s
+		`, qb, qb, qb, qb, qb)
+
+		rows, err := db.Query(query)
+		if err != nil {
+			continue // Most DBs won't have these tables
+		}
+		for rows.Next() {
+			var rType, name, dbName, details, status string
+			var articles int
+			if err := rows.Scan(&rType, &name, &dbName, &details, &articles, &status); err == nil {
+				results = append(results, map[string]interface{}{
+					"type":          rType,
+					"name":          name,
+					"database":      dbName,
+					"details":       details,
+					"article_count": articles,
+					"status":        status,
+				})
+			}
+		}
+		rows.Close()
+	}
+
+	return results, nil
+}
 func sqlServerQuoteBracket(ident string) string {
 	if ident == "" {
 		return "[]"
@@ -471,14 +560,14 @@ func (c *MssqlRepository) FetchQueryStoreSQLText(instanceName, databaseName, que
 
 	dbPrefix := sqlServerQuoteBracket(databaseName)
 	q := fmt.Sprintf(`
-		SELECT TOP 1
+		SELECT /* SQL_OPTIMA */   TOP 1
 			qt.query_sql_text
 		FROM %s.sys.query_store_query q
 		INNER JOIN %s.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
 		INNER JOIN %s.sys.query_store_plan p ON q.query_id = p.query_id
 		INNER JOIN %s.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
 		WHERE q.is_internal_query = 0
-		  AND CONVERT(VARCHAR(40), q.query_hash) = @p1
+		  AND CONVERT(VARCHAR(40), q.query_hash, 1) = @p1
 		ORDER BY rs.last_execution_time DESC;
 	`, dbPrefix, dbPrefix, dbPrefix, dbPrefix)
 
@@ -497,29 +586,38 @@ func (c *MssqlRepository) FetchQueryStoreSQLText(instanceName, databaseName, que
 // connection (which would race other collectors on the same *sql.DB).
 func queryStoreStatsSelectSQL(dbPrefix string) string {
 	return fmt.Sprintf(`
-		SELECT TOP 50
-			CONVERT(VARCHAR(40), q.query_hash) AS query_hash,
-			LEFT(qt.query_sql_text, 500) AS query_text,
+		SELECT /* SQL_OPTIMA */   TOP 100
+			CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
+			LEFT(qt.query_sql_text, 1000) AS query_text,
+			p.plan_id,
+			rs.runtime_stats_interval_id,
 			ISNULL(rs.count_executions, 0) AS executions,
 			ISNULL(rs.avg_duration, 0) / 1000.0 AS avg_duration_ms,
 			ISNULL(rs.avg_cpu_time, 0) / 1000.0 AS avg_cpu_ms,
 			ISNULL(rs.avg_logical_io_reads, 0) AS avg_logical_reads,
-			(ISNULL(rs.avg_cpu_time, 0) * ISNULL(rs.count_executions, 1)) / 1000.0 AS total_cpu_ms
+			(ISNULL(rs.avg_cpu_time, 0) * ISNULL(rs.count_executions, 1)) / 1000.0 AS total_cpu_ms,
+			rs.last_execution_time
 		FROM %s.sys.query_store_query q
 		INNER JOIN %s.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
 		INNER JOIN %s.sys.query_store_plan p ON q.query_id = p.query_id
 		INNER JOIN %s.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-		LEFT JOIN %s.sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
 		WHERE q.is_internal_query = 0
 		  AND ISNULL(rs.count_executions, 0) > 0
 		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sql_optima%%'
 		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sqloptima%%'
 		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sys.dm_%%'
-		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sys.query_store_%%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sys.query_store%%'
 		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%%sp_server_diagnostics%%'
+		  AND rs.last_execution_time > DATEADD(minute, -10, GETUTCDATE())
 		  AND (
-			rs.last_execution_time >= DATEADD(day, -7, SYSDATETIMEOFFSET())
-			OR rsi.end_time >= DATEADD(day, -7, GETDATE())
+			  rs.avg_cpu_time > 10000 
+			  OR rs.avg_logical_io_reads > 500 
+			  OR rs.count_executions > 100
+		  )
+		  AND q.query_id NOT IN (
+			  SELECT /* SQL_OPTIMA */   query_id 
+			  FROM %s.sys.query_store_query 
+			  WHERE last_bind_duration = 0
 		  )
 		ORDER BY (ISNULL(rs.avg_cpu_time, 0) * ISNULL(rs.count_executions, 0)) DESC
 	`, dbPrefix, dbPrefix, dbPrefix, dbPrefix, dbPrefix)
@@ -553,8 +651,8 @@ func (c *MssqlRepository) FetchQueryStoreStats(instanceName string) ([]QueryStor
 			var qs QueryStoreStats
 			qs.DatabaseName = dbn
 			var queryText sql.NullString
-			if err := rows.Scan(&qs.QueryHash, &queryText, &qs.Executions,
-				&qs.AvgDurationMs, &qs.AvgCpuMs, &qs.AvgLogicalReads, &qs.TotalCpuMs); err != nil {
+			if err := rows.Scan(&qs.QueryHash, &queryText, &qs.PlanID, &qs.IntervalID, &qs.Executions,
+				&qs.AvgDurationMs, &qs.AvgCpuMs, &qs.AvgLogicalReads, &qs.TotalCpuMs, &qs.LastExecutionTime); err != nil {
 				log.Printf("[MSSQL] FetchQueryStoreStats Scan Error: %v", err)
 				continue
 			}
@@ -582,7 +680,7 @@ func (c *MssqlRepository) FetchQueryStoreStats(instanceName string) ([]QueryStor
 
 func (c *MssqlRepository) listUserDatabaseNamesForQueryStore(db *sql.DB) ([]string, error) {
 	q := `
-		SELECT d.name
+		SELECT /* SQL_OPTIMA */   d.name
 		FROM sys.databases d
 		WHERE d.database_id > 4
 		  AND d.state = 0
@@ -606,29 +704,39 @@ func (c *MssqlRepository) listUserDatabaseNamesForQueryStore(db *sql.DB) ([]stri
 
 func (c *MssqlRepository) fetchQueryStoreStatsSingleDB(db *sql.DB, labelDB string) ([]QueryStoreStats, error) {
 	query := `
-		SELECT TOP 50
-			CONVERT(VARCHAR(40), q.query_hash) AS query_hash,
-			LEFT(qt.query_sql_text, 500) AS query_text,
+		SELECT /* SQL_OPTIMA */   TOP 100
+			CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
+			LEFT(qt.query_sql_text, 1000) AS query_text,
+			p.plan_id,
+			rs.runtime_stats_interval_id,
 			ISNULL(rs.count_executions, 0) AS executions,
 			ISNULL(rs.avg_duration, 0) / 1000.0 AS avg_duration_ms,
 			ISNULL(rs.avg_cpu_time, 0) / 1000.0 AS avg_cpu_ms,
 			ISNULL(rs.avg_logical_io_reads, 0) AS avg_logical_reads,
-			(ISNULL(rs.avg_cpu_time, 0) * ISNULL(rs.count_executions, 1)) / 1000.0 AS total_cpu_ms
+			(ISNULL(rs.avg_cpu_time, 0) * ISNULL(rs.count_executions, 1)) / 1000.0 AS total_cpu_ms,
+			rs.last_execution_time
 		FROM sys.query_store_query q
 		INNER JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
 		INNER JOIN sys.query_store_plan p ON q.query_id = p.query_id
 		INNER JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-		LEFT JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
 		WHERE q.is_internal_query = 0
 		  AND ISNULL(rs.count_executions, 0) > 0
+		  AND qt.query_sql_text NOT LIKE '%/* SQL_OPTIMA */%'
 		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sql_optima%'
 		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sqloptima%'
 		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sys.dm_%'
-		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sys.query_store_%'
+		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sys.query_store%'
 		  AND LOWER(ISNULL(qt.query_sql_text, '')) NOT LIKE '%sp_server_diagnostics%'
+		  AND rs.last_execution_time > DATEADD(minute, -10, GETUTCDATE())
 		  AND (
-			rs.last_execution_time >= DATEADD(day, -7, SYSDATETIMEOFFSET())
-			OR rsi.end_time >= DATEADD(day, -7, GETDATE())
+			  rs.avg_cpu_time > 10000 
+			  OR rs.avg_logical_io_reads > 500 
+			  OR rs.count_executions > 100
+		  )
+		  AND q.query_id NOT IN (
+			  SELECT /* SQL_OPTIMA */   query_id 
+			  FROM sys.query_store_query 
+			  WHERE last_bind_duration = 0
 		  )
 		ORDER BY (ISNULL(rs.avg_cpu_time, 0) * ISNULL(rs.count_executions, 0)) DESC
 	`
@@ -645,8 +753,8 @@ func (c *MssqlRepository) fetchQueryStoreStatsSingleDB(db *sql.DB, labelDB strin
 			qs.DatabaseName = "default"
 		}
 		var queryText sql.NullString
-		if err := rows.Scan(&qs.QueryHash, &queryText, &qs.Executions,
-			&qs.AvgDurationMs, &qs.AvgCpuMs, &qs.AvgLogicalReads, &qs.TotalCpuMs); err != nil {
+		if err := rows.Scan(&qs.QueryHash, &queryText, &qs.PlanID, &qs.IntervalID, &qs.Executions,
+			&qs.AvgDurationMs, &qs.AvgCpuMs, &qs.AvgLogicalReads, &qs.TotalCpuMs, &qs.LastExecutionTime); err != nil {
 			continue
 		}
 		if queryText.Valid {
@@ -686,10 +794,10 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
 	}
 
-	checkQuery := `SELECT COUNT(*) FROM sys.dm_hadr_availability_group_states`
+	checkQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.availability_groups`
 	var agCount int
 	if err := db.QueryRow(checkQuery).Scan(&agCount); err != nil {
-		log.Printf("[MSSQL] FetchAGHealthStats AG not available for %s: %v (not Enterprise Edition or AG not configured)", instanceName, err)
+		log.Printf("[MSSQL] FetchAGHealthStats AG metadata check failed for %s: %v (likely not configured or no permissions to sys.availability_groups)", instanceName, err)
 		return []AGHealthStats{}, nil
 	}
 
@@ -700,7 +808,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 	// Check if database states table exists (may not exist on all AG configurations)
 	hasDbStates := true
 	var dbStatesCheck int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sys.dm_hadr_availability_database_states`).Scan(&dbStatesCheck); err != nil {
+	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_hadr_availability_database_states`).Scan(&dbStatesCheck); err != nil {
 		log.Printf("[MSSQL] FetchAGHealthStats: dm_hadr_availability_database_states not available for %s: %v", instanceName, err)
 		hasDbStates = false
 	}
@@ -708,7 +816,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 	// Check if secondary_lag_seconds column exists (added in SQL Server 2016 SP1)
 	hasSecondaryLag := true
 	var lagCheck int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'secondary_lag_seconds'`).Scan(&lagCheck); err != nil || lagCheck == 0 {
+	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'secondary_lag_seconds'`).Scan(&lagCheck); err != nil || lagCheck == 0 {
 		log.Printf("[MSSQL] FetchAGHealthStats: secondary_lag_seconds not available for %s (pre-2016 SP1)", instanceName)
 		hasSecondaryLag = false
 	}
@@ -716,7 +824,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 	// Check if last_redone_time column exists (added in SQL Server 2016)
 	hasLastRedoneTime := true
 	var redoCheck int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'last_redone_time'`).Scan(&redoCheck); err != nil || redoCheck == 0 {
+	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'last_redone_time'`).Scan(&redoCheck); err != nil || redoCheck == 0 {
 		log.Printf("[MSSQL] FetchAGHealthStats: last_redone_time not available for %s (pre-2016)", instanceName)
 		hasLastRedoneTime = false
 	}
@@ -724,7 +832,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 	// Check if last_hardened_time column exists (added in SQL Server 2016 SP1 CU6)
 	hasLastHardenedTime := true
 	var hardenedCheck int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'last_hardened_time'`).Scan(&hardenedCheck); err != nil || hardenedCheck == 0 {
+	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'last_hardened_time'`).Scan(&hardenedCheck); err != nil || hardenedCheck == 0 {
 		log.Printf("[MSSQL] FetchAGHealthStats: last_hardened_time not available for %s (pre-2016 SP1 CU6)", instanceName)
 		hasLastHardenedTime = false
 	}
@@ -732,7 +840,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 	// Check if log_send_rate column exists (added in SQL Server 2016)
 	hasLogSendRate := true
 	var logRateCheck int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'log_send_rate'`).Scan(&logRateCheck); err != nil || logRateCheck == 0 {
+	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'log_send_rate'`).Scan(&logRateCheck); err != nil || logRateCheck == 0 {
 		log.Printf("[MSSQL] FetchAGHealthStats: log_send_rate not available for %s (pre-2016)", instanceName)
 		hasLogSendRate = false
 	}
@@ -740,7 +848,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 	// Check if undo_rate column exists (added in SQL Server 2016)
 	hasUndoRate := true
 	var undoRateCheck int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'undo_rate'`).Scan(&undoRateCheck); err != nil || undoRateCheck == 0 {
+	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'undo_rate'`).Scan(&undoRateCheck); err != nil || undoRateCheck == 0 {
 		log.Printf("[MSSQL] FetchAGHealthStats: undo_rate not available for %s (pre-2016)", instanceName)
 		hasUndoRate = false
 	}
@@ -748,7 +856,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 	// Check if undo_queue_size column exists (added in SQL Server 2016)
 	hasUndoQueueSize := true
 	var undoQueueCheck int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'undo_queue_size'`).Scan(&undoQueueCheck); err != nil || undoQueueCheck == 0 {
+	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'undo_queue_size'`).Scan(&undoQueueCheck); err != nil || undoQueueCheck == 0 {
 		log.Printf("[MSSQL] FetchAGHealthStats: undo_queue_size not available for %s (pre-2016)", instanceName)
 		hasUndoQueueSize = false
 	}
@@ -758,7 +866,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 	if !hasSecondaryLag || !hasLastRedoneTime || !hasLastHardenedTime || !hasLogSendRate || !hasUndoRate || !hasUndoQueueSize {
 		log.Printf("[MSSQL] FetchAGHealthStats: Using minimal fallback query for %s (missing columns detected)", instanceName)
 		query = `
-			SELECT 
+			SELECT /* SQL_OPTIMA */   
 				ag.name AS ag_name,
 				ar.replica_server_name,
 				'N/A' AS database_name,
@@ -781,11 +889,11 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 		`
 	} else if hasDbStates {
 		query = `
-			SELECT 
+			SELECT /* SQL_OPTIMA */   
 				ag.name AS ag_name,
 				ar.replica_server_name,
 				COALESCE(DB_NAME(dbs.database_id), 'N/A') AS database_name,
-				rs.role_desc AS replica_role,
+				ISNULL(rs.role_desc, 'UNKNOWN') AS replica_role,
 				COALESCE(drs.synchronization_state, 0) AS synchronization_state,
 				COALESCE(drs.synchronization_state_desc, 'UNKNOWN') AS synchronization_state_desc,
 				CASE WHEN rs.role_desc = 'PRIMARY' THEN 1 ELSE 0 END AS is_primary_replica,
@@ -800,18 +908,18 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 				ISNULL(drs.secondary_lag_seconds, 0) AS secondary_lag_seconds
 			FROM sys.availability_groups ag
 			INNER JOIN sys.availability_replicas ar ON ag.group_id = ar.group_id
-			INNER JOIN sys.dm_hadr_availability_group_states rs ON ag.group_id = rs.group_id
-			INNER JOIN sys.dm_hadr_availability_replica_states drs ON ar.replica_id = drs.replica_id
+			LEFT JOIN sys.dm_hadr_availability_group_states rs ON ag.group_id = rs.group_id
+			LEFT JOIN sys.dm_hadr_availability_replica_states drs ON ar.replica_id = drs.replica_id
 			LEFT JOIN sys.dm_hadr_availability_database_states dbs ON ar.replica_id = dbs.replica_id AND dbs.database_id IS NOT NULL
 			ORDER BY ag.name, ar.replica_server_name
 		`
 	} else {
 		query = `
-			SELECT 
+			SELECT /* SQL_OPTIMA */   
 				ag.name AS ag_name,
 				ar.replica_server_name,
 				'N/A' AS database_name,
-				rs.role_desc AS replica_role,
+				ISNULL(rs.role_desc, 'UNKNOWN') AS replica_role,
 				COALESCE(drs.synchronization_state, 0) AS synchronization_state,
 				COALESCE(drs.synchronization_state_desc, 'UNKNOWN') AS synchronization_state_desc,
 				CASE WHEN rs.role_desc = 'PRIMARY' THEN 1 ELSE 0 END AS is_primary_replica,
@@ -826,8 +934,8 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 				ISNULL(drs.secondary_lag_seconds, 0) AS secondary_lag_seconds
 			FROM sys.availability_groups ag
 			INNER JOIN sys.availability_replicas ar ON ag.group_id = ar.group_id
-			INNER JOIN sys.dm_hadr_availability_group_states rs ON ag.group_id = rs.group_id
-			INNER JOIN sys.dm_hadr_availability_replica_states drs ON ar.replica_id = drs.replica_id
+			LEFT JOIN sys.dm_hadr_availability_group_states rs ON ag.group_id = rs.group_id
+			LEFT JOIN sys.dm_hadr_availability_replica_states drs ON ar.replica_id = drs.replica_id
 			ORDER BY ag.name, ar.replica_server_name
 		`
 	}
@@ -839,7 +947,7 @@ func (c *MssqlRepository) FetchAGHealthStats(instanceName string) ([]AGHealthSta
 		if strings.Contains(err.Error(), "Invalid column name") {
 			log.Printf("[MSSQL] FetchAGHealthStats: Retrying with ultra-minimal fallback query for %s", instanceName)
 			query = `
-				SELECT 
+				SELECT /* SQL_OPTIMA */   
 					ag.name AS ag_name,
 					ar.replica_server_name,
 					'N/A' AS database_name,
@@ -942,7 +1050,7 @@ func (c *MssqlRepository) FetchDatabaseThroughput(instanceName string) ([]Databa
 	}
 
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			DB_NAME(s.database_id) AS database_name,
 			ISNULL(SUM(s.user_seeks), 0) AS idx_seeks,
 			ISNULL(SUM(s.user_scans), 0) AS idx_scans,
@@ -984,7 +1092,7 @@ func (c *MssqlRepository) FetchDatabaseThroughput(instanceName string) ([]Databa
 
 	// Also get batch requests per database
 	batchQuery := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			DB_NAME(r.database_id) AS database_name,
 			COUNT(*) AS batch_count
 		FROM sys.dm_exec_requests r
@@ -1052,7 +1160,7 @@ func (c *MssqlRepository) FetchSchedulerWG(instanceName string) ([]map[string]in
 	// (Enterprise, Developer, and some editions depending on features). If unavailable,
 	// callers should handle empty results gracefully.
 	query := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			COALESCE(rp.name, 'default') AS pool_name,
 			COALESCE(wg.name, 'default') AS group_name,
 			COALESCE(wgs.active_request_count, 0) AS active_requests,
@@ -1062,7 +1170,7 @@ func (c *MssqlRepository) FetchSchedulerWG(instanceName string) ([]map[string]in
 		LEFT JOIN sys.resource_governor_workload_groups wgm ON wg.group_id = wgm.group_id
 		LEFT JOIN sys.resource_governor_resource_pools rp ON wgm.pool_id = rp.pool_id
 		LEFT JOIN sys.dm_resource_governor_workload_groups_stats wgs ON wg.group_id = wgs.group_id
-		CROSS JOIN (SELECT SUM(total_cpu_usage_ms) AS total_cpu_usage_ms FROM sys.dm_resource_governor_workload_groups_stats) rgs
+		CROSS JOIN (SELECT /* SQL_OPTIMA */   SUM(total_cpu_usage_ms) AS total_cpu_usage_ms FROM sys.dm_resource_governor_workload_groups_stats) rgs
 		ORDER BY cpu_usage_percent DESC, pool_name, group_name
 	`
 
@@ -1085,6 +1193,229 @@ func (c *MssqlRepository) FetchSchedulerWG(instanceName string) ([]map[string]in
 			"active_requests":   active,
 			"queued_requests":   queued,
 			"cpu_usage_percent": cpuPct,
+		})
+	}
+	return results, nil
+}
+
+// CollectSQLServerStorageMetrics fetches database size metrics for historical snapshots.
+func (c *MssqlRepository) CollectSQLServerStorageMetrics(instanceName string) ([]map[string]interface{}, error) {
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return nil, fmt.Errorf("connection not found")
+	}
+
+	query := `
+		SELECT /* SQL_OPTIMA */   
+			DB_NAME(database_id) AS database_name,
+			SUM(CASE WHEN type_desc = 'ROWS' THEN size * 8 / 1024.0 ELSE 0 END) AS data_size_mb,
+			SUM(CASE WHEN type_desc = 'LOG' THEN size * 8 / 1024.0 ELSE 0 END) AS log_size_mb,
+			SUM(size * 8 / 1024.0) AS total_size_mb
+		FROM sys.master_files WITH (NOLOCK)
+		WHERE database_id > 4 AND state = 0
+		  AND LOWER(DB_NAME(database_id)) <> N'distribution'
+		GROUP BY database_id
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var dbName string
+		var dataMB, logMB, totalMB float64
+		if err := rows.Scan(&dbName, &dataMB, &logMB, &totalMB); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"database_name": dbName,
+			"data_size_mb":  dataMB,
+			"log_size_mb":   logMB,
+			"total_size_mb": totalMB,
+		})
+	}
+	return results, nil
+}
+
+// CollectSQLServerTableSizeMetrics fetches table size and row count details for historical snapshots.
+func (c *MssqlRepository) CollectSQLServerTableSizeMetrics(instanceName, databaseName string) ([]map[string]interface{}, error) {
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return nil, fmt.Errorf("connection not found")
+	}
+
+	query := fmt.Sprintf(`
+		USE [%s];
+		SELECT /* SQL_OPTIMA */   
+			DB_NAME() AS database_name,
+			SCHEMA_NAME(t.schema_id) AS schema_name,
+			t.name AS table_name,
+			p.rows AS row_count,
+			SUM(a.total_pages) * 8 / 1024.0 AS total_mb,
+			SUM(a.data_pages) * 8 / 1024.0 AS data_mb,
+			(SUM(a.total_pages) - SUM(a.used_pages)) * 8 / 1024.0 AS unused_mb,
+			(SUM(a.used_pages) - SUM(a.data_pages)) * 8 / 1024.0 AS index_mb
+		FROM sys.tables t WITH (NOLOCK)
+		INNER JOIN sys.indexes i WITH (NOLOCK) ON t.object_id = i.object_id
+		INNER JOIN sys.partitions p WITH (NOLOCK) ON i.object_id = p.object_id AND i.index_id = p.index_id
+		INNER JOIN sys.allocation_units a WITH (NOLOCK) ON p.partition_id = a.container_id
+		WHERE t.is_ms_shipped = 0
+		GROUP BY t.schema_id, t.name, p.rows
+		ORDER BY total_mb DESC
+	`, strings.ReplaceAll(databaseName, "]", "]]"))
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var dbn, sn, tn string
+		var rc int64
+		var tmb, dmb, umb, imb float64
+		if err := rows.Scan(&dbn, &sn, &tn, &rc, &tmb, &dmb, &umb, &imb); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"database_name": dbn, "schema_name": sn, "table_name": tn, "row_count": rc,
+			"total_mb": tmb, "data_mb": dmb, "unused_mb": umb, "index_mb": imb,
+		})
+	}
+	return results, nil
+}
+
+// CollectSQLServerIndexUsageMetrics fetches index usage counters.
+func (c *MssqlRepository) CollectSQLServerIndexUsageMetrics(instanceName, databaseName string) ([]map[string]interface{}, error) {
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return nil, fmt.Errorf("connection not found")
+	}
+
+	query := fmt.Sprintf(`
+		USE [%s];
+		SELECT /* SQL_OPTIMA */   
+			DB_NAME() AS database_name,
+			SCHEMA_NAME(t.schema_id) AS schema_name,
+			t.name AS table_name,
+			i.name AS index_name,
+			i.type_desc AS index_type,
+			ISNULL(s.user_seeks, 0) AS user_seeks,
+			ISNULL(s.user_scans, 0) AS user_scans,
+			ISNULL(s.user_lookups, 0) AS user_lookups,
+			ISNULL(s.user_updates, 0) AS user_updates,
+			(SELECT /* SQL_OPTIMA */   SUM(a.total_pages) * 8 / 1024.0 FROM sys.partitions p WITH (NOLOCK) JOIN sys.allocation_units a WITH (NOLOCK) ON p.partition_id = a.container_id WHERE p.object_id = i.object_id AND p.index_id = i.index_id) AS index_size_mb
+		FROM sys.indexes i WITH (NOLOCK)
+		INNER JOIN sys.tables t WITH (NOLOCK) ON i.object_id = t.object_id
+		LEFT JOIN sys.dm_db_index_usage_stats s WITH (NOLOCK) ON s.object_id = i.object_id AND s.index_id = i.index_id AND s.database_id = DB_ID()
+		WHERE t.is_ms_shipped = 0 AND i.name IS NOT NULL
+	`, strings.ReplaceAll(databaseName, "]", "]]"))
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var dbn, sn, tn, in, it string
+		var seeks, scans, lookups, updates int64
+		var sizeMB float64
+		if err := rows.Scan(&dbn, &sn, &tn, &in, &it, &seeks, &scans, &lookups, &updates, &sizeMB); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"database_name": dbn, "schema_name": sn, "table_name": tn, "index_name": in, "index_type": it,
+			"user_seeks": seeks, "user_scans": scans, "user_lookups": lookups, "user_updates": updates, "index_size_mb": sizeMB,
+		})
+	}
+	return results, nil
+}
+
+// CollectSQLServerIndexFragmentationMetrics fetches fragmentation details.
+func (c *MssqlRepository) CollectSQLServerIndexFragmentationMetrics(instanceName, databaseName string) ([]map[string]interface{}, error) {
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return nil, fmt.Errorf("connection not found")
+	}
+
+	query := fmt.Sprintf(`
+		USE [%s];
+		SELECT /* SQL_OPTIMA */   
+			DB_NAME() AS database_name,
+			SCHEMA_NAME(t.schema_id) AS schema_name,
+			t.name AS table_name,
+			i.name AS index_name,
+			s.avg_fragmentation_in_percent,
+			s.page_count
+		FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') s
+		INNER JOIN sys.indexes i WITH (NOLOCK) ON s.object_id = i.object_id AND s.index_id = i.index_id
+		INNER JOIN sys.tables t WITH (NOLOCK) ON i.object_id = t.object_id
+		WHERE t.is_ms_shipped = 0 AND i.name IS NOT NULL AND s.page_count > 100
+	`, strings.ReplaceAll(databaseName, "]", "]]"))
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var dbn, sn, tn, in string
+		var frag float64
+		var pc int64
+		if err := rows.Scan(&dbn, &sn, &tn, &in, &frag, &pc); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"database_name": dbn, "schema_name": sn, "table_name": tn, "index_name": in, "avg_fragmentation_pct": frag, "page_count": pc,
+		})
+	}
+	return results, nil
+}
+
+// CollectSQLServerTableStructureMetrics fetches structural risk signals.
+func (c *MssqlRepository) CollectSQLServerTableStructureMetrics(instanceName, databaseName string) ([]map[string]interface{}, error) {
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return nil, fmt.Errorf("connection not found")
+	}
+
+	query := fmt.Sprintf(`
+		USE [%s];
+		SELECT /* SQL_OPTIMA */   
+			DB_NAME() AS database_name,
+			SCHEMA_NAME(t.schema_id) AS schema_name,
+			t.name AS table_name,
+			CAST(MAX(CASE WHEN i.index_id = 1 THEN 1 ELSE 0 END) AS BIT) AS has_clustered_index,
+			CAST(MAX(CASE WHEN i.is_primary_key = 1 THEN 1 ELSE 0 END) AS BIT) AS has_primary_key
+		FROM sys.tables t WITH (NOLOCK)
+		INNER JOIN sys.indexes i WITH (NOLOCK) ON t.object_id = i.object_id
+		WHERE t.is_ms_shipped = 0
+		GROUP BY t.schema_id, t.name
+	`, strings.ReplaceAll(databaseName, "]", "]]"))
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var dbn, sn, tn string
+		var hasClustered, hasPK bool
+		if err := rows.Scan(&dbn, &sn, &tn, &hasClustered, &hasPK); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"database_name": dbn, "schema_name": sn, "table_name": tn, "has_clustered_index": hasClustered, "has_primary_key": hasPK,
 		})
 	}
 	return results, nil
@@ -1160,62 +1491,77 @@ func (c *MssqlRepository) FetchLogShippingHealth(instanceName string) ([]LogShip
 		return nil, fmt.Errorf("no connection for %s", instanceName)
 	}
 
-	// Quick existence check — log_shipping_secondary_databases is absent on instances that
-	// have never had log shipping configured.
-	var lsCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM msdb.dbo.log_shipping_secondary_databases WITH (NOLOCK)`).Scan(&lsCount); err != nil {
-		// Object not found or no msdb access — treat as not configured.
-		return []LogShippingHealth{}, nil
-	}
-	if lsCount == 0 {
-		return []LogShippingHealth{}, nil
-	}
-
-	// Pull secondary monitor rows.
-	rows, err := db.Query(`
-		SELECT
-			ISNULL(lss.primary_server,    '')     AS primary_server,
-			ISNULL(lss.primary_database,  '')     AS primary_database,
-			ISNULL(@@SERVERNAME,          '')     AS secondary_server,
-			ISNULL(lss.secondary_database,'')     AS secondary_database,
-			lsm.last_backup_date,
-			ISNULL(lsm.last_backup_file,  '')     AS last_backup_file,
-			lsm.last_restored_date,
-			lsm.last_copied_date,
-			lss.restore_delay,
-			lss.restore_threshold,
-			lsm.status
-		FROM msdb.dbo.log_shipping_secondary_databases   lss WITH (NOLOCK)
-		LEFT JOIN msdb.dbo.log_shipping_monitor_secondary lsm WITH (NOLOCK)
-		    ON lsm.secondary_server   = @@SERVERNAME
-		   AND lsm.secondary_database = lss.secondary_database
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var results []LogShippingHealth
-	for rows.Next() {
-		var h LogShippingHealth
-		h.IsPrimary = false
-		if err := rows.Scan(
-			&h.PrimaryServer, &h.PrimaryDatabase,
-			&h.SecondaryServer, &h.SecondaryDatabase,
-			&h.LastBackupDate,
-			&h.LastBackupFile,
-			&h.LastRestoreDate,
-			&h.LastCopiedDate,
-			&h.RestoreDelayMinutes,
-			&h.RestoreThresholdMinutes,
-			&h.Status,
-		); err != nil {
-			continue
+
+	// 1. Check Primary Role
+	var primaryCount int
+	_ = db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM msdb.dbo.log_shipping_primary_databases WITH (NOLOCK)`).Scan(&primaryCount)
+	if primaryCount > 0 {
+		rows, err := db.Query(`
+			SELECT /* SQL_OPTIMA */  
+				ISNULL(CAST(SERVERPROPERTY('ServerName') AS NVARCHAR(128)), '') AS primary_server,
+				lp.primary_database,
+				'' AS secondary_server,
+				'' AS secondary_database,
+				lpm.last_backup_date,
+				ISNULL(lpm.last_backup_file, '') AS last_backup_file,
+				CAST(NULL AS DATETIME) AS last_restored_date,
+				CAST(NULL AS DATETIME) AS last_copied_date,
+				0 AS restore_delay,
+				0 AS restore_threshold,
+				ISNULL(lpm.status, 1) AS status
+			FROM msdb.dbo.log_shipping_primary_databases lp WITH (NOLOCK)
+			LEFT JOIN msdb.dbo.log_shipping_monitor_primary lpm WITH (NOLOCK) 
+				ON lpm.primary_database = lp.primary_database
+		`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var h LogShippingHealth
+				h.IsPrimary = true
+				if err := rows.Scan(&h.PrimaryServer, &h.PrimaryDatabase, &h.SecondaryServer, &h.SecondaryDatabase,
+					&h.LastBackupDate, &h.LastBackupFile, &h.LastRestoreDate, &h.LastCopiedDate,
+					&h.RestoreDelayMinutes, &h.RestoreThresholdMinutes, &h.Status); err == nil {
+					results = append(results, h)
+				}
+			}
 		}
-		results = append(results, h)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+
+	// 2. Check Secondary Role
+	var secondaryCount int
+	_ = db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM msdb.dbo.log_shipping_secondary_databases WITH (NOLOCK)`).Scan(&secondaryCount)
+	if secondaryCount > 0 {
+		rows, err := db.Query(`
+			SELECT /* SQL_OPTIMA */  
+				ISNULL(lss.primary_server,    '')     AS primary_server,
+				ISNULL(lss.primary_database,  '')     AS primary_database,
+				ISNULL(CAST(SERVERPROPERTY('ServerName') AS NVARCHAR(128)), '') AS secondary_server,
+				ISNULL(lss.secondary_database,'')     AS secondary_database,
+				lsm.last_backup_date,
+				ISNULL(lsm.last_backup_file,  '')     AS last_backup_file,
+				lsm.last_restored_date,
+				lsm.last_copied_date,
+				lss.restore_delay,
+				lss.restore_threshold,
+				ISNULL(lsm.status, 1) AS status
+			FROM msdb.dbo.log_shipping_secondary_databases   lss WITH (NOLOCK)
+			LEFT JOIN msdb.dbo.log_shipping_monitor_secondary lsm WITH (NOLOCK)
+			   ON lsm.secondary_database = lss.secondary_database
+		`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var h LogShippingHealth
+				h.IsPrimary = false
+				if err := rows.Scan(&h.PrimaryServer, &h.PrimaryDatabase, &h.SecondaryServer, &h.SecondaryDatabase,
+					&h.LastBackupDate, &h.LastBackupFile, &h.LastRestoreDate, &h.LastCopiedDate,
+					&h.RestoreDelayMinutes, &h.RestoreThresholdMinutes, &h.Status); err == nil {
+					results = append(results, h)
+				}
+			}
+		}
 	}
+
 	return results, nil
 }

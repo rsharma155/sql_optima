@@ -18,12 +18,12 @@ type PgDatabaseSizeRow struct {
 }
 
 type PgDatabaseSizeStats struct {
-	Instance          string              `json:"instance"`
-	Timestamp         string              `json:"timestamp"`
-	TotalBytes        int64               `json:"total_bytes"`
-	GrowthBytesPerHr  float64             `json:"growth_bytes_per_hr,omitempty"`
-	ByDatabase        []PgDatabaseSizeRow  `json:"by_database"`
-	Error             string              `json:"error,omitempty"`
+	Instance         string              `json:"instance"`
+	Timestamp        string              `json:"timestamp"`
+	TotalBytes       int64               `json:"total_bytes"`
+	GrowthBytesPerHr float64             `json:"growth_bytes_per_hr,omitempty"`
+	ByDatabase       []PgDatabaseSizeRow `json:"by_database"`
+	Error            string              `json:"error,omitempty"`
 }
 
 func (c *PgRepository) GetDatabaseSizeStats(instanceName string) PgDatabaseSizeStats {
@@ -41,7 +41,7 @@ func (c *PgRepository) GetDatabaseSizeStats(instanceName string) PgDatabaseSizeS
 	}
 
 	rows, err := db.Query(`
-		SELECT datname, pg_database_size(datname)
+		SELECT /* SQL_OPTIMA */   datname, pg_database_size(datname)
 		FROM pg_database
 		WHERE datistemplate = false
 		ORDER BY pg_database_size(datname) DESC;
@@ -84,4 +84,3 @@ func (c *PgRepository) GetDatabaseSizeStats(instanceName string) PgDatabaseSizeS
 	}
 	return out
 }
-

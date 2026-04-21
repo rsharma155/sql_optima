@@ -33,7 +33,7 @@ func (c *MssqlRepository) FetchAgentJobs(instanceName string) models.JobMetrics 
 
 	// 1. Jobs Overview (Summary)
 	summaryQuery := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			COUNT(*) AS TotalJobs,
 			SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS EnabledJobs,
 			SUM(CASE WHEN enabled = 0 THEN 1 ELSE 0 END) AS DisabledJobs
@@ -47,7 +47,7 @@ func (c *MssqlRepository) FetchAgentJobs(instanceName string) models.JobMetrics 
 	}
 
 	// Pull running jobs explicit checks
-	runningQuery := `SELECT COUNT(*) FROM msdb.dbo.sysjobactivity WITH (NOLOCK) WHERE start_execution_date IS NOT NULL AND stop_execution_date IS NULL`
+	runningQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM msdb.dbo.sysjobactivity WITH (NOLOCK) WHERE start_execution_date IS NOT NULL AND stop_execution_date IS NULL`
 	if err := db.QueryRow(runningQuery).Scan(&metrics.Summary.RunningJobs); err != nil {
 		log.Printf("[MSSQL] FetchAgentJobs: Failed to fetch running jobs for %s: %v", instanceName, err)
 		metrics.LastError = "failed to fetch running jobs"
@@ -56,7 +56,7 @@ func (c *MssqlRepository) FetchAgentJobs(instanceName string) models.JobMetrics 
 
 	// Failed in last 24h
 	failedQuery := `
-		SELECT COUNT(*) FROM msdb.dbo.sysjobhistory h WITH (NOLOCK)
+		SELECT /* SQL_OPTIMA */   COUNT(*) FROM msdb.dbo.sysjobhistory h WITH (NOLOCK)
 		JOIN msdb.dbo.sysjobs j WITH (NOLOCK) ON h.job_id = j.job_id
 		WHERE h.run_status = 0 AND h.run_date >= CAST(CONVERT(VARCHAR(8), GETDATE()-1, 112) AS INT) AND h.step_id = 0
 	`
@@ -68,8 +68,10 @@ func (c *MssqlRepository) FetchAgentJobs(instanceName string) models.JobMetrics 
 
 	// 2. Job List
 	listQuery := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			ISNULL(j.name, 'Unknown') AS JobName,
+			ISNULL(c.name, 'Uncategorized') AS Category,
+			ISNULL(j.description, '') AS Description,
 			CAST(j.enabled AS BIT),
 			ISNULL(SUSER_SNAME(j.owner_sid), 'Unknown') AS Owner,
 			ISNULL(CONVERT(VARCHAR, j.date_created, 120), '') AS date_created,
@@ -87,12 +89,13 @@ func (c *MssqlRepository) FetchAgentJobs(instanceName string) models.JobMetrics 
 				ELSE 'Unknown'
 			END AS LastRunStatus
 		FROM msdb.dbo.sysjobs j WITH (NOLOCK)
+		LEFT JOIN msdb.dbo.syscategories c WITH (NOLOCK) ON j.category_id = c.category_id
 		LEFT JOIN (
-			SELECT job_id, MAX(session_id) as session_id FROM msdb.dbo.sysjobactivity WITH (NOLOCK) GROUP BY job_id
+			SELECT /* SQL_OPTIMA */   job_id, MAX(session_id) as session_id FROM msdb.dbo.sysjobactivity WITH (NOLOCK) GROUP BY job_id
 		) max_ja ON j.job_id = max_ja.job_id
 		LEFT JOIN msdb.dbo.sysjobactivity ja WITH (NOLOCK) ON max_ja.job_id = ja.job_id AND max_ja.session_id = ja.session_id
 		LEFT JOIN (
-			SELECT job_id, MAX(instance_id) AS instance_id FROM msdb.dbo.sysjobhistory WITH (NOLOCK) WHERE step_id = 0 GROUP BY job_id
+			SELECT /* SQL_OPTIMA */   job_id, MAX(instance_id) AS instance_id FROM msdb.dbo.sysjobhistory WITH (NOLOCK) WHERE step_id = 0 GROUP BY job_id
 		) max_h ON j.job_id = max_h.job_id
 		LEFT JOIN msdb.dbo.sysjobhistory h WITH (NOLOCK) ON max_h.instance_id = h.instance_id
 	`
@@ -101,7 +104,7 @@ func (c *MssqlRepository) FetchAgentJobs(instanceName string) models.JobMetrics 
 		defer listRows.Close()
 		for listRows.Next() {
 			var j models.JobDetail
-			if err := listRows.Scan(&j.JobName, &j.Enabled, &j.Owner, &j.CreatedDate, &j.CurrentStatus, &j.LastRunDate, &j.LastRunTime, &j.LastRunStatus); err == nil {
+			if err := listRows.Scan(&j.JobName, &j.Category, &j.Description, &j.Enabled, &j.Owner, &j.CreatedDate, &j.CurrentStatus, &j.LastRunDate, &j.LastRunTime, &j.LastRunStatus); err == nil {
 				metrics.Jobs = append(metrics.Jobs, j)
 			}
 		}
@@ -109,7 +112,7 @@ func (c *MssqlRepository) FetchAgentJobs(instanceName string) models.JobMetrics 
 
 	// 3. Next Run Schedules
 	schedQuery := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			ISNULL(j.name, 'Unknown') AS JobName,
 			ISNULL(j.enabled, 0),
 			ISNULL(s.name, 'N/A') AS ScheduleName,
@@ -137,7 +140,7 @@ func (c *MssqlRepository) FetchAgentJobs(instanceName string) models.JobMetrics 
 
 	// 4. Job Failures (Last 100 to limit payload sizes natively)
 	failQuery := `
-		SELECT TOP 100
+		SELECT /* SQL_OPTIMA */   TOP 100
 			ISNULL(j.name, 'Unknown'),
 			ISNULL(h.step_name, 'Unknown'),
 			ISNULL(SUBSTRING(h.message, 1, 300), 'No Trace'),

@@ -62,13 +62,13 @@ func (tl *TimescaleLogger) GetPlanCacheHealth(ctx context.Context, instanceName 
 			continue
 		}
 		out = append(out, map[string]interface{}{
-			"capture_timestamp":     ts,
-			"total_cache_mb":        total,
-			"single_use_cache_mb":   single,
-			"single_use_cache_pct":  pct,
-			"adhoc_cache_mb":        adhoc,
-			"prepared_cache_mb":     prep,
-			"proc_cache_mb":         proc,
+			"capture_timestamp":    ts,
+			"total_cache_mb":       total,
+			"single_use_cache_mb":  single,
+			"single_use_cache_pct": pct,
+			"adhoc_cache_mb":       adhoc,
+			"prepared_cache_mb":    prep,
+			"proc_cache_mb":        proc,
 		})
 	}
 	return out, rows.Err()
@@ -226,4 +226,3 @@ func (tl *TimescaleLogger) GetTempdbTopConsumers(ctx context.Context, instanceNa
 	}
 	return out, rows.Err()
 }
-

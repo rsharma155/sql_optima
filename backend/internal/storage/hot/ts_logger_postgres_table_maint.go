@@ -18,6 +18,7 @@ import (
 type PostgresTableMaintRow struct {
 	CaptureTimestamp   time.Time  `json:"capture_timestamp"`
 	ServerInstanceName string     `json:"server_instance_name"`
+	DatabaseName       string     `json:"database_name"`
 	SchemaName         string     `json:"schema_name"`
 	TableName          string     `json:"table_name"`
 	TotalBytes         int64      `json:"total_bytes"`
@@ -56,18 +57,18 @@ func (tl *TimescaleLogger) LogPostgresTableMaintenance(ctx context.Context, inst
 
 	q := `
 		INSERT INTO postgres_table_maintenance_stats (
-			capture_timestamp, server_instance_name,
+			capture_timestamp, server_instance_name, database_name,
 			schema_name, table_name,
 			total_bytes, live_tuples, dead_tuples, dead_pct,
 			seq_scans, idx_scans,
 			last_vacuum, last_autovacuum, last_analyze, last_autoanalyze
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 	`
 	now := time.Now().UTC()
 	b := &pgx.Batch{}
 	for _, r := range rows {
 		b.Queue(q,
-			now, instanceName,
+			now, instanceName, r.DatabaseName,
 			r.SchemaName, r.TableName,
 			r.TotalBytes, r.LiveTuples, r.DeadTuples, r.DeadPct,
 			r.SeqScans, r.IdxScans,
@@ -84,24 +85,25 @@ func (tl *TimescaleLogger) LogPostgresTableMaintenance(ctx context.Context, inst
 	return nil
 }
 
-func (tl *TimescaleLogger) GetPostgresTableMaintenanceHistory(ctx context.Context, instanceName string, schema, table string, limit int) ([]PostgresTableMaintRow, error) {
+func (tl *TimescaleLogger) GetPostgresTableMaintenanceHistory(ctx context.Context, instanceName string, database, schema, table string, limit int) ([]PostgresTableMaintRow, error) {
 	if limit <= 0 {
 		limit = 180
 	}
 	q := `
-		SELECT capture_timestamp, server_instance_name,
+		SELECT capture_timestamp, server_instance_name, database_name,
 		       schema_name, table_name,
 		       total_bytes, live_tuples, dead_tuples, dead_pct,
 		       seq_scans, idx_scans,
 		       last_vacuum, last_autovacuum, last_analyze, last_autoanalyze
 		FROM postgres_table_maintenance_stats
 		WHERE server_instance_name = $1
-		  AND schema_name = $2
-		  AND table_name = $3
+		  AND database_name = $2
+		  AND schema_name = $3
+		  AND table_name = $4
 		ORDER BY capture_timestamp DESC
-		LIMIT $4
+		LIMIT $5
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, schema, table, limit)
+	rows, err := tl.pool.Query(ctx, q, instanceName, database, schema, table, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +113,7 @@ func (tl *TimescaleLogger) GetPostgresTableMaintenanceHistory(ctx context.Contex
 	for rows.Next() {
 		var r PostgresTableMaintRow
 		if err := rows.Scan(
-			&r.CaptureTimestamp, &r.ServerInstanceName,
+			&r.CaptureTimestamp, &r.ServerInstanceName, &r.DatabaseName,
 			&r.SchemaName, &r.TableName,
 			&r.TotalBytes, &r.LiveTuples, &r.DeadTuples, &r.DeadPct,
 			&r.SeqScans, &r.IdxScans,
@@ -130,15 +132,15 @@ func (tl *TimescaleLogger) GetLatestPostgresTableMaintenance(ctx context.Context
 	}
 	q := `
 		WITH latest AS (
-			SELECT DISTINCT ON (schema_name, table_name)
-			       capture_timestamp, server_instance_name,
+			SELECT DISTINCT ON (database_name, schema_name, table_name)
+			       capture_timestamp, server_instance_name, database_name,
 			       schema_name, table_name,
 			       total_bytes, live_tuples, dead_tuples, dead_pct,
 			       seq_scans, idx_scans,
 			       last_vacuum, last_autovacuum, last_analyze, last_autoanalyze
 			FROM postgres_table_maintenance_stats
 			WHERE server_instance_name = $1
-			ORDER BY schema_name, table_name, capture_timestamp DESC
+			ORDER BY database_name, schema_name, table_name, capture_timestamp DESC
 		)
 		SELECT *
 		FROM latest
@@ -155,7 +157,7 @@ func (tl *TimescaleLogger) GetLatestPostgresTableMaintenance(ctx context.Context
 	for rows.Next() {
 		var r PostgresTableMaintRow
 		if err := rows.Scan(
-			&r.CaptureTimestamp, &r.ServerInstanceName,
+			&r.CaptureTimestamp, &r.ServerInstanceName, &r.DatabaseName,
 			&r.SchemaName, &r.TableName,
 			&r.TotalBytes, &r.LiveTuples, &r.DeadTuples, &r.DeadPct,
 			&r.SeqScans, &r.IdxScans,
@@ -167,4 +169,3 @@ func (tl *TimescaleLogger) GetLatestPostgresTableMaintenance(ctx context.Context
 	}
 	return out, rows.Err()
 }
-

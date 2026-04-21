@@ -8,8 +8,8 @@
 package repository
 
 import (
+	"database/sql"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -63,9 +63,16 @@ func (c *PgRepository) GetTableMaintenanceStats(instanceName string, limit int) 
 		return nil, fmt.Errorf("connection not found")
 	}
 
+	return c.GetTableMaintenanceStatsForDB(db, limit)
+}
+
+func (c *PgRepository) GetTableMaintenanceStatsForDB(db *sql.DB, limit int) ([]PgTableMaintenanceStat, error) {
+	if limit <= 0 {
+		limit = 200
+	}
 	// Table-level stats. Use pg_total_relation_size for bytes and pretty formatting.
 	q := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			now() AT TIME ZONE 'UTC' AS capture_timestamp,
 			s.schemaname,
 			s.relname,
@@ -87,7 +94,6 @@ func (c *PgRepository) GetTableMaintenanceStats(instanceName string, limit int) 
 
 	rows, err := db.Query(q, limit)
 	if err != nil {
-		log.Printf("[POSTGRES] GetTableMaintenanceStats query error for %s: %v", instanceName, err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -122,4 +128,3 @@ func (c *PgRepository) GetTableMaintenanceStats(instanceName string, limit int) 
 	}
 	return out, rows.Err()
 }
-

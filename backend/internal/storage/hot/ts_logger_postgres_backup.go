@@ -140,4 +140,3 @@ func (tl *TimescaleLogger) GetPostgresBackupRunHistory(ctx context.Context, inst
 	}
 	return out, rows.Err()
 }
-

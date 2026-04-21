@@ -11,11 +11,14 @@ package repository
 
 import (
 	"fmt"
+	"log"
+	"sort"
 	"time"
 )
 
 // PgBloatEstimate holds heuristic table bloat signals for one table.
 type PgBloatEstimate struct {
+	DatabaseName     string     `json:"database_name"`
 	SchemaName       string     `json:"schema"`
 	TableName        string     `json:"table"`
 	TotalBytes       int64      `json:"total_bytes"`
@@ -75,87 +78,95 @@ func (c *PgRepository) GetBloatEstimates(instanceName string, limit int) ([]PgBl
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
-	c.mutex.RUnlock()
-	if !ok || db == nil {
-		if c.reconnectInstance(instanceName) {
-			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
-			c.mutex.RUnlock()
-		}
-	}
-	if !ok || db == nil {
-		return nil, fmt.Errorf("connection not found for %s", instanceName)
-	}
-
-	q := `
-		SELECT
-			s.schemaname,
-			s.relname,
-			pg_total_relation_size(c.oid)                                        AS total_bytes,
-			pg_size_pretty(pg_total_relation_size(c.oid))                        AS total_pretty,
-			COALESCE(s.n_live_tup, 0)                                            AS live_tuples,
-			COALESCE(s.n_dead_tup, 0)                                            AS dead_tuples,
-			CASE
-				WHEN COALESCE(s.n_live_tup,0) + COALESCE(s.n_dead_tup,0) > 0
-				THEN ROUND(100.0 * COALESCE(s.n_dead_tup,0)::numeric /
-				           (COALESCE(s.n_live_tup,0) + COALESCE(s.n_dead_tup,0)), 2)::float8
-				ELSE 0
-			END                                                                   AS dead_pct,
-			GREATEST(0,
-				ROUND((COALESCE(s.n_dead_tup,0)::numeric / NULLIF(c.reltuples, 0))
-				      * pg_relation_size(c.oid) / 1048576.0, 2)
-			)::float8                                                             AS estimated_waste_mb,
-			COALESCE(s.seq_scan, 0)                                              AS seq_scans,
-			s.last_autovacuum,
-			s.last_vacuum,
-			age(c.relfrozenxid)::bigint                                          AS table_freeze_age,
-			COALESCE(EXTRACT(EPOCH FROM (now() - s.last_autovacuum))::float8, -1) AS vacuum_lag_seconds
-		FROM pg_stat_user_tables s
-		JOIN pg_class c
-			ON c.relname = s.relname
-			AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = s.schemaname)
-		WHERE c.relkind = 'r'
-		  AND c.reltuples > 0
-		  AND COALESCE(s.n_dead_tup, 0) > 0
-		ORDER BY COALESCE(s.n_dead_tup, 0) DESC
-		LIMIT $1`
-
-	rows, err := db.Query(q, limit)
+	dbs, err := c.GetDatabases(instanceName)
 	if err != nil {
-		return nil, fmt.Errorf("GetBloatEstimates query: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
-	var out []PgBloatEstimate
-	for rows.Next() {
-		var r PgBloatEstimate
-		if err := rows.Scan(
-			&r.SchemaName, &r.TableName, &r.TotalBytes, &r.TotalSizePretty,
-			&r.LiveTuples, &r.DeadTuples, &r.DeadPct, &r.EstimatedWasteMB,
-			&r.SeqScans, &r.LastAutovacuum, &r.LastVacuum,
-			&r.TableFreezeAge, &r.VacuumLagSeconds,
-		); err != nil {
+	var all []PgBloatEstimate
+	for _, dbName := range dbs {
+		db, err := c.GetConnForDB(instanceName, dbName)
+		if err != nil {
+			log.Printf("[POSTGRES] GetBloatEstimates: failed to connect to %s/%s: %v", instanceName, dbName, err)
 			continue
 		}
-		// Derive recommendation based on dead_pct and freeze age thresholds.
-		const maxXIDFreeze int64 = 2100000000
-		switch {
-		case r.TableFreezeAge > maxXIDFreeze*3/4:
-			r.Recommendation = "VACUUM FREEZE urgently — freeze age >75% of XID limit"
-		case r.TableFreezeAge > maxXIDFreeze/2:
-			r.Recommendation = "Consider VACUUM FREEZE — freeze age >50% of XID limit"
-		case r.DeadPct >= 30:
-			r.Recommendation = "VACUUM required immediately — >30% dead tuples"
-		case r.DeadPct >= 10:
-			r.Recommendation = "Schedule VACUUM — 10-30% dead tuples"
-		default:
-			r.Recommendation = "Monitor — autovacuum may be delayed"
+
+		q := `
+			SELECT /* SQL_OPTIMA */  
+				$1 as database_name,
+				s.schemaname,
+				s.relname,
+				pg_total_relation_size(c.oid)                                        AS total_bytes,
+				pg_size_pretty(pg_total_relation_size(c.oid))                        AS total_pretty,
+				COALESCE(s.n_live_tup, 0)                                            AS live_tuples,
+				COALESCE(s.n_dead_tup, 0)                                            AS dead_tuples,
+				CASE
+					WHEN COALESCE(s.n_live_tup,0) + COALESCE(s.n_dead_tup,0) > 0
+					THEN ROUND(100.0 * COALESCE(s.n_dead_tup,0)::numeric /
+							   (COALESCE(s.n_live_tup,0) + COALESCE(s.n_dead_tup,0)), 2)::float8
+					ELSE 0
+				END                                                                   AS dead_pct,
+				GREATEST(0,
+					ROUND((COALESCE(s.n_dead_tup,0)::numeric / NULLIF(c.reltuples, 0))
+						  * pg_relation_size(c.oid) / 1048576.0, 2)
+				)::float8                                                             AS estimated_waste_mb,
+				COALESCE(s.seq_scan, 0)                                              AS seq_scans,
+				s.last_autovacuum,
+				s.last_vacuum,
+				age(c.relfrozenxid)::bigint                                          AS table_freeze_age,
+				COALESCE(EXTRACT(EPOCH FROM (now() - s.last_autovacuum))::float8, -1) AS vacuum_lag_seconds
+			FROM pg_stat_user_tables s
+			JOIN pg_class c
+				ON c.relname = s.relname
+				AND c.relnamespace = (SELECT /* SQL_OPTIMA */   oid FROM pg_namespace WHERE nspname = s.schemaname)
+			WHERE c.relkind = 'r'
+			  AND c.reltuples > 0
+			ORDER BY (COALESCE(s.n_dead_tup, 0)::numeric / NULLIF(c.reltuples, 0)) DESC, age(c.relfrozenxid) DESC
+			LIMIT $2`
+
+		rows, err := db.Query(q, dbName, limit)
+		if err != nil {
+			log.Printf("[POSTGRES] GetBloatEstimates query failed for %s/%s: %v", instanceName, dbName, err)
+			continue
 		}
-		out = append(out, r)
+
+		for rows.Next() {
+			var r PgBloatEstimate
+			if err := rows.Scan(
+				&r.DatabaseName, &r.SchemaName, &r.TableName, &r.TotalBytes, &r.TotalSizePretty,
+				&r.LiveTuples, &r.DeadTuples, &r.DeadPct, &r.EstimatedWasteMB,
+				&r.SeqScans, &r.LastAutovacuum, &r.LastVacuum,
+				&r.TableFreezeAge, &r.VacuumLagSeconds,
+			); err != nil {
+				continue
+			}
+			// Derive recommendation based on dead_pct and freeze age thresholds.
+			const maxXIDFreeze int64 = 2100000000
+			switch {
+			case r.TableFreezeAge > maxXIDFreeze*3/4:
+				r.Recommendation = "VACUUM FREEZE urgently — freeze age >75% of XID limit"
+			case r.TableFreezeAge > maxXIDFreeze/2:
+				r.Recommendation = "Consider VACUUM FREEZE — freeze age >50% of XID limit"
+			case r.DeadPct >= 30:
+				r.Recommendation = "VACUUM required immediately — >30% dead tuples"
+			case r.DeadPct >= 10:
+				r.Recommendation = "Schedule VACUUM — 10-30% dead tuples"
+			default:
+				r.Recommendation = "Monitor — autovacuum may be delayed"
+			}
+			all = append(all, r)
+		}
+		rows.Close()
 	}
-	return out, rows.Err()
+
+	// Sort globally by dead tuples desc and limit.
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].DeadTuples > all[j].DeadTuples
+	})
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
 }
 
 // GetIdleInTransactionSessions returns sessions currently idle in a transaction.
@@ -175,7 +186,7 @@ func (c *PgRepository) GetIdleInTransactionSessions(instanceName string) ([]PgId
 	}
 
 	q := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			pid,
 			COALESCE(usename, '')         AS user_name,
 			COALESCE(datname, '')         AS database,
@@ -232,10 +243,10 @@ func (c *PgRepository) GetXIDWraparoundRisk(instanceName string) ([]PgXIDWraparo
 	// wraparound_limit is autovacuum_freeze_max_age (default 200M); we derive it from pg_settings.
 	q := `
 		WITH limit_val AS (
-			SELECT COALESCE(setting::bigint, 200000000) AS max_age
+			SELECT /* SQL_OPTIMA */   COALESCE(setting::bigint, 200000000) AS max_age
 			FROM pg_settings WHERE name = 'autovacuum_freeze_max_age'
 		)
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			datname,
 			age(datfrozenxid)::bigint AS freeze_age,
 			l.max_age
@@ -308,7 +319,7 @@ func (c *PgRepository) GetLongRunningTransactions(instanceName string) ([]PgLong
 	}
 
 	q := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			pid,
 			COALESCE(usename, '')           AS user_name,
 			COALESCE(datname, '')           AS database,
@@ -350,6 +361,7 @@ func (c *PgRepository) GetLongRunningTransactions(instanceName string) ([]PgLong
 
 // PgIndexBloat holds index size and usage signals for one index.
 type PgIndexBloat struct {
+	DatabaseName    string `json:"database_name"`
 	SchemaName      string `json:"schema"`
 	TableName       string `json:"table"`
 	IndexName       string `json:"index_name"`
@@ -366,67 +378,76 @@ func (c *PgRepository) GetIndexBloat(instanceName string, limit int) ([]PgIndexB
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
-	c.mutex.RUnlock()
-	if !ok || db == nil {
-		if c.reconnectInstance(instanceName) {
-			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
-			c.mutex.RUnlock()
-		}
-	}
-	if !ok || db == nil {
-		return nil, fmt.Errorf("connection not found for %s", instanceName)
-	}
-
-	q := `
-		SELECT
-			i.schemaname,
-			i.relname                                            AS table_name,
-			i.indexrelname                                       AS index_name,
-			pg_relation_size(i.indexrelid)                       AS index_bytes,
-			pg_size_pretty(pg_relation_size(i.indexrelid))       AS index_size,
-			COALESCE(i.idx_scan, 0)                              AS idx_scans,
-			ix.indisunique                                       AS is_unique,
-			ix.indisprimary                                      AS is_primary
-		FROM pg_stat_user_indexes i
-		JOIN pg_index ix ON ix.indexrelid = i.indexrelid
-		WHERE pg_relation_size(i.indexrelid) > 0
-		ORDER BY pg_relation_size(i.indexrelid) DESC
-		LIMIT $1`
-
-	rows, err := db.Query(q, limit)
+	dbs, err := c.GetDatabases(instanceName)
 	if err != nil {
-		return nil, fmt.Errorf("GetIndexBloat query: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
-	var out []PgIndexBloat
-	for rows.Next() {
-		var r PgIndexBloat
-		if err := rows.Scan(
-			&r.SchemaName, &r.TableName, &r.IndexName,
-			&r.IndexSizeBytes, &r.IndexSizePretty,
-			&r.IdxScans, &r.IsUnique, &r.IsPrimary,
-		); err != nil {
+	var all []PgIndexBloat
+	for _, dbName := range dbs {
+		db, err := c.GetConnForDB(instanceName, dbName)
+		if err != nil {
+			log.Printf("[POSTGRES] GetIndexBloat: failed to connect to %s/%s: %v", instanceName, dbName, err)
 			continue
 		}
-		switch {
-		case r.IsPrimary:
-			r.Recommendation = "Primary key — keep"
-		case r.IsUnique:
-			r.Recommendation = "Unique constraint — keep"
-		case r.IdxScans == 0:
-			r.Recommendation = "Unused index — consider dropping to reduce write overhead"
-		case r.IndexSizeBytes >= 1073741824: // 1 GB
-			r.Recommendation = "Large index — consider REINDEX CONCURRENTLY if fragmented"
-		default:
-			r.Recommendation = "Active — monitor for fragmentation"
+
+		q := `
+			SELECT /* SQL_OPTIMA */  
+				$1 as database_name,
+				i.schemaname,
+				i.relname                                            AS table_name,
+				i.indexrelname                                       AS index_name,
+				pg_relation_size(i.indexrelid)                       AS index_bytes,
+				pg_size_pretty(pg_relation_size(i.indexrelid))       AS index_size,
+				COALESCE(i.idx_scan, 0)                              AS idx_scans,
+				ix.indisunique                                       AS is_unique,
+				ix.indisprimary                                      AS is_primary
+			FROM pg_stat_user_indexes i
+			JOIN pg_index ix ON ix.indexrelid = i.indexrelid
+			WHERE pg_relation_size(i.indexrelid) > 0
+			ORDER BY pg_relation_size(i.indexrelid) DESC
+			LIMIT $2`
+
+		rows, err := db.Query(q, dbName, limit)
+		if err != nil {
+			log.Printf("[POSTGRES] GetIndexBloat query failed for %s/%s: %v", instanceName, dbName, err)
+			continue
 		}
-		out = append(out, r)
+
+		for rows.Next() {
+			var r PgIndexBloat
+			if err := rows.Scan(
+				&r.DatabaseName, &r.SchemaName, &r.TableName, &r.IndexName,
+				&r.IndexSizeBytes, &r.IndexSizePretty,
+				&r.IdxScans, &r.IsUnique, &r.IsPrimary,
+			); err != nil {
+				continue
+			}
+			switch {
+			case r.IsPrimary:
+				r.Recommendation = "Primary key — keep"
+			case r.IsUnique:
+				r.Recommendation = "Unique constraint — keep"
+			case r.IdxScans == 0:
+				r.Recommendation = "Unused index — consider dropping to reduce write overhead"
+			case r.IndexSizeBytes >= 1073741824: // 1 GB
+				r.Recommendation = "Large index — consider REINDEX CONCURRENTLY if fragmented"
+			default:
+				r.Recommendation = "Active — monitor for fragmentation"
+			}
+			all = append(all, r)
+		}
+		rows.Close()
 	}
-	return out, rows.Err()
+
+	// Sort globally by index size desc and limit.
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].IndexSizeBytes > all[j].IndexSizeBytes
+	})
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
 }
 
 // GetWALArchiverRisk returns a combined WAL archiver health and slot retention summary.
@@ -449,7 +470,7 @@ func (c *PgRepository) GetWALArchiverRisk(instanceName string) (*PgWALArchiverRi
 
 	// Archiver stats.
 	archQ := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			archived_count,
 			failed_count,
 			COALESCE(last_archived_wal, '')    AS last_archived_wal,
@@ -472,7 +493,7 @@ func (c *PgRepository) GetWALArchiverRisk(instanceName string) (*PgWALArchiverRi
 
 	// Replication slot retention.
 	slotQ := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			COALESCE(slot_name, '')                                            AS slot_name,
 			COALESCE(
 				(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) / 1048576.0)::float8,

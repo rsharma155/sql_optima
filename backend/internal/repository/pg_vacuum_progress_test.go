@@ -23,4 +23,3 @@ func TestVacuumProgressPctGuards(t *testing.T) {
 		t.Fatalf("expected clamp to 100, got %v", got)
 	}
 }
-

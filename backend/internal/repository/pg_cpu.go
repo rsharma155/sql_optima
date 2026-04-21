@@ -15,14 +15,14 @@ import (
 // CollectPgSystemStats fetches PostgreSQL system stats (CPU and Memory)
 func (c *PgRepository) CollectPgSystemStats(db *sql.DB) (float64, float64, error) {
 	query := `
-		SELECT 
-			(SELECT COALESCE(avg(percent), 0) FROM (
-				SELECT 100 * (1 - (avail::float / total::float)) AS percent
+		SELECT /* SQL_OPTIMA */   
+			(SELECT /* SQL_OPTIMA */   COALESCE(avg(percent), 0) FROM (
+				SELECT /* SQL_OPTIMA */   100 * (1 - (avail::float / total::float)) AS percent
 				FROM (
-					SELECT available_memory AS avail, total_memory AS total FROM pg_os_info()
+					SELECT /* SQL_OPTIMA */   available_memory AS avail, total_memory AS total FROM pg_os_info()
 				) mem
 			) m) AS memory_usage,
-			(SELECT COALESCE(util, 0) FROM pg_stat_cpu() WHERE util IS NOT NULL LIMIT 1) AS cpu_usage
+			(SELECT /* SQL_OPTIMA */   COALESCE(util, 0) FROM pg_stat_cpu() WHERE util IS NOT NULL LIMIT 1) AS cpu_usage
 	`
 
 	var cpuUsage, memUsage float64
@@ -31,8 +31,8 @@ func (c *PgRepository) CollectPgSystemStats(db *sql.DB) (float64, float64, error
 		log.Printf("[PostgreSQL] System Stats Query Error: %v", err)
 		// Fallback query
 		fallbackQuery := `
-			SELECT 
-				(SELECT COALESCE(100 * (1 - (available_memory::float / total_memory::float)), 0) FROM pg_os_info()) AS memory_usage,
+			SELECT /* SQL_OPTIMA */   
+				(SELECT /* SQL_OPTIMA */   COALESCE(100 * (1 - (available_memory::float / total_memory::float)), 0) FROM pg_os_info()) AS memory_usage,
 				0.0 AS cpu_usage
 		`
 		_ = db.QueryRow(fallbackQuery).Scan(&memUsage, &cpuUsage)
@@ -44,7 +44,7 @@ func (c *PgRepository) CollectPgSystemStats(db *sql.DB) (float64, float64, error
 // CollectPgServerInfo fetches PostgreSQL version and uptime
 func (c *PgRepository) CollectPgServerInfo(db *sql.DB) (string, string, error) {
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			version() AS version,
 			date_trunc('second', now() - pg_postmaster_start_time())::text AS uptime
 		FROM pg_postmaster_start_time()

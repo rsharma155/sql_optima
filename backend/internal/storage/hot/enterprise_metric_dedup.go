@@ -17,12 +17,12 @@ import (
 
 // Batch-kind keys for in-memory snapshot deduplication (per instance).
 const (
-	enterpriseKindLatchWaits    = "latch_waits"
-	enterpriseKindProcedure     = "procedure_stats"
-	enterpriseKindFileIO        = "file_io_latency"
-	enterpriseKindSpinlock      = "spinlock_stats"
-	enterpriseKindMemoryClerks  = "memory_clerks"
-	enterpriseKindWaitsDelta    = "waits_delta"
+	enterpriseKindLatchWaits   = "latch_waits"
+	enterpriseKindProcedure    = "procedure_stats"
+	enterpriseKindFileIO       = "file_io_latency"
+	enterpriseKindSpinlock     = "spinlock_stats"
+	enterpriseKindMemoryClerks = "memory_clerks"
+	enterpriseKindWaitsDelta   = "waits_delta"
 )
 
 func enterpriseHashKey(instance, kind string) string {

@@ -80,4 +80,3 @@ func weightedLinear(value, good, bad, weight float64) float64 {
 	}
 	return f * weight
 }
-

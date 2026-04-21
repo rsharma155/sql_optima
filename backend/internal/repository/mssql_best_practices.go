@@ -55,7 +55,7 @@ func (c *MssqlRepository) FetchBestPractices(instanceName string) models.BestPra
 // queryServerConfigurations fetches server-level configuration settings
 func (c *MssqlRepository) queryServerConfigurations(db *sql.DB) (map[string]string, error) {
 	query := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			name AS [Configuration_Name],
 			CAST(value_in_use AS VARCHAR(50)) AS [Current_Value]
 		FROM sys.configurations WITH (NOLOCK)
@@ -89,7 +89,7 @@ func (c *MssqlRepository) queryServerConfigurations(db *sql.DB) (map[string]stri
 // queryDatabaseConfigurations fetches database-level configuration settings
 func (c *MssqlRepository) queryDatabaseConfigurations(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			name AS [Database_Name],
 			page_verify_option_desc AS [Page_Verify],
 			is_auto_shrink_on AS [Auto_Shrink],
@@ -265,7 +265,7 @@ func (c *MssqlRepository) FetchGuardrails(instanceName string) models.Guardrails
 
 func (c *MssqlRepository) queryStorageRisks(db *sql.DB) []models.StorageRisk {
 	query := `
-		SELECT DB_NAME(mf.database_id), mf.type_desc, mf.name, mf.physical_name, mf.size * 8 / 1024, LEFT(mf.physical_name, 1)
+		SELECT /* SQL_OPTIMA */   DB_NAME(mf.database_id), mf.type_desc, mf.name, mf.physical_name, mf.size * 8 / 1024, LEFT(mf.physical_name, 1)
 		FROM sys.master_files mf WITH (NOLOCK)
 		WHERE mf.database_id > 4 AND mf.state_desc = 'ONLINE' AND mf.physical_name LIKE 'C:%'
 		ORDER BY mf.size DESC
@@ -290,7 +290,7 @@ func (c *MssqlRepository) queryStorageRisks(db *sql.DB) []models.StorageRisk {
 
 	// Check for data and log files on same drive
 	sameDriveQuery := `
-		SELECT DB_NAME(database_id) AS db_name, LEFT(physical_name, 1) AS drive
+		SELECT /* SQL_OPTIMA */   DB_NAME(database_id) AS db_name, LEFT(physical_name, 1) AS drive
 		FROM sys.master_files WITH (NOLOCK)
 		WHERE database_id > 4 AND state_desc = 'ONLINE'
 		GROUP BY DB_NAME(database_id), LEFT(physical_name, 1)
@@ -321,7 +321,7 @@ func (c *MssqlRepository) queryStorageRisks(db *sql.DB) []models.StorageRisk {
 func (c *MssqlRepository) queryDiskSpace(db *sql.DB) []models.DiskSpaceInfo {
 	// Get disk space with log file sizes
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			LEFT(vs.volume_mount_point, 1) AS drive_letter,
 			vs.total_bytes / 1024 / 1024 AS total_size_mb,
 			vs.available_bytes / 1024 / 1024 AS free_space_mb,
@@ -366,7 +366,7 @@ func (c *MssqlRepository) queryDiskSpace(db *sql.DB) []models.DiskSpaceInfo {
 
 func (c *MssqlRepository) queryLogHealth(db *sql.DB) []models.LogHealthInfo {
 	query := `
-		SELECT d.name, d.recovery_model_desc, d.log_reuse_wait_desc
+		SELECT /* SQL_OPTIMA */   d.name, d.recovery_model_desc, d.log_reuse_wait_desc
 		FROM sys.databases d WITH (NOLOCK)
 		WHERE d.database_id > 4 AND d.state_desc = 'ONLINE'
 	`
@@ -385,7 +385,7 @@ func (c *MssqlRepository) queryLogHealth(db *sql.DB) []models.LogHealthInfo {
 				l.Severity = "WARNING"
 				l.Message = fmt.Sprintf("Log reuse wait: %s", l.LogReuseWait)
 				l.DrillDown = "Transaction log cannot truncate. Active transactions or backup chain breaks preventing log reuse."
-				l.MitigationSQL = "-- Check what's blocking log reuse\nSELECT name, log_reuse_wait_desc FROM sys.databases WHERE name = '" + l.DatabaseName + "';"
+				l.MitigationSQL = "-- Check what's blocking log reuse\nSELECT /* SQL_OPTIMA */   name, log_reuse_wait_desc FROM sys.databases WHERE name = '" + l.DatabaseName + "';"
 			}
 			logs = append(logs, l)
 		}
@@ -393,7 +393,7 @@ func (c *MssqlRepository) queryLogHealth(db *sql.DB) []models.LogHealthInfo {
 
 	// Get VLF count for each database
 	vlfQuery := `
-		SELECT DB_NAME(database_id), COUNT(*) AS vlf_count
+		SELECT /* SQL_OPTIMA */   DB_NAME(database_id), COUNT(*) AS vlf_count
 		FROM sys.dm_db_log_info
 		GROUP BY database_id
 		HAVING DB_NAME(database_id) IS NOT NULL
@@ -434,7 +434,7 @@ func (c *MssqlRepository) queryLogHealth(db *sql.DB) []models.LogHealthInfo {
 
 func (c *MssqlRepository) queryLogBackups(db *sql.DB) []models.LogBackupInfo {
 	query := `
-		SELECT d.name, MAX(b.backup_finish_date), DATEDIFF(MINUTE, MAX(b.backup_finish_date), GETDATE())
+		SELECT /* SQL_OPTIMA */   d.name, MAX(b.backup_finish_date), DATEDIFF(MINUTE, MAX(b.backup_finish_date), GETDATE())
 		FROM sys.databases d WITH (NOLOCK)
 		LEFT JOIN msdb.dbo.backupset b ON d.name = b.database_name AND b.type = 'L' AND b.backup_finish_date >= DATEADD(DAY, -7, GETDATE())
 		WHERE d.database_id > 4 AND d.recovery_model_desc IN ('FULL', 'BULK_LOGGED') AND d.state_desc = 'ONLINE'
@@ -480,7 +480,7 @@ func (c *MssqlRepository) queryLogBackups(db *sql.DB) []models.LogBackupInfo {
 
 func (c *MssqlRepository) queryLongRunningTransactions(db *sql.DB) []models.LongTxnInfo {
 	query := `
-		SELECT TOP 20 r.session_id, s.login_name, DB_NAME(r.database_id), r.status, r.cpu_time,
+		SELECT /* SQL_OPTIMA */   TOP 20 r.session_id, s.login_name, DB_NAME(r.database_id), r.status, r.cpu_time,
 		       r.total_elapsed_time / 1000, r.logical_reads, r.writes, r.blocking_session_id
 		FROM sys.dm_exec_requests r WITH (NOLOCK)
 		JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
@@ -504,7 +504,7 @@ func (c *MssqlRepository) queryLongRunningTransactions(db *sql.DB) []models.Long
 				t.Severity = "CRITICAL"
 				t.Message = fmt.Sprintf("ORPHANED transaction - sleeping for %d seconds", t.ElapsedSeconds)
 				t.DrillDown = "An open transaction has been idle for over 15 minutes. This prevents transaction log truncation and holds locks on tables, potentially blocking other users."
-				t.MitigationSQL = "-- Identify the offending SQL text\nSELECT st.text FROM sys.dm_exec_connections c \nCROSS APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) AS st WHERE c.session_id = " + fmt.Sprintf("%d", t.SessionID) + ";\n-- Terminate if necessary\nKILL " + fmt.Sprintf("%d", t.SessionID) + ";"
+				t.MitigationSQL = "-- Identify the offending SQL text\nSELECT /* SQL_OPTIMA */   st.text FROM sys.dm_exec_connections c \nCROSS APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) AS st WHERE c.session_id = " + fmt.Sprintf("%d", t.SessionID) + ";\n-- Terminate if necessary\nKILL " + fmt.Sprintf("%d", t.SessionID) + ";"
 			} else if t.ElapsedSeconds > 900 {
 				t.Severity = "CRITICAL"
 				t.Message = fmt.Sprintf("Running for %d seconds", t.ElapsedSeconds)
@@ -525,7 +525,7 @@ func (c *MssqlRepository) queryLongRunningTransactions(db *sql.DB) []models.Long
 
 func (c *MssqlRepository) queryAutogrowth(db *sql.DB) []models.AutogrowthInfo {
 	query := `
-		SELECT DB_NAME(mf.database_id), mf.type_desc, mf.name, mf.is_percent_growth, mf.growth
+		SELECT /* SQL_OPTIMA */   DB_NAME(mf.database_id), mf.type_desc, mf.name, mf.is_percent_growth, mf.growth
 		FROM sys.master_files mf WITH (NOLOCK)
 		WHERE mf.database_id > 4 AND mf.growth > 0
 	`
@@ -569,7 +569,7 @@ func (c *MssqlRepository) queryAutogrowth(db *sql.DB) []models.AutogrowthInfo {
 func (c *MssqlRepository) queryTempDBConfig(db *sql.DB) models.TempDBInfo {
 	var td models.TempDBInfo
 
-	query := `SELECT COUNT(*), SUM(size * 8 / 1024) FROM sys.master_files WITH (NOLOCK) WHERE database_id = 2 AND type_desc = 'DATA'`
+	query := `SELECT /* SQL_OPTIMA */   COUNT(*), SUM(size * 8 / 1024) FROM sys.master_files WITH (NOLOCK) WHERE database_id = 2 AND type_desc = 'DATA'`
 	var fc, ts sql.NullInt64
 	if err := db.QueryRow(query).Scan(&fc, &ts); err == nil {
 		if fc.Valid {
@@ -580,7 +580,7 @@ func (c *MssqlRepository) queryTempDBConfig(db *sql.DB) models.TempDBInfo {
 		}
 	}
 
-	fileQuery := `SELECT name, size * 8 / 1024 FROM sys.master_files WITH (NOLOCK) WHERE database_id = 2 AND type_desc = 'DATA'`
+	fileQuery := `SELECT /* SQL_OPTIMA */   name, size * 8 / 1024 FROM sys.master_files WITH (NOLOCK) WHERE database_id = 2 AND type_desc = 'DATA'`
 	rows, _ := db.Query(fileQuery)
 	if rows != nil {
 		defer rows.Close()
@@ -630,7 +630,7 @@ func (c *MssqlRepository) queryTempDBConfig(db *sql.DB) models.TempDBInfo {
 
 func (c *MssqlRepository) queryResourceGovernor(db *sql.DB) models.ResourceGovInfo {
 	var rg models.ResourceGovInfo
-	query := `SELECT is_enabled FROM sys.resource_governor`
+	query := `SELECT /* SQL_OPTIMA */   is_enabled FROM sys.resource_governor`
 	if err := db.QueryRow(query).Scan(&rg.IsEnabled); err != nil {
 		rg.Severity = "UNKNOWN"
 		rg.Message = "Could not query RG"

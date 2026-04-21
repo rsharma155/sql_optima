@@ -109,4 +109,3 @@ func (tl *TimescaleLogger) GetPostgresPoolerStatsHistory(ctx context.Context, in
 	}
 	return out, rows.Err()
 }
-

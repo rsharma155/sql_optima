@@ -272,4 +272,3 @@ func (tl *TimescaleLogger) GetPlanCacheHealthRange(ctx context.Context, instance
 	}
 	return out, rows.Err()
 }
-

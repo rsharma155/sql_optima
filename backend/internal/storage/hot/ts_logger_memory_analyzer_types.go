@@ -15,4 +15,3 @@ type spillDeltaState struct {
 	lastSort int64
 	lastHash int64
 }
-

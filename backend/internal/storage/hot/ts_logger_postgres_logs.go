@@ -16,20 +16,20 @@ import (
 )
 
 type PostgresLogEventRow struct {
-	CaptureTimestamp  time.Time              `json:"capture_timestamp"`
-	ServerInstanceName string                `json:"server_instance_name"`
-	Severity          string                 `json:"severity"`
-	SQLState          string                 `json:"sqlstate,omitempty"`
-	Message           string                 `json:"message"`
-	UserName          string                 `json:"user_name,omitempty"`
-	DatabaseName      string                 `json:"database_name,omitempty"`
-	ApplicationName   string                 `json:"application_name,omitempty"`
-	ClientAddr        string                 `json:"client_addr,omitempty"`
-	PID               int64                  `json:"pid,omitempty"`
-	Context           string                 `json:"context,omitempty"`
-	Detail            string                 `json:"detail,omitempty"`
-	Hint              string                 `json:"hint,omitempty"`
-	Raw               map[string]interface{} `json:"raw,omitempty"`
+	CaptureTimestamp   time.Time              `json:"capture_timestamp"`
+	ServerInstanceName string                 `json:"server_instance_name"`
+	Severity           string                 `json:"severity"`
+	SQLState           string                 `json:"sqlstate,omitempty"`
+	Message            string                 `json:"message"`
+	UserName           string                 `json:"user_name,omitempty"`
+	DatabaseName       string                 `json:"database_name,omitempty"`
+	ApplicationName    string                 `json:"application_name,omitempty"`
+	ClientAddr         string                 `json:"client_addr,omitempty"`
+	PID                int64                  `json:"pid,omitempty"`
+	Context            string                 `json:"context,omitempty"`
+	Detail             string                 `json:"detail,omitempty"`
+	Hint               string                 `json:"hint,omitempty"`
+	Raw                map[string]interface{} `json:"raw,omitempty"`
 }
 
 type PostgresLogSummary struct {
@@ -176,4 +176,3 @@ func (tl *TimescaleLogger) GetPostgresLogEvents(ctx context.Context, instanceNam
 	}
 	return out, rows.Err()
 }
-

@@ -15,17 +15,18 @@ import (
 )
 
 type PgReplicationSlotStat struct {
-	CaptureTimestamp time.Time `json:"capture_timestamp"`
-	SlotName         string    `json:"slot_name"`
-	SlotType         string    `json:"slot_type"`
-	Active           bool      `json:"active"`
-	Temporary        bool      `json:"temporary"`
-	RetainedWalMB    float64   `json:"retained_wal_mb"`
-	RestartLSN       string    `json:"restart_lsn"`
-	ConfirmedFlushLSN string   `json:"confirmed_flush_lsn"`
-	Xmin             *int64    `json:"xmin,omitempty"`
-	CatalogXmin      *int64    `json:"catalog_xmin,omitempty"`
+	CaptureTimestamp  time.Time `json:"capture_timestamp"`
+	SlotName          string    `json:"slot_name"`
+	SlotType          string    `json:"slot_type"`
+	Active            bool      `json:"active"`
+	Temporary         bool      `json:"temporary"`
+	RetainedWalMB     float64   `json:"retained_wal_mb"`
+	RestartLSN        string    `json:"restart_lsn"`
+	ConfirmedFlushLSN string    `json:"confirmed_flush_lsn"`
+	Xmin              *int64    `json:"xmin,omitempty"`
+	CatalogXmin       *int64    `json:"catalog_xmin,omitempty"`
 }
+
 // GetReplicationSlotStats returns replication slot stats for an instance.
 // It uses pg_wal_lsn_diff to estimate WAL retention for the slot.
 func (c *PgRepository) GetReplicationSlotStats(instanceName string) ([]PgReplicationSlotStat, error) {
@@ -47,7 +48,7 @@ func (c *PgRepository) GetReplicationSlotStats(instanceName string) ([]PgReplica
 	// - physical slot: current_wal_lsn - restart_lsn
 	// - logical slot: current_wal_lsn - confirmed_flush_lsn (if present), else restart_lsn
 	query := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			now() AT TIME ZONE 'UTC' AS capture_timestamp,
 			slot_name,
 			slot_type,
@@ -113,4 +114,3 @@ func (c *PgRepository) GetReplicationSlotStats(instanceName string) ([]PgReplica
 	}
 	return out, rows.Err()
 }
-

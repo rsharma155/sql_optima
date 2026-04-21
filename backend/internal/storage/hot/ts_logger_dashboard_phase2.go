@@ -16,18 +16,18 @@ import (
 )
 
 type RiskHealthRow struct {
-	CaptureTimestamp   time.Time `json:"capture_timestamp"`
-	ServerInstanceName string    `json:"server_instance_name"`
-	BlockingSessions   int       `json:"blocking_sessions"`
-	MemoryGrantsPending int      `json:"memory_grants_pending"`
-	FailedLogins5m     int       `json:"failed_logins_5m"`
-	TempdbUsedPercent  float64   `json:"tempdb_used_percent"`
-	MaxLogDbName       string    `json:"max_log_db_name"`
-	MaxLogUsedPercent  float64   `json:"max_log_used_percent"`
-	PLE                float64   `json:"ple"`
-	CompilationsPerSec float64   `json:"compilations_per_sec"`
-	BatchReqPerSec     float64   `json:"batch_requests_per_sec"`
-	BufferCacheHitPct  float64   `json:"buffer_cache_hit_ratio"`
+	CaptureTimestamp    time.Time `json:"capture_timestamp"`
+	ServerInstanceName  string    `json:"server_instance_name"`
+	BlockingSessions    int       `json:"blocking_sessions"`
+	MemoryGrantsPending int       `json:"memory_grants_pending"`
+	FailedLogins5m      int       `json:"failed_logins_5m"`
+	TempdbUsedPercent   float64   `json:"tempdb_used_percent"`
+	MaxLogDbName        string    `json:"max_log_db_name"`
+	MaxLogUsedPercent   float64   `json:"max_log_used_percent"`
+	PLE                 float64   `json:"ple"`
+	CompilationsPerSec  float64   `json:"compilations_per_sec"`
+	BatchReqPerSec      float64   `json:"batch_requests_per_sec"`
+	BufferCacheHitPct   float64   `json:"buffer_cache_hit_ratio"`
 }
 
 func (tl *TimescaleLogger) LogSQLServerRiskHealth(ctx context.Context, instanceName string, row RiskHealthRow) error {
@@ -53,6 +53,53 @@ func (tl *TimescaleLogger) LogSQLServerRiskHealth(ctx context.Context, instanceN
 		row.BufferCacheHitPct,
 	)
 	return err
+}
+
+func (tl *TimescaleLogger) GetSQLServerRiskHealthHistory(ctx context.Context, instanceName string, from, to time.Time) ([]RiskHealthRow, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	q := `
+		SELECT capture_timestamp, server_instance_name,
+		       COALESCE(blocking_sessions,0),
+		       COALESCE(memory_grants_pending,0),
+		       COALESCE(failed_logins_5m,0),
+		       COALESCE(tempdb_used_percent,0),
+		       COALESCE(max_log_db_name,''),
+		       COALESCE(max_log_used_percent,0),
+		       COALESCE(ple,0),
+		       COALESCE(compilations_per_sec,0),
+		       COALESCE(batch_requests_per_sec,0),
+		       COALESCE(buffer_cache_hit_ratio,0)
+		FROM mssql_risk_health
+		WHERE server_instance_name = $1
+		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
+		ORDER BY capture_timestamp ASC
+	`
+	rows, err := tl.pool.Query(ctx, q, instanceName, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []RiskHealthRow
+	for rows.Next() {
+		var r RiskHealthRow
+		if err := rows.Scan(
+			&r.CaptureTimestamp, &r.ServerInstanceName,
+			&r.BlockingSessions, &r.MemoryGrantsPending,
+			&r.FailedLogins5m,
+			&r.TempdbUsedPercent,
+			&r.MaxLogDbName, &r.MaxLogUsedPercent,
+			&r.PLE,
+			&r.CompilationsPerSec, &r.BatchReqPerSec,
+			&r.BufferCacheHitPct,
+		); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
 }
 
 func (tl *TimescaleLogger) GetLatestSQLServerRiskHealth(ctx context.Context, instanceName string) (*RiskHealthRow, error) {
@@ -251,10 +298,9 @@ func (tl *TimescaleLogger) GetBufferCacheHitTrend(ctx context.Context, instanceN
 			continue
 		}
 		out = append(out, map[string]interface{}{
-			"timestamp":             ts,
+			"timestamp":              ts,
 			"buffer_cache_hit_ratio": v,
 		})
 	}
 	return out, rows.Err()
 }
-

@@ -29,4 +29,3 @@ func TestPgRetainedWalMB_Computation(t *testing.T) {
 		t.Fatalf("expected ~512 MB, got %v", got)
 	}
 }
-

@@ -15,7 +15,7 @@ import (
 // CollectPgReplication fetches PostgreSQL replication stats
 func (c *PgRepository) CollectPgReplication(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			pid,
 			usesysid,
 			usename,
@@ -64,7 +64,7 @@ func (c *PgRepository) CollectPgReplication(db *sql.DB) ([]map[string]interface{
 // CollectPgReplicationLag fetches replication lag in MB
 func (c *PgRepository) CollectPgReplicationLag(db *sql.DB) (float64, string, error) {
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			COALESCE(EXTRACT(EPOCH FROM (now() - replay_lag)) * 1024, 0) AS lag_mb,
 			COALESCE(state, 'unknown') AS state
 		FROM pg_stat_replication

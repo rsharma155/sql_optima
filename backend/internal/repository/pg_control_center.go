@@ -31,7 +31,7 @@ func (c *PgRepository) FetchWalBytesTotal(instanceName string) (uint64, error) {
 	}
 
 	var bytes sql.NullInt64
-	err := db.QueryRow(`SELECT COALESCE(SUM(wal_bytes), 0) FROM pg_stat_wal`).Scan(&bytes)
+	err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COALESCE(SUM(wal_bytes), 0) FROM pg_stat_wal`).Scan(&bytes)
 	if err != nil {
 		return 0, err
 	}
@@ -58,7 +58,7 @@ func (c *PgRepository) FetchWalDirSizeMB(instanceName string) (float64, error) {
 	}
 
 	var mb float64
-	err := db.QueryRow(`SELECT COALESCE(SUM(size), 0) / 1024.0 / 1024.0 FROM pg_ls_waldir()`).Scan(&mb)
+	err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COALESCE(SUM(size), 0) / 1024.0 / 1024.0 FROM pg_ls_waldir()`).Scan(&mb)
 	return mb, err
 }
 
@@ -79,7 +79,7 @@ func (c *PgRepository) FetchActiveWaitingSessions(instanceName string) (active i
 	}
 
 	err = db.QueryRow(`
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			COUNT(*) FILTER (WHERE state = 'active') AS active,
 			COUNT(*) FILTER (WHERE wait_event IS NOT NULL) AS waiting
 		FROM pg_stat_activity
@@ -103,7 +103,7 @@ func (c *PgRepository) FetchSlowQueriesCount(instanceName string, thresholdMs fl
 		return 0, fmt.Errorf("connection not found")
 	}
 	var cnt int
-	err := db.QueryRow(`SELECT COUNT(*) FROM pg_stat_statements WHERE mean_exec_time > $1`, thresholdMs).Scan(&cnt)
+	err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM pg_stat_statements WHERE mean_exec_time > $1`, thresholdMs).Scan(&cnt)
 	return cnt, err
 }
 
@@ -123,7 +123,7 @@ func (c *PgRepository) FetchBlockingSessionsCount(instanceName string) (int, err
 	}
 
 	var cnt int
-	err := db.QueryRow(`SELECT COUNT(*) FROM pg_stat_activity WHERE wait_event_type='Lock'`).Scan(&cnt)
+	err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM pg_stat_activity WHERE wait_event_type='Lock'`).Scan(&cnt)
 	return cnt, err
 }
 
@@ -143,7 +143,7 @@ func (c *PgRepository) FetchAutovacuumWorkers(instanceName string) (int, error) 
 	}
 
 	var cnt int
-	err := db.QueryRow(`SELECT COUNT(*) FROM pg_stat_activity WHERE query ILIKE '%autovacuum%'`).Scan(&cnt)
+	err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM pg_stat_activity WHERE query ILIKE '%autovacuum%'`).Scan(&cnt)
 	return cnt, err
 }
 
@@ -164,7 +164,7 @@ func (c *PgRepository) FetchDeadTupleRatioPct(instanceName string) (float64, err
 
 	var pct float64
 	err := db.QueryRow(`
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			CASE WHEN (SUM(n_dead_tup) + SUM(n_live_tup)) > 0
 				THEN (SUM(n_dead_tup)::float / (SUM(n_dead_tup) + SUM(n_live_tup))) * 100.0
 				ELSE 0
@@ -191,7 +191,7 @@ func (c *PgRepository) FetchCacheHitRatioPct(instanceName string) (float64, erro
 
 	var pct float64
 	err := db.QueryRow(`
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			CASE WHEN (SUM(blks_hit) + SUM(blks_read)) > 0
 				THEN (SUM(blks_hit)::float * 100.0) / (SUM(blks_hit) + SUM(blks_read))
 				ELSE 0
@@ -209,4 +209,3 @@ func retainedWalMBFromBytes(b int64) float64 {
 	}
 	return float64(b) / 1024.0 / 1024.0
 }
-

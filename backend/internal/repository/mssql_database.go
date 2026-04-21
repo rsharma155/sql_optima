@@ -16,7 +16,7 @@ import (
 // CollectDatabaseThroughput fetches database throughput metrics
 func (c *MssqlRepository) CollectDatabaseThroughput(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			DB_NAME(database_id) AS database_name,
 			CAST(SUM(num_reads) AS BIGINT) AS total_reads,
 			CAST(SUM(num_writes) AS BIGINT) AS total_writes,
@@ -58,7 +58,7 @@ func (c *MssqlRepository) CollectDatabaseThroughput(db *sql.DB) ([]map[string]in
 // If database is non-empty, scopes to that DB only.
 func (c *MssqlRepository) CollectConnectionStats(db *sql.DB, database string) ([]map[string]interface{}, error) {
 	query := `
-		SELECT TOP 20
+		SELECT /* SQL_OPTIMA */   TOP 20
 			ISNULL(program_name, 'Unknown') AS program_name,
 			COUNT(*) AS connection_count,
 			COUNT(DISTINCT login_name) AS unique_logins

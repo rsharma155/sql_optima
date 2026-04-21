@@ -573,16 +573,16 @@ func (tl *TimescaleLogger) GetSQLServerMetricsRange(ctx context.Context, instanc
 		}
 		out = append(out, map[string]interface{}{
 			"capture_timestamp": ts,
-			"event_time":          ts.Format(time.RFC3339),
-			"server_name":         srv,
-			"avg_cpu_load":        cpu,
-			"memory_usage":        mem,
-			"active_users":        users,
-			"total_locks":         locks,
-			"deadlocks":           dead,
-			"data_disk_mb":        dataMB,
-			"log_disk_mb":         logMB,
-			"free_disk_mb":        freeMB,
+			"event_time":        ts.Format(time.RFC3339),
+			"server_name":       srv,
+			"avg_cpu_load":      cpu,
+			"memory_usage":      mem,
+			"active_users":      users,
+			"total_locks":       locks,
+			"deadlocks":         dead,
+			"data_disk_mb":      dataMB,
+			"log_disk_mb":       logMB,
+			"free_disk_mb":      freeMB,
 		})
 	}
 	return out, rows.Err()
@@ -623,10 +623,10 @@ func (tl *TimescaleLogger) GetSQLServerMemoryHistoryRange(ctx context.Context, i
 			pv = ple.Float64
 		}
 		out = append(out, map[string]interface{}{
-			"capture_timestamp":          ts,
-			"event_time":                 ts.Format(time.RFC3339),
+			"capture_timestamp":            ts,
+			"event_time":                   ts.Format(time.RFC3339),
 			"page_life_expectancy_seconds": pv,
-			"page_life_expectancy":       pv,
+			"page_life_expectancy":         pv,
 		})
 	}
 	return out, rows.Err()
@@ -679,13 +679,13 @@ func (tl *TimescaleLogger) GetSQLServerSchedulerMemoryRange(ctx context.Context,
 			pctFree = (float64(apk) / float64(tpk)) * 100.0
 		}
 		m := map[string]interface{}{
-			"capture_timestamp":                 ts,
-			"event_time":                        ts.Format(time.RFC3339),
-			"total_physical_memory_kb":          tpk,
-			"available_physical_memory_kb":      apk,
-			"physical_memory_free_percent":      pctFree,
-			"physical_memory_pressure_warning":  pressure.Valid && pressure.Bool,
-			"system_memory_state_desc":          "",
+			"capture_timestamp":                ts,
+			"event_time":                       ts.Format(time.RFC3339),
+			"total_physical_memory_kb":         tpk,
+			"available_physical_memory_kb":     apk,
+			"physical_memory_free_percent":     pctFree,
+			"physical_memory_pressure_warning": pressure.Valid && pressure.Bool,
+			"system_memory_state_desc":         "",
 		}
 		if stateDesc.Valid {
 			m["system_memory_state_desc"] = stateDesc.String

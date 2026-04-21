@@ -22,7 +22,7 @@ func (c *MssqlRepository) CollectLongRunningQueries(ctx context.Context, db *sql
 	}
 
 	query := fmt.Sprintf(`
-		SELECT TOP 50
+		SELECT /* SQL_OPTIMA */   TOP 50
 			r.session_id,
 			r.request_id,
 			DB_NAME(r.database_id) AS database_name,
@@ -105,7 +105,7 @@ func (c *MssqlRepository) CollectLongRunningQueries(ctx context.Context, db *sql
 // If database is non-empty, scopes to that DB only.
 func (c *MssqlRepository) CollectLiveRunningQueries(ctx context.Context, db *sql.DB, database string) ([]map[string]interface{}, error) {
 	query := `
-		SELECT TOP 50
+		SELECT /* SQL_OPTIMA */   TOP 50
 			r.session_id, 
 			s.login_name, 
 			s.program_name, 
@@ -173,7 +173,7 @@ func (c *MssqlRepository) CollectTopQueries(db *sql.DB, limit int) ([]map[string
 	}
 
 	query := fmt.Sprintf(`
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			DB_NAME(COALESCE(pa.dbid, st.dbid)) AS database_name,
 			ISNULL(s.login_name, 'Unknown') AS login_name,
 			ISNULL(s.program_name, 'Unknown') AS client_app,
@@ -198,12 +198,12 @@ func (c *MssqlRepository) CollectTopQueries(db *sql.DB, limit int) ([]map[string
 		FROM sys.dm_exec_query_stats qs
 		CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
 		OUTER APPLY (
-			SELECT CONVERT(INT,value) dbid
+			SELECT /* SQL_OPTIMA */   CONVERT(INT,value) dbid
 			FROM sys.dm_exec_plan_attributes(qs.plan_handle)
 			WHERE attribute = N'dbid'
 		) pa
 		OUTER APPLY (
-			SELECT TOP 1 ses.original_login_name login_name, ses.program_name
+			SELECT /* SQL_OPTIMA */   TOP 1 ses.original_login_name login_name, ses.program_name
 			FROM sys.dm_exec_sessions ses
 			JOIN sys.dm_exec_connections con ON ses.session_id = con.session_id
 			WHERE con.most_recent_sql_handle = qs.sql_handle
@@ -258,7 +258,7 @@ func (c *MssqlRepository) CollectTopQueries(db *sql.DB, limit int) ([]map[string
 // CollectProcedureStats fetches stored procedure execution stats
 func (c *MssqlRepository) CollectProcedureStats(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT TOP 20 
+		SELECT /* SQL_OPTIMA */   TOP 20 
 			DB_NAME(ps.database_id) AS database_name,
 			OBJECT_SCHEMA_NAME(ps.object_id, ps.database_id) AS schema_name,
 			OBJECT_NAME(ps.object_id, ps.database_id) AS object_name,

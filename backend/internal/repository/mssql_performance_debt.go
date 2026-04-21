@@ -41,7 +41,7 @@ func (c *MssqlRepository) FetchUnusedIndexes(instanceName, databaseName string, 
 	// NOTE: Must be executed in the target database context because dm_db_index_usage_stats is per-db.
 	q := fmt.Sprintf(`
 		USE %s;
-		SELECT TOP (%d)
+		SELECT /* SQL_OPTIMA */   TOP (%d)
 			DB_NAME() AS database_name,
 			OBJECT_NAME(i.object_id) AS table_name,
 			i.name AS index_name,
@@ -60,8 +60,10 @@ func (c *MssqlRepository) FetchUnusedIndexes(instanceName, databaseName string, 
 		  AND i.is_unique_constraint = 0
 		  AND i.is_disabled = 0
 		  AND i.is_hypothetical = 0
-		  AND (COALESCE(s.user_seeks,0)+COALESCE(s.user_scans,0)+COALESCE(s.user_lookups,0)) = 0
-		  AND COALESCE(s.user_updates,0) >= %d
+		  AND s.user_seeks = 0 
+		  AND s.user_scans = 0 
+		  AND s.user_lookups = 0 
+		  AND s.user_updates >= %d
 		ORDER BY COALESCE(s.user_updates,0) DESC;
 	`, quoteDb(databaseName), limit, minUpdates)
 
@@ -102,7 +104,7 @@ func (c *MssqlRepository) FetchMissingIndexRecommendations(instanceName, databas
 
 	q := fmt.Sprintf(`
 		USE %s;
-		SELECT TOP (%d)
+		SELECT /* SQL_OPTIMA */   TOP (%d)
 			(COALESCE(migs.avg_total_user_cost,0) * COALESCE(migs.avg_user_impact,0) * (COALESCE(migs.user_seeks,0) + COALESCE(migs.user_scans,0))) AS improvement_score,
 			mid.statement AS table_name,
 			COALESCE(mid.equality_columns,'') AS equality_columns,
@@ -160,7 +162,7 @@ func (c *MssqlRepository) FetchIndexFragmentation(instanceName, databaseName str
 
 	q := fmt.Sprintf(`
 		USE %s;
-		SELECT TOP (%d)
+		SELECT /* SQL_OPTIMA */   TOP (%d)
 			OBJECT_NAME(ps.object_id) AS table_name,
 			COALESCE(i.name,'') AS index_name,
 			ps.index_id,
@@ -196,11 +198,11 @@ func (c *MssqlRepository) FetchIndexFragmentation(instanceName, databaseName str
 }
 
 type PerformanceDebtStaleStats struct {
-	TableName            string
-	StatsName            string
-	LastUpdated          sql.NullTime
-	Rows                 int64
-	ModificationCounter  int64
+	TableName           string
+	StatsName           string
+	LastUpdated         sql.NullTime
+	Rows                int64
+	ModificationCounter int64
 }
 
 func (c *MssqlRepository) FetchStaleStatistics(instanceName, databaseName string, modificationPct float64, limit int) ([]PerformanceDebtStaleStats, error) {
@@ -217,7 +219,7 @@ func (c *MssqlRepository) FetchStaleStatistics(instanceName, databaseName string
 
 	q := fmt.Sprintf(`
 		USE %s;
-		SELECT TOP (%d)
+		SELECT /* SQL_OPTIMA */   TOP (%d)
 			OBJECT_NAME(s.object_id) AS table_name,
 			s.name AS stats_name,
 			STATS_DATE(s.object_id, s.stats_id) AS last_updated,
@@ -266,7 +268,7 @@ func (c *MssqlRepository) FetchAutogrowthRisks(instanceName, databaseName string
 
 	q := fmt.Sprintf(`
 		USE %s;
-		SELECT TOP (%d)
+		SELECT /* SQL_OPTIMA */   TOP (%d)
 			name,
 			size*8/1024.0 AS size_mb,
 			growth,
@@ -299,7 +301,7 @@ func (c *MssqlRepository) FetchVLFCount(instanceName, databaseName string) (int6
 	}
 	q := fmt.Sprintf(`
 		USE %s;
-		SELECT COUNT(*) AS vlf_count
+		SELECT /* SQL_OPTIMA */   COUNT(*) AS vlf_count
 		FROM sys.dm_db_log_info(DB_ID());
 	`, quoteDb(databaseName))
 	var n int64
@@ -316,7 +318,7 @@ func (c *MssqlRepository) FetchLastFullBackupAgeHours(instanceName, databaseName
 		return 0, fmt.Errorf("no connection for instance: %s", instanceName)
 	}
 	q := `
-		SELECT TOP 1 DATEDIFF(MINUTE, backup_finish_date, GETDATE()) / 60.0 AS age_hours
+		SELECT /* SQL_OPTIMA */   TOP 1 DATEDIFF(MINUTE, backup_finish_date, GETDATE()) / 60.0 AS age_hours
 		FROM msdb.dbo.backupset
 		WHERE database_name = @p1
 		  AND type = 'D'
@@ -344,7 +346,7 @@ func (c *MssqlRepository) FetchFailedAgentJobs24h(instanceName string, limit int
 		limit = 50
 	}
 	q := fmt.Sprintf(`
-		SELECT TOP (%d)
+		SELECT /* SQL_OPTIMA */   TOP (%d)
 			j.name AS job_name,
 			msdb.dbo.agent_datetime(h.run_date, h.run_time) AS run_dt,
 			h.run_status
@@ -386,7 +388,7 @@ func (c *MssqlRepository) FetchDisabledAgentJobs(instanceName string, limit int)
 	if limit <= 0 {
 		limit = 200
 	}
-	q := fmt.Sprintf(`SELECT TOP (%d) name FROM msdb.dbo.sysjobs WHERE enabled = 0 ORDER BY name`, limit)
+	q := fmt.Sprintf(`SELECT /* SQL_OPTIMA */   TOP (%d) name FROM msdb.dbo.sysjobs WHERE enabled = 0 ORDER BY name`, limit)
 	rows, err := db.Query(q)
 	if err != nil {
 		return nil, err
@@ -408,7 +410,7 @@ func (c *MssqlRepository) FetchConfigValueInUse(instanceName string, name string
 	if !ok || db == nil {
 		return 0, fmt.Errorf("no connection for instance: %s", instanceName)
 	}
-	q := `SELECT value_in_use FROM sys.configurations WHERE name = @p1`
+	q := `SELECT /* SQL_OPTIMA */   value_in_use FROM sys.configurations WHERE name = @p1`
 	var v int64
 	if err := db.QueryRow(q, name).Scan(&v); err != nil {
 		return 0, err
@@ -422,4 +424,3 @@ func quoteDb(dbName string) string {
 	clean := strings.ReplaceAll(dbName, "]", "")
 	return "[" + clean + "]"
 }
-

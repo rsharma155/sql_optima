@@ -13,4 +13,3 @@ func TestVacuumProgressRowStructExists(t *testing.T) {
 	// compile-time guard
 	var _ PostgresVacuumProgressRow
 }
-

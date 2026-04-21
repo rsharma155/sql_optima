@@ -387,46 +387,135 @@ func (tl *TimescaleLogger) LogQueryStoreStatsDirect(ctx context.Context, rows []
 		return nil
 	}
 
+	// 1. Insert into Staging (Raw Cumulative Data)
 	batch := &pgx.Batch{}
-	now := time.Now().UTC()
+	serverName := rows[0].ServerName
 
 	for _, r := range rows {
-		ts := r.CaptureTimestamp
-		if ts.IsZero() {
-			ts = now
-		}
-		tsu := ts.UTC()
-		batch.Queue(`INSERT INTO query_store_stats (
-			capture_timestamp, server_name, database_name,
-			query_hash, query_text, executions,
-			avg_duration_ms, avg_cpu_ms, avg_logical_reads, total_cpu_ms
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-			tsu, r.ServerName, r.DatabaseName,
-			r.QueryHash, r.QueryText, r.Executions,
-			r.AvgDurationMs, r.AvgCpuMs, r.AvgLogicalReads, r.TotalCpuMs,
-		)
-		// Enterprise hypertable (same snapshot; used by external scripts / ops expecting this name).
-		batch.Queue(`INSERT INTO sqlserver_query_store_stats (
-			capture_timestamp, server_instance_name, database_name,
-			query_hash, query_text, executions,
-			avg_duration_ms, avg_cpu_ms, avg_logical_reads, total_cpu_ms
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-			tsu, r.ServerName, r.DatabaseName,
-			r.QueryHash, r.QueryText, r.Executions,
-			r.AvgDurationMs, r.AvgCpuMs, r.AvgLogicalReads, r.TotalCpuMs,
+		batch.Queue(`INSERT INTO monitor.mssql_query_store_staging (
+			server_instance_name, database_name, query_hash, query_text, 
+			plan_id, runtime_stats_interval_id, executions, 
+			avg_duration_ms, avg_cpu_ms, avg_logical_reads, total_cpu_ms, last_execution_time
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			r.ServerName, r.DatabaseName, r.QueryHash, r.QueryText,
+			r.PlanID, r.IntervalID, r.Executions,
+			r.AvgDurationMs, r.AvgCpuMs, r.AvgLogicalReads, r.TotalCpuMs, r.LastExecutionTime,
 		)
 	}
 
 	br := tl.pool.SendBatch(ctx, batch)
-	defer br.Close()
+	if err := br.Close(); err != nil {
+		return fmt.Errorf("query store staging batch: %w", err)
+	}
 
-	for i := 0; i < len(rows)*2; i++ {
-		if _, err := br.Exec(); err != nil {
-			return fmt.Errorf("query store batch op %d: %w", i, err)
-		}
+	// 2. Process Snapshot (Deduplicate and store unique states)
+	if err := tl.ProcessQueryStoreSnapshot(ctx, serverName); err != nil {
+		log.Printf("[TSLogger] ProcessQueryStoreSnapshot failed for %s: %v", serverName, err)
+	}
+
+	// 3. Process Delta (Calculate subtraction from previous snapshot)
+	if err := tl.ProcessQueryStoreDelta(ctx, serverName); err != nil {
+		log.Printf("[TSLogger] ProcessQueryStoreDelta failed for %s: %v", serverName, err)
 	}
 
 	return nil
+}
+
+func (tl *TimescaleLogger) ProcessQueryStoreSnapshot(ctx context.Context, instanceName string) error {
+	query := `
+		INSERT INTO monitor.mssql_query_store_snapshot (
+			capture_time, server_instance_name, database_name, query_hash, query_text,
+			plan_id, runtime_stats_interval_id, total_executions, total_cpu_ms,
+			total_duration_ms, total_logical_reads, row_fingerprint
+		)
+		SELECT
+			NOW(),
+			s.server_instance_name,
+			s.database_name,
+			s.query_hash,
+			s.query_text,
+			s.plan_id,
+			s.runtime_stats_interval_id,
+			s.executions,
+			s.total_cpu_ms,
+			(s.avg_duration_ms * s.executions),
+			(s.avg_logical_reads * s.executions),
+			md5(s.executions::text || '-' || s.total_cpu_ms::text || '-' || s.runtime_stats_interval_id::text)
+		FROM monitor.mssql_query_store_staging s
+		WHERE s.server_instance_name = $1
+		AND NOT EXISTS (
+			SELECT 1
+			FROM (
+				SELECT last.row_fingerprint
+				FROM monitor.mssql_query_store_snapshot last
+				WHERE last.server_instance_name = s.server_instance_name
+				  AND last.query_hash = s.query_hash
+				  AND last.plan_id = s.plan_id
+				  AND last.runtime_stats_interval_id = s.runtime_stats_interval_id
+				ORDER BY last.capture_time DESC
+				LIMIT 1
+			) prev
+			WHERE prev.row_fingerprint = md5(s.executions::text || '-' || s.total_cpu_ms::text || '-' || s.runtime_stats_interval_id::text)
+		)
+		ON CONFLICT DO NOTHING
+	`
+	_, err := tl.pool.Exec(ctx, query, instanceName)
+	if err == nil {
+		_, _ = tl.pool.Exec(ctx, `DELETE FROM monitor.mssql_query_store_staging WHERE server_instance_name = $1`, instanceName)
+	}
+	return err
+}
+
+func (tl *TimescaleLogger) ProcessQueryStoreDelta(ctx context.Context, instanceName string) error {
+	query := `
+		INSERT INTO monitor.mssql_query_store_interval (
+			bucket_start, bucket_end, server_instance_name, database_name, query_hash, query_text,
+			plan_id, runtime_stats_interval_id, delta_executions, delta_cpu_ms,
+			delta_duration_ms, delta_logical_reads, avg_cpu_ms, avg_duration_ms, is_reset
+		)
+		SELECT
+			t.prev_time,
+			t.capture_time,
+			t.server_instance_name,
+			t.database_name,
+			t.query_hash,
+			t.query_text,
+			t.plan_id,
+			t.runtime_stats_interval_id,
+			t.exec_delta,
+			t.cpu_delta,
+			t.dur_delta,
+			t.reads_delta,
+			(t.cpu_delta / NULLIF(t.exec_delta, 0)),
+			(t.dur_delta / NULLIF(t.exec_delta, 0)),
+			t.reset
+		FROM (
+			SELECT
+				curr.*,
+				prev.capture_time AS prev_time,
+				curr.total_executions - COALESCE(prev.total_executions, 0) AS exec_delta,
+				curr.total_cpu_ms - COALESCE(prev.total_cpu_ms, 0) AS cpu_delta,
+				curr.total_duration_ms - COALESCE(prev.total_duration_ms, 0) AS dur_delta,
+				curr.total_logical_reads - COALESCE(prev.total_logical_reads, 0) AS reads_delta,
+				(curr.total_executions < COALESCE(prev.total_executions, 0) OR curr.runtime_stats_interval_id != prev.runtime_stats_interval_id) AS reset
+			FROM monitor.mssql_query_store_snapshot curr
+			JOIN LATERAL (
+				SELECT total_executions, total_cpu_ms, total_duration_ms, total_logical_reads, capture_time, runtime_stats_interval_id
+				FROM monitor.mssql_query_store_snapshot p
+				WHERE p.server_instance_name = curr.server_instance_name
+				  AND p.query_hash = curr.query_hash
+				  AND p.plan_id = curr.plan_id
+				  AND p.capture_time < curr.capture_time
+				ORDER BY capture_time DESC
+				LIMIT 1
+			) prev ON true
+			WHERE curr.server_instance_name = $1
+		) t
+		WHERE t.exec_delta > 0
+		ON CONFLICT (bucket_end, server_instance_name, query_hash, plan_id, runtime_stats_interval_id) DO NOTHING
+	`
+	_, err := tl.pool.Exec(ctx, query, instanceName)
+	return err
 }
 
 func (tl *TimescaleLogger) LogQueryStoreStats(ctx context.Context, instanceName string, queries []QueryStoreStatsRow) error {
@@ -451,13 +540,13 @@ func (tl *TimescaleLogger) GetQueryStoreStats(ctx context.Context, instanceName 
 	}
 
 	query := fmt.Sprintf(`
-		SELECT capture_timestamp, server_name, database_name,
-		       query_hash, query_text, executions,
-		       avg_duration_ms, avg_cpu_ms, avg_logical_reads, total_cpu_ms
-		FROM query_store_stats
-		WHERE server_name = $1
-		  AND capture_timestamp >= NOW() - INTERVAL '%s'
-		ORDER BY capture_timestamp DESC, total_cpu_ms DESC
+		SELECT bucket_end, server_instance_name, database_name,
+		       query_hash, query_text, delta_executions,
+		       avg_duration_ms, avg_cpu_ms, delta_logical_reads, delta_cpu_ms
+		FROM monitor.mssql_query_store_interval
+		WHERE UPPER(server_instance_name) = UPPER($1)
+		  AND bucket_end >= NOW() - INTERVAL '%s'
+		ORDER BY bucket_end DESC, delta_cpu_ms DESC
 		LIMIT $2
 	`, interval)
 
@@ -501,19 +590,20 @@ func (tl *TimescaleLogger) GetQueryStoreBottlenecks(ctx context.Context, instanc
 		interval = "1 hour"
 	}
 
+	// Querying from the true delta interval table
 	query := fmt.Sprintf(`
 		WITH recent AS (
-			SELECT query_hash, query_text, database_name,
-			       SUM(executions) as total_exec,
+			SELECT query_hash, MAX(query_text) as query_text, database_name,
+			       SUM(delta_executions) as total_exec,
 			       AVG(avg_cpu_ms) as avg_cpu,
-			       SUM(total_cpu_ms) as total_cpu,
+			       SUM(delta_cpu_ms) as total_cpu,
 			       AVG(avg_duration_ms) as avg_dur,
-			       AVG(avg_logical_reads) as avg_reads
-			FROM query_store_stats
-			WHERE server_name = $1
-			  AND capture_timestamp >= NOW() - INTERVAL '%s'
+			       AVG(delta_logical_reads) as avg_reads
+			FROM monitor.mssql_query_store_interval
+			WHERE server_instance_name = $1
+			  AND bucket_end >= NOW() - INTERVAL '%s'
 			  AND ($2::text IS NULL OR $2 = '' OR database_name = $2)
-			GROUP BY query_hash, query_text, database_name
+			GROUP BY query_hash, database_name
 		)
 		SELECT query_hash, query_text, database_name, total_exec, avg_cpu, total_cpu, avg_dur, avg_reads,
 		       CASE WHEN avg_dur > 1000 THEN 'high_duration'
@@ -542,6 +632,7 @@ func (tl *TimescaleLogger) GetQueryStoreBottlenecks(ctx context.Context, instanc
 		var bottleneckType string
 
 		if err := rows.Scan(&queryHash, &queryText, &databaseName, &totalExec, &avgCpu, &totalCpu, &avgDur, &avgReads, &bottleneckType); err != nil {
+			log.Printf("[TSLogger] GetQueryStoreBottlenecks scan error: %v", err)
 			continue
 		}
 
@@ -749,169 +840,4 @@ func (tl *TimescaleLogger) ProcessQueryStatsDelta(ctx context.Context, instanceN
 	}
 
 	return nil
-}
-
-// QueryStatsDashboardParams drives leaderboard queries over sqlserver_query_stats_interval.
-type QueryStatsDashboardParams struct {
-	InstanceName string
-	Metric       string // cpu, duration, reads, executions
-	TimeRange    string // 15m, 1h, 24h (used when From/To are empty)
-	Dimension    string // query, database, login, app
-	Limit        int
-	From         string // RFC3339 inclusive lower bound for bucket_end (optional)
-	To           string // RFC3339 inclusive upper bound for bucket_end (optional)
-}
-
-func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params QueryStatsDashboardParams) ([]map[string]interface{}, error) {
-	if params.Limit <= 0 {
-		params.Limit = 20
-	}
-
-	timeRange := map[string]string{
-		"15m": "15 minutes",
-		"1h":  "1 hour",
-		"24h": "24 hours",
-	}[params.TimeRange]
-	if timeRange == "" {
-		timeRange = "1 hour"
-	}
-
-	dimensionCol := map[string]string{
-		"query":    "query_hash",
-		"database": "database_name",
-		"login":    "login_name",
-		"app":      "client_app",
-	}[params.Dimension]
-	if dimensionCol == "" {
-		dimensionCol = "query_hash"
-	}
-
-	metricCol := map[string]string{
-		"cpu":        "cpu_ms",
-		"duration":   "duration_ms",
-		"reads":      "logical_reads",
-		"executions": "executions",
-	}[params.Metric]
-	if metricCol == "" {
-		metricCol = "cpu_ms"
-	}
-
-	baseSelect := fmt.Sprintf(`
-		SELECT %s AS dimension_value,
-		       query_text,
-		       MAX(database_name) AS database_name,
-		       MAX(login_name) AS login_name,
-		       MAX(client_app) AS client_app,
-		       SUM(%s) AS metric_value,
-		       SUM(executions) AS total_executions,
-		       AVG(avg_cpu_ms) AS avg_cpu_ms,
-		       AVG(avg_duration_ms) AS avg_duration_ms,
-		       AVG(avg_reads) AS avg_reads
-		FROM sqlserver_query_stats_interval
-		WHERE server_instance_name = $1`,
-		dimensionCol, metricCol)
-
-	var rows pgx.Rows
-	var err error
-	if strings.TrimSpace(params.From) != "" && strings.TrimSpace(params.To) != "" {
-		start, end, errParse := parseTimeRangeRFC3339(params.From, params.To)
-		if errParse != nil {
-			return nil, errParse
-		}
-		q := baseSelect + `
-		  AND bucket_end >= $2
-		  AND bucket_end <= $3
-		GROUP BY ` + dimensionCol + `, query_text
-		ORDER BY metric_value DESC
-		LIMIT $4`
-		rows, err = tl.pool.Query(ctx, q, params.InstanceName, start, end, params.Limit)
-	} else {
-		q := baseSelect + fmt.Sprintf(`
-		  AND bucket_end > now() - INTERVAL '%s'
-		GROUP BY %s, query_text
-		ORDER BY metric_value DESC
-		LIMIT $2`, timeRange, dimensionCol)
-		rows, err = tl.pool.Query(ctx, q, params.InstanceName, params.Limit)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var results []map[string]interface{}
-	for rows.Next() {
-		var dimValue, queryText, dbName, loginName, clientApp sql.NullString
-		var metricValue, totalExecutions, avgCPU, avgDuration, avgReads float64
-
-		if err := rows.Scan(&dimValue, &queryText, &dbName, &loginName, &clientApp, &metricValue, &totalExecutions, &avgCPU, &avgDuration, &avgReads); err != nil {
-			continue
-		}
-
-		results = append(results, map[string]interface{}{
-			"dimension":         dimValue.String,
-			"query_text":        queryText.String,
-			"database_name":     dbName.String,
-			"login_name":        loginName.String,
-			"client_app":        clientApp.String,
-			"metric_value":      metricValue,
-			"total_executions":  totalExecutions,
-			"avg_cpu_ms":        avgCPU,
-			"avg_duration_ms":   avgDuration,
-			"avg_reads":         avgReads,
-		})
-	}
-	return results, rows.Err()
-}
-
-func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, instanceName, metric string, timeRange string) ([]map[string]interface{}, error) {
-	tr := map[string]string{
-		"15m": "15 minutes",
-		"1h":  "1 hour",
-		"24h": "24 hours",
-	}[timeRange]
-	if tr == "" {
-		tr = "1 hour"
-	}
-
-	metricCol := map[string]string{
-		"cpu":        "cpu_ms",
-		"duration":   "duration_ms",
-		"reads":      "logical_reads",
-		"executions": "executions",
-	}[metric]
-	if metricCol == "" {
-		metricCol = "cpu_ms"
-	}
-
-	query := fmt.Sprintf(`
-		SELECT time_bucket('5 min', bucket_end) AS time,
-		       SUM(%s) AS value
-		FROM sqlserver_query_stats_interval
-		WHERE server_instance_name = $1
-		  AND bucket_end > now() - INTERVAL '%s'
-		GROUP BY time
-		ORDER BY time
-	`, metricCol, tr)
-
-	rows, err := tl.pool.Query(ctx, query, instanceName)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var results []map[string]interface{}
-	for rows.Next() {
-		var ts time.Time
-		var value float64
-
-		if err := rows.Scan(&ts, &value); err != nil {
-			continue
-		}
-
-		results = append(results, map[string]interface{}{
-			"time":  ts,
-			"value": value,
-		})
-	}
-	return results, rows.Err()
 }

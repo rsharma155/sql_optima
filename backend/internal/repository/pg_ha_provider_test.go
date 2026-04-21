@@ -30,4 +30,3 @@ func TestDetectHaProviderAuto(t *testing.T) {
 		t.Fatalf("expected standalone, got %s", got4.Provider)
 	}
 }
-

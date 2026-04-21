@@ -20,6 +20,7 @@ import (
 	"github.com/rsharma155/sql_optima/internal/collector/pghostcpu"
 	"github.com/rsharma155/sql_optima/internal/collectors"
 	"github.com/rsharma155/sql_optima/internal/models"
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
@@ -38,18 +39,30 @@ func (s *MetricsService) sihDue(m map[string]time.Time, instanceName string, now
 	return false
 }
 
+func (s *MetricsService) getInterval(ctx context.Context, name string, defaultValue time.Duration) time.Duration {
+	if pool := s.GetTimescaleDBPool(); pool != nil {
+		repo := repository.NewCollectorConfigRepository(pool)
+		cfg, err := repo.GetByName(ctx, name)
+		if err == nil && cfg != nil && cfg.IsActive {
+			return time.Duration(cfg.FrequencySeconds) * time.Second
+		}
+	}
+	return defaultValue
+}
+
 func (s *MetricsService) StartBackgroundCollector(ctx context.Context) {
+	histInterval := s.getInterval(ctx, "SQL Server CPU and Memory", HistoricalInterval)
 	log.Printf("[Collector] Split-Speed Background Daemon starting...")
-	log.Printf("[Collector]   - Historical Storage ticker: every %v", HistoricalInterval)
-	log.Printf("[Collector]   - Long Running Queries: every 60s (within historical)")
-	log.Printf("[Collector]   - Top CPU Queries: every 60s (within historical)")
+	log.Printf("[Collector]   - Historical Storage ticker: every %v", histInterval)
+	log.Printf("[Collector]   - Long Running Queries: every %v (within historical)", histInterval)
+	log.Printf("[Collector]   - Top CPU Queries: every %v (within historical)", histInterval)
 	log.Printf("[Collector]   - Live Diagnostics ticker: DISABLED (RTD is on-demand only)")
 	log.Printf("[Collector]   - PG Locks/Blocking incidents: adaptive 15s/5s")
 
 	s.dashboardCache = make(map[string]models.DashboardMetrics)
 	s.pgDashboardCache = make(map[string]models.PgCoreDashboardCache)
 
-	historyTicker := time.NewTicker(HistoricalInterval)
+	historyTicker := time.NewTicker(histInterval)
 	defer historyTicker.Stop()
 
 	// Run one live scrape on startup only (warm cache), then rely on on-demand RTD endpoints.
@@ -212,12 +225,6 @@ func (s *MetricsService) runHistoricalStorageWithContext(ctx context.Context) {
 				}
 
 				if s.tsLogger != nil {
-					if err := s.fetchAndLogQueryStoreStatsWithContext(ctx, instanceName); err != nil {
-						log.Printf("[Collector] ERROR: Failed to fetch Query Store stats for %s: %v", instanceName, err)
-					}
-				}
-
-				if s.tsLogger != nil {
 					if err := s.fetchAndLogLongRunningQueriesWithContext(ctx, instanceName, 30); err != nil {
 						log.Printf("[Collector] ERROR: Failed to fetch Long Running Queries for %s: %v", instanceName, err)
 					}
@@ -266,6 +273,11 @@ func (s *MetricsService) runHistoricalStorageWithContext(ctx context.Context) {
 						log.Printf("[Collector] ERROR: Failed to log Postgres metrics to TimescaleDB for %s: %v", instanceName, err)
 					} else {
 						log.Printf("[Collector] Successfully logged Postgres metrics for %s to TimescaleDB", instanceName)
+					}
+
+					// Enhanced Memory Intelligence collection
+					if err := s.CollectAndLogPgMemory(ctx, instanceName); err != nil {
+						log.Printf("[Collector] ERROR: Enhanced PgMemory collection failed for %s: %v", instanceName, err)
 					}
 				}
 
@@ -629,51 +641,6 @@ func (s *MetricsService) logPostgresMetricsToTimescaleWithContext(ctx context.Co
 	return nil
 }
 
-func (s *MetricsService) fetchAndLogQueryStoreStatsWithContext(ctx context.Context, instanceName string) error {
-	if s.tsLogger == nil {
-		return fmt.Errorf("tsLogger is nil")
-	}
-
-	stats, err := s.MsRepo.FetchQueryStoreStats(instanceName)
-	if err != nil {
-		return fmt.Errorf("FetchQueryStoreStats: %w", err)
-	}
-
-	if len(stats) == 0 {
-		log.Printf("[Collector] No Query Store stats found for %s", instanceName)
-		return nil
-	}
-
-	timestamp := time.Now().UTC()
-
-	rows := make([]hot.QueryStoreStatsRow, 0, len(stats))
-	for _, qs := range stats {
-		dbn := strings.TrimSpace(qs.DatabaseName)
-		if dbn == "" {
-			dbn = "unknown"
-		}
-		rows = append(rows, hot.QueryStoreStatsRow{
-			CaptureTimestamp: timestamp,
-			ServerName:       instanceName,
-			DatabaseName:     dbn,
-			QueryHash:        qs.QueryHash,
-			QueryText:        qs.QueryText,
-			Executions:       qs.Executions,
-			AvgDurationMs:    qs.AvgDurationMs,
-			AvgCpuMs:         qs.AvgCpuMs,
-			AvgLogicalReads:  qs.AvgLogicalReads,
-			TotalCpuMs:       qs.TotalCpuMs,
-		})
-	}
-
-	if err := s.tsLogger.LogQueryStoreStatsDirect(ctx, rows); err != nil {
-		return fmt.Errorf("LogQueryStoreStatsDirect: %w", err)
-	}
-
-	log.Printf("[Collector] Successfully logged %d Query Store stats for %s", len(rows), instanceName)
-	return nil
-}
-
 func (s *MetricsService) fetchAndLogLongRunningQueriesWithContext(ctx context.Context, instanceName string, minDurationSeconds int) error {
 	if s.tsLogger == nil {
 		return fmt.Errorf("tsLogger is nil")
@@ -802,6 +769,8 @@ func (s *MetricsService) fetchAndLogAgentJobsMetricsWithContext(ctx context.Cont
 		for _, j := range metrics.Jobs {
 			jobDetails = append(jobDetails, map[string]interface{}{
 				"job_name":        j.JobName,
+				"category":        j.Category,
+				"description":     j.Description,
 				"enabled":         j.Enabled,
 				"owner":           j.Owner,
 				"created_date":    j.CreatedDate,

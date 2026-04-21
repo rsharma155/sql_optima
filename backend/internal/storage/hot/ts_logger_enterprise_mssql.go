@@ -79,10 +79,10 @@ func (tl *TimescaleLogger) GetLatchWaits(ctx context.Context, instanceName strin
 			continue
 		}
 		out = append(out, map[string]interface{}{
-			"wait_type":             waitType,
-			"waiting_tasks_count":   waitingTasks,
-			"wait_time_ms":          waitMs,
-			"signal_wait_time_ms":   signalMs,
+			"wait_type":           waitType,
+			"waiting_tasks_count": waitingTasks,
+			"wait_time_ms":        waitMs,
+			"signal_wait_time_ms": signalMs,
 		})
 	}
 	return out, rows.Err()
@@ -288,13 +288,13 @@ func (tl *TimescaleLogger) GetProcedureStats(ctx context.Context, instanceName s
 			continue
 		}
 		out = append(out, map[string]interface{}{
-			"database_name":        db,
-			"schema_name":          schema,
-			"object_name":          obj,
-			"execution_count":      execCount,
-			"total_worker_time_ms": worker,
+			"database_name":         db,
+			"schema_name":           schema,
+			"object_name":           obj,
+			"execution_count":       execCount,
+			"total_worker_time_ms":  worker,
 			"total_elapsed_time_ms": elapsed,
-			"total_logical_reads":  logical,
+			"total_logical_reads":   logical,
 		})
 	}
 	return out, rows.Err()
@@ -540,14 +540,14 @@ func (tl *TimescaleLogger) GetMemoryClerks(ctx context.Context, instanceName str
 			continue
 		}
 		out = append(out, map[string]interface{}{
-			"capture_timestamp":          ts,
-			"event_time":                ts.Format(time.RFC3339),
-			"clerk_type":                 ct,
-			"memory_node":                node,
-			"pages_mb":                   pages,
-			"virtual_memory_reserved_mb": rsv,
+			"capture_timestamp":           ts,
+			"event_time":                  ts.Format(time.RFC3339),
+			"clerk_type":                  ct,
+			"memory_node":                 node,
+			"pages_mb":                    pages,
+			"virtual_memory_reserved_mb":  rsv,
 			"virtual_memory_committed_mb": com,
-			"awe_memory_mb":              awe,
+			"awe_memory_mb":               awe,
 		})
 	}
 	return out, rows.Err()
@@ -695,4 +695,3 @@ func (tl *TimescaleLogger) GetSchedulerWG(ctx context.Context, instanceName stri
 	}
 	return out, rows.Err()
 }
-

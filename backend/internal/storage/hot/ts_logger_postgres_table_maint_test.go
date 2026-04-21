@@ -16,4 +16,3 @@ func TestPgTableMaintSigDiffers(t *testing.T) {
 		t.Fatalf("expected different sig")
 	}
 }
-

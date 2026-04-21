@@ -37,7 +37,7 @@ func (r *WidgetRepository) Pool() *pgxpool.Pool {
 
 // GetAllWidgets returns all widget metadata (public view, no SQL).
 func (r *WidgetRepository) GetAllWidgets(ctx context.Context) ([]models.UIWidgetPublic, error) {
-	query := `SELECT widget_id, dashboard_section, title, chart_type, updated_at FROM optima_ui_widgets ORDER BY dashboard_section, widget_id`
+	query := `SELECT  widget_id, dashboard_section, title, chart_type, updated_at FROM optima_ui_widgets ORDER BY dashboard_section, widget_id`
 	rows, err := r.pool.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch widgets: %w", err)
@@ -58,7 +58,7 @@ func (r *WidgetRepository) GetAllWidgets(ctx context.Context) ([]models.UIWidget
 
 // GetWidgetsByInstance returns all widgets with their current SQL for a specific instance type.
 func (r *WidgetRepository) GetWidgetsByInstance(instanceName string) ([]models.UIWidget, error) {
-	query := `SELECT widget_id, dashboard_section, title, chart_type, COALESCE(current_sql, default_sql) as sql, default_sql, updated_at FROM optima_ui_widgets ORDER BY dashboard_section, widget_id`
+	query := `SELECT  widget_id, dashboard_section, title, chart_type, COALESCE(current_sql, default_sql) as sql, default_sql, updated_at FROM optima_ui_widgets ORDER BY dashboard_section, widget_id`
 	rows, err := r.pool.Query(context.Background(), query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch widgets: %w", err)
@@ -79,7 +79,7 @@ func (r *WidgetRepository) GetWidgetsByInstance(instanceName string) ([]models.U
 
 // GetWidgetByID returns a single widget with its SQL (admin view).
 func (r *WidgetRepository) GetWidgetByID(ctx context.Context, widgetID string) (*models.UIWidget, error) {
-	query := `SELECT widget_id, dashboard_section, title, chart_type, current_sql, default_sql, updated_at FROM optima_ui_widgets WHERE widget_id = $1`
+	query := `SELECT  widget_id, dashboard_section, title, chart_type, current_sql, default_sql, updated_at FROM optima_ui_widgets WHERE widget_id = $1`
 	var w models.UIWidget
 	err := r.pool.QueryRow(ctx, query, widgetID).Scan(&w.WidgetID, &w.DashboardSection, &w.Title, &w.ChartType, &w.CurrentSQL, &w.DefaultSQL, &w.UpdatedAt)
 	if err != nil {

@@ -34,7 +34,6 @@ type tableUsageStateRow struct {
 }
 
 // GetLastIndexUsageSnapshot fetches the most recent cumulative counters (not delta) for a single index identity.
-// It is used by collectors to compute deltas and to survive process restarts.
 func (tl *TimescaleLogger) GetLastIndexUsageSnapshot(ctx context.Context, engine, serverID, dbName, schemaName, tableName, indexName string) (*models.IndexUsageStat, error) {
 	query := `
 		SELECT time, engine, server_id, db_name, schema_name, table_name, index_name,
@@ -231,121 +230,6 @@ func (tl *TimescaleLogger) InsertTableSizeHistory(ctx context.Context, s models.
 	return err
 }
 
-// QueryStorageIndexHealthIndexUsage returns raw points for charts/grids (UI derives).
-func (tl *TimescaleLogger) QueryStorageIndexHealthIndexUsage(ctx context.Context, engine, serverID, from, to string, limit int) ([]models.IndexUsageStat, error) {
-	if limit <= 0 {
-		limit = 500
-	}
-	if limit > 5000 {
-		limit = 5000
-	}
-	q := `
-		SELECT time, engine, server_id, db_name, schema_name, table_name, index_name,
-		       COALESCE(seeks,0), COALESCE(scans,0), COALESCE(lookups,0), COALESCE(updates,0),
-		       COALESCE(index_size_mb,0)::float8,
-		       COALESCE(is_unique,false), COALESCE(is_pk,false), COALESCE(fillfactor,0)
-		FROM monitor.index_usage_stats
-		WHERE engine = $1 AND server_id = $2
-		  AND time >= $3::timestamptz AND time <= $4::timestamptz
-		ORDER BY time DESC
-		LIMIT $5
-	`
-	rows, err := tl.pool.Query(ctx, q, engine, serverID, from, to, limit)
-	if err != nil {
-		if isMissingRelation(err) {
-			return nil, schemaMissingErr("monitor.index_usage_stats")
-		}
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []models.IndexUsageStat
-	for rows.Next() {
-		var r models.IndexUsageStat
-		if err := rows.Scan(&r.Time, &r.Engine, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.IndexName,
-			&r.Seeks, &r.Scans, &r.Lookups, &r.Updates, &r.IndexSizeMB, &r.IsUnique, &r.IsPK, &r.FillFactor); err != nil {
-			continue
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-func (tl *TimescaleLogger) QueryStorageIndexHealthTableUsage(ctx context.Context, engine, serverID, from, to string, limit int) ([]models.TableUsageStat, error) {
-	if limit <= 0 {
-		limit = 500
-	}
-	if limit > 5000 {
-		limit = 5000
-	}
-	q := `
-		SELECT time, engine, server_id, db_name, schema_name, table_name,
-		       COALESCE(seq_scans,0), COALESCE(idx_scans,0), COALESCE(rows_read,0), COALESCE(rows_modified,0),
-		       COALESCE(table_size_mb,0)::float8, COALESCE(index_size_mb,0)::float8, COALESCE(row_count,0)
-		FROM monitor.table_usage_stats
-		WHERE engine = $1 AND server_id = $2
-		  AND time >= $3::timestamptz AND time <= $4::timestamptz
-		ORDER BY time DESC
-		LIMIT $5
-	`
-	rows, err := tl.pool.Query(ctx, q, engine, serverID, from, to, limit)
-	if err != nil {
-		if isMissingRelation(err) {
-			return nil, schemaMissingErr("monitor.table_usage_stats")
-		}
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []models.TableUsageStat
-	for rows.Next() {
-		var r models.TableUsageStat
-		if err := rows.Scan(&r.Time, &r.Engine, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName,
-			&r.SeqScans, &r.IdxScans, &r.RowsRead, &r.RowsModified, &r.TableSizeMB, &r.IndexSizeMB, &r.RowCount); err != nil {
-			continue
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-func (tl *TimescaleLogger) QueryStorageIndexHealthTableGrowth(ctx context.Context, engine, serverID string, from, to string, limit int) ([]models.TableSizeHistory, error) {
-	if limit <= 0 {
-		limit = 500
-	}
-	if limit > 5000 {
-		limit = 5000
-	}
-	q := `
-		SELECT time, engine, server_id, db_name, schema_name, table_name,
-		       COALESCE(table_size_mb,0)::float8, COALESCE(index_size_mb,0)::float8, COALESCE(row_count,0)
-		FROM monitor.table_size_history
-		WHERE engine = $1 AND server_id = $2
-		  AND time >= $3::timestamptz AND time <= $4::timestamptz
-		ORDER BY time DESC
-		LIMIT $5
-	`
-	rows, err := tl.pool.Query(ctx, q, engine, serverID, from, to, limit)
-	if err != nil {
-		if isMissingRelation(err) {
-			return nil, schemaMissingErr("monitor.table_size_history")
-		}
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []models.TableSizeHistory
-	for rows.Next() {
-		var r models.TableSizeHistory
-		if err := rows.Scan(&r.Time, &r.Engine, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName,
-			&r.TableSizeMB, &r.IndexSizeMB, &r.RowCount); err != nil {
-			continue
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
 func (tl *TimescaleLogger) InsertIndexDefinition(ctx context.Context, d models.IndexDefinition) error {
 	q := `
 		INSERT INTO monitor.index_definitions (
@@ -376,8 +260,7 @@ type IndexDefinitionRow struct {
 }
 
 // QueryIndexDefinition returns the latest stored definitions from monitor.index_definitions
-// for the given engine and serverID. The dbName, schemaName, and indexName parameters are
-// optional filters; when none are provided the query returns all definitions for the instance.
+// for the given engine and serverID.
 func (tl *TimescaleLogger) QueryIndexDefinition(ctx context.Context, engine, serverID, dbName, schemaName, indexName string) ([]IndexDefinitionRow, error) {
 	if engine == "" || serverID == "" {
 		return nil, fmt.Errorf("engine and serverID are required")
@@ -430,162 +313,78 @@ func (tl *TimescaleLogger) QueryIndexDefinition(ctx context.Context, engine, ser
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) QueryStorageIndexHealthFilterOptions(ctx context.Context, engine, serverID, from, to string, dbName, schemaName string) (*SIHFilterOptions, error) {
-	baseWhereTime := `engine=$1 AND server_id=$2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
-	baseArgsTime := []interface{}{engine, serverID, from, to}
-	baseWhereAny := `engine=$1 AND server_id=$2`
-	baseArgsAny := []interface{}{engine, serverID}
-
-	countIn := func(rel string) (int64, error) {
-		q := `SELECT COUNT(*)::bigint FROM ` + rel + ` WHERE ` + baseWhereTime
-		var n int64
-		err := tl.pool.QueryRow(ctx, q, baseArgsTime...).Scan(&n)
-		if err != nil {
-			if isMissingRelation(err) {
-				return 0, nil
-			}
-			return 0, err
-		}
-		return n, nil
+func (tl *TimescaleLogger) QueryStorageIndexHealthIndexUsage(ctx context.Context, engine, serverID, from, to string, limit int) ([]models.IndexUsageStat, error) {
+	if limit <= 0 {
+		limit = 500
 	}
-
-	var counts SIHFilterSourceRowCounts
-	var err error
-	if counts.TableSizeHistory, err = countIn("monitor.table_size_history"); err != nil {
-		return nil, err
-	}
-	if counts.TableUsageStats, err = countIn("monitor.table_usage_stats"); err != nil {
-		return nil, err
-	}
-	if counts.IndexUsageStats, err = countIn("monitor.index_usage_stats"); err != nil {
-		return nil, err
-	}
-
-	// Distinct values across all SIH hypertables so filters populate even if only index_usage
-	// or table_usage has rows (e.g. before first 6h growth snapshot).
-	queryDistinctUnion := func(col, whereSQL string, args []interface{}) ([]string, error) {
-		q := fmt.Sprintf(`
-			SELECT DISTINCT v FROM (
-				SELECT %s::text AS v FROM monitor.table_size_history WHERE %s
-				UNION
-				SELECT %s::text AS v FROM monitor.table_usage_stats WHERE %s
-				UNION
-				SELECT %s::text AS v FROM monitor.index_usage_stats WHERE %s
-			) x
-			WHERE v IS NOT NULL AND btrim(v) <> ''
-			ORDER BY v
-			LIMIT 1000
-		`, col, whereSQL, col, whereSQL, col, whereSQL)
-		rows, err := tl.pool.Query(ctx, q, args...)
-		if err != nil {
-			if isMissingRelation(err) {
-				return nil, schemaMissingErr("monitor.table_size_history")
-			}
-			return nil, err
-		}
-		defer rows.Close()
-		out := make([]string, 0, 64)
-		for rows.Next() {
-			var s string
-			if err := rows.Scan(&s); err == nil && strings.TrimSpace(s) != "" {
-				out = append(out, s)
-			}
-		}
-		return out, rows.Err()
-	}
-
-	dbs, err := queryDistinctUnion("db_name", baseWhereTime, baseArgsTime)
+	q := `SELECT time, engine, server_id, db_name, schema_name, table_name, index_name, seeks, scans, lookups, updates, index_size_mb, is_unique, is_pk, fillfactor
+	      FROM monitor.index_usage_stats WHERE engine = $1 AND server_id = $2 AND time >= $3::timestamptz AND time <= $4::timestamptz
+	      ORDER BY time DESC LIMIT $5`
+	rows, err := tl.pool.Query(ctx, q, engine, serverID, from, to, limit)
 	if err != nil {
 		return nil, err
 	}
-	if len(dbs) == 0 {
-		dbs, err = queryDistinctUnion("db_name", baseWhereAny, baseArgsAny)
-		if err != nil {
-			return nil, err
+	defer rows.Close()
+	var out []models.IndexUsageStat
+	for rows.Next() {
+		var r models.IndexUsageStat
+		if err := rows.Scan(&r.Time, &r.Engine, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.IndexName, &r.Seeks, &r.Scans, &r.Lookups, &r.Updates, &r.IndexSizeMB, &r.IsUnique, &r.IsPK, &r.FillFactor); err != nil {
+			continue
 		}
+		out = append(out, r)
 	}
-
-	whereSchemasTime := baseWhereTime
-	argsSchemasTime := append([]interface{}{}, baseArgsTime...)
-	if strings.TrimSpace(dbName) != "" {
-		whereSchemasTime += " AND db_name = $5"
-		argsSchemasTime = append(argsSchemasTime, dbName)
-	}
-	schemas, err := queryDistinctUnion("schema_name", whereSchemasTime, argsSchemasTime)
-	if err != nil {
-		return nil, err
-	}
-	if len(schemas) == 0 {
-		whereSchemasAny := baseWhereAny
-		argsSchemasAny := append([]interface{}{}, baseArgsAny...)
-		if strings.TrimSpace(dbName) != "" {
-			whereSchemasAny += " AND db_name = $3"
-			argsSchemasAny = append(argsSchemasAny, dbName)
-		}
-		schemas, err = queryDistinctUnion("schema_name", whereSchemasAny, argsSchemasAny)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	whereTablesTime := baseWhereTime
-	argsTablesTime := append([]interface{}{}, baseArgsTime...)
-	n := 5
-	if strings.TrimSpace(dbName) != "" {
-		whereTablesTime += " AND db_name = $" + fmt.Sprint(n)
-		argsTablesTime = append(argsTablesTime, dbName)
-		n++
-	}
-	if strings.TrimSpace(schemaName) != "" {
-		whereTablesTime += " AND schema_name = $" + fmt.Sprint(n)
-		argsTablesTime = append(argsTablesTime, schemaName)
-	}
-	tables, err := queryDistinctUnion("table_name", whereTablesTime, argsTablesTime)
-	if err != nil {
-		return nil, err
-	}
-	if len(tables) == 0 {
-		whereTablesAny := baseWhereAny
-		argsTablesAny := append([]interface{}{}, baseArgsAny...)
-		n2 := 3
-		if strings.TrimSpace(dbName) != "" {
-			whereTablesAny += " AND db_name = $" + fmt.Sprint(n2)
-			argsTablesAny = append(argsTablesAny, dbName)
-			n2++
-		}
-		if strings.TrimSpace(schemaName) != "" {
-			whereTablesAny += " AND schema_name = $" + fmt.Sprint(n2)
-			argsTablesAny = append(argsTablesAny, schemaName)
-		}
-		tables, err = queryDistinctUnion("table_name", whereTablesAny, argsTablesAny)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if dbs == nil {
-		dbs = []string{}
-	}
-	if schemas == nil {
-		schemas = []string{}
-	}
-	if tables == nil {
-		tables = []string{}
-	}
-	return &SIHFilterOptions{Databases: dbs, Schemas: schemas, Tables: tables, SourceRowCounts: counts}, nil
+	return out, rows.Err()
 }
 
-// RefreshIndexUnusedCandidatesDaily stores the top unused-index candidates for alerts/UI.
-// It replaces rows for (run_at UTC midnight of analysis day, engine, server_id).
-// Criteria: zero reads in the prior 24h window ending at analysisEnd, updates >= minUpdates, not PK.
+func (tl *TimescaleLogger) QueryStorageIndexHealthTableUsage(ctx context.Context, engine, serverID, from, to string, limit int) ([]models.TableUsageStat, error) {
+	q := `SELECT time, engine, server_id, db_name, schema_name, table_name, seq_scans, idx_scans, rows_read, rows_modified, table_size_mb, index_size_mb, row_count
+	      FROM monitor.table_usage_stats WHERE engine = $1 AND server_id = $2 AND time >= $3::timestamptz AND time <= $4::timestamptz
+	      ORDER BY time DESC LIMIT $5`
+	rows, err := tl.pool.Query(ctx, q, engine, serverID, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.TableUsageStat
+	for rows.Next() {
+		var r models.TableUsageStat
+		if err := rows.Scan(&r.Time, &r.Engine, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.SeqScans, &r.IdxScans, &r.RowsRead, &r.RowsModified, &r.TableSizeMB, &r.IndexSizeMB, &r.RowCount); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (tl *TimescaleLogger) QueryStorageIndexHealthTableGrowth(ctx context.Context, engine, serverID string, from, to string, limit int) ([]models.TableSizeHistory, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	q := `SELECT time, engine, server_id, db_name, schema_name, table_name, table_size_mb, index_size_mb, row_count
+	      FROM monitor.table_size_history WHERE engine = $1 AND server_id = $2 AND time >= $3::timestamptz AND time <= $4::timestamptz
+	      ORDER BY time DESC LIMIT $5`
+	rows, err := tl.pool.Query(ctx, q, engine, serverID, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.TableSizeHistory
+	for rows.Next() {
+		var r models.TableSizeHistory
+		if err := rows.Scan(&r.Time, &r.Engine, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.TableSizeMB, &r.IndexSizeMB, &r.RowCount); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
 func (tl *TimescaleLogger) RefreshIndexUnusedCandidatesDaily(ctx context.Context, engine, serverID string, analysisEnd time.Time, minUpdates int64) (int64, error) {
 	if minUpdates <= 0 {
 		minUpdates = 100
 	}
 	u := analysisEnd.UTC()
 	runAt := time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
-	end := u
-
 	tx, err := tl.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -594,9 +393,6 @@ func (tl *TimescaleLogger) RefreshIndexUnusedCandidatesDaily(ctx context.Context
 
 	del := `DELETE FROM monitor.index_unused_candidates_daily WHERE run_at = $1 AND engine = $2 AND server_id = $3`
 	if _, err := tx.Exec(ctx, del, runAt, engine, serverID); err != nil {
-		if isMissingRelation(err) {
-			return 0, schemaMissingErr("monitor.index_unused_candidates_daily")
-		}
 		return 0, err
 	}
 
@@ -642,15 +438,437 @@ func (tl *TimescaleLogger) RefreshIndexUnusedCandidatesDaily(ctx context.Context
 		) x
 		WHERE x.rnk <= 100
 	`
-	tag, err := tx.Exec(ctx, ins, runAt, engine, serverID, end, minUpdates)
+	tag, err := tx.Exec(ctx, ins, runAt, engine, serverID, analysisEnd.UTC(), minUpdates)
 	if err != nil {
-		if isMissingRelation(err) {
-			return 0, schemaMissingErr("monitor.index_unused_candidates_daily")
-		}
 		return 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+func (tl *TimescaleLogger) QueryStorageIndexHealthFilterOptions(ctx context.Context, engine, serverID, from, to string, dbName, schemaName string) (*SIHFilterOptions, error) {
+	baseWhereTime := `engine=$1 AND server_id=$2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
+	baseArgsTime := []interface{}{engine, serverID, from, to}
+	baseWhereAny := `engine=$1 AND server_id=$2`
+	baseArgsAny := []interface{}{engine, serverID}
+
+	countIn := func(rel string) (int64, error) {
+		q := `SELECT COUNT(*)::bigint FROM ` + rel + ` WHERE ` + baseWhereTime
+		var n int64
+		err := tl.pool.QueryRow(ctx, q, baseArgsTime...).Scan(&n)
+		if err != nil {
+			if isMissingRelation(err) {
+				return 0, nil
+			}
+			return 0, err
+		}
+		return n, nil
+	}
+
+	var counts SIHFilterSourceRowCounts
+	counts.TableSizeHistory, _ = countIn("monitor.table_size_history")
+	counts.TableUsageStats, _ = countIn("monitor.table_usage_stats")
+	counts.IndexUsageStats, _ = countIn("monitor.index_usage_stats")
+
+	queryDistinctUnion := func(col, whereSQL string, args []interface{}) ([]string, error) {
+		q := fmt.Sprintf(`
+			SELECT DISTINCT v FROM (
+				SELECT %s::text AS v FROM monitor.table_size_history WHERE %s
+				UNION
+				SELECT %s::text AS v FROM monitor.table_usage_stats WHERE %s
+				UNION
+				SELECT %s::text AS v FROM monitor.index_usage_stats WHERE %s
+			) x
+			WHERE v IS NOT NULL AND btrim(v) <> '' ORDER BY v LIMIT 1000
+		`, col, whereSQL, col, whereSQL, col, whereSQL)
+		rows, err := tl.pool.Query(ctx, q, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		out := make([]string, 0, 64)
+		for rows.Next() {
+			var s string
+			if err := rows.Scan(&s); err == nil && strings.TrimSpace(s) != "" {
+				out = append(out, s)
+			}
+		}
+		return out, nil
+	}
+
+	dbs, _ := queryDistinctUnion("db_name", baseWhereTime, baseArgsTime)
+	if len(dbs) == 0 {
+		dbs, _ = queryDistinctUnion("db_name", baseWhereAny, baseArgsAny)
+	}
+
+	whereSchemasTime := baseWhereTime
+	argsSchemasTime := append([]interface{}{}, baseArgsTime...)
+	if dbName != "" {
+		whereSchemasTime += " AND db_name = $5"
+		argsSchemasTime = append(argsSchemasTime, dbName)
+	}
+	schemas, _ := queryDistinctUnion("schema_name", whereSchemasTime, argsSchemasTime)
+
+	whereTablesTime := baseWhereTime
+	argsTablesTime := append([]interface{}{}, baseArgsTime...)
+	n := 5
+	if dbName != "" {
+		whereTablesTime += " AND db_name = $" + fmt.Sprint(n)
+		argsTablesTime = append(argsTablesTime, dbName)
+		n++
+	}
+	if schemaName != "" {
+		whereTablesTime += " AND schema_name = $" + fmt.Sprint(n)
+		argsTablesTime = append(argsTablesTime, schemaName)
+	}
+	tables, _ := queryDistinctUnion("table_name", whereTablesTime, argsTablesTime)
+
+	return &SIHFilterOptions{
+		Databases: dbs, Schemas: schemas, Tables: tables, SourceRowCounts: counts,
+	}, nil
+}
+
+// ---- New Time-Series Storage & Index History Methods ----
+
+type DBStorageHistoryRow struct {
+	SnapshotTime time.Time `json:"snapshot_time"`
+	ServerName   string    `json:"server_name"`
+	InstanceName string    `json:"instance_name"`
+	DatabaseName string    `json:"database_name"`
+	TotalSizeMB  float64   `json:"total_size_mb"`
+	DataSizeMB   float64   `json:"data_size_mb"`
+	LogSizeMB    float64   `json:"log_size_mb"`
+}
+
+type IndexFragHistoryRow struct {
+	SnapshotTime        time.Time `json:"snapshot_time"`
+	ServerName          string    `json:"server_name"`
+	InstanceName        string    `json:"instance_name"`
+	DatabaseName        string    `json:"database_name"`
+	SchemaName          string    `json:"schema_name"`
+	TableName           string    `json:"table_name"`
+	IndexName           string    `json:"index_name"`
+	AvgFragmentationPct float64   `json:"avg_fragmentation_pct"`
+	PageCount           int64     `json:"page_count"`
+}
+
+type TableStructureHistoryRow struct {
+	SnapshotTime      time.Time `json:"snapshot_time"`
+	ServerName        string    `json:"server_name"`
+	InstanceName      string    `json:"instance_name"`
+	DatabaseName      string    `json:"database_name"`
+	SchemaName        string    `json:"schema_name"`
+	TableName         string    `json:"table_name"`
+	HasClusteredIndex bool      `json:"has_clustered_index"`
+	HasPrimaryKey     bool      `json:"has_primary_key"`
+}
+
+type TableSizeHistoryRow struct {
+	SnapshotTime time.Time `json:"snapshot_time"`
+	ServerName   string    `json:"server_name"`
+	InstanceName string    `json:"instance_name"`
+	DatabaseName string    `json:"database_name"`
+	SchemaName   string    `json:"schema_name"`
+	TableName    string    `json:"table_name"`
+	RowCount     int64     `json:"row_count"`
+	TotalMB      float64   `json:"total_mb"`
+	DataMB       float64   `json:"data_mb"`
+	IndexMB      float64   `json:"index_mb"`
+}
+
+func (tl *TimescaleLogger) LogTableStructureHistory(ctx context.Context, rows []TableStructureHistoryRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	q := `INSERT INTO snapshot.mssql_table_structure_history (snapshot_time, server_name, instance_name, database_name, schema_name, table_name, has_clustered_index, has_primary_key)
+	      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`
+	for _, r := range rows {
+		_, _ = tl.pool.Exec(ctx, q, r.SnapshotTime, r.ServerName, r.InstanceName, r.DatabaseName, r.SchemaName, r.TableName, r.HasClusteredIndex, r.HasPrimaryKey)
+	}
+	return nil
+}
+
+func (tl *TimescaleLogger) LogTableSizeHistory(ctx context.Context, rows []TableSizeHistoryRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	q := `INSERT INTO snapshot.mssql_table_size_history (snapshot_time, server_name, instance_name, database_name, schema_name, table_name, row_count, total_mb, data_mb, index_mb)
+	      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`
+	for _, r := range rows {
+		_, _ = tl.pool.Exec(ctx, q, r.SnapshotTime, r.ServerName, r.InstanceName, r.DatabaseName, r.SchemaName, r.TableName, r.RowCount, r.TotalMB, r.DataMB, r.IndexMB)
+	}
+	return nil
+}
+
+func (tl *TimescaleLogger) LogDBStorageHistory(ctx context.Context, rows []DBStorageHistoryRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	q := `INSERT INTO snapshot.mssql_db_storage_history (snapshot_time, server_name, instance_name, database_name, total_size_mb, data_size_mb, log_size_mb)
+	      VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`
+	for _, r := range rows {
+		_, _ = tl.pool.Exec(ctx, q, r.SnapshotTime, r.ServerName, r.InstanceName, r.DatabaseName, r.TotalSizeMB, r.DataSizeMB, r.LogSizeMB)
+	}
+	return nil
+}
+
+func (tl *TimescaleLogger) LogIndexUsageHistory(ctx context.Context, rows []models.IndexUsageStat) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	q := `INSERT INTO snapshot.mssql_index_usage_history (snapshot_time, server_name, instance_name, database_name, schema_name, table_name, index_name, index_size_mb, user_seeks, user_scans, user_lookups, user_updates)
+	      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING`
+	for _, r := range rows {
+		_, _ = tl.pool.Exec(ctx, q, r.Time, r.ServerID, r.ServerID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.IndexSizeMB, r.Seeks, r.Scans, r.Lookups, r.Updates)
+	}
+	return nil
+}
+
+func (tl *TimescaleLogger) LogIndexFragmentationHistory(ctx context.Context, rows []IndexFragHistoryRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	q := `INSERT INTO snapshot.mssql_index_fragmentation_history (snapshot_time, server_name, instance_name, database_name, schema_name, table_name, index_name, avg_fragmentation_pct, page_count)
+	      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`
+	for _, r := range rows {
+		_, _ = tl.pool.Exec(ctx, q, r.SnapshotTime, r.ServerName, r.InstanceName, r.DatabaseName, r.SchemaName, r.TableName, r.IndexName, r.AvgFragmentationPct, r.PageCount)
+	}
+	return nil
+}
+
+func (tl *TimescaleLogger) GetTableSizeHistory(ctx context.Context, engine, instanceName, from, to string, db, schema, table string) ([]models.TableSizeHistory, error) {
+	var q string
+	var args []interface{}
+
+	// Step 1: Try monitor.table_usage_stats (has 15m cadence deltas/snapshots)
+	// Column names in monitor.* are fixed: server_id, db_name
+	q = `SELECT time, server_id, db_name, schema_name, table_name, row_count, table_size_mb, index_size_mb
+	      FROM monitor.table_usage_stats
+	      WHERE engine = $1 AND server_id = $2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
+	args = []interface{}{engine, instanceName, from, to}
+
+	if db != "" && db != "all" {
+		args = append(args, db)
+		q += fmt.Sprintf(" AND db_name = $%d", len(args))
+	}
+	if schema != "" && schema != "all" {
+		args = append(args, schema)
+		q += fmt.Sprintf(" AND schema_name = $%d", len(args))
+	}
+	if table != "" && table != "all" {
+		args = append(args, table)
+		q += fmt.Sprintf(" AND table_name = $%d", len(args))
+	}
+
+	q += " ORDER BY time ASC"
+
+	rows, err := tl.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []models.TableSizeHistory
+	for rows.Next() {
+		var r models.TableSizeHistory
+		if err := rows.Scan(&r.Time, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.RowCount, &r.TableSizeMB, &r.IndexSizeMB); err != nil {
+			continue
+		}
+		r.Engine = engine
+		out = append(out, r)
+	}
+
+	// Step 2: Fallback to table_size_history or engine-specific history if usage stats empty
+	if len(out) == 0 {
+		if engine == "postgres" {
+			q = `SELECT time, server_id, db_name, schema_name, table_name, row_count, table_size_mb, index_size_mb
+			      FROM monitor.table_size_history
+			      WHERE engine = $1 AND server_id = $2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
+			args = []interface{}{engine, instanceName, from, to}
+		} else {
+			// MSSQL snapshot table uses instance_name and database_name
+			q = `SELECT snapshot_time, instance_name, database_name, schema_name, table_name, row_count, total_mb, index_mb
+			      FROM snapshot.mssql_table_size_history
+			      WHERE instance_name = $1 AND snapshot_time >= $2::timestamptz AND snapshot_time <= $3::timestamptz`
+			args = []interface{}{instanceName, from, to}
+		}
+
+		if db != "" && db != "all" {
+			args = append(args, db)
+			q += fmt.Sprintf(" AND %s = $%d", tl.dbCol(engine), len(args))
+		}
+		if schema != "" && schema != "all" {
+			args = append(args, schema)
+			q += fmt.Sprintf(" AND schema_name = $%d", len(args))
+		}
+		if table != "" && table != "all" {
+			args = append(args, table)
+			q += fmt.Sprintf(" AND table_name = $%d", len(args))
+		}
+
+		if engine == "postgres" {
+			q += " ORDER BY time ASC"
+		} else {
+			q += " ORDER BY snapshot_time ASC"
+		}
+
+		rows2, _ := tl.pool.Query(ctx, q, args...)
+		if rows2 != nil {
+			defer rows2.Close()
+			for rows2.Next() {
+				var r models.TableSizeHistory
+				if err := rows2.Scan(&r.Time, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.RowCount, &r.TableSizeMB, &r.IndexSizeMB); err != nil {
+					continue
+				}
+				r.Engine = engine
+				out = append(out, r)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (tl *TimescaleLogger) dbCol(engine string) string {
+	if engine == "postgres" {
+		return "db_name"
+	}
+	return "database_name"
+}
+
+func (tl *TimescaleLogger) GetIndexUsageHistory(ctx context.Context, engine, instanceName, from, to string, db, schema, table string) ([]models.IndexUsageStat, error) {
+	var q string
+	var args []interface{}
+
+	// Step 1: Try monitor.index_usage_stats (15m cadence)
+	q = `SELECT time, server_id, db_name, schema_name, table_name, index_name, index_size_mb, 
+	            COALESCE(seeks,0), COALESCE(scans,0), COALESCE(lookups,0), COALESCE(updates,0)
+	      FROM monitor.index_usage_stats
+	      WHERE engine = $1 AND server_id = $2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
+	args = []interface{}{engine, instanceName, from, to}
+
+	if db != "" && db != "all" {
+		args = append(args, db)
+		q += fmt.Sprintf(" AND db_name = $%d", len(args))
+	}
+	if schema != "" && schema != "all" {
+		args = append(args, schema)
+		q += fmt.Sprintf(" AND schema_name = $%d", len(args))
+	}
+	if table != "" && table != "all" {
+		args = append(args, table)
+		q += fmt.Sprintf(" AND table_name = $%d", len(args))
+	}
+
+	q += " ORDER BY time ASC"
+
+	rows, err := tl.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []models.IndexUsageStat
+	for rows.Next() {
+		var r models.IndexUsageStat
+		if err := rows.Scan(&r.Time, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.IndexName, &r.IndexSizeMB, &r.Seeks, &r.Scans, &r.Lookups, &r.Updates); err != nil {
+			continue
+		}
+		r.Engine = engine
+		out = append(out, r)
+	}
+
+	// Step 2: Fallback to engine-specific history if usage stats empty (MSSQL)
+	if len(out) == 0 && engine == "sqlserver" {
+		q = `SELECT snapshot_time, instance_name, database_name, schema_name, table_name, index_name, index_size_mb, user_seeks, user_scans, user_lookups, user_updates
+		      FROM snapshot.mssql_index_usage_history
+		      WHERE instance_name = $1 AND snapshot_time >= $2::timestamptz AND snapshot_time <= $3::timestamptz`
+		args = []interface{}{instanceName, from, to}
+		if db != "" && db != "all" {
+			args = append(args, db)
+			q += fmt.Sprintf(" AND database_name = $%d", len(args))
+		}
+		if schema != "" && schema != "all" {
+			args = append(args, schema)
+			q += fmt.Sprintf(" AND schema_name = $%d", len(args))
+		}
+		if table != "" && table != "all" {
+			args = append(args, table)
+			q += fmt.Sprintf(" AND table_name = $%d", len(args))
+		}
+		q += " ORDER BY snapshot_time ASC"
+		rows2, _ := tl.pool.Query(ctx, q, args...)
+		if rows2 != nil {
+			defer rows2.Close()
+			for rows2.Next() {
+				var r models.IndexUsageStat
+				if err := rows2.Scan(&r.Time, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.IndexName, &r.IndexSizeMB, &r.Seeks, &r.Scans, &r.Lookups, &r.Updates); err != nil {
+					continue
+				}
+				r.Engine = engine
+				out = append(out, r)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (tl *TimescaleLogger) GetIndexFragmentationHistory(ctx context.Context, engine, instanceName, from, to string, db, schema, table string) ([]IndexFragHistoryRow, error) {
+	if engine == "postgres" {
+		// Postgres doesn't track fragmentation in the same way, return empty for now
+		return []IndexFragHistoryRow{}, nil
+	}
+	q := `SELECT snapshot_time, server_name, instance_name, database_name, schema_name, table_name, index_name, avg_fragmentation_pct, page_count
+	      FROM snapshot.mssql_index_fragmentation_history
+	      WHERE instance_name = $1 AND snapshot_time >= $2::timestamptz AND snapshot_time <= $3::timestamptz`
+	args := []interface{}{instanceName, from, to}
+	if db != "" && db != "all" {
+		args = append(args, db)
+		q += fmt.Sprintf(" AND database_name = $%d", len(args))
+	}
+	if schema != "" && schema != "all" {
+		args = append(args, schema)
+		q += fmt.Sprintf(" AND schema_name = $%d", len(args))
+	}
+	if table != "" && table != "all" {
+		args = append(args, table)
+		q += fmt.Sprintf(" AND table_name = $%d", len(args))
+	}
+	q += " ORDER BY snapshot_time ASC"
+	rows, err := tl.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []IndexFragHistoryRow
+	for rows.Next() {
+		var r IndexFragHistoryRow
+		if err := rows.Scan(&r.SnapshotTime, &r.ServerName, &r.InstanceName, &r.DatabaseName, &r.SchemaName, &r.TableName, &r.IndexName, &r.AvgFragmentationPct, &r.PageCount); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (tl *TimescaleLogger) GetDBStorageHistory(ctx context.Context, instanceName, from, to string) ([]DBStorageHistoryRow, error) {
+	q := `SELECT snapshot_time, server_name, instance_name, database_name, total_size_mb, data_size_mb, log_size_mb
+	      FROM snapshot.mssql_db_storage_history
+	      WHERE instance_name = $1 AND snapshot_time >= $2::timestamptz AND snapshot_time <= $3::timestamptz
+	      ORDER BY snapshot_time ASC`
+	rows, err := tl.pool.Query(ctx, q, instanceName, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DBStorageHistoryRow
+	for rows.Next() {
+		var r DBStorageHistoryRow
+		if err := rows.Scan(&r.SnapshotTime, &r.ServerName, &r.InstanceName, &r.DatabaseName, &r.TotalSizeMB, &r.DataSizeMB, &r.LogSizeMB); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
 }

@@ -68,7 +68,7 @@ func (c *PgRepository) FetchPgCoreThroughputTelemetry(instanceName string, prev 
 	var queryErr error
 
 	rows, err := db.Query(`
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			datname,
 			xact_commit,
 			xact_rollback,
@@ -108,7 +108,7 @@ func (c *PgRepository) FetchPgCoreThroughputTelemetry(instanceName string, prev 
 
 			if dbOk && db != nil {
 				rows2, err2 := db.Query(`
-					SELECT
+					SELECT /* SQL_OPTIMA */  
 						datname,
 						xact_commit,
 						xact_rollback,

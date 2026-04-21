@@ -540,14 +540,20 @@ func (tl *TimescaleLogger) LogPostgresQueryStatsSnapshot(ctx context.Context, in
 	const q = `INSERT INTO postgres_query_stats (
 		capture_timestamp, server_instance_name, query_id, query_text,
 		calls, total_time_ms, mean_time_ms, rows,
-		temp_blks_read, temp_blks_written, blk_read_time_ms, blk_write_time_ms
-	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`
+		temp_blks_read, temp_blks_written, blk_read_time_ms, blk_write_time_ms,
+		shared_blks_hit, shared_blks_read, shared_blks_dirtied, shared_blks_written,
+		wal_bytes, wal_records, wal_fpi,
+		total_plan_time, mean_plan_time, plans
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`
 	batch := &pgx.Batch{}
 	for _, r := range rows {
 		batch.Queue(q,
 			captureTS, instanceName, r.QueryID, r.QueryText,
 			r.Calls, r.TotalTimeMs, r.MeanTimeMs, r.Rows,
 			r.TempBlksRead, r.TempBlksWritten, r.BlkReadTimeMs, r.BlkWriteTimeMs,
+			r.SharedBlksHit, r.SharedBlksRead, r.SharedBlksDirtied, r.SharedBlksWritten,
+			r.WalBytes, r.WalRecords, r.WalFpi,
+			r.TotalPlanTime, r.MeanPlanTime, r.Plans,
 		)
 	}
 	br := tl.pool.SendBatch(ctx, batch)
@@ -563,7 +569,11 @@ func (tl *TimescaleLogger) LogPostgresQueryStatsSnapshot(ctx context.Context, in
 func (tl *TimescaleLogger) loadPostgresQueryStatsSnapshot(ctx context.Context, instanceName string, ts time.Time) (map[int64]PostgresQueryStatsSnapRow, error) {
 	const q = `
 		SELECT query_id, query_text, calls, total_time_ms, mean_time_ms, rows,
-		       temp_blks_read, temp_blks_written, blk_read_time_ms, blk_write_time_ms
+		       temp_blks_read, temp_blks_written, blk_read_time_ms, blk_write_time_ms,
+		       COALESCE(shared_blks_hit,0), COALESCE(shared_blks_read,0),
+		       COALESCE(shared_blks_dirtied,0), COALESCE(shared_blks_written,0),
+		       COALESCE(wal_bytes,0), COALESCE(wal_records,0), COALESCE(wal_fpi,0),
+		       COALESCE(total_plan_time,0), COALESCE(mean_plan_time,0), COALESCE(plans,0)
 		FROM postgres_query_stats
 		WHERE server_instance_name = $1 AND capture_timestamp = $2`
 	rows, err := tl.pool.Query(ctx, q, instanceName, ts)
@@ -575,7 +585,10 @@ func (tl *TimescaleLogger) loadPostgresQueryStatsSnapshot(ctx context.Context, i
 	for rows.Next() {
 		var r PostgresQueryStatsSnapRow
 		if err := rows.Scan(&r.QueryID, &r.QueryText, &r.Calls, &r.TotalTimeMs, &r.MeanTimeMs, &r.Rows,
-			&r.TempBlksRead, &r.TempBlksWritten, &r.BlkReadTimeMs, &r.BlkWriteTimeMs); err != nil {
+			&r.TempBlksRead, &r.TempBlksWritten, &r.BlkReadTimeMs, &r.BlkWriteTimeMs,
+			&r.SharedBlksHit, &r.SharedBlksRead, &r.SharedBlksDirtied, &r.SharedBlksWritten,
+			&r.WalBytes, &r.WalRecords, &r.WalFpi,
+			&r.TotalPlanTime, &r.MeanPlanTime, &r.Plans); err != nil {
 			continue
 		}
 		out[r.QueryID] = r
@@ -589,15 +602,24 @@ func subSnap(a, b PostgresQueryStatsSnapRow) PostgresQueryStatsSnapRow {
 		return b
 	}
 	r := PostgresQueryStatsSnapRow{
-		QueryID:         b.QueryID,
-		QueryText:       b.QueryText,
-		Calls:           b.Calls - a.Calls,
-		TotalTimeMs:     b.TotalTimeMs - a.TotalTimeMs,
-		Rows:            b.Rows - a.Rows,
-		TempBlksRead:    b.TempBlksRead - a.TempBlksRead,
-		TempBlksWritten: b.TempBlksWritten - a.TempBlksWritten,
-		BlkReadTimeMs:   b.BlkReadTimeMs - a.BlkReadTimeMs,
-		BlkWriteTimeMs:  b.BlkWriteTimeMs - a.BlkWriteTimeMs,
+		QueryID:           b.QueryID,
+		QueryText:         b.QueryText,
+		Calls:             b.Calls - a.Calls,
+		TotalTimeMs:       b.TotalTimeMs - a.TotalTimeMs,
+		Rows:              b.Rows - a.Rows,
+		TempBlksRead:      b.TempBlksRead - a.TempBlksRead,
+		TempBlksWritten:   b.TempBlksWritten - a.TempBlksWritten,
+		BlkReadTimeMs:     b.BlkReadTimeMs - a.BlkReadTimeMs,
+		BlkWriteTimeMs:    b.BlkWriteTimeMs - a.BlkWriteTimeMs,
+		SharedBlksHit:     b.SharedBlksHit - a.SharedBlksHit,
+		SharedBlksRead:    b.SharedBlksRead - a.SharedBlksRead,
+		SharedBlksDirtied: b.SharedBlksDirtied - a.SharedBlksDirtied,
+		SharedBlksWritten: b.SharedBlksWritten - a.SharedBlksWritten,
+		WalBytes:          b.WalBytes - a.WalBytes,
+		WalRecords:        b.WalRecords - a.WalRecords,
+		WalFpi:            b.WalFpi - a.WalFpi,
+		TotalPlanTime:     b.TotalPlanTime - a.TotalPlanTime,
+		Plans:             b.Plans - a.Plans,
 	}
 	if r.Calls < 0 {
 		r.Calls = 0
@@ -620,8 +642,38 @@ func subSnap(a, b PostgresQueryStatsSnapRow) PostgresQueryStatsSnapRow {
 	if r.BlkWriteTimeMs < 0 {
 		r.BlkWriteTimeMs = 0
 	}
+	if r.SharedBlksHit < 0 {
+		r.SharedBlksHit = 0
+	}
+	if r.SharedBlksRead < 0 {
+		r.SharedBlksRead = 0
+	}
+	if r.SharedBlksDirtied < 0 {
+		r.SharedBlksDirtied = 0
+	}
+	if r.SharedBlksWritten < 0 {
+		r.SharedBlksWritten = 0
+	}
+	if r.WalBytes < 0 {
+		r.WalBytes = 0
+	}
+	if r.WalRecords < 0 {
+		r.WalRecords = 0
+	}
+	if r.WalFpi < 0 {
+		r.WalFpi = 0
+	}
+	if r.TotalPlanTime < 0 {
+		r.TotalPlanTime = 0
+	}
+	if r.Plans < 0 {
+		r.Plans = 0
+	}
 	if r.Calls > 0 {
 		r.MeanTimeMs = r.TotalTimeMs / float64(r.Calls)
+	}
+	if r.Plans > 0 {
+		r.MeanPlanTime = r.TotalPlanTime / float64(r.Plans)
 	}
 	return r
 }

@@ -12,11 +12,11 @@ import (
 )
 
 type PgSessionStateCounts struct {
-	Active        int `json:"active"`
-	Idle          int `json:"idle"`
-	IdleInTxn     int `json:"idle_in_txn"`
-	Waiting       int `json:"waiting"`
-	Total         int `json:"total"`
+	Active    int `json:"active"`
+	Idle      int `json:"idle"`
+	IdleInTxn int `json:"idle_in_txn"`
+	Waiting   int `json:"waiting"`
+	Total     int `json:"total"`
 }
 
 func (c *PgRepository) GetSessionStateCounts(instanceName string) (*PgSessionStateCounts, error) {
@@ -28,7 +28,7 @@ func (c *PgRepository) GetSessionStateCounts(instanceName string) (*PgSessionSta
 	}
 
 	q := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			COUNT(*) FILTER (WHERE state = 'active') AS active_cnt,
 			COUNT(*) FILTER (WHERE state = 'idle') AS idle_cnt,
 			COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_txn_cnt,
@@ -43,4 +43,3 @@ func (c *PgRepository) GetSessionStateCounts(instanceName string) (*PgSessionSta
 	}
 	return &out, nil
 }
-

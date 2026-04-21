@@ -10,8 +10,8 @@ package hot
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -233,21 +233,20 @@ func (tl *TimescaleLogger) GetLatestPerformanceDebtFindings(ctx context.Context,
 			continue
 		}
 		out = append(out, map[string]interface{}{
-			"capture_timestamp": ts,
+			"capture_timestamp":    ts,
 			"server_instance_name": server,
-			"database_name": db,
-			"section": section,
-			"finding_type": ft,
-			"severity": sev,
-			"title": title,
-			"object_name": objName,
-			"object_type": objType,
-			"finding_key": key,
-			"details": json.RawMessage(details),
-			"recommendation": rec,
-			"fix_script": fix,
+			"database_name":        db,
+			"section":              section,
+			"finding_type":         ft,
+			"severity":             sev,
+			"title":                title,
+			"object_name":          objName,
+			"object_type":          objType,
+			"finding_key":          key,
+			"details":              json.RawMessage(details),
+			"recommendation":       rec,
+			"fix_script":           fix,
 		})
 	}
 	return out, rows.Err()
 }
-

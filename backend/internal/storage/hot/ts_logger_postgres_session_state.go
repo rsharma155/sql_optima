@@ -84,4 +84,3 @@ func (r PostgresSessionStateCountRow) String() string {
 	return fmt.Sprintf("%s a=%d idle=%d iit=%d w=%d t=%d",
 		r.ServerInstanceName, r.ActiveCount, r.IdleCount, r.IdleInTxnCount, r.WaitingCount, r.TotalCount)
 }
-
