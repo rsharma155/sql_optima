@@ -296,7 +296,7 @@ func TestPgssWorkload_NilTsLogger_Returns200(t *testing.T) {
 	if resp.Instance != "pg-test" {
 		t.Fatalf("want instance=pg-test, got %q", resp.Instance)
 	}
-	if resp.Points != nil && len(resp.Points) != 0 {
+	if len(resp.Points) != 0 {
 		t.Fatalf("want nil/empty points with nil tsLogger, got %d", len(resp.Points))
 	}
 }

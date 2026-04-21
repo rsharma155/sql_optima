@@ -398,9 +398,6 @@ func (tl *TimescaleLogger) CountMssqlWatchedQueries(ctx context.Context, instanc
 	return count, err
 }
 
-// ────────────────────────────────────────────────
-// Watched query snapshots
-// ────────────────────────────────────────────────
 // LogMssqlWatchedQuerySnapshot batch-inserts snapshot rows for watched queries.
 func (tl *TimescaleLogger) LogMssqlWatchedQuerySnapshot(ctx context.Context, rows []MssqlWatchedSnapshotRow) error {
 	if len(rows) == 0 {

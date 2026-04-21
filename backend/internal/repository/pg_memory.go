@@ -79,7 +79,9 @@ func (c *PgRepository) CollectPgMemoryStats(ctx context.Context, instanceName st
 	} else {
 		// Fallback/estimate for non-linux or non-colocated
 		var sharedBuffers int64
-		db.QueryRowContext(ctx, "SELECT /* SQL_OPTIMA */   setting::bigint * 8 / 1024 FROM pg_settings WHERE name = 'shared_buffers'").Scan(&sharedBuffers)
+		if err := db.QueryRowContext(ctx, "SELECT /* SQL_OPTIMA */   setting::bigint * 8 / 1024 FROM pg_settings WHERE name = 'shared_buffers'").Scan(&sharedBuffers); err != nil {
+			log.Printf("[POSTGRES] CollectPgMemoryStats shared_buffers scan error: %v", err)
+		}
 		snap.PostgresRSSMB = int64(float64(sharedBuffers) * 1.2) // very rough estimate
 	}
 

@@ -185,7 +185,7 @@ func TestPgssWorkloadPointHasTimeSeries(t *testing.T) {
 
 func TestUpsertPgssQueryDim_EmptyRows(t *testing.T) {
 	tl := &TimescaleLogger{} // nil pool — safe because empty rows short-circuits
-	err := tl.UpsertPgssQueryDim(nil, "test-instance", nil)
+	err := tl.UpsertPgssQueryDim(context.TODO(), "test-instance", nil)
 	if err != nil {
 		t.Fatalf("expected nil error for empty rows, got %v", err)
 	}
