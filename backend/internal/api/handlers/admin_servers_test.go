@@ -240,7 +240,7 @@ func TestSanitizeDBError_TLSNotMaskedAsAuth(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected non-nil error")
 	}
-	if got.Error() != "SSL/TLS error - check SSL mode or certificates" {
+	if got.Error() != "SSL/TLS error - try enabling 'Trust server certificate' or set SSL mode to 'disable'" {
 		t.Fatalf("unexpected message: %q", got.Error())
 	}
 }

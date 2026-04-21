@@ -244,16 +244,21 @@ func (s *MetricsService) collectPgLocksSnapshot(ctx context.Context, db *sql.DB,
 			oid = uint32(relOID.Int64)
 		}
 		out = append(out, hot.PgLockSnapshotRow{
-			CollectedAt:    now,
-			ServerID:       instanceName,
-			PID:            pid,
-			LockType:       lt,
-			Mode:           mode,
-			Granted:        granted,
-			RelationOID:    oid,
-			RelationName:   relname,
-			TransactionID:  txid,
-			WaitingSeconds: func() float64 { if waitSec.Valid { return waitSec.Float64 }; return 0 }(),
+			CollectedAt:   now,
+			ServerID:      instanceName,
+			PID:           pid,
+			LockType:      lt,
+			Mode:          mode,
+			Granted:       granted,
+			RelationOID:   oid,
+			RelationName:  relname,
+			TransactionID: txid,
+			WaitingSeconds: func() float64 {
+				if waitSec.Valid {
+					return waitSec.Float64
+				}
+				return 0
+			}(),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -309,4 +314,3 @@ func (s *MetricsService) pickRootBlocker(ctx context.Context, db *sql.DB, roots 
 	query = strings.TrimSpace(query)
 	return &pid, query
 }
-

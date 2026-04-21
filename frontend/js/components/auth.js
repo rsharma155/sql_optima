@@ -125,30 +125,8 @@ window.validateMonitoringServerPayload = function(p) {
     return null;
 };
 
-// Override authenticatedFetch to include CSRF token (deferred until apiClient is ready).
-// The JWT is now in an HttpOnly cookie — the browser sends it automatically.
-(function setupAuthFetch() {
-    function doOverride() {
-        if (window.apiClient && window.apiClient.authenticatedFetch) {
-            const originalFetch = window.apiClient.authenticatedFetch.bind(window.apiClient);
-            window.apiClient.authenticatedFetch = async function(url, options) {
-                options = options || {};
-                options.headers = options.headers || {};
-                options.credentials = 'same-origin';
-                // Attach CSRF token for mutating requests.
-                const csrf = window._auth._csrfToken();
-                if (csrf) {
-                    options.headers['X-CSRF-Token'] = csrf;
-                }
-                return originalFetch(url, options);
-            };
-            console.log('[Auth] authenticatedFetch overridden with cookie + CSRF support');
-        } else {
-            setTimeout(doOverride, 100);
-        }
-    }
-    doOverride();
-})();
+// JWT is now in an HttpOnly cookie — the browser sends it automatically.
+// CSRF protection is handled by the apiClient ES module.
 
 // ========== LOGIN PAGE ==========
 
@@ -256,6 +234,7 @@ window.AdminPanelView = async function() {
             <div id="admin-nav-bar" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:1.25rem;">
                 <button type="button" class="btn btn-sm btn-accent admin-nav-btn" data-action="show-admin-tab" data-tab="users" id="admin-tab-users"><i class="fa-solid fa-users"></i> User management</button>
                 <button type="button" class="btn btn-sm btn-outline admin-nav-btn" data-action="show-admin-tab" data-tab="servers" id="admin-tab-servers"><i class="fa-solid fa-server"></i> Monitoring servers</button>
+                <button type="button" class="btn btn-sm btn-outline admin-nav-btn" data-action="show-admin-tab" data-tab="collectors" id="admin-tab-collectors"><i class="fa-solid fa-clock-rotate-left"></i> Collector frequencies</button>
             </div>
             <div id="admin-content">
                 <div style="display:flex; justify-content:center; align-items:center; min-height:12rem;">
@@ -320,6 +299,9 @@ window.showAdminTab = async function(tab) {
             </div>
         `;
         window.loadAdminServers();
+    } else if (tab === 'collectors') {
+        const { loadCollectorConfigs } = await import('/js/pages/admin_collector_control.js');
+        loadCollectorConfigs();
     }
 };
 
@@ -430,7 +412,7 @@ window.showAddServerForm = function() {
                         <label for="srv-pass">Password</label>
                         <input class="custom-input" id="srv-pass" type="password" autocomplete="new-password" />
                     </div>
-                    <div class="admin-add-field" style="grid-column:1/-1;">
+                    <div id="srv-ssl-wrap" class="admin-add-field" style="grid-column:1/-1;">
                         <label for="srv-ssl">SSL mode (PostgreSQL / RDS)</label>
                         <select class="custom-select" id="srv-ssl" style="width:100%;min-height:2.4rem;">
                             <option value="require">require</option>
@@ -438,15 +420,23 @@ window.showAddServerForm = function() {
                             <option value="verify-full">verify-full</option>
                         </select>
                     </div>
+                    <div id="srv-encrypt-wrap" class="admin-add-field" style="grid-column:1/-1;display:none;">
+                        <label for="srv-encrypt">Encryption (SQL Server)</label>
+                        <select class="custom-select" id="srv-encrypt" style="width:100%;min-height:2.4rem;">
+                            <option value="true">Encrypt (recommended)</option>
+                            <option value="false">No encryption (disable)</option>
+                        </select>
+                        <p class="text-muted" style="font-size:0.72rem;margin:0.35rem 0 0;line-height:1.4;">Choose <strong>No encryption</strong> only for local/dev SQL Server instances without TLS configured.</p>
+                    </div>
                     <div class="admin-add-field" style="grid-column:1/-1;">
-                        <label for="srv-database">Initial database / catalog <span class="text-muted" style="font-weight:400;">(optional)</span></label>
+                        <label for="srv-database">Initial database / catalog <span class="text-muted" style="font-weight:400;">(required for Azure SQL &amp; Managed Instance)</span></label>
                         <input class="custom-input" id="srv-database" placeholder="postgres or master (Azure SQL / MI)" autocomplete="off" />
-                        <p class="text-muted" style="font-size:0.72rem;margin:0.35rem 0 0;line-height:1.4;">RDS/Aurora: often <code>postgres</code>. Azure SQL / Managed Instance: <code>master</code>; public MI commonly port <code>3342</code>.</p>
+                        <p class="text-muted" style="font-size:0.72rem;margin:0.35rem 0 0;line-height:1.4;">RDS/Aurora: often <code>postgres</code>. Azure SQL / Managed Instance: your database name; public MI commonly port <code>3342</code>. Leave blank to use <code>master</code> — if the login lacks <code>master</code> access, enter the specific database name here.</p>
                     </div>
                     <div id="srv-trust-wrap" class="admin-add-field" style="grid-column:1/-1;display:none;">
                         <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;font-weight:500;margin:0;">
-                            <input type="checkbox" id="srv-trust-cert" style="width:1rem;height:1rem;" />
-                            Trust server certificate (Azure SQL / MI when strict TLS validation fails)
+                            <input type="checkbox" id="srv-trust-cert" style="width:1rem;height:1rem;" checked />
+                            Trust server certificate <span class="text-muted" style="font-weight:400;">(required for self-signed certs — most on-premises &amp; dev SQL Server instances)</span>
                         </label>
                     </div>
                 </div>
@@ -456,7 +446,8 @@ window.showAddServerForm = function() {
                 </style>
                 <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:1.1rem;align-items:center;">
                     <button type="button" class="btn btn-sm btn-outline" data-action="test-server-add-draft"><i class="fa-solid fa-plug-circle-check"></i> Test connection</button>
-                    <button type="button" class="btn btn-sm btn-accent" data-action="submit-add-server"><i class="fa-solid fa-floppy-disk"></i> Save server</button>
+                    <span id="srv-test-inline-msg" style="font-size:0.78rem;font-weight:500;vertical-align:middle;"></span>
+                    <button type="button" id="srv-save-btn" class="btn btn-sm btn-accent" data-action="submit-add-server" disabled title="Run 'Test connection' first"><i class="fa-solid fa-floppy-disk"></i> Save server</button>
                     <button type="button" class="btn btn-sm btn-outline" data-action="load-admin-servers"><i class="fa-solid fa-rotate"></i> Refresh list</button>
                 </div>
                 <div id="srv-add-error" style="display:none;margin-top:0.85rem;" class="alert alert-danger"></div>
@@ -472,12 +463,37 @@ window.showAddServerForm = function() {
     }
     const typeSel = document.getElementById('srv-type');
     const trustWrap = document.getElementById('srv-trust-wrap');
-    const syncTrust = () => {
-        if (!trustWrap || !typeSel) return;
-        trustWrap.style.display = typeSel.value === 'sqlserver' ? 'block' : 'none';
+    const sslWrap = document.getElementById('srv-ssl-wrap');
+    const encryptWrap = document.getElementById('srv-encrypt-wrap');
+    const portEl = document.getElementById('srv-port');
+    const syncType = () => {
+        if (!typeSel) return;
+        const isMssql = typeSel.value === 'sqlserver';
+        if (trustWrap) trustWrap.style.display = isMssql ? 'block' : 'none';
+        if (sslWrap) sslWrap.style.display = isMssql ? 'none' : 'block';
+        if (encryptWrap) encryptWrap.style.display = isMssql ? 'block' : 'none';
+        // Auto-fill default port when switching engine and port is blank or was the other default
+        if (portEl) {
+            const p = portEl.value.trim();
+            if (p === '' || p === '5432' || p === '1433') {
+                portEl.value = isMssql ? '1433' : '5432';
+            }
+        }
     };
-    typeSel?.addEventListener('change', syncTrust);
-    syncTrust();
+    typeSel?.addEventListener('change', syncType);
+    syncType();
+
+    // Reset Save button to disabled whenever any field changes (connection may no longer be valid).
+    const resetSaveBtn = () => {
+        const btn = document.getElementById('srv-save-btn');
+        if (btn) { btn.disabled = true; btn.title = "Run 'Test connection' first"; }
+        const inlineMsg = document.getElementById('srv-test-inline-msg');
+        if (inlineMsg) { inlineMsg.textContent = ''; }
+    };
+    ['srv-name','srv-type','srv-host','srv-port','srv-user','srv-pass','srv-ssl','srv-encrypt','srv-database','srv-trust-cert'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', resetSaveBtn);
+        document.getElementById(id)?.addEventListener('change', resetSaveBtn);
+    });
 };
 
 window.testServerAddDraft = async function() {
@@ -490,7 +506,11 @@ window.testServerAddDraft = async function() {
     const portRaw = document.getElementById('srv-port')?.value?.trim() || '';
     const username = document.getElementById('srv-user')?.value?.trim() || '';
     const password = document.getElementById('srv-pass')?.value || '';
-    const sslMode = document.getElementById('srv-ssl')?.value?.trim() || '';
+    // For SQL Server use the encrypt select; for Postgres use the ssl_mode select.
+    const isMssql = dbType === 'sqlserver';
+    const sslMode = isMssql
+        ? (document.getElementById('srv-encrypt')?.value === 'false' ? 'disable' : 'require')
+        : (document.getElementById('srv-ssl')?.value?.trim() || '');
     const database = document.getElementById('srv-database')?.value?.trim() || '';
     const trust_server_certificate = !!document.getElementById('srv-trust-cert')?.checked;
     const port = parseInt(portRaw, 10);
@@ -501,6 +521,8 @@ window.testServerAddDraft = async function() {
         return;
     }
     if (msg) msg.innerHTML = '<div class="alert alert-info">Testing connection…</div>';
+    var inlineMsg = document.getElementById('srv-test-inline-msg');
+    if (inlineMsg) { inlineMsg.textContent = 'Testing…'; inlineMsg.style.color = 'var(--text-muted)'; }
     try {
         const response = await window.apiClient.authenticatedFetch('/api/admin/servers/test-draft', {
             method: 'POST',
@@ -512,8 +534,14 @@ window.testServerAddDraft = async function() {
             throw new Error(j.error || `HTTP ${response.status}`);
         }
         if (msg) msg.innerHTML = '<div class="alert alert-success">Connection test succeeded. You can save the server.</div>';
+        if (inlineMsg) { inlineMsg.textContent = '\u2714 Connection succeeded'; inlineMsg.style.color = 'var(--success,#22c55e)'; }
+        const saveBtn = document.getElementById('srv-save-btn');
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.title = ''; }
     } catch (e) {
         if (msg) msg.innerHTML = `<div class="alert alert-danger">Connection test failed: ${window.escapeHtml(e.message || String(e))}</div>`;
+        if (inlineMsg) { inlineMsg.textContent = '\u2716 ' + (e.message || String(e)); inlineMsg.style.color = 'var(--danger,#ef4444)'; }
+        const saveBtn = document.getElementById('srv-save-btn');
+        if (saveBtn) { saveBtn.disabled = true; saveBtn.title = "Run 'Test connection' first"; }
     }
 };
 
@@ -521,13 +549,23 @@ window.submitAddServer = async function() {
     const errEl = document.getElementById('srv-add-error');
     if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
 
+    // Guard: block save if the button is still disabled (test not passed).
+    const saveBtn = document.getElementById('srv-save-btn');
+    if (saveBtn && saveBtn.disabled) {
+        if (errEl) { errEl.textContent = 'Run "Test connection" first and ensure it succeeds before saving.'; errEl.style.display = 'block'; }
+        return;
+    }
+
     const name = document.getElementById('srv-name')?.value?.trim() || '';
     const dbType = document.getElementById('srv-type')?.value?.trim() || '';
     const host = document.getElementById('srv-host')?.value?.trim() || '';
     const portRaw = document.getElementById('srv-port')?.value?.trim() || '';
     const username = document.getElementById('srv-user')?.value?.trim() || '';
     const password = document.getElementById('srv-pass')?.value || '';
-    const sslMode = document.getElementById('srv-ssl')?.value?.trim() || '';
+    const isMssqlSave = dbType === 'sqlserver';
+    const sslMode = isMssqlSave
+        ? (document.getElementById('srv-encrypt')?.value === 'false' ? 'disable' : 'require')
+        : (document.getElementById('srv-ssl')?.value?.trim() || '');
     const database = document.getElementById('srv-database')?.value?.trim() || '';
     const trustServerCertificate = !!document.getElementById('srv-trust-cert')?.checked;
 

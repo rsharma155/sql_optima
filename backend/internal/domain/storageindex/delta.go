@@ -16,4 +16,3 @@ func Delta(current, previous int64) (delta int64, ok bool) {
 	}
 	return d, true
 }
-

@@ -166,6 +166,7 @@
             '<div id="ts-msg" style="display:none;"></div>' +
             '<div class="setup-ref-actions">' +
             '<button type="button" class="btn btn-outline" id="ts-test-btn"><i class="fa-solid fa-plug-circle-check"></i> Test connection</button>' +
+            '<span id="ts-test-inline-msg" style="font-size:0.78rem;font-weight:500;margin-left:0.5rem;vertical-align:middle;"></span>' +
             '<button type="button" class="btn btn-accent" id="ts-schema-btn"><i class="fa-solid fa-play"></i> Run schema scripts &amp; continue</button>' +
             '</div></div></section>' +
 
@@ -210,6 +211,8 @@
                 return;
             }
             showMsg('ts-msg', 'Testing connection…', 'info');
+            var inlineMsg = document.getElementById('ts-test-inline-msg');
+            if (inlineMsg) { inlineMsg.textContent = 'Testing…'; inlineMsg.style.color = 'var(--text-muted)'; }
             var btn = document.getElementById('ts-test-btn');
             if (btn) btn.disabled = true;
             try {
@@ -221,11 +224,14 @@
                 var j = await response.json().catch(function() { return {}; });
                 if (!response.ok || !j.success) {
                     showMsg('ts-msg', (j.error || 'Connection failed') + '', 'err');
+                    if (inlineMsg) { inlineMsg.textContent = '\u2716 ' + (j.error || 'Connection failed'); inlineMsg.style.color = 'var(--danger,#ef4444)'; }
                     return;
                 }
                 showMsg('ts-msg', 'Connection successful.', 'ok');
+                if (inlineMsg) { inlineMsg.textContent = '\u2714 Connection successful'; inlineMsg.style.color = 'var(--success,#22c55e)'; }
             } catch (e) {
                 showMsg('ts-msg', String(e.message || e), 'err');
+                if (inlineMsg) { inlineMsg.textContent = '\u2716 ' + (e.message || e); inlineMsg.style.color = 'var(--danger,#ef4444)'; }
             } finally {
                 if (btn) btn.disabled = false;
             }
@@ -249,6 +255,13 @@
                 return;
             }
             window.appNavigate('setup-schema');
+        });
+
+        document.getElementById('adm-pass2')?.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                document.getElementById('adm-create-btn')?.click();
+            }
         });
 
         document.getElementById('adm-create-btn')?.addEventListener('click', async function() {

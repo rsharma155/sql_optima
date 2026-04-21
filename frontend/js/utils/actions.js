@@ -241,6 +241,8 @@
                 break;
             }
             case 'submit-add-server': {
+                const _saveBtn = document.getElementById('srv-save-btn');
+                if (_saveBtn && _saveBtn.disabled) break;
                 if (window.submitAddServer) window.submitAddServer();
                 break;
             }

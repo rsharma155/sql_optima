@@ -3,7 +3,7 @@
 -- Target Table: N/A (lock monitoring)
 -- Description: Returns all current locks with waiting time from pg_locks joined with pg_class and pg_stat_activity
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     l.pid,
     l.locktype,
     COALESCE(r.relname || ' (' || r.oid || ')', 'virtual') as relation,

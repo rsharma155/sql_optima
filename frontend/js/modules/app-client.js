@@ -10,26 +10,25 @@
 
 // Authenticated API client and boot (ES module).
 import { appState } from './app-state.js';
+import { AuthManager } from './auth-manager.js';
+import { loadTemplate } from './ui-manager.js';
 
 export const apiClient = {
     /** Read the csrf_token cookie (not HttpOnly). */
     _csrfToken() {
-        const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
-        return m ? decodeURIComponent(m[1]) : '';
+        return AuthManager.getCsrfToken();
     },
 
     getToken() {
-        // Legacy compatibility — returns null. JWT is now in HttpOnly cookie.
         return null;
     },
 
     setToken(_token) {
-        // JWT is stored in an HttpOnly cookie by the backend.
         appState.isAuthenticated = true;
     },
 
     clearToken() {
-        appState.isAuthenticated = false;
+        AuthManager.clear();
     },
 
     async fetchAuthStatus() {
@@ -41,6 +40,10 @@ export const apiClient = {
             appState.authMode = data.auth_mode || 'local';
             if (data.deployment === 'docker' || data.deployment === 'dedicated') {
                 appState.deployment = data.deployment;
+            }
+            // Sync AuthManager if backend says we are not logged in but we have local state
+            if (appState.authRequired && response.status === 401) {
+                AuthManager.clear();
             }
         } catch (e) {
             console.warn('[auth] /api/auth/status failed', e);
@@ -54,7 +57,6 @@ export const apiClient = {
             ...options.headers
         };
 
-        // Attach CSRF token for all requests (server only checks on mutating methods).
         const csrf = this._csrfToken();
         if (csrf) {
             headers['X-CSRF-Token'] = csrf;
@@ -64,13 +66,6 @@ export const apiClient = {
 
         if (response.status === 401) {
             this.clearToken();
-            // Clear in-memory auth state so stale "Signed in as" displays are removed.
-            if (window._auth) {
-                window._auth.token = null;
-                window._auth.user = null;
-                localStorage.removeItem('auth_user');
-            }
-            // Always prompt login on 401 — admin routes require auth regardless of AUTH_REQUIRED setting.
             this.showLoginModal();
             throw new Error('Authentication required');
         }
@@ -89,11 +84,8 @@ export const apiClient = {
                 appState.config = cfg;
                 return true;
             }
-            console.error('Config fetch rejected with status:', response.status);
         } catch (e) {
-            if (e.message !== 'No authentication token available') {
-                console.error('API Server unreached or config loading failed.', e);
-            }
+            console.error('Config fetch failed:', e);
         }
 
         appState.config = { instances: [] };
@@ -111,8 +103,7 @@ export const apiClient = {
 
             if (response.ok) {
                 const data = await response.json();
-                // JWT is in HttpOnly cookie — just mark state as authenticated.
-                this.setToken(null);
+                AuthManager.setUser({ user_id: data.user_id, username: data.username, role: data.role });
                 return { success: true };
             }
             const error = await response.json().catch(() => ({}));
@@ -127,7 +118,13 @@ export const apiClient = {
         const modal = document.getElementById('login-modal');
         const form = document.getElementById('login-form');
         const errorDiv = document.getElementById('login-error');
-        if (!modal || !form) return;
+        if (!modal || !form) {
+            // No modal element in the DOM — fall back to full-page LoginView.
+            if (typeof window.LoginView === 'function') {
+                window.LoginView();
+            }
+            return;
+        }
 
         modal.style.display = 'flex';
         if (errorDiv) errorDiv.style.display = 'none';
@@ -253,7 +250,8 @@ export async function boot() {
         }
     }
 
-    if (appState.authRequired && !apiClient.getToken()) {
+    const isLoggedIn = !!(window._auth && typeof window._auth.isLoggedIn === 'function' && window._auth.isLoggedIn());
+    if (appState.authRequired && !isLoggedIn) {
         console.log('[BOOT] Login required before loading config');
         apiClient.showLoginModal();
         return;

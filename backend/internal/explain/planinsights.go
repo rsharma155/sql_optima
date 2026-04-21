@@ -20,15 +20,15 @@ const planRowMismatchRatio = 5.0
 
 // PlanHeuristicInsight is a plan-driven hint (JSON plan analysis); not the DB rules engine.
 type PlanHeuristicInsight struct {
-	Code            string `json:"code"`
-	Severity        string `json:"severity"`
-	Title           string `json:"title"`
-	Message         string `json:"message"`
-	NodeID          int    `json:"node_id,omitempty"`
-	NodeType        string `json:"node_type,omitempty"`
-	RelationName    string `json:"relation_name,omitempty"`
-	SuggestedIndex  string `json:"suggested_index_sql,omitempty"`
-	RewriteHint     string `json:"rewrite_hint,omitempty"`
+	Code           string `json:"code"`
+	Severity       string `json:"severity"`
+	Title          string `json:"title"`
+	Message        string `json:"message"`
+	NodeID         int    `json:"node_id,omitempty"`
+	NodeType       string `json:"node_type,omitempty"`
+	RelationName   string `json:"relation_name,omitempty"`
+	SuggestedIndex string `json:"suggested_index_sql,omitempty"`
+	RewriteHint    string `json:"rewrite_hint,omitempty"`
 }
 
 // BuildHeuristicPlanInsights walks the parsed JSON plan (types.PlanNode) and emits H*-style hints
@@ -97,13 +97,13 @@ func BuildHeuristicPlanInsights(root *types.PlanNode, query string) []PlanHeuris
 
 		if (nt == "Hash Join" || nt == "Merge Join") && n.TotalCost >= planHotCost {
 			out = append(out, PlanHeuristicInsight{
-				Code:          "H4_LARGE_JOIN",
-				Severity:      "medium",
-				Title:         "Large hash/merge join",
-				Message:       fmt.Sprintf("%s with high cost (%.0f) — indexes on join keys can enable nested loop or reduce build size.", nt, n.TotalCost),
-				NodeID:        n.ID,
-				NodeType:      nt,
-				RewriteHint:   "B-tree indexes on both sides of the join equality predicates.",
+				Code:        "H4_LARGE_JOIN",
+				Severity:    "medium",
+				Title:       "Large hash/merge join",
+				Message:     fmt.Sprintf("%s with high cost (%.0f) — indexes on join keys can enable nested loop or reduce build size.", nt, n.TotalCost),
+				NodeID:      n.ID,
+				NodeType:    nt,
+				RewriteHint: "B-tree indexes on both sides of the join equality predicates.",
 			})
 		}
 
@@ -122,13 +122,13 @@ func BuildHeuristicPlanInsights(root *types.PlanNode, query string) []PlanHeuris
 
 		if (strings.Contains(nt, "Aggregate") || strings.Contains(nt, "Group")) && n.PlanRows > 100000 {
 			out = append(out, PlanHeuristicInsight{
-				Code:         "H6_AGG_SCAN",
-				Severity:     "medium",
-				Title:        "Aggregation over many rows",
-				Message:      "Large aggregated row estimate — consider an index on GROUP BY columns.",
-				NodeID:       n.ID,
-				NodeType:     nt,
-				RewriteHint:  "Index leading columns matching GROUP BY can enable hash aggregate optimizations or reduce input.",
+				Code:        "H6_AGG_SCAN",
+				Severity:    "medium",
+				Title:       "Aggregation over many rows",
+				Message:     "Large aggregated row estimate — consider an index on GROUP BY columns.",
+				NodeID:      n.ID,
+				NodeType:    nt,
+				RewriteHint: "Index leading columns matching GROUP BY can enable hash aggregate optimizations or reduce input.",
 			})
 		}
 
@@ -143,20 +143,20 @@ func BuildHeuristicPlanInsights(root *types.PlanNode, query string) []PlanHeuris
 	if q != "" {
 		if matchesSelectStar(q) {
 			out = append(out, PlanHeuristicInsight{
-				Code:          "R1_SELECT_STAR",
-				Severity:      "low",
-				Title:         "SELECT *",
-				Message:       "SELECT * prevents index-only scans and hides projection cost.",
-				RewriteHint:   "List only required columns (see projected list from parser when available).",
+				Code:        "R1_SELECT_STAR",
+				Severity:    "low",
+				Title:       "SELECT *",
+				Message:     "SELECT * prevents index-only scans and hides projection cost.",
+				RewriteHint: "List only required columns (see projected list from parser when available).",
 			})
 		}
 		if matchesOffset(q) {
 			out = append(out, PlanHeuristicInsight{
-				Code:          "R2_OFFSET",
-				Severity:      "medium",
-				Title:         "OFFSET pagination",
-				Message:       "OFFSET skips rows on each page — cost grows with page depth.",
-				RewriteHint:   "Prefer keyset pagination: WHERE (sort_col, id) > ($1,$2) ORDER BY ... LIMIT.",
+				Code:        "R2_OFFSET",
+				Severity:    "medium",
+				Title:       "OFFSET pagination",
+				Message:     "OFFSET skips rows on each page — cost grows with page depth.",
+				RewriteHint: "Prefer keyset pagination: WHERE (sort_col, id) > ($1,$2) ORDER BY ... LIMIT.",
 			})
 		}
 	}

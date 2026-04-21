@@ -25,7 +25,7 @@ func (c *MssqlRepository) FetchBlockingSessionsCount(ctx context.Context, instan
 
 	var n int
 	err := db.QueryRowContext(ctx, `
-		SELECT COUNT(*) AS blocking_sessions
+		SELECT /* SQL_OPTIMA */   COUNT(*) AS blocking_sessions
 		FROM sys.dm_exec_requests
 		WHERE blocking_session_id <> 0;
 	`).Scan(&n)
@@ -43,7 +43,7 @@ func (c *MssqlRepository) FetchMemoryGrantsPending(ctx context.Context, instance
 
 	var n int
 	err := db.QueryRowContext(ctx, `
-		SELECT COUNT(*) AS memory_grants_pending
+		SELECT /* SQL_OPTIMA */   COUNT(*) AS memory_grants_pending
 		FROM sys.dm_exec_query_memory_grants
 		WHERE grant_time IS NULL;
 	`).Scan(&n)
@@ -80,7 +80,7 @@ func (c *MssqlRepository) FetchPerfCounters(ctx context.Context, instanceName st
 	}
 
 	q := fmt.Sprintf(`
-		SELECT counter_name, instance_name, CAST(cntr_value AS FLOAT) AS cntr_value
+		SELECT /* SQL_OPTIMA */   counter_name, instance_name, CAST(cntr_value AS FLOAT) AS cntr_value
 		FROM sys.dm_os_performance_counters
 		WHERE counter_name IN (%s);
 	`, placeholders)
@@ -115,7 +115,7 @@ func (c *MssqlRepository) FetchWaitStatsCumulative(ctx context.Context, instance
 	defer cancel()
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT wait_type, CAST(wait_time_ms AS FLOAT) AS wait_time_ms
+		SELECT /* SQL_OPTIMA */   wait_type, CAST(wait_time_ms AS FLOAT) AS wait_time_ms
 		FROM sys.dm_os_wait_stats
 		WHERE wait_type NOT LIKE '%SLEEP%';
 	`)
@@ -148,7 +148,7 @@ func (c *MssqlRepository) FetchTempdbUsagePercent(ctx context.Context, instanceN
 	// Use tempdb DMV without switching DB context.
 	var usedMB, freeMB float64
 	err := db.QueryRowContext(ctx, `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			SUM(user_object_reserved_page_count + internal_object_reserved_page_count) * 8.0 / 1024.0 AS used_mb,
 			SUM(unallocated_extent_page_count) * 8.0 / 1024.0 AS free_mb
 		FROM tempdb.sys.dm_db_file_space_usage;
@@ -182,7 +182,7 @@ func (c *MssqlRepository) FetchMaxDBLogUsagePercent(ctx context.Context, instanc
 
 	// Discover online user DBs.
 	rows, err := db.QueryContext(ctx, `
-		SELECT name
+		SELECT /* SQL_OPTIMA */   name
 		FROM sys.databases
 		WHERE database_id > 4 AND state_desc = 'ONLINE';
 	`)
@@ -208,7 +208,7 @@ func (c *MssqlRepository) FetchMaxDBLogUsagePercent(ctx context.Context, instanc
 		// Per-db context needed for sys.dm_db_log_space_usage.
 		q := fmt.Sprintf(`
 			USE [%s];
-			SELECT
+			SELECT /* SQL_OPTIMA */  
 				total_log_size_mb,
 				used_log_space_mb,
 				used_log_space_in_percent
@@ -245,19 +245,18 @@ func (c *MssqlRepository) FetchFailedLoginsLast5Min(ctx context.Context, instanc
 	// We count entries that mention "Login failed" within the last 5 minutes.
 	var n int
 	err := db.QueryRowContext(ctx, `
-		DECLARE @ts_now bigint = (SELECT cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
+		DECLARE @ts_now bigint = (SELECT /* SQL_OPTIMA */   cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
 		WITH rb AS (
-			SELECT
+			SELECT /* SQL_OPTIMA */  
 				DATEADD(ms, -1 * (@ts_now - [timestamp]), GETDATE()) AS event_time,
 				CONVERT(nvarchar(max), record) AS rec
 			FROM sys.dm_os_ring_buffers WITH (NOLOCK)
 			WHERE ring_buffer_type = N'RING_BUFFER_SECURITY_ERROR'
 		)
-		SELECT COUNT(*)
+		SELECT /* SQL_OPTIMA */   COUNT(*)
 		FROM rb
 		WHERE event_time >= DATEADD(minute, -5, GETDATE())
 		  AND rec LIKE N'%Login failed%';
 	`).Scan(&n)
 	return n, err
 }
-

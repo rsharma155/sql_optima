@@ -139,14 +139,18 @@ func (h *RulesHandler) BestPractices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	resp := map[string]interface{}{
 		"server_id":      serverID,
 		"target_db_type": dbType,
 		"count":          len(entries),
 		"rules_total":    rulesTotal,
 		"missing_rules":  missingRuleIDs,
 		"best_practices": entries,
-	})
+	}
+	if h.pgPool == nil {
+		resp["warning"] = "TimescaleDB not connected. Rule evaluation requires the metrics repository."
+	}
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *RulesHandler) getEnabledRuleIDs(ctx context.Context, dbType string) ([]string, error) {

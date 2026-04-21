@@ -21,12 +21,12 @@ const SQLContextDisclaimer = "PostgreSQL does not expose exact character ranges 
 
 // FindingSQLContext augments a finding when the user supplied SQL text.
 type FindingSQLContext struct {
-	FindingType     string   `json:"finding_type"`
-	Severity        string   `json:"severity"`
-	Message         string   `json:"message"`
-	NodeID          int      `json:"node_id,omitempty"`
-	PlannerNodeType string   `json:"planner_node_type,omitempty"`
-	RelationName    string   `json:"relation_name,omitempty"`
+	FindingType     string `json:"finding_type"`
+	Severity        string `json:"severity"`
+	Message         string `json:"message"`
+	NodeID          int    `json:"node_id,omitempty"`
+	PlannerNodeType string `json:"planner_node_type,omitempty"`
+	RelationName    string `json:"relation_name,omitempty"`
 	// Line numbers are 1-based; best-effort match to a line containing the relation.
 	LineStart       int    `json:"line_start,omitempty"`
 	LineEnd         int    `json:"line_end,omitempty"`

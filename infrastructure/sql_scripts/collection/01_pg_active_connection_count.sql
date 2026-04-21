@@ -3,4 +3,4 @@
 -- Target Table: N/A (system stats estimation)
 -- Description: Counts active connections for CPU usage estimation
 
-SELECT count(*) FROM pg_stat_activity WHERE state = 'active';
+SELECT /* SQL_OPTIMA */   count(*) FROM pg_stat_activity WHERE state = 'active';

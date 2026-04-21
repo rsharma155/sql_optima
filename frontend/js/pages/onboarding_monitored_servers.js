@@ -71,6 +71,7 @@ window.onbShowAddForm = function() {
                 </style>
                 <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:1rem;">
                     <button type="button" class="btn btn-sm btn-outline" data-action="call" data-fn="onbTestAddDraft"><i class="fa-solid fa-plug-circle-check"></i> Test connection</button>
+                    <span id="onb-test-inline-msg" style="font-size:0.78rem;font-weight:500;vertical-align:middle;"></span>
                     <button type="button" class="btn btn-sm btn-accent" data-action="call" data-fn="onbSubmitAdd"><i class="fa-solid fa-floppy-disk"></i> Save</button>
                 </div>
             </div>
@@ -106,6 +107,8 @@ window.onbTestAddDraft = async function() {
         return;
     }
     if (msg) msg.innerHTML = '<div class="alert alert-info">Testing connection…</div>';
+    var inlineMsg = document.getElementById('onb-test-inline-msg');
+    if (inlineMsg) { inlineMsg.textContent = 'Testing…'; inlineMsg.style.color = 'var(--text-muted)'; }
     try {
         const response = await window.apiClient.authenticatedFetch('/api/admin/servers/test-draft', {
             method: 'POST',
@@ -115,8 +118,10 @@ window.onbTestAddDraft = async function() {
         const j = await response.json().catch(() => ({}));
         if (!response.ok || !j.success) throw new Error(j.error || `HTTP ${response.status}`);
         if (msg) msg.innerHTML = '<div class="alert alert-success">Connection test succeeded.</div>';
+        if (inlineMsg) { inlineMsg.textContent = '\u2714 Connection succeeded'; inlineMsg.style.color = 'var(--success,#22c55e)'; }
     } catch (e) {
         if (msg) msg.innerHTML = `<div class="alert alert-danger">${window.escapeHtml(e.message || String(e))}</div>`;
+        if (inlineMsg) { inlineMsg.textContent = '\u2716 ' + (e.message || String(e)); inlineMsg.style.color = 'var(--danger,#ef4444)'; }
     }
 };
 

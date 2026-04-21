@@ -1040,7 +1040,7 @@ function renderDashboard(inst, metrics) {
                         </h4>
                     </div>
                     <div class="dashboard-strip-metrics-row--6">
-                        <div class="strip-metric-cell ${cpuIsDanger ? 'strip-metric-cell--accent-bad' : (cpuIsWarning ? 'strip-metric-cell--accent-warn' : '')}">
+                        <div class="strip-metric-cell ${cpuIsDanger ? 'strip-metric-cell--accent-bad' : (cpuIsWarning ? 'strip-metric-cell--accent-warn' : '')}" title="Average CPU utilization of the SQL Server host. High values (>85%) indicate compute pressure.">
                             <div class="strip-metric-label">CPU</div>
                             <div class="strip-metric-value"><span id="metric-cpu" class="${cpuIsDanger ? 'text-danger fw-bold' : (cpuIsWarning ? 'text-warning fw-bold' : '')}">${avgCpuLoad >= 0 ? avgCpuLoad.toFixed(1) + '%' : ''}</span>${avgCpuLoad < 0 ? '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>' : ''}</div>
                         </div>
@@ -1048,15 +1048,15 @@ function renderDashboard(inst, metrics) {
                             <div class="strip-metric-label">Memory</div>
                             <div class="strip-metric-value"><span id="metric-memory" class="${memIsDanger ? 'text-danger fw-bold' : (memIsWarning ? 'text-warning fw-bold' : '')}">${memoryUsage >= 0 ? memoryUsage.toFixed(1) + '%' : ''}</span>${memoryUsage < 0 ? '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>' : ''}</div>
                         </div>
-                        <div class="strip-metric-cell">
+                        <div class="strip-metric-cell" title="Disk space in GB: D = total data file size, L = total log file size across all databases.">
                             <div class="strip-metric-label">Disk GB D/L</div>
                             <div class="strip-metric-value">${diskD > 0 || diskL > 0 ? diskD + '/' + diskL : '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>'}</div>
                         </div>
-                        <div class="strip-metric-cell">
+                        <div class="strip-metric-cell" title="Transactions per second — the rate of committed and rolled-back transactions on this instance.">
                             <div class="strip-metric-label">TPS</div>
                             <div class="strip-metric-value">${tps > 0 ? tps.toFixed(1) : 'N/A'}</div>
                         </div>
-                        <div class="strip-metric-cell">
+                        <div class="strip-metric-cell" title="Number of currently active (running) sessions on the SQL Server instance.">
                             <div class="strip-metric-label">Active</div>
                             <div class="strip-metric-value" style="color:var(--success,#22c55e);"><span id="metric-active">${activeUsers >= 0 ? activeUsers : '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>'}</span></div>
                         </div>
@@ -1077,19 +1077,19 @@ function renderDashboard(inst, metrics) {
                         </h4>
                     </div>
                     <div class="dashboard-strip-metrics-row--6">
-                        <div class="strip-metric-cell ${memGrants != null && memGrants > 0 ? 'strip-metric-cell--accent-warn' : ''}">
+                        <div class="strip-metric-cell ${memGrants != null && memGrants > 0 ? 'strip-metric-cell--accent-warn' : ''}" title="Number of queries waiting for a memory grant. Non-zero values indicate memory pressure for query execution.">
                             <div class="strip-metric-label">Mem Grants Pending</div>
                             <div class="strip-metric-value">${memGrants != null ? memGrants : '--'}</div>
                         </div>
-                        <div class="strip-metric-cell ${failedLogins5m != null && failedLogins5m > 0 ? 'strip-metric-cell--accent-warn' : ''}">
+                        <div class="strip-metric-cell ${failedLogins5m != null && failedLogins5m > 0 ? 'strip-metric-cell--accent-warn' : ''}" title="Count of failed login attempts in the last 5 minutes. Spikes may indicate brute-force attacks or misconfigured applications.">
                             <div class="strip-metric-label">Failed Logins (5m)</div>
                             <div class="strip-metric-value">${failedLogins5m != null ? failedLogins5m : '--'}</div>
                         </div>
-                        <div class="strip-metric-cell ${tempdbPct != null && tempdbPct > 80 ? 'strip-metric-cell--accent-bad' : (tempdbPct != null && tempdbPct > 60 ? 'strip-metric-cell--accent-warn' : '')}">
+                        <div class="strip-metric-cell ${tempdbPct != null && tempdbPct > 80 ? 'strip-metric-cell--accent-bad' : (tempdbPct != null && tempdbPct > 60 ? 'strip-metric-cell--accent-warn' : '')}" title="Percentage of TempDB space currently in use. Values above 80% can cause query failures and spills.">
                             <div class="strip-metric-label">TempDB Used</div>
                             <div class="strip-metric-value">${tempdbPct != null ? tempdbPct.toFixed(0) + '%' : '--'}</div>
                         </div>
-                        <div class="strip-metric-cell ${logPct != null && logPct > 80 ? 'strip-metric-cell--accent-bad' : (logPct != null && logPct > 60 ? 'strip-metric-cell--accent-warn' : '')}">
+                        <div class="strip-metric-cell ${logPct != null && logPct > 80 ? 'strip-metric-cell--accent-bad' : (logPct != null && logPct > 60 ? 'strip-metric-cell--accent-warn' : '')}" title="Highest transaction log usage percentage across all databases. Full logs block writes and can halt the instance.">
                             <div class="strip-metric-label">Max Log Used</div>
                             <div class="strip-metric-value">${logPct != null ? logPct.toFixed(0) + '%' : '--'}</div>
                             <div class="text-muted sub" title="${window.escapeHtml(logDb)}">${window.escapeHtml(logDb || '')}</div>
@@ -1098,7 +1098,7 @@ function renderDashboard(inst, metrics) {
                             <div class="strip-metric-label">PLE</div>
                             <div class="strip-metric-value">${risk.ple != null ? Number(risk.ple).toFixed(0) : '--'}</div>
                         </div>
-                        <div class="strip-metric-cell ${compSev === 'WARNING' ? 'strip-metric-cell--accent-warn' : ''}">
+                        <div class="strip-metric-cell ${compSev === 'WARNING' ? 'strip-metric-cell--accent-warn' : ''}" title="Ratio of SQL compilations to batch requests. High ratios indicate excessive ad-hoc queries or plan cache eviction.">
                             <div class="strip-metric-label">Compilations Ratio</div>
                             <div class="strip-metric-value">${compRatio != null ? (compRatio * 100).toFixed(1) + '%' : '--'}</div>
                             <div class="text-muted sub">${batch != null ? batch.toFixed(0) : '--'} batch/s · ${comp != null ? comp.toFixed(0) : '--'} comp/s</div>
@@ -1108,13 +1108,13 @@ function renderDashboard(inst, metrics) {
             </div>
             <div class="charts-grid dashboard-charts-row mt-3" data-cols="3">
                 <div class="chart-card glass-panel" style="padding:0.6rem; cursor:pointer;" data-action="navigate" data-route="drilldown-cpu" title="Drilldown into System Resources"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">System Resources</h3></div><div class="chart-container"><canvas id="dashResourcesChart"></canvas></div></div>
-                <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Batch Requests/sec (1h)</h3></div><div class="chart-container"><canvas id="dashBatchChart"></canvas></div></div>
+                <div class="chart-card glass-panel" style="padding:0.6rem;" title="Batch requests per second over the last hour — a key throughput indicator for SQL Server workload."><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Batch Requests/sec (1h)</h3></div><div class="chart-container"><canvas id="dashBatchChart"></canvas></div></div>
                 <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Disk I/O Latency <span class="dashboard-strip-header-tooltip" title="Trend uses Timescale (sqlserver_file_io_latency). Each dashboard load records one snapshot when Timescale is connected; the Enterprise metrics collector also writes on a timer (default ~2 min, ENTERPRISE_METRICS_INTERVAL_SEC). Check logs for WarmFileIOLatency / EnterpriseMetricsCollector / insert errors. Latency can read as 0 ms with no I/O or very fast storage."><i class="fa-solid fa-circle-info"></i></span></h3></div><div class="chart-container"><canvas id="dashIoChart"></canvas></div></div>
             </div>
             <div class="charts-grid dashboard-charts-row mt-2" data-cols="3">
                 <div class="chart-card glass-panel" style="padding:0.6rem; cursor:pointer;" data-action="navigate" data-route="drilldown-memory" title="Memory drilldown (PLE &amp; Timescale)"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Page Life Expectancy</h3></div><div class="chart-container"><canvas id="dashPleChart"></canvas></div></div>
-                <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Buffer Cache Hit % (1h)</h3></div><div class="chart-container"><canvas id="dashBchrChart"></canvas></div></div>
-                <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Wait Categories (15m)</h3></div><div class="chart-container"><canvas id="dashWaitCategoriesDonut"></canvas></div></div>
+                <div class="chart-card glass-panel" style="padding:0.6rem;" title="Buffer cache hit ratio over the last hour. Values below 95% suggest insufficient memory for the workload."><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Buffer Cache Hit % (1h)</h3></div><div class="chart-container"><canvas id="dashBchrChart"></canvas></div></div>
+                <div class="chart-card glass-panel" style="padding:0.6rem;" title="Distribution of wait categories over the last 15 minutes. Helps identify bottlenecks (CPU, I/O, locking, network, memory)."><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Wait Categories (15m)</h3></div><div class="chart-container"><canvas id="dashWaitCategoriesDonut"></canvas></div></div>
             </div>
             <div class="tables-grid mt-3" style="display:grid; grid-template-columns:1fr; gap:0.75rem;">
                 <div class="table-card glass-panel">

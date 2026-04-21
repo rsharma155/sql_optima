@@ -3,4 +3,4 @@
 -- Target Table: N/A (auto-discovers databases)
 -- Description: Auto-discovers online user databases excluding system databases
 
-SELECT name FROM sys.databases WHERE database_id > 4 AND state_desc = 'ONLINE';
+SELECT /* SQL_OPTIMA */   name FROM sys.databases WHERE database_id > 4 AND state_desc = 'ONLINE';

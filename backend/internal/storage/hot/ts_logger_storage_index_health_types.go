@@ -13,20 +13,24 @@ import "time"
 
 type StorageIndexHealthKPI struct {
 	UnusedIndexCount               int     `json:"unused_index_count"`
+	UnusedIndexMB                  float64 `json:"unused_index_mb"`
 	HighScanTableCount             int     `json:"high_scan_table_count"`
 	FastestGrowingTable            string  `json:"fastest_growing_table"`
 	FastestGrowingTableGrowthPct7d float64 `json:"fastest_growing_table_growth_7d_pct"`
 	IndexWriteOverheadPct          float64 `json:"index_write_overhead_pct"`
+	TotalDBSizeMB                  float64 `json:"total_db_size_mb"`
+	ForecastTableMB90d             float64 `json:"forecast_table_mb_90d"`
+	Growth7dPct                    float64 `json:"growth_7d_pct"`
 }
 
 type StorageIndexHealthTopRow struct {
-	DBName        string     `json:"db_name"`
-	SchemaName    string     `json:"schema_name"`
-	TableName     string     `json:"table_name"`
-	IndexName     string     `json:"index_name,omitempty"`
-	Value         float64    `json:"value"`
-	Value2        float64    `json:"value2,omitempty"`
-	LastUserSeek  *time.Time `json:"last_user_seek,omitempty"`
+	DBName       string     `json:"db_name"`
+	SchemaName   string     `json:"schema_name"`
+	TableName    string     `json:"table_name"`
+	IndexName    string     `json:"index_name,omitempty"`
+	Value        float64    `json:"value"`
+	Value2       float64    `json:"value2,omitempty"`
+	LastUserSeek *time.Time `json:"last_user_seek,omitempty"`
 }
 
 type StorageIndexHealthGrowthPoint struct {
@@ -57,20 +61,21 @@ type StorageIndexHealthSeekScanLookupRow struct {
 }
 
 type StorageIndexHealthDashboard struct {
-	Engine                   string                                `json:"engine"`
-	Instance                 string                                `json:"instance"`
-	From                     string                                `json:"from"`
-	To                       string                                `json:"to"`
-	KPIs                     StorageIndexHealthKPI                 `json:"kpis"`
-	TopScans                 []StorageIndexHealthTopRow            `json:"top_scans"`
-	SeekScanLookup           []StorageIndexHealthSeekScanLookupRow `json:"seek_scan_lookup,omitempty"`
-	LargestTables            []StorageIndexHealthTopRow            `json:"largest_tables"`
-	LargestIndexes           []StorageIndexHealthTopRow            `json:"largest_indexes"`
-	Growth                   []StorageIndexHealthGrowthPoint       `json:"growth"`
-	GrowthSummary            StorageIndexHealthGrowthSummary       `json:"growth_summary"`
-	UnusedIndexes            []StorageIndexHealthTopRow            `json:"unused_indexes"`
-	HighScanTables           []StorageIndexHealthTopRow            `json:"high_scan_tables"`
-	DuplicateIndexCandidates []map[string]interface{}              `json:"duplicate_index_candidates"`
+	Engine              string                                `json:"engine"`
+	Instance            string                                `json:"instance"`
+	From                string                                `json:"from"`
+	To                  string                                `json:"to"`
+	KPIs                StorageIndexHealthKPI                 `json:"kpis"`
+	TopScans            []StorageIndexHealthTopRow            `json:"top_scans"`
+	SeekScanLookup      []StorageIndexHealthSeekScanLookupRow `json:"seek_scan_lookup,omitempty"`
+	LargestTables       []StorageIndexHealthTopRow            `json:"largest_tables"`
+	LargestIndexes      []StorageIndexHealthTopRow            `json:"largest_indexes"`
+	Growth              []StorageIndexHealthGrowthPoint       `json:"growth"`
+	GrowthSummary       StorageIndexHealthGrowthSummary       `json:"growth_summary"`
+	UnusedIndexes       []StorageIndexHealthTopRow            `json:"unused_indexes"`
+	HighScanTables      []StorageIndexHealthTopRow            `json:"high_scan_tables"`
+	Insights            []map[string]interface{}              `json:"insights"`
+	RawDuplicateIndexes []map[string]interface{}              `json:"raw_duplicate_indexes,omitempty"`
 }
 
 type SIHFilters struct {

@@ -51,7 +51,7 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 
 // AuthenticateUser verifies username/password and returns user info if valid.
 func (r *UserRepository) AuthenticateUser(ctx context.Context, username, password string) (*User, error) {
-	query := `SELECT user_id, username, password_hash, role, created_at FROM optima_users WHERE username = $1`
+	query := `SELECT  user_id, username, password_hash, role, created_at FROM optima_users WHERE username = $1`
 	var u User
 	var hash string
 	var createdAt time.Time
@@ -104,7 +104,7 @@ func (r *UserRepository) CountUsers(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("user repository not configured")
 	}
 	var n int
-	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM optima_users`).Scan(&n)
+	err := r.pool.QueryRow(ctx, `SELECT  COUNT(*) FROM optima_users`).Scan(&n)
 	if err != nil {
 		return 0, err
 	}
@@ -113,7 +113,7 @@ func (r *UserRepository) CountUsers(ctx context.Context) (int, error) {
 
 // GetAllUsers returns all users (without password hashes).
 func (r *UserRepository) GetAllUsers(ctx context.Context) ([]User, error) {
-	query := `SELECT user_id, username, role, created_at FROM optima_users ORDER BY created_at DESC`
+	query := `SELECT  user_id, username, role, created_at FROM optima_users ORDER BY created_at DESC`
 	rows, err := r.pool.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch users: %w", err)

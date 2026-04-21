@@ -3,7 +3,7 @@
 -- Target Table: N/A (best practices audit)
 -- Description: Fetches key server-level configuration settings for health audit
 
-SELECT
+SELECT /* SQL_OPTIMA */  
     name AS [Configuration_Name],
     CAST(value_in_use AS VARCHAR(50)) AS [Current_Value]
 FROM sys.configurations WITH (NOLOCK)

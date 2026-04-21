@@ -66,6 +66,7 @@ window.RulesEngineView = async function() {
 
 function renderBestPracticesDashboard(inst, data) {
     const checks = data.best_practices || [];
+    const warning = data.warning || '';
 
     if (checks.length === 0) {
         window.routerOutlet.innerHTML = `
@@ -74,6 +75,7 @@ function renderBestPracticesDashboard(inst, data) {
                     <h1><i class="fa-solid fa-list-check text-accent"></i> Best Practices Dashboard</h1>
                     <p class="subtitle">Instance: ${window.escapeHtml(inst.name)}</p>
                 </div>
+                ${warning ? `<div class="alert alert-danger mt-3"><i class="fa-solid fa-triangle-exclamation"></i> ${window.escapeHtml(warning)}</div>` : ''}
                 <div class="alert alert-warning mt-3">
                     <i class="fa-solid fa-info-circle"></i> No best practice rules configured. Please add rules to the Rule Engine.
                 </div>
@@ -106,6 +108,7 @@ function renderBestPracticesDashboard(inst, data) {
                     <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="${inst && inst.type === 'postgres' && typeof window.PgBestPracticesView === 'function' ? 'PgBestPracticesView' : 'RulesEngineView'}"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
+            ${warning ? `<div class="alert alert-danger mt-2" style="font-size:0.75rem;"><i class="fa-solid fa-triangle-exclamation"></i> ${window.escapeHtml(warning)}</div>` : ''}
 
             <div class="metrics-row" style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:0.75rem; margin-top:0.75rem;">
                 <div class="metric-card glass-panel" style="padding:0.4rem 0.6rem; background:linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);">

@@ -3,7 +3,7 @@
 -- Target Table: N/A (job monitoring)
 -- Description: Returns full job list with current status, last run info, and owner
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     ISNULL(j.name, 'Unknown') AS JobName,
     CAST(j.enabled AS BIT),
     ISNULL(SUSER_SNAME(j.owner_sid), 'Unknown') AS Owner,
@@ -23,10 +23,10 @@ SELECT
     END AS LastRunStatus
 FROM msdb.dbo.sysjobs j WITH (NOLOCK)
 LEFT JOIN (
-    SELECT job_id, MAX(session_id) as session_id FROM msdb.dbo.sysjobactivity WITH (NOLOCK) GROUP BY job_id
+    SELECT /* SQL_OPTIMA */   job_id, MAX(session_id) as session_id FROM msdb.dbo.sysjobactivity WITH (NOLOCK) GROUP BY job_id
 ) max_ja ON j.job_id = max_ja.job_id
 LEFT JOIN msdb.dbo.sysjobactivity ja WITH (NOLOCK) ON max_ja.job_id = ja.job_id AND max_ja.session_id = ja.session_id
 LEFT JOIN (
-    SELECT job_id, MAX(instance_id) AS instance_id FROM msdb.dbo.sysjobhistory WITH (NOLOCK) WHERE step_id = 0 GROUP BY job_id
+    SELECT /* SQL_OPTIMA */   job_id, MAX(instance_id) AS instance_id FROM msdb.dbo.sysjobhistory WITH (NOLOCK) WHERE step_id = 0 GROUP BY job_id
 ) max_h ON j.job_id = max_h.job_id
 LEFT JOIN msdb.dbo.sysjobhistory h WITH (NOLOCK) ON max_h.instance_id = h.instance_id;

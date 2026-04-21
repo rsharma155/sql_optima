@@ -188,6 +188,10 @@ func (s *MetricsService) IsTimescaleConnected() bool {
 	return s.tsLogger != nil && s.tsHotStorage != nil
 }
 
+func (s *MetricsService) GetTimescaleDBLogger() *hot.TimescaleLogger {
+	return s.tsLogger
+}
+
 // =============================================================================
 // Timescale-backed Storage & Index Health reads
 // =============================================================================
@@ -213,13 +217,106 @@ func (s *MetricsService) TimescaleStorageIndexHealthGrowth(ctx context.Context, 
 	return s.tsLogger.QueryStorageIndexHealthTableGrowth(ctx, engine, instance, from, to, limit)
 }
 
+func (s *MetricsService) generateStorageInsights(dash *hot.StorageIndexHealthDashboard) []map[string]interface{} {
+	var insights []map[string]interface{}
+	k := dash.KPIs
+
+	// 1. Unused Index Insight (Aggregate)
+	if k.UnusedIndexCount > 0 {
+		insights = append(insights, map[string]interface{}{
+			"severity": "critical",
+			"message":  fmt.Sprintf("%d unused indexes detected, consuming %.1f MB of space.", k.UnusedIndexCount, k.UnusedIndexMB),
+		})
+	}
+
+	// 2. Individual Large Unused Indexes
+	for _, idx := range dash.UnusedIndexes {
+		if idx.Value2 > 500 { // > 500MB
+			insights = append(insights, map[string]interface{}{
+				"severity":    "warning",
+				"message":     fmt.Sprintf("Large unused index: %s (%s) consuming %.1f MB.", idx.IndexName, idx.TableName, idx.Value2),
+				"db_name":     idx.DBName,
+				"schema_name": idx.SchemaName,
+				"table_name":  idx.TableName,
+			})
+		}
+	}
+
+	// 3. Growth Insight
+	if k.Growth7dPct > 10 {
+		insights = append(insights, map[string]interface{}{
+			"severity": "warning",
+			"message":  fmt.Sprintf("High growth detected: Database is expanding at %.1f%% weekly.", k.Growth7dPct),
+		})
+	}
+
+	// 4. Fragmentation / Scan Insight
+	if k.HighScanTableCount > 0 {
+		insights = append(insights, map[string]interface{}{
+			"severity": "warning",
+			"message":  fmt.Sprintf("%d tables have high scan-to-seek ratios, indicating potential missing indexes.", k.HighScanTableCount),
+		})
+	}
+
+	// 5. Duplicate Index Candidates
+	for _, d := range dash.RawDuplicateIndexes {
+		insights = append(insights, map[string]interface{}{
+			"severity":    "warning",
+			"message":     fmt.Sprintf("Duplicate index candidate on %s.%s: %v", d["schema_name"], d["table_name"], d["suggestion"]),
+			"db_name":     d["db_name"],
+			"schema_name": d["schema_name"],
+			"table_name":  d["table_name"],
+		})
+	}
+
+	return insights
+}
+
 func (s *MetricsService) TimescaleStorageIndexHealthDashboard(ctx context.Context, engine, instance, from, to string, dbNames, schemaNames []string, tableLike string) (*hot.StorageIndexHealthDashboard, error) {
 	if s.tsLogger == nil {
 		return nil, fmt.Errorf("timescale not configured")
 	}
-	return s.tsLogger.QueryStorageIndexHealthDashboard(ctx, engine, instance, from, to, hot.SIHFilters{
+	dash, err := s.tsLogger.QueryStorageIndexHealthDashboard(ctx, engine, instance, from, to, hot.SIHFilters{
 		DBNames: dbNames, SchemaNames: schemaNames, TableLike: tableLike,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	if dash != nil {
+		// Populate dynamic insights
+		dash.Insights = s.generateStorageInsights(dash)
+	}
+
+	return dash, nil
+}
+
+func (s *MetricsService) GetSQLServerRiskHealthHistory(ctx context.Context, instanceName string, from, to time.Time) ([]hot.RiskHealthRow, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not connected")
+	}
+	return s.tsLogger.GetSQLServerRiskHealthHistory(ctx, instanceName, from, to)
+}
+
+func (s *MetricsService) GetTableSizeHistory(ctx context.Context, engine, instanceName, from, to string, db, schema, table string) ([]models.TableSizeHistory, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not connected")
+	}
+	return s.tsLogger.GetTableSizeHistory(ctx, engine, instanceName, from, to, db, schema, table)
+}
+
+func (s *MetricsService) GetIndexUsageHistory(ctx context.Context, engine, instanceName, from, to string, db, schema, table string) ([]models.IndexUsageStat, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not connected")
+	}
+	return s.tsLogger.GetIndexUsageHistory(ctx, engine, instanceName, from, to, db, schema, table)
+}
+
+func (s *MetricsService) GetIndexFragmentationHistory(ctx context.Context, engine, instanceName, from, to string, db, schema, table string) ([]hot.IndexFragHistoryRow, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not connected")
+	}
+	return s.tsLogger.GetIndexFragmentationHistory(ctx, engine, instanceName, from, to, db, schema, table)
 }
 
 func (s *MetricsService) TimescaleStorageIndexHealthFilterOptions(ctx context.Context, engine, instance, from, to string, dbName, schemaName string) (*hot.SIHFilterOptions, error) {
@@ -713,6 +810,25 @@ func (s *MetricsService) GetPostgresCpuSaturation(instanceName string) map[strin
 		hostPct = tsRow.CPUUsage
 	}
 
+	// Try Agent data
+	osConfigured := false
+	if s.ServerRepo != nil {
+		srv, _ := s.ServerRepo.GetByName(context.Background(), instanceName)
+		if srv.Host != "" {
+			if s.tsLogger != nil {
+				osStatus, _ := s.tsLogger.CheckOSCollectorStatus(context.Background(), srv.Host)
+				osConfigured = osStatus
+				if osStatus {
+					if agentData, err := s.tsLogger.GetLatestOSCPUSaturation(context.Background(), srv.Host); err == nil {
+						load1 = agentData["load_1m"].(float64)
+						cores = agentData["cpu_cores"].(int)
+						hostPct = 100.0 - agentData["cpu_idle_pct"].(float64)
+					}
+				}
+			}
+		}
+	}
+
 	if snap.Load1m > 0 {
 		load1 = snap.Load1m
 	}
@@ -734,14 +850,15 @@ func (s *MetricsService) GetPostgresCpuSaturation(instanceName string) map[strin
 	per := pghostcpu.CpuPerConnection(pgPct, active)
 
 	return map[string]interface{}{
-		"instance":             instanceName,
-		"cpu_saturation_pct":   sat,
-		"cpu_per_connection":   per,
-		"load_1m":              load1,
-		"cpu_cores":            cores,
-		"host_cpu_percent":     hostPct,
-		"postgres_cpu_percent": pgPct,
-		"active_connections":   active,
+		"instance":                instanceName,
+		"cpu_saturation_pct":      sat,
+		"cpu_per_connection":      per,
+		"load_1m":                 load1,
+		"cpu_cores":               cores,
+		"host_cpu_percent":        hostPct,
+		"postgres_cpu_percent":    pgPct,
+		"active_connections":      active,
+		"os_collector_configured": osConfigured,
 	}
 }
 
@@ -808,11 +925,11 @@ func (s *MetricsService) GetTimescalePostgresVacuumProgress(instanceName string,
 	return s.tsLogger.GetPostgresVacuumProgress(context.Background(), instanceName, limit)
 }
 
-func (s *MetricsService) GetPostgresTableMaintenanceHistory(ctx context.Context, instanceName string, schema string, table string, limit int) ([]hot.PostgresTableMaintRow, error) {
+func (s *MetricsService) GetPostgresTableMaintenanceHistory(ctx context.Context, instanceName string, database string, schema string, table string, limit int) ([]hot.PostgresTableMaintRow, error) {
 	if s.tsLogger == nil {
 		return nil, fmt.Errorf("TimescaleDB not connected")
 	}
-	return s.tsLogger.GetPostgresTableMaintenanceHistory(ctx, instanceName, schema, table, limit)
+	return s.tsLogger.GetPostgresTableMaintenanceHistory(ctx, instanceName, database, schema, table, limit)
 }
 
 func (s *MetricsService) GetLatestPostgresTableMaintenance(ctx context.Context, instanceName string, limit int) ([]hot.PostgresTableMaintRow, error) {
@@ -943,7 +1060,7 @@ func (s *MetricsService) GetTimescaleAGHealthSummary(ctx context.Context, instan
 	if s.tsLogger == nil {
 		return nil, fmt.Errorf("TimescaleDB not connected")
 	}
-	return s.tsLogger.GetAGHealthSummary(ctx, instanceName, limit)
+	return s.tsLogger.GetAGHealthSummary(ctx, instanceName, "", "", limit)
 }
 
 // GetTimescaleDatabaseThroughputSummary wraps Timescale DB throughput rollup (last hour).

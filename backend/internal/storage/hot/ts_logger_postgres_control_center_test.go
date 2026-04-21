@@ -36,4 +36,3 @@ func TestComputeWalRateMBPerMin_ComputesRateAndClampsNegative(t *testing.T) {
 		t.Fatalf("expected clamp to 0, got %v", rate2)
 	}
 }
-

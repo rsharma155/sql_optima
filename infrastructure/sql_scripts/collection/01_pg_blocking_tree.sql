@@ -3,7 +3,7 @@
 -- Target Table: N/A (blocking analysis)
 -- Description: Returns all active sessions with blocking hierarchy from pg_stat_activity
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     a.pid,
     a.state,
     EXTRACT(EPOCH FROM (now() - a.state_change)) as duration_seconds,

@@ -86,4 +86,3 @@ func ClassifyBottleneck(nodes []pg_planparser.FlatNode, totalExecMs float64, cat
 	}
 	return Bottleneck{Primary: "mixed", Reason: "No single dominant bottleneck detected"}
 }
-

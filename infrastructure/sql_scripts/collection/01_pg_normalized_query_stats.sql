@@ -3,7 +3,7 @@
 -- Target Table: N/A (query performance from pg_stat_statements)
 -- Description: Retrieves query statistics with query ID from pg_stat_statements for normalization
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     queryid,
     query,
     calls,
@@ -12,5 +12,6 @@ SELECT
     rows
 FROM pg_stat_statements 
 WHERE query NOT LIKE '%pg_stat_statements%'
+  AND query NOT LIKE '%/* SQL_OPTIMA */%'
 ORDER BY total_exec_time DESC
 LIMIT 100;

@@ -22,59 +22,59 @@ import (
 
 // Report matches OUTPUT CONTRACT in explain_analyze_report_layout.md (10 JSON arrays).
 type Report struct {
-	ExecutionSummary      []ExecutionSummaryRow      `json:"execution_summary"`
-	TimeBreakdown         []TimeBreakdownRow         `json:"time_breakdown"`
-	TopNodes              []TopNodeRow               `json:"top_nodes"`
-	Cardinality             []CardinalityRow           `json:"cardinality"`
-	MemoryDisk              []MemoryDiskRow            `json:"memory_disk"`
-	TableAccess             []TableAccessRow           `json:"table_access"`
-	JoinAnalysis            []JoinAnalysisRow          `json:"join_analysis"`
-	Findings                []FindingGridRow           `json:"findings"`
-	IndexOpportunities      []IndexOpportunityGridRow  `json:"index_opportunities"`
-	TuningRecommendations   []TuningRecommendationGridRow `json:"tuning_recommendations"`
+	ExecutionSummary      []ExecutionSummaryRow         `json:"execution_summary"`
+	TimeBreakdown         []TimeBreakdownRow            `json:"time_breakdown"`
+	TopNodes              []TopNodeRow                  `json:"top_nodes"`
+	Cardinality           []CardinalityRow              `json:"cardinality"`
+	MemoryDisk            []MemoryDiskRow               `json:"memory_disk"`
+	TableAccess           []TableAccessRow              `json:"table_access"`
+	JoinAnalysis          []JoinAnalysisRow             `json:"join_analysis"`
+	Findings              []FindingGridRow              `json:"findings"`
+	IndexOpportunities    []IndexOpportunityGridRow     `json:"index_opportunities"`
+	TuningRecommendations []TuningRecommendationGridRow `json:"tuning_recommendations"`
 }
 
 type ExecutionSummaryRow struct {
-	ExecutionTimeMs          float64 `json:"execution_time_ms"`
-	PlanningTimeMs             float64 `json:"planning_time_ms"`
-	JitTimeMs                  *float64 `json:"jit_time_ms,omitempty"`
-	TotalPlanNodes             int     `json:"total_plan_nodes"`
-	MaxPlanDepth               int     `json:"max_plan_depth"`
-	TotalRowsProcessed         int64   `json:"total_rows_processed"`
-	FinalRowsReturned          int     `json:"final_rows_returned"`
-	ParallelWorkersPlanned     int     `json:"parallel_workers_planned"`
-	ParallelWorkersLaunched    int     `json:"parallel_workers_launched"`
-	PrimaryBottleneck          string  `json:"primary_bottleneck"`
+	ExecutionTimeMs         float64  `json:"execution_time_ms"`
+	PlanningTimeMs          float64  `json:"planning_time_ms"`
+	JitTimeMs               *float64 `json:"jit_time_ms,omitempty"`
+	TotalPlanNodes          int      `json:"total_plan_nodes"`
+	MaxPlanDepth            int      `json:"max_plan_depth"`
+	TotalRowsProcessed      int64    `json:"total_rows_processed"`
+	FinalRowsReturned       int      `json:"final_rows_returned"`
+	ParallelWorkersPlanned  int      `json:"parallel_workers_planned"`
+	ParallelWorkersLaunched int      `json:"parallel_workers_launched"`
+	PrimaryBottleneck       string   `json:"primary_bottleneck"`
 }
 
 type TimeBreakdownRow struct {
-	Rank           int     `json:"rank"`
-	OperationType  string  `json:"operation_type"`
-	NodeCount      int     `json:"node_count"`
-	TotalTimeMs    float64 `json:"total_time_ms"`
-	TimePercent    float64 `json:"time_percent"`
+	Rank          int     `json:"rank"`
+	OperationType string  `json:"operation_type"`
+	NodeCount     int     `json:"node_count"`
+	TotalTimeMs   float64 `json:"total_time_ms"`
+	TimePercent   float64 `json:"time_percent"`
 }
 
 type TopNodeRow struct {
-	Rank             int     `json:"rank"`
-	NodeType         string  `json:"node_type"`
-	RelationName     string  `json:"relation_name,omitempty"`
-	ParentNodeType   string  `json:"parent_node_type,omitempty"`
-	DepthLevel       int     `json:"depth_level"`
-	ActualRows       int     `json:"actual_rows"`
-	ActualLoops      int     `json:"actual_loops"`
-	RowsProcessed    int64   `json:"rows_processed"`
-	ExecutionTimeMs  float64 `json:"execution_time_ms"`
-	TimePercent      float64 `json:"time_percent"`
+	Rank            int     `json:"rank"`
+	NodeType        string  `json:"node_type"`
+	RelationName    string  `json:"relation_name,omitempty"`
+	ParentNodeType  string  `json:"parent_node_type,omitempty"`
+	DepthLevel      int     `json:"depth_level"`
+	ActualRows      int     `json:"actual_rows"`
+	ActualLoops     int     `json:"actual_loops"`
+	RowsProcessed   int64   `json:"rows_processed"`
+	ExecutionTimeMs float64 `json:"execution_time_ms"`
+	TimePercent     float64 `json:"time_percent"`
 }
 
 type CardinalityRow struct {
-	NodeType            string  `json:"node_type"`
-	RelationName        string  `json:"relation_name,omitempty"`
-	EstimatedRows       int     `json:"estimated_rows"`
-	ActualRows          int     `json:"actual_rows"`
-	ErrorRatio          float64 `json:"error_ratio"`
-	EstimationQuality   string  `json:"estimation_quality"`
+	NodeType          string  `json:"node_type"`
+	RelationName      string  `json:"relation_name,omitempty"`
+	EstimatedRows     int     `json:"estimated_rows"`
+	ActualRows        int     `json:"actual_rows"`
+	ErrorRatio        float64 `json:"error_ratio"`
+	EstimationQuality string  `json:"estimation_quality"`
 }
 
 type MemoryDiskRow struct {
@@ -88,12 +88,12 @@ type MemoryDiskRow struct {
 }
 
 type TableAccessRow struct {
-	RelationName    string `json:"relation_name"`
-	ScanType        string `json:"scan_type"`
-	NodeCount       int    `json:"node_count"`
-	TotalRowsRead   int64  `json:"total_rows_read"`
-	ParallelUsed    bool   `json:"parallel_used"`
-	LargeScanFlag   bool   `json:"large_scan_flag"`
+	RelationName  string `json:"relation_name"`
+	ScanType      string `json:"scan_type"`
+	NodeCount     int    `json:"node_count"`
+	TotalRowsRead int64  `json:"total_rows_read"`
+	ParallelUsed  bool   `json:"parallel_used"`
+	LargeScanFlag bool   `json:"large_scan_flag"`
 }
 
 type JoinAnalysisRow struct {
@@ -105,27 +105,27 @@ type JoinAnalysisRow struct {
 }
 
 type FindingGridRow struct {
-	Severity        string `json:"severity"`
-	Category        string `json:"category"`
-	FindingCode     string `json:"finding_code"`
-	FindingSummary  string `json:"finding_summary"`
-	Evidence        string `json:"evidence"`
+	Severity       string `json:"severity"`
+	Category       string `json:"category"`
+	FindingCode    string `json:"finding_code"`
+	FindingSummary string `json:"finding_summary"`
+	Evidence       string `json:"evidence"`
 }
 
 type IndexOpportunityGridRow struct {
-	Priority         string   `json:"priority"`
-	OpportunityType  string   `json:"opportunity_type"`
-	TableName        string   `json:"table_name"`
-	ColumnsInvolved  []string `json:"columns_involved"`
-	Reason           string   `json:"reason"`
+	Priority        string   `json:"priority"`
+	OpportunityType string   `json:"opportunity_type"`
+	TableName       string   `json:"table_name"`
+	ColumnsInvolved []string `json:"columns_involved"`
+	Reason          string   `json:"reason"`
 }
 
 type TuningRecommendationGridRow struct {
-	PriorityRank             int     `json:"priority_rank"`
-	RecommendationCategory   string  `json:"recommendation_category"`
-	ActionSummary            string  `json:"action_summary"`
-	ExpectedImpact           string  `json:"expected_impact"`
-	ConfidenceScore          float64 `json:"confidence_score"`
+	PriorityRank           int     `json:"priority_rank"`
+	RecommendationCategory string  `json:"recommendation_category"`
+	ActionSummary          string  `json:"action_summary"`
+	ExpectedImpact         string  `json:"expected_impact"`
+	ConfidenceScore        float64 `json:"confidence_score"`
 }
 
 type Options struct {
@@ -170,9 +170,9 @@ func Generate(plan *types.Plan, opts Options) *Report {
 	tuneGrid := buildTuningGrid(bn, findings, idxGrid)
 
 	return &Report{
-		ExecutionSummary:    execSummary,
-		TimeBreakdown:       timeBreak,
-		TopNodes:            top,
+		ExecutionSummary:      execSummary,
+		TimeBreakdown:         timeBreak,
+		TopNodes:              top,
 		Cardinality:           cardRows,
 		MemoryDisk:            memDisk,
 		TableAccess:           tableAcc,
@@ -211,15 +211,15 @@ func buildExecutionSummary(nodes []pg_planparser.FlatNode, g pg_planmetrics.Glob
 	}
 	pwPlanned, pwLaunched := gatherWorkerTotals(nodes)
 	row := ExecutionSummaryRow{
-		ExecutionTimeMs:       totalExec,
-		PlanningTimeMs:        planning,
-		TotalPlanNodes:        len(nodes),
-		MaxPlanDepth:          g.MaxPlanDepth,
-		TotalRowsProcessed:    maxRows,
-		FinalRowsReturned:     finalRows,
-		ParallelWorkersPlanned: pwPlanned,
+		ExecutionTimeMs:         totalExec,
+		PlanningTimeMs:          planning,
+		TotalPlanNodes:          len(nodes),
+		MaxPlanDepth:            g.MaxPlanDepth,
+		TotalRowsProcessed:      maxRows,
+		FinalRowsReturned:       finalRows,
+		ParallelWorkersPlanned:  pwPlanned,
 		ParallelWorkersLaunched: pwLaunched,
-		PrimaryBottleneck:     normalizePrimaryBottleneck(bn.Primary),
+		PrimaryBottleneck:       normalizePrimaryBottleneck(bn.Primary),
 	}
 	if jit != nil {
 		row.JitTimeMs = jit
@@ -628,11 +628,11 @@ func firstNonEmpty(a, b string) string {
 
 type rawIndexOpp struct {
 	Pattern        string
-	Table            string
-	Columns          []string
+	Table          string
+	Columns        []string
 	FromExpression string
 	Recommendation string
-	NodeID           int
+	NodeID         int
 }
 
 func inferIndexOpportunities(nodes []pg_planparser.FlatNode) []rawIndexOpp {

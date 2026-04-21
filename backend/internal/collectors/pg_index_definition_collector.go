@@ -10,6 +10,7 @@ package collectors
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
@@ -18,7 +19,16 @@ import (
 // CollectPostgresIndexDefinitions snapshots index key/include columns for duplicate/overlap analysis (daily cadence).
 // Requires PostgreSQL 11+ (uses pg_index.indnkeyattrs for INCLUDE indexes).
 func CollectPostgresIndexDefinitions(ctx context.Context, db *sql.DB) ([]IndexDefinitionCatalogRow, error) {
-	q := `
+	// Support older Postgres (< 11) where indnkeyattrs does not exist.
+	var hasIndNKeyAttrs bool
+	_ = db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='pg_index' AND column_name='indnkeyattrs')`).Scan(&hasIndNKeyAttrs)
+
+	nKeyCol := "i.indnatts" // Fallback
+	if hasIndNKeyAttrs {
+		nKeyCol = "i.indnkeyattrs"
+	}
+
+	q := fmt.Sprintf(`
 		WITH base AS (
 			SELECT
 				current_database()::text AS db_name,
@@ -27,7 +37,7 @@ func CollectPostgresIndexDefinitions(ctx context.Context, db *sql.DB) ([]IndexDe
 				t.oid AS tbl_oid,
 				ic.relname::text AS index_name,
 				i.indkey,
-				COALESCE(NULLIF(i.indnkeyattrs::int, 0), cardinality(i.indkey::smallint[])) AS nkey,
+				COALESCE(NULLIF(%s::int, 0), cardinality(i.indkey::smallint[])) AS nkey,
 				NULLIF(btrim(COALESCE(pg_get_expr(i.indpred, i.indrelid, true), '')), '') AS filter_definition,
 				i.indisunique AS is_unique,
 				i.indisprimary AS is_pk,
@@ -62,7 +72,7 @@ func CollectPostgresIndexDefinitions(ctx context.Context, db *sql.DB) ([]IndexDe
 		WHERE u.attnum > 0
 		GROUP BY b.db_name, b.schema_name, b.table_name, b.index_name, b.filter_definition, b.is_unique, b.is_pk, b.index_type, b.nkey
 		ORDER BY b.db_name, b.schema_name, b.table_name, b.index_name
-	`
+	`, nKeyCol)
 	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err

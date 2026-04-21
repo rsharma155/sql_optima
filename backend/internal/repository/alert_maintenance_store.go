@@ -46,8 +46,8 @@ func (r *AlertMaintenanceRepository) Create(ctx context.Context, mw alerts.Maint
 
 func (r *AlertMaintenanceRepository) IsUnderMaintenance(ctx context.Context, instanceName string, engine alerts.Engine, at time.Time) (bool, error) {
 	const q = `
-		SELECT EXISTS(
-			SELECT 1 FROM optima_maintenance_windows
+		SELECT  EXISTS(
+			SELECT  1 FROM optima_maintenance_windows
 			WHERE instance_name = $1
 			  AND engine = $2
 			  AND starts_at <= $3
@@ -61,7 +61,7 @@ func (r *AlertMaintenanceRepository) IsUnderMaintenance(ctx context.Context, ins
 
 func (r *AlertMaintenanceRepository) ListActive(ctx context.Context, at time.Time) ([]alerts.MaintenanceWindow, error) {
 	const q = `
-		SELECT id, instance_name, engine, reason, starts_at, ends_at, created_by, created_at
+		SELECT  id, instance_name, engine, reason, starts_at, ends_at, created_by, created_at
 		FROM optima_maintenance_windows
 		WHERE starts_at <= $1 AND ends_at > $1
 		ORDER BY ends_at ASC`
@@ -102,7 +102,7 @@ func NewAlertRuleRepository(pool *pgxpool.Pool) *AlertRuleRepository {
 
 func (r *AlertRuleRepository) ListEnabled(ctx context.Context, engine alerts.Engine) ([]alerts.AlertRule, error) {
 	const q = `
-		SELECT id, name, engine, category, default_severity, description, is_enabled, config, created_at, updated_at
+		SELECT  id, name, engine, category, default_severity, description, is_enabled, config, created_at, updated_at
 		FROM optima_alert_rules
 		WHERE is_enabled = true AND (engine = $1 OR engine = 'all')
 		ORDER BY name`
@@ -134,7 +134,7 @@ func (r *AlertRuleRepository) ListEnabled(ctx context.Context, engine alerts.Eng
 
 func (r *AlertRuleRepository) GetByName(ctx context.Context, name string) (alerts.AlertRule, error) {
 	const q = `
-		SELECT id, name, engine, category, default_severity, description, is_enabled, config, created_at, updated_at
+		SELECT  id, name, engine, category, default_severity, description, is_enabled, config, created_at, updated_at
 		FROM optima_alert_rules
 		WHERE name = $1`
 

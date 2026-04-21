@@ -3,7 +3,7 @@
 -- Target Table: sqlserver_ag_health (TimescaleDB)
 -- Description: Fetches AG health metrics without database states but with secondary lag
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     ag.name AS ag_name,
     ar.replica_server_name,
     'N/A' AS database_name,

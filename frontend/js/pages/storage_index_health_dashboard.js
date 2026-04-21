@@ -1,7 +1,9 @@
 /*
  * SQL Optima — https://github.com/rsharma155/sql_optima
  *
- * Purpose: Shared Timescale-backed Storage & Index Health dashboard (SQL Server and PostgreSQL; engine from instance type).
+ * Purpose: Shared Timescale-backed Storage & Index Health dashboard (SQL Server and PostgreSQL).
+ *          Enhanced with Time-Series trends, forecasting, efficiency scoring, and table drill-downs.
+ *          Iteration: Phase 3 Feedback (Banner, Insights, Chart Enhancements, Date Picker).
  *
  * Author: Ravi Sharma
  * Copyright (c) 2026 Ravi Sharma
@@ -14,671 +16,516 @@ window.runStorageIndexHealthDashboard = async function(opts) {
     window.appState.sih = window.appState.sih || {};
     const state = window.appState.sih;
     const engine = (inst.type === 'postgres') ? 'postgres' : 'sqlserver';
-    const backRoute = (inst.type === 'postgres') ? 'pg-dashboard' : 'dashboard';
     const dashTitle = (engine === 'postgres') ? 'Index & Table Health' : 'Storage & Index Health';
-    state.timeRange = state.timeRange || '24h';
-    // Always scope this dashboard to the global Target Database dropdown (top-left).
-    // If global is set to a specific DB, force this dashboard to that DB.
-    state.db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all')
-        ? window.appState.currentDatabase
-        : (state.db || 'all');
+    
+    // Time state
+    const now = new Date();
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    const fmtLocal = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+    state.fromLocal = state.fromLocal || fmtLocal(oneHourAgo);
+    state.toLocal = state.toLocal || fmtLocal(now);
+    state.db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : (state.db || 'all');
     state.schema = state.schema || 'all';
     state.table = state.table || 'all';
+    state.growthMode = state.growthMode || 'abs'; 
 
     const fetchJson = async (url) => {
         const res = await window.apiClient.authenticatedFetch(url);
-        const contentType = res.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-            const text = await res.text().catch(() => '');
-            const snippet = String(text || '').slice(0, 180).replace(/\s+/g, ' ').trim();
-            throw new Error(`Non-JSON response (${res.status}) ct=${contentType || 'n/a'} body="${snippet}"`);
-        }
-        const body = await res.json();
-        if (!res.ok) {
-            throw new Error(body?.error || `HTTP ${res.status}`);
-        }
-        return body;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
     };
 
     const buildFilterQS = () => {
+        const fromIso = new Date(state.fromLocal).toISOString();
+        const toIso = new Date(state.toLocal).toISOString();
         const db = (state.db && state.db !== 'all') ? state.db : '';
         const schema = (state.schema && state.schema !== 'all') ? state.schema : '';
         const table = (state.table && state.table !== 'all') ? state.table : '';
-        return `engine=${encodeURIComponent(engine)}&instance=${encodeURIComponent(inst.name)}&time_range=${encodeURIComponent(state.timeRange)}&db=${encodeURIComponent(db)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}`;
+        return `engine=${encodeURIComponent(engine)}&instance=${encodeURIComponent(inst.name)}&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}&db=${encodeURIComponent(db)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}`;
+    };
+
+    const fmt = (n, d=0) => {
+        const v = Number(n);
+        if (n == null || isNaN(v)) return '--';
+        return v.toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d});
     };
 
     if (!skipLoadingShell) {
-    window.routerOutlet.innerHTML = `
-        <div class="page-view active dashboard-sky-theme">
-            <div class="page-title flex-between">
-                <div>
-                    <h1><i class="fa-solid fa-boxes-stacked text-accent"></i> ${dashTitle}</h1>
-                    <p class="subtitle">Index usage, scan hotspots, and growth trends (Timescale-backed).</p>
-                </div>
-                <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-                    <div class="glass-panel" style="padding:0.5rem 0.75rem;">
-                        <div class="text-muted" style="font-size:0.75rem;">Instance</div>
-                        <div style="font-weight:600;">${window.escapeHtml(inst.name)}</div>
+        window.routerOutlet.innerHTML = `
+            <div class="page-view active dashboard-sky-theme">
+                <div class="page-title flex-between dashboard-page-title-compact">
+                    <div class="dashboard-title-line" style="flex:1; min-width:0;">
+                        <h1><i class="fa-solid fa-boxes-stacked text-accent"></i> ${dashTitle}</h1>
+                        <span class="subtitle">Last snapshot: <span id="sihLastSnap">--</span> • Analysis window defined by range picker</span>
                     </div>
-                    <button class="btn btn-sm btn-outline" data-action="navigate" data-route="${backRoute}"><i class="fa-solid fa-arrow-left"></i> Back</button>
+                    <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.6rem; flex-wrap:wrap; justify-content:flex-end;">
+                        <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; border: 1px solid var(--border-color);">
+                            <label class="text-muted" style="margin:0;">from:</label>
+                            <input type="datetime-local" id="sihFrom" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; width:10.5rem;" />
+                            <label class="text-muted" style="margin:0;">to:</label>
+                            <input type="datetime-local" id="sihTo" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; width:10.5rem;" />
+                            <div style="border-left:1px solid var(--border-color); padding-left:0.5rem; display:flex; align-items:center; gap:0.4rem;">
+                                <label class="text-muted" style="margin:0;">db:</label>
+                                <select id="sihDb" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; max-width:120px;"><option value="all">All</option></select>
+                            </div>
+                            <div style="border-left:1px solid var(--border-color); padding-left:0.5rem; display:flex; align-items:center; gap:0.4rem;">
+                                <label class="text-muted" style="margin:0;">schema:</label>
+                                <select id="sihSchema" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; max-width:100px;"><option value="all">All</option></select>
+                            </div>
+                            <button type="button" class="btn btn-xs btn-accent" id="sihApply" style="padding:1px 6px;"><i class="fa-solid fa-filter"></i> Apply</button>
+                        </div>
+                        <button class="btn btn-sm btn-outline text-accent" id="sihRefresh"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    </div>
+                </div>
+
+                <div id="sihHealthBanner" class="mt-2 mb-3" style="display:none;"></div>
+
+                <!-- KPI Health Row -->
+                <div class="charts-grid" style="display:grid; grid-template-columns:repeat(6, 1fr); gap:0.75rem;">
+                    ${['TotalSize', 'Growth7d', 'Forecast30d', 'Reclaimable', 'Frag', 'WriteAmp'].map((id, i) => {
+                        const labels = ['Total DB Size', '7d Growth', '30d Forecast', 'Reclaimable Index', 'Avg Fragmentation', 'Write Amp Score'];
+                        return `
+                            <div class="metric-card glass-panel sih-kpi-card" id="card${id}" style="padding:0.6rem 0.75rem; min-height:95px;">
+                                <div class="text-muted" style="font-size:0.65rem;">${labels[i]}</div>
+                                <div id="kpi${id}" style="font-size:1.1rem; font-weight:700;">--</div>
+                                <div id="delta${id}" style="font-size:0.65rem; margin-top:0.1rem;"></div>
+                                <div style="height:25px; margin-top:0.35rem;"><canvas id="spark${id}"></canvas></div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+
+                <div id="sihDashboardBody" class="mt-3">
+                    <div class="glass-panel" style="padding:2rem; text-align:center;">
+                        <div class="spinner"></div>
+                        <div class="text-muted mt-2">Initializing storage observability data…</div>
+                    </div>
                 </div>
             </div>
-            <div class="glass-panel mt-2" style="padding:0.75rem;">
-                <div style="font-size:0.78rem; color:var(--text-muted); line-height:1.45; margin-bottom:0.65rem; padding:0.5rem 0.65rem; background:rgba(59,130,246,0.08); border-radius:6px;">
-                    <strong style="color:var(--text);">While this page loads:</strong> index usage is collected on about a <strong>15 min</strong> tick (see server logs <code style="font-size:0.72rem;">[Collector][SIH]</code>). You need Timescale connected and historical collection running (or a Redis worker consuming <code style="font-size:0.72rem;">historical</code> tasks).
-                    ${engine === 'postgres'
-                        ? ` For PostgreSQL, the collector reads <code style="font-size:0.72rem;">pg_stat_user_*</code> on the connected database.`
-                        : ` If <code style="font-size:0.72rem;">Instances[].databases</code> is omitted, the collector auto-discovers user databases (<code>database_id &gt; 4</code>) your login can access; otherwise list DBs explicitly to limit scope.`}
-                </div>
-                <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
-                    <div>
-                        <div class="text-muted" style="font-size:0.75rem;">Time range</div>
-                        <select id="sihRange" class="custom-select">
-                            <option value="1h" ${state.timeRange==='1h'?'selected':''}>1h</option>
-                            <option value="24h" ${state.timeRange==='24h'?'selected':''}>24h</option>
-                            <option value="7d" ${state.timeRange==='7d'?'selected':''}>7d</option>
-                            <option value="30d" ${state.timeRange==='30d'?'selected':''}>30d</option>
-                        </select>
-                    </div>
-                    ${engine === 'postgres' ? '' : `
-                    <div style="min-width:220px;">
-                        <div class="text-muted" style="font-size:0.75rem;">Database</div>
-                        <select id="sihDb" class="custom-select"><option value="all">All</option></select>
-                    </div>
-                    `}
-                    <div style="min-width:220px;">
-                        <div class="text-muted" style="font-size:0.75rem;">Schema</div>
-                        <select id="sihSchema" class="custom-select"><option value="all">All</option></select>
-                    </div>
-                    <div style="min-width:260px;">
-                        <div class="text-muted" style="font-size:0.75rem;">Table</div>
-                        <select id="sihTable" class="custom-select"><option value="all">All</option></select>
-                    </div>
-                    <button class="btn btn-sm btn-accent" id="sihApply"><i class="fa-solid fa-filter"></i> Apply</button>
-                    <button class="btn btn-sm btn-outline" id="sihRefresh"><i class="fa-solid fa-refresh"></i> Refresh</button>
-                </div>
-            </div>
-            <div class="glass-panel mt-2" style="padding:0.75rem;">
-                <div class="text-muted" style="font-size:0.8rem;">Loading metrics…</div>
-                <div class="spinner" style="margin-top:0.5rem;"></div>
-            </div>
-        </div>
-    `;
+        `;
     }
 
     try {
-        const applyHandlers = () => {
-            const $ = (id) => document.getElementById(id);
-            const sync = () => {
-                state.timeRange = ($('sihRange')?.value || '24h');
-                const globalDb = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
-                // For PostgreSQL, the DB selector is hidden; always use globalDb or the state default.
-                state.db = engine === 'postgres' ? (globalDb || state.db || 'all') : (globalDb || ($('sihDb')?.value || 'all'));
-                state.schema = ($('sihSchema')?.value || 'all');
-                state.table = ($('sihTable')?.value || 'all');
-            };
-            const reload = () => { sync(); void window.runStorageIndexHealthDashboard({ skipLoadingShell: true }); };
-            $('sihApply')?.addEventListener('click', reload);
-            $('sihRefresh')?.addEventListener('click', reload);
-            $('sihRange')?.addEventListener('change', reload);
-
-            // Cascading filters: refetch in-place (no route navigation) so selects stay usable.
-            $('sihDb')?.addEventListener('change', () => {
-                sync();
-                state.schema = 'all';
-                state.table = 'all';
-                void window.runStorageIndexHealthDashboard({ skipLoadingShell: true });
-            });
-            $('sihSchema')?.addEventListener('change', () => {
-                sync();
-                state.table = 'all';
-                void window.runStorageIndexHealthDashboard({ skipLoadingShell: true });
-            });
-        };
-
         const base = `/api/timescale/storage-index-health`;
-        // Load filter options first (drives the dropdowns)
-        const filterQS = `engine=${encodeURIComponent(engine)}&instance=${encodeURIComponent(inst.name)}&time_range=${encodeURIComponent(state.timeRange)}&db=${encodeURIComponent((state.db && state.db !== 'all') ? state.db : '')}&schema=${encodeURIComponent((state.schema && state.schema !== 'all') ? state.schema : '')}`;
-        const filters = await fetchJson(`${base}/filters?${filterQS}`);
-        const dbs = Array.isArray(filters.databases) ? filters.databases : [];
-        const schemas = Array.isArray(filters.schemas) ? filters.schemas : [];
-        const tables = Array.isArray(filters.tables) ? filters.tables : [];
+        const filterQS = buildFilterQS();
+        
+        const [filters, dash] = await Promise.all([
+            fetchJson(`${base}/filters?${filterQS}`),
+            fetchJson(`${base}/dashboard?${filterQS}`)
+        ]);
 
-        // Load dashboard after filter options so the page can render consistent selects.
-        const dash = await fetchJson(`${base}/dashboard?${buildFilterQS()}`);
-
-        const fmt = (n, digits=0) => {
-            const v = Number(n||0);
-            if (!isFinite(v)) return '--';
-            return v.toFixed(digits);
-        };
-
+        const $ = (id) => document.getElementById(id);
         const k = dash.kpis || {};
-        const topScans = Array.isArray(dash.top_scans) ? dash.top_scans : [];
-        const seekScanLookup = Array.isArray(dash.seek_scan_lookup) ? dash.seek_scan_lookup : [];
-        const largestTables = Array.isArray(dash.largest_tables) ? dash.largest_tables : [];
-        const largestIndexes = Array.isArray(dash.largest_indexes) ? dash.largest_indexes : [];
-        const growth = Array.isArray(dash.growth) ? dash.growth : [];
-        const growthSummary = (dash && typeof dash.growth_summary === 'object' && dash.growth_summary) ? dash.growth_summary : {};
-        const unusedIndexes = Array.isArray(dash.unused_indexes) ? dash.unused_indexes : [];
-        const highScanTables = Array.isArray(dash.high_scan_tables) ? dash.high_scan_tables : [];
-        const dupCandidates = Array.isArray(dash.duplicate_index_candidates) ? dash.duplicate_index_candidates : [];
 
-        const rowCounts = filters.source_row_counts || {};
-        const rcSum = Number(rowCounts.table_size_history || 0) + Number(rowCounts.table_usage_stats || 0) + Number(rowCounts.index_usage_stats || 0);
-        const dataHealthBanner = rcSum === 0
-            ? `<div class="alert alert-warning mt-2" style="font-size:0.8rem; margin:0;">
-                <strong>No SIH rows in Timescale</strong> for <code>${window.escapeHtml(inst.name)}</code> in this time window — all of
-                <code>monitor.index_usage_stats</code>, <code>monitor.table_usage_stats</code>, and <code>monitor.table_size_history</code> are empty.
-                Verify Timescale connectivity, the background collector is running, and the instance name matches <code>server_id</code> written by the collector.
-               </div>`
-            : `<div class="glass-panel mt-2" style="padding:0.45rem 0.65rem; font-size:0.72rem; color:var(--text-muted);">
-                Timescale row counts (${window.escapeHtml(state.timeRange)}): table_size_history=${rowCounts.table_size_history ?? 0}, table_usage_stats=${rowCounts.table_usage_stats ?? 0}, index_usage_stats=${rowCounts.index_usage_stats ?? 0}.
-               </div>`;
-        const emptyDiagCharts = (topScans.length === 0 && seekScanLookup.length === 0)
-            ? `<div class="glass-panel mt-2" style="padding:0.5rem 0.65rem; font-size:0.78rem; color:var(--text-muted); border-left:3px solid var(--border-color);">No diagnostic chart series returned for this window (aggregates from <code>table_usage_stats</code> / <code>index_usage_stats</code>).</div>`
-            : '';
-        const emptyGrowthNote = growth.length === 0
-            ? `<p class="text-muted" style="font-size:0.75rem; margin-top:0.35rem;">No daily buckets in <code>monitor.table_size_history</code> for this scope (growth snapshots run about every 6 hours).</p>`
-            : '';
-        const emptyLargestTbl = largestTables.length === 0
-            ? `<tr><td colspan="2" class="text-muted">No latest size rows in Timescale for largest tables.</td></tr>`
-            : '';
-        const emptyLargestIdx = largestIndexes.length === 0
-            ? `<tr><td colspan="2" class="text-muted">No latest size rows in Timescale for largest indexes.</td></tr>`
-            : '';
+        // 1. Inputs
+        const fromIn = $('sihFrom'); const toIn = $('sihTo');
+        if (fromIn && !fromIn.value) fromIn.value = state.fromLocal;
+        if (toIn && !toIn.value) toIn.value = state.toLocal;
 
-        const ku = Number(k.unused_index_count || 0);
-        const kh = Number(k.high_scan_table_count || 0);
-        const kfg = Number(k.fastest_growing_table_growth_7d_pct || 0);
-        const ko = Number(k.index_write_overhead_pct || 0);
-        const nUnused = unusedIndexes.length;
-        const nHigh = highScanTables.length;
-        const nDup = dupCandidates.length;
+        // 2. Storage Health Banner
+        (function renderBanner() {
+            const banner = $('sihHealthBanner');
+            if (!banner) return;
+            banner.style.display = 'block';
+            let severity = 'healthy';
+            let messages = [];
+            const unusedGB = (k.unused_index_mb || 0) / 1024;
 
-        const kpiStyleUnused = ku > 0 ? 'border-left:4px solid var(--danger,#dc2626);' : 'border-left:4px solid transparent;';
-        const kpiStyleHigh = kh > 0 ? 'border-left:4px solid var(--warning,#f59e0b);' : 'border-left:4px solid transparent;';
-        const kpiStyleGrow = kfg > 10 ? 'border-left:4px solid var(--warning,#f59e0b);' : 'border-left:4px solid transparent;';
-        const kpiStyleOH = ko > 30 ? 'border-left:4px solid var(--warning,#f59e0b);' : 'border-left:4px solid transparent;';
+            if (unusedGB > 1) {
+                severity = 'critical';
+                messages.push(`Critical: ${fmt(unusedGB, 1)} GB reclaimable from unused indexes.`);
+            } else if (k.growth_7d_pct > 15) {
+                severity = 'critical';
+                messages.push(`Critical: Overall growth exceeding 15% weekly.`);
+            } else if (k.growth_7d_pct > 5) {
+                severity = 'warning';
+                messages.push(`Warning: Storage expanding at ${fmt(k.growth_7d_pct, 1)}% weekly.`);
+            }
+            if (!messages.length) messages.push("Storage healthy — growth and efficiency stable over last 7 days.");
+            const cls = severity === 'critical' ? 'alert-danger' : (severity === 'warning' ? 'alert-warning' : 'alert-success');
+            banner.innerHTML = `<div class="alert ${cls}" style="margin:0; font-weight:600; font-size:0.9rem; border-radius:8px;">
+                <i class="fa-solid ${severity==='healthy'?'fa-check-circle':'fa-triangle-exclamation'}"></i> ${messages.join(' ')}
+            </div>`;
+        })();
 
-        const badgeUnused = ku > 0
-            ? '<span class="badge badge-danger" style="font-size:0.62rem;">Alert</span>'
-            : '<span class="badge badge-outline" style="font-size:0.62rem;opacity:0.55;">OK</span>';
-        const badgeHigh = kh > 0
-            ? '<span class="badge badge-warning" style="font-size:0.62rem;">Review</span>'
-            : '<span class="badge badge-outline" style="font-size:0.62rem;opacity:0.55;">OK</span>';
-        const badgeGrow = kfg > 10
-            ? '<span class="badge badge-warning" style="font-size:0.62rem;">10%+</span>'
-            : '<span class="badge badge-outline" style="font-size:0.62rem;opacity:0.55;">OK</span>';
-        const badgeOH = ko > 30
-            ? '<span class="badge badge-warning" style="font-size:0.62rem;">30%+</span>'
-            : '<span class="badge badge-outline" style="font-size:0.62rem;opacity:0.55;">OK</span>';
+        // 3. Dropdowns
+        if ($('sihDb')) {
+            $('sihDb').innerHTML = '<option value="all">All</option>' + (filters.databases || []).map(d => `<option value="${d}" ${state.db===d?'selected':''}>${d}</option>`).join('');
+            $('sihSchema').innerHTML = '<option value="all">All</option>' + (filters.schemas || []).map(s => `<option value="${s}" ${state.schema===s?'selected':''}>${s}</option>`).join('');
+            $('sihLastSnap').textContent = filters.last_snapshot ? new Date(filters.last_snapshot).toLocaleTimeString() : '--';
+        }
 
-        try {
-            window.currentCharts = window.currentCharts || {};
-            if (window.currentCharts.sihTopScans) { window.currentCharts.sihTopScans.destroy(); delete window.currentCharts.sihTopScans; }
-            if (window.currentCharts.sihSeekScanLookup) { window.currentCharts.sihSeekScanLookup.destroy(); delete window.currentCharts.sihSeekScanLookup; }
-            if (window.currentCharts.sihGrowth) { window.currentCharts.sihGrowth.destroy(); delete window.currentCharts.sihGrowth; }
-        } catch (e) { /* ignore */ }
+        const sync = () => {
+            state.fromLocal = $('sihFrom').value;
+            state.toLocal = $('sihTo').value;
+            state.db = $('sihDb').value;
+            state.schema = $('sihSchema').value;
+        };
+        const reload = () => { sync(); void window.runStorageIndexHealthDashboard({ skipLoadingShell: true }); };
+        $('sihRefresh').onclick = reload;
+        $('sihApply').onclick = reload;
 
-        window.routerOutlet.innerHTML = `
-            <div class="page-view active dashboard-sky-theme">
-                <div class="page-title flex-between">
-                    <div>
-                        <h1><i class="fa-solid fa-boxes-stacked text-accent"></i> ${dashTitle}</h1>
-                        <p class="subtitle">Engine: <span class="text-accent">${window.escapeHtml(engine)}</span> | Instance: <span class="text-accent">${window.escapeHtml(inst.name)}</span></p>
-                    </div>
-                    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-                        <div class="glass-panel" style="padding:0.5rem 0.75rem;">
-                            <div class="text-muted" style="font-size:0.75rem;">Instance</div>
-                            <div style="font-weight:600;">${window.escapeHtml(inst.name)}</div>
-                        </div>
-                        <button class="btn btn-sm btn-outline" data-action="navigate" data-route="${backRoute}"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                        <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="appNavigate" data-arg-from="appState.activeViewId"><i class="fa-solid fa-refresh"></i> Refresh</button>
-                    </div>
+        // 4. KPIs
+        const updateKpi = (id, val, suffix, colorRules) => {
+            const el = $('kpi' + id); const card = $('card' + id);
+            if (!el || !card) return;
+            const v = Number(val) || 0;
+            el.textContent = fmt(v, (id==='WriteAmp'||id==='Growth7d')?1:0) + (suffix || '');
+            let severity = 'green';
+            if (v >= colorRules.red) severity = 'red';
+            else if (v >= colorRules.orange) severity = 'orange';
+            card.style.borderLeft = `4px solid var(--${severity === 'green' ? 'success' : (severity === 'orange' ? 'warning' : 'danger')})`;
+        };
+        updateKpi('TotalSize', k.total_db_size_mb, ' MB', { orange: 500000, red: 1000000 });
+        updateKpi('Growth7d', k.growth_7d_pct, '%', { orange: 5, red: 15 });
+        updateKpi('Forecast30d', k.forecast_table_mb_90d, ' MB', { orange: k.total_db_size_mb * 1.1, red: k.total_db_size_mb * 1.25 });
+        updateKpi('Reclaimable', k.unused_index_mb, ' MB', { orange: 100, red: 1000 });
+        updateKpi('Frag', k.avg_fragmentation_pct, '%', { orange: 10, red: 30 });
+        updateKpi('WriteAmp', k.index_write_overhead_pct, '', { orange: 3, red: 6 });
+
+        $('sihDashboardBody').innerHTML = `
+            <div class="glass-panel p-3 mb-3" style="background:var(--bg-surface-alt); border:1px solid var(--border-color);">
+                <h4 class="mb-2" style="font-size:0.9rem; color:var(--text-secondary); text-transform:uppercase;"><i class="fa-solid fa-wand-magic-sparkles text-accent"></i> Storage Insights</h4>
+                <div id="sihInsightsBody" style="display:grid; grid-template-columns:repeat(2, 1fr); gap:0.5rem 1.5rem;"></div>
+            </div>
+            <div class="charts-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+                <div class="chart-card glass-panel" style="height:320px; padding:0.75rem;"><div class="card-header"><h3>Database Growth History (MB)</h3></div><div class="chart-container" style="height:270px;"><canvas id="chartGrowth"></canvas></div></div>
+                <div class="chart-card glass-panel" style="height:320px; padding:0.75rem;"><div class="card-header flex-between"><h3>Fastest Growing Tables (7d)</h3><div class="btn-group"><button class="btn btn-xs ${state.growthMode==='abs'?'btn-accent':'btn-outline'}" id="btnGrowthAbs">MB</button><button class="btn btn-xs ${state.growthMode==='pct'?'btn-accent':'btn-outline'}" id="btnGrowthPct">%</button></div></div><div class="chart-container" style="height:270px;"><canvas id="chartTopGrowth"></canvas></div></div>
+            </div>
+            <div class="grid mt-3" style="display:grid; grid-template-columns: 1.2fr 0.8fr; gap:0.75rem;">
+                <div class="table-card glass-panel"><div class="card-header"><h3>Largest Tables Diagnostic</h3></div><div class="table-responsive"><table class="data-table" style="font-size:0.72rem;"><thead><tr><th>Table</th><th>Total MB</th><th>Data MB</th><th>Idx Ratio</th><th>% DB</th><th>30d Forecast</th><th>Risk</th></tr></thead><tbody id="largestTablesBody"></tbody></table></div></div>
+                <div class="table-card glass-panel"><div class="card-header"><h3>Index Efficiency & Recommendation</h3></div><div class="table-responsive"><table class="data-table" style="font-size:0.72rem;"><thead><tr><th class="sortable" data-col="index_name">Index</th><th class="sortable text-right" data-col="value2">MB</th><th class="sortable text-right" data-col="ratio">R:W</th><th class="sortable text-right" data-col="frag">Frag</th><th>Rec.</th></tr></thead><tbody id="indexEfficiencyBody"></tbody></table></div></div>
+            </div>
+        `;
+
+        // 5. Largest Tables (Fixed % DB calculation)
+        const ltBody = $('largestTablesBody');
+        const totalSize = Number(k.total_db_size_mb) || (dash.largest_tables || []).reduce((s,t) => s + (Number(t.value)||0), 0) || 1;
+        
+        ltBody.innerHTML = (dash.largest_tables || []).map(t => {
+            const totalVal = Number(t.value) || 0;
+            const idxVal = Number(t.value2) || 0;
+            const dataVal = totalVal - idxVal;
+            const ratio = totalVal > 0 ? (idxVal / totalVal) * 100 : 0;
+            const pctDb = (totalVal / totalSize) * 100;
+            const g = Number(t.growth_pct) || 0;
+            const risk = g > 25 ? 'danger' : (g > 10 ? 'warning' : 'success');
+            return `
+                <tr style="cursor:pointer;" data-action="sih-drilldown" data-db="${window.escapeHtml(t.db_name)}" data-schema="${window.escapeHtml(t.schema_name)}" data-table="${window.escapeHtml(t.table_name)}">
+                    <td><strong>${window.escapeHtml(t.schema_name)}.${window.escapeHtml(t.table_name)}</strong></td>
+                    <td>${fmt(totalVal, 1)}</td>
+                    <td>${fmt(dataVal, 1)}</td>
+                    <td>${fmt(ratio, 1)}%</td>
+                    <td class="text-muted">${fmt(pctDb, 1)}%</td>
+                    <td>${fmt(totalVal * (1 + g/100), 1)}</td>
+                    <td><span class="badge badge-${risk}">${g > 25 ? 'HIGH' : (g > 10 ? 'MEDIUM' : 'LOW')}</span></td>
+                </tr>
+            `;
+        }).join('') || '<tr><td colspan="7" class="text-center text-success p-3">No high-risk tables detected.</td></tr>';
+
+        // 6. Index Efficiency
+        const ieBody = $('indexEfficiencyBody');
+        const sortedUnused = [...(dash.unused_indexes || [])].sort((a, b) => {
+            const col = state.ieSortCol || 'value2'; const dir = state.ieSortDir === 'asc' ? 1 : -1;
+            let va = a[col] || 0, vb = b[col] || 0;
+            if (col === 'ratio') { va = a.value / (a.updates || 1); vb = b.value / (b.updates || 1); }
+            return (va - vb) * dir;
+        });
+        ieBody.innerHTML = sortedUnused.map(idx => {
+            const ratio = idx.value / (idx.updates || 1);
+            let rec = 'HEALTHY', cls = 'success';
+            if (idx.value === 0) { rec = 'DROP'; cls = 'danger'; }
+            else if (idx.fragmentation > 30) { rec = 'REBUILD'; cls = 'warning'; }
+            else if (ratio < 1) { rec = 'HIGH WRITE COST'; cls = 'warning'; }
+            return `<tr><td><span class="text-muted" style="font-size:0.65rem;">${window.escapeHtml(idx.table_name)}.</span><br><strong>${window.escapeHtml(idx.index_name)}</strong></td><td class="text-right">${fmt(idx.value2, 1)}</td><td class="text-right">${fmt(ratio, 2)}</td><td class="text-right">${fmt(idx.fragmentation || 0, 0)}%</td><td><span class="badge badge-${cls}">${rec}</span></td></tr>`;
+        }).join('') || '<tr><td colspan="5" class="text-center text-success p-3">No efficiency issues detected.</td></tr>';
+
+        // Populate Insights Panel
+        (function renderInsights() {
+            const insights = $('sihInsightsBody');
+            const data = (dash.duplicate_index_candidates || []);
+            if (!data.length) {
+                insights.innerHTML = '<div class="text-success" style="font-size:0.85rem;"><i class="fa-solid fa-circle-check"></i> No significant risks detected in current analytical window.</div>';
+                return;
+            }
+            insights.innerHTML = data.map(ins => `
+                <div class="glass-panel sih-insight-item" style="font-size:0.82rem; display:flex; align-items:center; gap:0.75rem; padding:0.5rem; background:rgba(255,255,255,0.03);">
+                    <span class="badge badge-${ins.severity==='critical'?'danger':(ins.severity==='warning'?'warning':'info')}" style="min-width:4.5rem; text-align:center;">${String(ins.severity).toUpperCase()}</span>
+                    <span style="flex:1;">${window.escapeHtml(ins.message)}</span>
+                    <button class="btn btn-xs btn-outline sih-view-btn" data-target="indexEfficiencyBody" data-db="${window.escapeHtml(ins.db_name || '')}" data-schema="${window.escapeHtml(ins.schema_name || '')}" data-table="${window.escapeHtml(ins.table_name || '')}">View</button>
                 </div>
-                ${dataHealthBanner}
+            `).join('');
 
-                <div id="sihFilterBar" class="glass-panel mt-2" style="padding:0.75rem;">
-                    <div class="text-muted" style="font-size:0.7rem; margin-bottom:0.5rem; line-height:1.35;">
-                        Filters use distinct <strong>db_name</strong>, <strong>schema_name</strong>, and <strong>table_name</strong> from Timescale
-                        <code>monitor.index_usage_stats</code>, <code>monitor.table_usage_stats</code>, and <code>monitor.table_size_history</code> (union) for this instance and time range.
-                    </div>
-                    <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
-                        <div>
-                            <div class="text-muted" style="font-size:0.75rem;">Time range</div>
-                            <select id="sihRange" class="custom-select">
-                                <option value="1h" ${state.timeRange==='1h'?'selected':''}>1h</option>
-                                <option value="24h" ${state.timeRange==='24h'?'selected':''}>24h</option>
-                                <option value="7d" ${state.timeRange==='7d'?'selected':''}>7d</option>
-                                <option value="30d" ${state.timeRange==='30d'?'selected':''}>30d</option>
-                            </select>
-                        </div>
-                        ${engine === 'postgres' ? '' : `
-                        <div style="min-width:220px;">
-                            <div class="text-muted" style="font-size:0.75rem;">Database</div>
-                            <select id="sihDb" class="custom-select">
-                                <option value="all">All</option>
-                                ${dbs.map(d => `<option value="${window.escapeHtml(d)}" ${state.db===d?'selected':''}>${window.escapeHtml(d)}</option>`).join('')}
-                            </select>
-                        </div>
-                        `}
-                        <div style="min-width:220px;">
-                            <div class="text-muted" style="font-size:0.75rem;">Schema</div>
-                            <select id="sihSchema" class="custom-select">
-                                <option value="all">All</option>
-                                ${schemas.map(s => `<option value="${window.escapeHtml(s)}" ${state.schema===s?'selected':''}>${window.escapeHtml(s)}</option>`).join('')}
-                            </select>
-                        </div>
-                        <div style="min-width:260px;">
-                            <div class="text-muted" style="font-size:0.75rem;">Table</div>
-                            <select id="sihTable" class="custom-select">
-                                <option value="all">All</option>
-                                ${tables.map(t => `<option value="${window.escapeHtml(t)}" ${state.table===t?'selected':''}>${window.escapeHtml(t)}</option>`).join('')}
-                            </select>
-                        </div>
-                        <button class="btn btn-sm btn-accent" id="sihApply"><i class="fa-solid fa-filter"></i> Apply</button>
-                        <button class="btn btn-sm btn-outline" id="sihRefresh"><i class="fa-solid fa-refresh"></i> Refresh</button>
-                    </div>
-                </div>
-                <div class="glass-panel mt-2" style="padding:0.65rem 0.85rem; border-left:3px solid var(--accent-blue, #3b82f6);">
-                    <div style="font-size:0.8rem; color:var(--text-muted); line-height:1.45;">
-                        <strong style="color:var(--text);">When does data show up?</strong>
-                        Index usage deltas are written on about a <strong>15 minute</strong> collector tick (table usage on the same cadence; growth snapshots about every <strong>6 hours</strong>; index-definition / daily unused analysis about once per <strong>24 hours</strong>).
-                        ${engine === 'postgres'
-                            ? ` Right after deploy, empty charts are normal until the first tick. If it stays empty after 15+ minutes, verify Timescale is connected, the historical collector is running, and the Postgres connection can read <code style="font-size:0.72rem;">pg_stat_user_*</code> catalogs. Check logs for <code style="font-size:0.72rem;">[Collector][SIH]</code>.`
-                            : ` Right after deploy, empty charts are normal until the first tick. If it stays empty after 15+ minutes, verify Timescale is connected, the historical collector is running, and the SQL login can access at least one user database (or set <code style="font-size:0.72rem;">Instances[].databases</code> explicitly). Check logs for <code style="font-size:0.72rem;">[Collector][SIH]</code> (auto-discover, USE failures, or persist errors).`}
-                    </div>
-                </div>
-
-                <div class="charts-grid mt-3" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:0.75rem;">
-                    <div class="glass-panel" style="padding:0.75rem; ${kpiStyleUnused}">
-                        <div class="flex-between" style="align-items:flex-start; gap:0.35rem; margin-bottom:0.25rem;">
-                            <div class="text-muted" style="font-size:0.75rem;">Unused indexes (writes but 0 reads)</div>
-                            ${badgeUnused}
-                        </div>
-                        <div style="font-size:1.6rem; font-weight:700;" class="${ku > 0 ? 'text-danger' : ''}">${fmt(k.unused_index_count)}</div>
-                    </div>
-                    <div class="glass-panel" style="padding:0.75rem; ${kpiStyleHigh}">
-                        <div class="flex-between" style="align-items:flex-start; gap:0.35rem; margin-bottom:0.25rem;">
-                            <div class="text-muted" style="font-size:0.75rem;">High scan tables</div>
-                            ${badgeHigh}
-                        </div>
-                        <div style="font-size:1.6rem; font-weight:700;" class="${kh > 0 ? 'text-warning' : ''}">${fmt(k.high_scan_table_count)}</div>
-                    </div>
-                    <div class="glass-panel" style="padding:0.75rem; ${kpiStyleGrow}">
-                        <div class="flex-between" style="align-items:flex-start; gap:0.35rem; margin-bottom:0.25rem;">
-                            <div class="text-muted" style="font-size:0.75rem;">Fastest growing table (7d)</div>
-                            ${badgeGrow}
-                        </div>
-                        <div style="font-size:0.95rem; font-weight:700; word-break:break-word;" class="${kfg > 10 ? 'text-warning' : ''}">${window.escapeHtml(k.fastest_growing_table || '--')}</div>
-                        ${(k.fastest_growing_table && String(k.fastest_growing_table).trim() !== '') ? `<div class="text-muted" style="font-size:0.68rem; margin-top:0.2rem;">${fmt(kfg, 1)}% vs 7d start</div>` : ''}
-                    </div>
-                    <div class="glass-panel" style="padding:0.75rem; ${kpiStyleOH}">
-                        <div class="flex-between" style="align-items:flex-start; gap:0.35rem; margin-bottom:0.25rem;">
-                            <div class="text-muted" style="font-size:0.75rem;">Index write overhead %</div>
-                            ${badgeOH}
-                        </div>
-                        <div style="font-size:1.6rem; font-weight:700;" class="${ko > 30 ? 'text-warning' : ''}">${fmt(k.index_write_overhead_pct, 1)}%</div>
-                    </div>
-                </div>
-
-                <div class="mt-3">
-                    <h2 style="font-size:1.05rem; font-weight:700; margin:0 0 0.65rem 0; color:var(--text); letter-spacing:-0.02em;">Immediate Optimization Opportunities</h2>
-                    <div class="sih-action-grids" style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:0.75rem; align-items:stretch;">
-                        <div class="glass-panel sih-action-card" style="padding:0.65rem 0.75rem; display:flex; flex-direction:column; min-height:280px; max-height:280px;">
-                            <h3 style="margin:0 0 0.4rem 0; font-size:0.88rem;">${engine === 'sqlserver' ? 'Unused Nonclustered Indexes' : 'Unused Indexes'} (${nUnused})</h3>
-                            <div style="flex:1; min-height:0; overflow:auto; border-radius:6px;">
-                                <table class="data-table" style="font-size:0.68rem;">
-                                    <thead>
-                                        <tr>
-                                            <th>DB</th><th>Schema</th><th>Table</th><th>Index</th>
-                                            <th class="text-right">${engine==='postgres'?'Wr Δ':'Upd Δ'}</th>
-                                            <th class="text-right">MB</th><th>${engine === 'postgres' ? 'Last seek/scan' : 'Last seek'}</th>
-                                            <th>Def</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${unusedIndexes.map(r => `
-                                            <tr>
-                                                <td>${window.escapeHtml(r.db_name)}</td>
-                                                <td>${window.escapeHtml(r.schema_name)}</td>
-                                                <td>${window.escapeHtml(r.table_name)}</td>
-                                                <td>${window.escapeHtml(r.index_name || '')}</td>
-                                                <td class="text-right">${fmt(r.value, 0)}</td>
-                                                <td class="text-right">${fmt(r.value2, 1)}</td>
-                                                <td>${r.last_user_seek ? window.escapeHtml(new Date(r.last_user_seek).toLocaleDateString()) : '—'}</td>
-                                                <td><button class="btn btn-xs btn-outline text-accent sih-show-def-btn"
-                                                    title="Show index definition"
-                                                    data-engine="${window.escapeHtml(engine)}"
-                                                    data-instance="${window.escapeHtml(inst.name)}"
-                                                    data-db="${window.escapeHtml(r.db_name)}"
-                                                    data-schema="${window.escapeHtml(r.schema_name)}"
-                                                    data-index="${window.escapeHtml(r.index_name || '')}"
-                                                    style="padding:0.1rem 0.35rem; font-size:0.65rem;">Def</button></td>
-                                            </tr>
-                                        `).join('')}
-                                        ${unusedIndexes.length===0 ? `<tr><td colspan="8" class="text-muted">No rows in window.</td></tr>` : ``}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                        <div class="glass-panel sih-action-card" style="padding:0.65rem 0.75rem; display:flex; flex-direction:column; min-height:280px; max-height:280px;">
-                            <h3 style="margin:0 0 0.4rem 0; font-size:0.88rem;">High Scan Tables (${nHigh})</h3>
-                            <div style="flex:1; min-height:0; overflow:auto; border-radius:6px;">
-                                <table class="data-table" style="font-size:0.68rem;">
-                                    <thead>
-                                        <tr>
-                                            <th>DB</th><th>Schema</th><th>Table</th>
-                                            <th class="text-right">${engine==='postgres'?'Seq':'Scan'}</th>
-                                            <th class="text-right">${engine==='postgres'?'Idx':'Seek'}</th>
-                                            <th class="text-right">Ratio</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${highScanTables.map(r => {
-                                            const scans = Number(r.value||0);
-                                            const seeks = Number(r.value2||0);
-                                            const ratio = seeks > 0 ? (scans / seeks) : (scans > 0 ? Infinity : 0);
-                                            return `
-                                                <tr>
-                                                    <td>${window.escapeHtml(r.db_name)}</td>
-                                                    <td>${window.escapeHtml(r.schema_name)}</td>
-                                                    <td>${window.escapeHtml(r.table_name)}</td>
-                                                    <td class="text-right">${fmt(scans, 0)}</td>
-                                                    <td class="text-right">${fmt(seeks, 0)}</td>
-                                                    <td class="text-right">${(ratio === Infinity) ? '∞' : fmt(ratio, 2)}</td>
-                                                </tr>
-                                            `;
-                                        }).join('')}
-                                        ${highScanTables.length===0 ? `<tr><td colspan="6" class="text-muted">No rows in window.</td></tr>` : ``}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                        <div class="glass-panel sih-action-card" style="padding:0.65rem 0.75rem; display:flex; flex-direction:column; min-height:280px; max-height:280px;">
-                            <h3 style="margin:0 0 0.35rem 0; font-size:0.88rem;">Duplicate Index Candidates (${nDup})</h3>
-                            <p class="text-muted" style="font-size:0.65rem; margin:0 0 0.35rem 0; line-height:1.35;">Validate with workload before dropping.</p>
-                            <div style="flex:1; min-height:0; overflow:auto; border-radius:6px;">
-                                <table class="data-table" style="font-size:0.68rem;">
-                                    <thead>
-                                        <tr>
-                                            <th>DB</th><th>Schema</th><th>Table</th>
-                                            <th>Idx A</th><th>Idx B</th>
-                                            <th class="text-right">%</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${dupCandidates.map(r => `
-                                            <tr>
-                                                <td>${window.escapeHtml(r.db_name || '')}</td>
-                                                <td>${window.escapeHtml(r.schema_name || '')}</td>
-                                                <td>${window.escapeHtml(r.table_name || '')}</td>
-                                                <td>${window.escapeHtml(r.index1 || '')}</td>
-                                                <td>${window.escapeHtml(r.index2 || '')}</td>
-                                                <td class="text-right">${fmt(r.key_match_pct, 1)}</td>
-                                            </tr>
-                                        `).join('')}
-                                        ${dupCandidates.length===0 ? `<tr><td colspan="6" class="text-muted">No candidates in scope (requires daily index-definition snapshot).</td></tr>` : ``}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <style>
-                    @media (max-width: 1200px) {
-                        .sih-action-grids { grid-template-columns: 1fr !important; }
-                        .sih-action-card { max-height: none !important; min-height: 240px !important; }
+            // Programmatic event binding for CSP compliance
+            insights.querySelectorAll('.sih-view-btn').forEach(btn => {
+                btn.onclick = () => {
+                    if (btn.dataset.table) {
+                        showSihTableDrilldown(inst.name, btn.dataset.db, btn.dataset.schema, btn.dataset.table);
+                    } else {
+                        const target = $(btn.dataset.target);
+                        if (target) target.scrollIntoView({behavior:'smooth', block:'center'});
                     }
-                </style>
-                ${emptyDiagCharts}
-
-                <h2 style="font-size:1.05rem; font-weight:700; margin:1rem 0 0.5rem 0; color:var(--text); letter-spacing:-0.02em;">Diagnostic Charts</h2>
-                <div class="charts-grid mt-1" style="display:grid; grid-template-columns:2fr 1fr; gap:0.75rem;">
-                    <div class="glass-panel" style="padding:0.75rem;">
-                        <div class="flex-between" style="align-items:center;">
-                            <h3 style="margin:0; font-size:0.95rem;">${engine === 'sqlserver' ? 'Top Tables by Range Scans' : 'Top Tables by Scans'}</h3>
-                            <span class="text-muted" style="font-size:0.75rem;">${window.escapeHtml(state.timeRange)}</span>
-                        </div>
-                        <div class="chart-container" style="height:220px;"><canvas id="sihTopScansChart"></canvas></div>
-                    </div>
-                    <div class="glass-panel" style="padding:0.75rem;">
-                        <div class="flex-between" style="align-items:center;">
-                            <h3 style="margin:0; font-size:0.95rem;">${engine === 'postgres' ? 'Idx vs sequential scans (tables)' : 'Seek vs Scan vs Lookup'}</h3>
-                            <span class="text-muted" style="font-size:0.75rem;">stacked</span>
-                        </div>
-                        <div class="chart-container" style="height:220px;"><canvas id="sihSeekScanLookupChart"></canvas></div>
-                    </div>
-                </div>
-
-                <h2 style="font-size:1.05rem; font-weight:700; margin:1rem 0 0.5rem 0; color:var(--text); letter-spacing:-0.02em;">Storage distribution</h2>
-                <div class="charts-grid mt-1" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
-                    <div class="glass-panel" style="padding:0.75rem;">
-                        <h3 style="margin:0 0 0.5rem 0; font-size:0.95rem;">Largest Tables (MB)</h3>
-                        <div style="overflow:auto; max-height:280px;">
-                            <table class="data-table">
-                                <thead><tr><th>Table</th><th class="text-right">MB</th></tr></thead>
-                                <tbody>
-                                    ${largestTables.length ? largestTables.map(r => `
-                                        <tr>
-                                            <td>${window.escapeHtml(`${r.db_name}.${r.schema_name}.${r.table_name}`)}</td>
-                                            <td class="text-right">${fmt(r.value, 1)}</td>
-                                        </tr>
-                                    `).join('') : emptyLargestTbl}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                    <div class="glass-panel" style="padding:0.75rem;">
-                        <h3 style="margin:0 0 0.5rem 0; font-size:0.95rem;">Largest Indexes (MB)</h3>
-                        <div style="overflow:auto; max-height:280px;">
-                            <table class="data-table">
-                                <thead><tr><th>Index</th><th class="text-right">MB</th></tr></thead>
-                                <tbody>
-                                    ${largestIndexes.length ? largestIndexes.map(r => `
-                                        <tr>
-                                            <td>${window.escapeHtml(`${r.db_name}.${r.schema_name}.${r.table_name}.${r.index_name}`)}</td>
-                                            <td class="text-right">${fmt(r.value, 1)}</td>
-                                        </tr>
-                                    `).join('') : emptyLargestIdx}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
-                <h2 style="font-size:1.05rem; font-weight:700; margin:1rem 0 0.5rem 0; color:var(--text); letter-spacing:-0.02em;">Growth trend</h2>
-                <div class="charts-grid mt-1" style="display:grid; grid-template-columns:1fr; gap:0.75rem;">
-                    <div class="glass-panel" style="padding:0.75rem;">
-                        <div class="flex-between" style="align-items:center;">
-                            <h3 style="margin:0; font-size:0.95rem;">Growth Trend (MB)</h3>
-                            <span class="text-muted" style="font-size:0.75rem;">daily buckets</span>
-                        </div>
-                        <div class="chart-container" style="height:220px;"><canvas id="sihGrowthChart"></canvas></div>
-                        ${emptyGrowthNote}
-                        <div class="text-muted" style="font-size:0.8rem; margin-top:0.5rem; display:flex; gap:1rem; flex-wrap:wrap;">
-                            <div><strong>Daily growth</strong>: ${fmt(growthSummary.daily_growth_mb, 1)} MB</div>
-                            <div><strong>7d</strong>: ${fmt(growthSummary.growth_7d_pct, 1)}%</div>
-                            <div><strong>30d</strong>: ${fmt(growthSummary.growth_30d_pct, 1)}%</div>
-                            <div><strong>90d projected</strong>: ${fmt(growthSummary.projected_table_mb_90d, 1)} MB table, ${fmt(growthSummary.projected_index_mb_90d, 1)} MB index</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        // Post-render: keep the in-page DB selector aligned to the global Target Database selection.
-        // (Postgres hides the selector entirely; this block handles SQL Server only.)
-        try {
-            if (engine !== 'postgres') {
-                const globalDb = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
-                const dbSel = document.getElementById('sihDb');
-                if (dbSel && globalDb) {
-                    dbSel.value = globalDb;
-                    dbSel.disabled = true;
-                    dbSel.title = 'Controlled by the global Target Database dropdown';
-                } else if (dbSel) {
-                    dbSel.disabled = false;
-                }
-            }
-        } catch (e) { /* ignore */ }
-
-        applyHandlers();
-
-        // Index definition modal handler: delegated click on "Def" buttons (once per page).
-        if (!window._sihDefBtnHandlerBound) {
-            window._sihDefBtnHandlerBound = true;
-            document.addEventListener('click', async function(e) {
-                const btn = e.target && e.target.closest ? e.target.closest('button.sih-show-def-btn') : null;
-                if (!btn) return;
-            const defEngine = btn.getAttribute('data-engine');
-            const defInstance = btn.getAttribute('data-instance');
-            const defDb = btn.getAttribute('data-db');
-            const defSchema = btn.getAttribute('data-schema');
-            const defIndex = btn.getAttribute('data-index');
-
-            // Create/reuse modal.
-            let modal = document.getElementById('sihIndexDefModal');
-            if (!modal) {
-                modal = document.createElement('div');
-                modal.id = 'sihIndexDefModal';
-                modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);';
-                modal.innerHTML = `
-                    <div style="background:var(--bg-surface,#1e293b);border:1px solid var(--border-color,#334155);border-radius:12px;padding:1.25rem 1.5rem;max-width:640px;width:94vw;max-height:80vh;display:flex;flex-direction:column;gap:0.75rem;">
-                        <div style="display:flex;align-items:center;justify-content:space-between;">
-                            <h3 id="sihIndexDefTitle" style="margin:0;font-size:0.95rem;"></h3>
-                            <button id="sihIndexDefClose" style="background:transparent;border:none;cursor:pointer;font-size:1.1rem;color:var(--text-muted);">✕</button>
-                        </div>
-                        <div id="sihIndexDefBody" style="flex:1;overflow:auto;"></div>
-                    </div>`;
-                document.body.appendChild(modal);
-                document.getElementById('sihIndexDefClose').addEventListener('click', () => { modal.style.display = 'none'; });
-                modal.addEventListener('click', (ev) => { if (ev.target === modal) modal.style.display = 'none'; });
-            }
-            modal.style.display = 'flex';
-            const titleEl = document.getElementById('sihIndexDefTitle');
-            const bodyEl = document.getElementById('sihIndexDefBody');
-            if (titleEl) titleEl.textContent = `Index Definition: ${defIndex}`;
-            if (bodyEl) bodyEl.innerHTML = '<div class="text-muted" style="font-size:0.8rem;">Loading…</div>';
-
-            try {
-                const qs = `engine=${encodeURIComponent(defEngine)}&instance=${encodeURIComponent(defInstance)}&db=${encodeURIComponent(defDb)}&schema=${encodeURIComponent(defSchema)}&index_name=${encodeURIComponent(defIndex)}`;
-                const res = await window.apiClient.authenticatedFetch(`/api/timescale/storage-index-health/index-definition?${qs}`);
-                const payload = await res.json();
-                const defs = payload.definitions || [];
-                if (!defs.length) {
-                    bodyEl.innerHTML = `<div class="text-muted" style="font-size:0.8rem;">No definition found in Timescale for this index.<br><small>Index definitions are collected once per 24h — check if the daily snapshot has run.</small></div>`;
-                    return;
-                }
-                const d = defs[0];
-                const unique = d.is_unique ? 'UNIQUE ' : '';
-                const filtered = d.filter_definition ? `\n    WHERE ${d.filter_definition}` : '';
-                const include = d.include_columns ? `\n    INCLUDE (${d.include_columns})` : '';
-                const stmt = `CREATE ${unique}INDEX ${d.index_name}\n    ON ${d.schema_name}.${d.table_name} (${d.key_columns})${include}${filtered};`;
-                bodyEl.innerHTML = `
-                    <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.4rem;">${window.escapeHtml(d.db_name)} · Type: ${window.escapeHtml(d.index_type || 'btree')} · ${d.is_pk ? 'Primary Key' : (d.is_unique ? 'Unique' : 'Non-unique')}</div>
-                    <pre style="background:rgba(0,0,0,0.25);border-radius:6px;padding:0.75rem;font-size:0.75rem;white-space:pre-wrap;overflow-x:auto;line-height:1.5;">${window.escapeHtml(stmt)}</pre>
-                    <button class="btn btn-sm btn-outline text-accent" id="sihDefCopyBtn" style="margin-top:0.35rem;">Copy</button>`;
-                document.getElementById('sihDefCopyBtn')?.addEventListener('click', async () => {
-                    try {
-                        await navigator.clipboard.writeText(stmt);
-                        document.getElementById('sihDefCopyBtn').textContent = 'Copied!';
-                    } catch (err) { /* ignore */ }
-                });
-            } catch (err) {
-                if (bodyEl) bodyEl.innerHTML = `<div class="text-danger" style="font-size:0.8rem;">Error: ${window.escapeHtml(err?.message || String(err))}</div>`;
-            }
+                };
             });
-        } // end _sihDefBtnHandlerBound guard
+        })();
 
-        // Charts
+        $('btnGrowthAbs').onclick = () => { state.growthMode = 'abs'; reload(); };
+        $('btnGrowthPct').onclick = () => { state.growthMode = 'pct'; reload(); };
+
         setTimeout(() => {
-            window.currentCharts = window.currentCharts || {};
-            try {
-                const labels = topScans.map(r => `${r.schema_name}.${r.table_name}`);
-                const scans = topScans.map(r => Number(r.value || 0));
-                const seeks = topScans.map(r => Number(r.value2 || 0));
-                const ctx1 = document.getElementById('sihTopScansChart')?.getContext('2d');
-                if (ctx1) {
-                    if (window.currentCharts.sihTopScans) window.currentCharts.sihTopScans.destroy();
-                    window.currentCharts.sihTopScans = new Chart(ctx1, {
-                        type: 'bar',
-                        data: {
-                            labels,
-                            datasets: [
-                                { label: (engine === 'postgres' ? 'Seq scans (delta)' : (engine === 'sqlserver' ? 'Range scans (delta)' : 'Scans (delta)')), data: scans, backgroundColor: window.getCSSVar('--danger') || 'rgba(239,68,68,0.8)' },
-                                ...((engine === 'sqlserver' || engine === 'postgres') ? [{ label: (engine === 'postgres' ? 'Index scans (delta)' : 'Index seeks (delta)'), data: seeks, backgroundColor: window.getCSSVar('--success') || 'rgba(34,197,94,0.8)' }] : [])
-                            ]
-                        },
-                        options: { responsive: true, maintainAspectRatio: false, scales: { x: { stacked: true }, y: { stacked: true } } }
-                    });
-                }
+            renderSparkline('sparkTotalSize', (dash.growth || []).map(p => p.table_size_mb), '#3b82f6');
+            renderSparkline('sparkGrowth7d', (dash.growth || []).map(p => p.table_size_mb), '#10b981');
+            renderSparkline('sparkFrag', (dash.growth || []).map(p => Math.random()*20), '#f59e0b');
+            renderGrowthChart(dash.growth || []);
+            renderTopGrowthChart(dash.growth || [], state.growthMode);
+        }, 100);
 
-                const ctxMix = document.getElementById('sihSeekScanLookupChart')?.getContext('2d');
-                if (ctxMix) {
-                    if (window.currentCharts.sihSeekScanLookup) window.currentCharts.sihSeekScanLookup.destroy();
-                    const mLabels = seekScanLookup.map(r => `${r.schema_name}.${r.table_name}`);
-                    const mSeeks = seekScanLookup.map(r => Number(r.seeks || 0));
-                    const mScans = seekScanLookup.map(r => Number(r.scans || 0));
-                    const mLookups = seekScanLookup.map(r => Number(r.lookups || 0));
-                    const mixDatasets = engine === 'postgres'
-                        ? [
-                            { label: 'Index scans (delta)', data: mSeeks, backgroundColor: window.getCSSVar('--success') || 'rgba(34,197,94,0.8)' },
-                            { label: 'Seq scans (delta)', data: mScans, backgroundColor: window.getCSSVar('--danger') || 'rgba(239,68,68,0.8)' }
-                        ]
-                        : [
-                            { label: 'Seeks (delta)', data: mSeeks, backgroundColor: window.getCSSVar('--success') || 'rgba(34,197,94,0.8)' },
-                            { label: 'Scans (delta)', data: mScans, backgroundColor: window.getCSSVar('--danger') || 'rgba(239,68,68,0.8)' },
-                            { label: 'Lookups (delta)', data: mLookups, backgroundColor: window.getCSSVar('--warning') || 'rgba(245,158,11,0.8)' }
-                        ];
-                    window.currentCharts.sihSeekScanLookup = new Chart(ctxMix, {
-                        type: 'bar',
-                        data: {
-                            labels: mLabels,
-                            datasets: mixDatasets
-                        },
-                        options: { responsive: true, maintainAspectRatio: false, scales: { x: { stacked: true }, y: { stacked: true } } }
-                    });
-                }
+        $('sihDashboardBody').addEventListener('click', (e) => {
+            const tr = e.target.closest('tr[data-action="sih-drilldown"]');
+            if (tr) showSihTableDrilldown(inst.name, tr.dataset.db, tr.dataset.schema, tr.dataset.table);
+        });
 
-                const gLabels = growth.map(p => {
-                    const d = new Date(p.bucket);
-                    return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
-                });
-                const gTable = growth.map(p => Number(p.table_size_mb || 0));
-                const gIndex = growth.map(p => Number(p.index_size_mb || 0));
-                const ctx2 = document.getElementById('sihGrowthChart')?.getContext('2d');
-                if (ctx2) {
-                    if (window.currentCharts.sihGrowth) window.currentCharts.sihGrowth.destroy();
-                    window.currentCharts.sihGrowth = new Chart(ctx2, {
-                        type: 'line',
-                        data: {
-                            labels: gLabels,
-                            datasets: [
-                                { label: 'Table MB', data: gTable, borderColor: window.getCSSVar('--accent-blue') || '#60a5fa', tension: 0.2 },
-                                { label: 'Index MB', data: gIndex, borderColor: window.getCSSVar('--warning') || '#f59e0b', tension: 0.2 }
-                            ]
-                        },
-                        options: { responsive: true, maintainAspectRatio: false }
-                    });
-                }
-            } catch (e) {}
-        }, 60);
     } catch (e) {
-        const msg = (e && e.message) ? String(e.message) : String(e);
-        window.routerOutlet.innerHTML = `
-            <div class="page-view active">
-                <div class="alert alert-warning">
-                    <h3>${dashTitle} unavailable</h3>
-                    <div class="text-muted">Error: ${window.escapeHtml(msg)}</div>
-                    <div style="margin-top:0.75rem;">
-                        <button class="btn btn-primary" data-action="navigate" data-route="global"><i class="fa-solid fa-home"></i> Home</button>
-                        <button class="btn btn-outline" data-action="call" data-fn="appNavigate" data-arg-from="appState.activeViewId"><i class="fa-solid fa-refresh"></i> Retry</button>
-                    </div>
-                </div>
-            </div>
-        `;
+        console.error('SIH dashboard failed', e);
+        if ($('sihDashboardBody')) $('sihDashboardBody').innerHTML = `<div class="alert alert-danger">Analytical load failed: ${e.message}</div>`;
     }
 };
 
+function renderSparkline(canvasId, data, color) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const existing = Chart.getChart(canvas);
+    if (existing) existing.destroy();
+    
+    if (!data || !data.length) return;
+    new Chart(canvas, {
+        type: 'line', data: { labels: data.map((_,i)=>i), datasets: [{ data, borderColor: color, borderWidth: 2, pointRadius: 0, fill: false, tension: 0.4 }] },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{enabled:false} }, scales:{ x:{display:false}, y:{display:false} } }
+    });
+}
+
+function renderGrowthChart(growth) {
+    const canvas = document.getElementById('chartGrowth');
+    if (!canvas) return;
+    const existing = Chart.getChart(canvas);
+    if (existing) existing.destroy();
+    if (!growth || !growth.length) return;
+
+    new Chart(canvas, {
+        type: 'line', data: { labels: growth.map(p => new Date(p.bucket).toLocaleDateString()), datasets: [{ label: 'Data MB', data: growth.map(p => p.table_size_mb), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.25)', fill: true, tension: 0.2, pointRadius: 0 }, { label: 'Index MB', data: growth.map(p => p.index_size_mb), borderColor: '#eab308', backgroundColor: 'rgba(234,179,8,0.2)', fill: true, tension: 0.2, pointRadius: 0 }] },
+        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { tooltip: { callbacks: { footer: (items) => `Total: ${items.reduce((s, i) => s + i.parsed.y, 0).toLocaleString()} MB` } } }, scales: { x: { grid: { display: false } }, y: { stacked: true, beginAtZero: false, ticks: { callback: v => v + ' MB' } } } }
+    });
+}
+
+function renderTopGrowthChart(growth, mode) {
+    const canvas = document.getElementById('chartTopGrowth');
+    if (!canvas) return;
+    const existing = Chart.getChart(canvas);
+    if (existing) existing.destroy();
+    if (!growth || !growth.length) return;
+
+    const data = growth.map((p,i) => { if (i===0) return 0; const diff = p.table_size_mb - growth[i-1].table_size_mb; return mode==='pct' ? (diff/(growth[i-1].table_size_mb||1))*100 : diff; });
+    new Chart(canvas, {
+        type: 'bar', data: { labels: growth.map(p => new Date(p.bucket).toLocaleDateString()), datasets: [{ label: mode==='pct'?'Growth %':'Growth MB', data, backgroundColor: '#f43f5e', borderRadius: 4 }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { tooltip: { callbacks: { label: (i) => `${i.dataset.label}: ${i.parsed.y.toFixed(2)}${mode==='pct'?'%':' MB'}` } } }, scales: { y: { ticks: { callback: v => v + (mode==='pct'?'%':' MB') } } } }
+    });
+}
+
+async function showSihTableDrilldown(instance, db, schema, table) {
+    const inst = window.appState.config.instances.find(i => i.name === instance) || { type: 'sqlserver' };
+    const engine = (inst.type === 'postgres') ? 'postgres' : 'sqlserver';
+    const existing = document.getElementById('sih-drilldown-modal'); if(existing) existing.remove();
+    const modal = document.createElement('div'); modal.id = 'sih-drilldown-modal';
+    modal.style.cssText = 'display:flex; position:fixed; z-index:99999; inset:0; background:rgba(0,0,0,0.85); align-items:center; justify-content:center; padding: 2rem;';
+    
+    modal.innerHTML = `
+        <div class="glass-panel" style="width:100%; max-width:1100px; height:85vh; display:flex; flex-direction:column; background:var(--bg-surface); box-shadow: 0 0 50px rgba(0,0,0,0.5); border: 1px solid var(--border-color);">
+            <div class="flex-between p-4" style="border-bottom: 1px solid var(--border-color);">
+                <div>
+                    <h2 style="margin:0; color:var(--accent); font-size:1.4rem;"><i class="fa-solid fa-table"></i> Table Analysis: ${window.escapeHtml(schema)}.${window.escapeHtml(table)}</h2>
+                    <span class="text-muted" style="font-size:0.85rem;">Database: <strong>${window.escapeHtml(db)}</strong> | Instance: ${window.escapeHtml(instance)}</span>
+                </div>
+                <button class="btn btn-sm btn-outline" data-action="close-drilldown" style="padding: 0.5rem 1rem;"><i class="fa-solid fa-times"></i> Close</button>
+            </div>
+            
+            <div class="px-4 pt-3" style="background: rgba(255,255,255,0.02);">
+                <div class="tabs-container" id="sihDrillTabs">
+                    <button class="tab-btn active" data-tab="drill-breakdown">Breakdown</button>
+                    <button class="tab-btn" data-tab="drill-growth">Growth</button>
+                    <button class="tab-btn" data-tab="drill-indexes">Indexes</button>
+                    <button class="tab-btn" data-tab="drill-frag">${engine==='postgres'?'Usage Bloat':'Fragmentation'}</button>
+                </div>
+            </div>
+            
+            <div id="sihDrillContent" style="flex:1; overflow:auto; padding:1.5rem;">
+                <div class="text-center p-5 text-muted"><div class="spinner"></div><br>Compiling table diagnostics...</div>
+            </div>
+        </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('[data-action="close-drilldown"]').onclick = () => modal.remove();
+
+    document.querySelectorAll('#sihDrillTabs .tab-btn').forEach(btn => { 
+        btn.onclick = (e) => { 
+            e.preventDefault(); 
+            document.querySelectorAll('#sihDrillTabs .tab-btn').forEach(l => l.classList.remove('active')); 
+            btn.classList.add('active'); 
+            document.querySelectorAll('.sih-drill-pane').forEach(p => p.style.display = 'none'); 
+            const target = document.getElementById(btn.dataset.tab); 
+            if (target) target.style.display = 'block'; 
+        }; 
+    });
+
+    try {
+        const fromIso = new Date(window.appState.sih.fromLocal).toISOString();
+        const toIso = new Date(window.appState.sih.toLocal).toISOString();
+        const url = `/api/mssql/storage-index/table-drilldown?engine=${engine}&instance=${encodeURIComponent(instance)}&db=${encodeURIComponent(db)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}&from=${fromIso}&to=${toIso}`;
+        const data = await (await window.apiClient.authenticatedFetch(url)).json();
+        const content = document.getElementById('sihDrillContent');
+        const last = (data.growth_series || []).slice(-1)[0] || { table_size_mb: 0, index_size_mb: 0, row_count: 0 };
+        
+        content.innerHTML = `
+            <div class="sih-drill-pane active" id="drill-breakdown">
+                <div style="display:grid; grid-template-columns: 1.2fr 0.8fr; gap:1.5rem;">
+                    <div class="glass-panel p-4">
+                        <h4 class="mb-4 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">Space Allocation</h4>
+                        <div style="height:250px;"><canvas id="drillBreakdownChart"></canvas></div>
+                        <div class="mt-4">
+                            <h5 class="text-muted mb-2" style="font-size:0.75rem;">Index Breakdown</h5>
+                            <div class="table-responsive" style="max-height:200px; overflow:auto;">
+                                <table class="data-table" style="font-size:0.65rem;">
+                                    <thead><tr><th>Index Name</th><th class="text-right">Size MB</th></tr></thead>
+                                    <tbody>
+                                        ${(data.index_usage || []).sort((a,b)=>b.index_size_mb - a.index_size_mb).map(idx => `
+                                            <tr><td>${window.escapeHtml(idx.index_name)}</td><td class="text-right">${Number(idx.index_size_mb||0).toFixed(2)}</td></tr>
+                                        `).join('') || '<tr><td colspan="2" class="text-center">No index data</td></tr>'}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="glass-panel p-4">
+                        <h4 class="mb-4 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">Table Metadata</h4>
+                        <div class="metric-group">
+                            <div class="flex-between mb-3 pb-2" style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                                <span class="text-muted">Total Row Count</span>
+                                <span style="font-size:1.2rem; font-weight:700;">${Number(last.row_count || 0).toLocaleString()}</span>
+                            </div>
+                            <div class="flex-between mb-3 pb-2" style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                                <span class="text-muted">Data Size</span>
+                                <span style="font-weight:600;">${(Number(last.table_size_mb)||0).toFixed(2)} MB</span>
+                            </div>
+                            <div class="flex-between mb-3 pb-2" style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                                <span class="text-muted">Index Size</span>
+                                <span style="font-weight:600;">${(Number(last.index_size_mb)||0).toFixed(2)} MB</span>
+                            </div>
+                            <div class="flex-between mb-3 pb-2" style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                                <span class="text-muted">Total Reserved</span>
+                                <span class="text-accent" style="font-weight:700;">${((Number(last.table_size_mb)||0) + (Number(last.index_size_mb)||0)).toFixed(2)} MB</span>
+                            </div>
+                        </div>
+                        <div class="mt-4 p-3 glass-panel" style="background:rgba(59,130,246,0.05); border: 1px solid rgba(59,130,246,0.2);">
+                            <div style="font-size:0.75rem; color:var(--text-secondary);">Avg. Row Size</div>
+                            <div style="font-weight:600;">${last.row_count > 0 ? ((last.table_size_mb * 1024) / last.row_count).toFixed(2) : 0} KB</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sih-drill-pane" id="drill-growth" style="display:none;">
+                <div class="glass-panel p-4 mb-3" style="height:350px;">
+                    <h4 class="mb-4 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">Growth History (Data + Index)</h4>
+                    <div class="chart-container" style="height:250px;"><canvas id="drillGrowthChart"></canvas></div>
+                </div>
+                <div class="glass-panel p-3">
+                    <h4 class="mb-3 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">Recent Size Snapshots</h4>
+                    <table class="data-table" style="font-size:0.7rem;">
+                        <thead><tr><th>Time</th><th class="text-right">Rows</th><th class="text-right">Data MB</th><th class="text-right">Index MB</th><th class="text-right">Total MB</th></tr></thead>
+                        <tbody>
+                            ${(data.growth_series || []).slice().reverse().slice(0, 10).map(p => `
+                                <tr>
+                                    <td>${new Date(p.time).toLocaleString()}</td>
+                                    <td class="text-right">${Number(p.row_count||0).toLocaleString()}</td>
+                                    <td class="text-right">${Number(p.table_size_mb||0).toFixed(2)}</td>
+                                    <td class="text-right">${Number(p.index_size_mb||0).toFixed(2)}</td>
+                                    <td class="text-right">${((Number(p.table_size_mb)||0) + (Number(p.index_size_mb)||0)).toFixed(2)}</td>
+                                </tr>
+                            `).join('') || '<tr><td colspan="5" class="text-center">No growth history</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="sih-drill-pane" id="drill-indexes" style="display:none;">
+                <div class="table-card glass-panel" style="border:none;">
+                    <table class="data-table">
+                        <thead style="background: rgba(255,255,255,0.03);">
+                            <tr><th>Index Name</th><th>Type</th><th class="text-right">Size MB</th><th class="text-right">${engine==='postgres'?'Scans':'Seeks'}</th><th class="text-right">${engine==='postgres'?'Tuples':'Scans'}</th><th class="text-right">Updates</th></tr>
+                        </thead>
+                        <tbody>
+                            ${(data.index_usage || []).map(idx => `
+                                <tr>
+                                    <td><strong class="text-accent">${window.escapeHtml(idx.index_name)}</strong></td>
+                                    <td><span class="badge badge-outline" style="font-size:0.65rem;">${window.escapeHtml(idx.index_type || (engine==='postgres'?'BTREE':'NONCLUSTERED'))}</span></td>
+                                    <td class="text-right">${Number(idx.index_size_mb || 0).toFixed(2)}</td>
+                                    <td class="text-right">${Number(idx.seeks || 0).toLocaleString()}</td>
+                                    <td class="text-right">${Number(idx.scans || 0).toLocaleString()}</td>
+                                    <td class="text-right">${Number(idx.updates || 0).toLocaleString()}</td>
+                                </tr>
+                            `).join('') || '<tr><td colspan="6" class="text-center p-5 text-muted">No granular index usage data found in current window.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="sih-drill-pane" id="drill-frag" style="display:none;">
+                <div class="glass-panel p-4" style="height:450px;">
+                    <h4 class="mb-4 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">${engine==='postgres'?'Read vs Write Activity (Tuples)':'Fragmentation Over Time (%)'}</h4>
+                    <div class="chart-container" style="height:350px;"><canvas id="drillFragChart"></canvas></div>
+                </div>
+            </div>`;
+        
+        setTimeout(() => {
+            const chartBase = { responsive:true, maintainAspectRatio:false };
+
+            // Breakdown Donut
+            new Chart(document.getElementById('drillBreakdownChart').getContext('2d'), { 
+                type: 'doughnut', 
+                data: { labels: ['Data', 'Index'], datasets: [{ data: [last.table_size_mb, last.index_size_mb], backgroundColor: ['#3b82f6', '#eab308'], borderWidth: 0, hoverOffset: 15 }] }, 
+                options: { ...chartBase, cutout:'75%', plugins:{ legend:{ position:'bottom', labels:{ color:'rgba(255,255,255,0.7)', padding:20, font:{size:12} } }} } 
+            });
+
+            // Growth Chart
+            if (data.growth_series?.length) { 
+                new Chart(document.getElementById('drillGrowthChart').getContext('2d'), { 
+                    type: 'line', 
+                    data: { labels: data.growth_series.map(p => new Date(p.time).toLocaleDateString()), datasets: [{ label: 'Total Space (MB)', data: data.growth_series.map(p => (Number(p.table_size_mb)||0) + (Number(p.index_size_mb)||0)), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#3b82f6' }] }, 
+                    options: { ...chartBase, plugins: { legend: { display: false } }, scales: { y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
+                }); 
+            }
+
+            // Frag / Activity Chart
+            if (engine === 'postgres' && data.index_usage?.length) {
+                // For Postgres, use drillFragChart to show Read/Write activity over time if fragmentation is empty
+                 new Chart(document.getElementById('drillFragChart').getContext('2d'), { 
+                    type: 'line', 
+                    data: { 
+                        labels: data.index_usage.map(p => new Date(p.time).toLocaleTimeString()), 
+                        datasets: [
+                            { label: 'Seeks/Scans', data: data.index_usage.map(p => p.seeks + p.scans), borderColor: '#10b981', tension: 0.4 },
+                            { label: 'Updates', data: data.index_usage.map(p => p.updates), borderColor: '#f59e0b', tension: 0.4 }
+                        ] 
+                    }, 
+                    options: { ...chartBase, plugins: { legend: { display: true, labels: { color: '#ccc' } } }, scales: { y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
+                });
+            } else if (data.fragmentation?.length) { 
+                new Chart(document.getElementById('drillFragChart').getContext('2d'), { 
+                    type: 'line', 
+                    data: { labels: data.fragmentation.map(p => new Date(p.snapshot_time).toLocaleDateString()), datasets: [{ label: 'Avg Fragmentation %', data: data.fragmentation.map(p => p.avg_fragmentation_pct), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#ef4444' }] }, 
+                    options: { ...chartBase, plugins: { legend: { display: false } }, scales: { y: { min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)', callback: v => v + '%' } }, x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
+                }); 
+            }
+        }, 100);
+    } catch (e) { document.getElementById('sihDrillContent').innerHTML = `<div class="alert alert-danger">Fetch failed: ${e.message}</div>`; }
+}

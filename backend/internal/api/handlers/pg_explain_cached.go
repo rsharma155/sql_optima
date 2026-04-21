@@ -108,4 +108,3 @@ func NewPgExplainAnalyzeHandler(metricsSvc *service.MetricsService) http.Handler
 
 // Ensure unused imports don't creep in when build tags change.
 var _ = analyzer.New
-

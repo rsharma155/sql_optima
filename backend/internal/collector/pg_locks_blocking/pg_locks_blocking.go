@@ -99,4 +99,3 @@ func AnalyzePairs(pairs []Pair) GraphStats {
 		RootBlockers:    roots,
 	}
 }
-

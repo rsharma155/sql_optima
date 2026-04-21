@@ -39,11 +39,11 @@ func (c *PgRepository) GetCpuTimeByDatabase(instanceName string) ([]PgCpuDbRow, 
 	}
 
 	var exists bool
-	if err := db.QueryRow("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists); err != nil || !exists {
+	if err := db.QueryRow("SELECT /* SQL_OPTIMA */   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists); err != nil || !exists {
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
-	q := `SELECT d.datname::text AS datname,
+	q := `SELECT /* SQL_OPTIMA */   d.datname::text AS datname,
 			SUM(s.total_exec_time)::float8 AS total_exec_time_ms
 		FROM pg_stat_statements s
 		JOIN pg_database d ON d.oid = s.dbid
@@ -86,11 +86,11 @@ func (c *PgRepository) GetTopCpuQueries(instanceName string, limit int) ([]PgTop
 	}
 
 	var exists bool
-	if err := db.QueryRow("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists); err != nil || !exists {
+	if err := db.QueryRow("SELECT /* SQL_OPTIMA */   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists); err != nil || !exists {
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
-	q := fmt.Sprintf(`SELECT s.queryid,
+	q := fmt.Sprintf(`SELECT /* SQL_OPTIMA */   s.queryid,
 			now()::timestamptz AS captured_at,
 			COALESCE(r.rolname, '') AS user_name,
 			LEFT(s.query, 400) AS query,

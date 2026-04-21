@@ -18,12 +18,12 @@ type GlobalInstanceMetric struct {
 
 // BestPracticesResult contains the complete best practices audit results
 type BestPracticesResult struct {
-	InstanceName         string                `json:"instance_name"`
-	ServerConfig         []ServerConfigCheck   `json:"server_config"`
-	DatabaseConfig       []DatabaseConfigCheck `json:"database_config"`
-	Timestamp            string                `json:"timestamp"`
-	DataSource           string                `json:"data_source,omitempty"`            // "live" | "timescale" (pg_settings values overlaid from latest postgres_settings_snapshot)
-	SnapshotCapturedAt   string                `json:"snapshot_captured_at,omitempty"` // RFC3339 when DataSource is timescale
+	InstanceName       string                `json:"instance_name"`
+	ServerConfig       []ServerConfigCheck   `json:"server_config"`
+	DatabaseConfig     []DatabaseConfigCheck `json:"database_config"`
+	Timestamp          string                `json:"timestamp"`
+	DataSource         string                `json:"data_source,omitempty"`          // "live" | "timescale" (pg_settings values overlaid from latest postgres_settings_snapshot)
+	SnapshotCapturedAt string                `json:"snapshot_captured_at,omitempty"` // RFC3339 when DataSource is timescale
 }
 
 // ServerConfigCheck represents a server-level configuration check

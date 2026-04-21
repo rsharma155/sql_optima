@@ -3,4 +3,4 @@
 -- Target Table: N/A (availability group check)
 -- Description: Checks if AlwaysOn Availability Groups are configured
 
-SELECT COUNT(*) FROM sys.dm_hadr_availability_group_states;
+SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_hadr_availability_group_states;

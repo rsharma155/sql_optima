@@ -16,4 +16,3 @@ func TestDiskSigChangesWhenFreeBytesChanges(t *testing.T) {
 		t.Fatalf("expected different signatures")
 	}
 }
-

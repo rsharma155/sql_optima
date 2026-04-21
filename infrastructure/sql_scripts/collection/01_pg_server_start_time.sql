@@ -3,4 +3,4 @@
 -- Target Table: N/A (server info)
 -- Description: Gets PostgreSQL postmaster start time for uptime calculation
 
-SELECT pg_postmaster_start_time();
+SELECT /* SQL_OPTIMA */   pg_postmaster_start_time();

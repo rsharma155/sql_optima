@@ -48,6 +48,8 @@ func buildPgStatStatementsFilters() string {
 	var b strings.Builder
 	b.WriteString(`s.query NOT LIKE '%pg_stat_statements%'`)
 	b.WriteString(`
+		  AND s.query NOT LIKE '%/* SQL_OPTIMA */%'
+		  AND s.query NOT ILIKE '<insufficient privilege>%'
 		  AND s.query NOT ILIKE '%sql_optima%'
 		  AND s.query NOT ILIKE '%sqloptima%'
 		  AND s.query NOT ILIKE '%SQLOptima%'
@@ -69,10 +71,16 @@ func buildPgStatStatementsFilters() string {
 		  AND s.query NOT ILIKE 'rollback%'
 		  AND s.query NOT ILIKE 'savepoint%'
 		  AND s.query NOT ILIKE 'release savepoint%'
-		  AND s.query NOT ILIKE '%pg_catalog.%'
-		  AND s.query NOT ILIKE '%information_schema.%'
+		  AND s.query NOT ILIKE '%pg_catalog%'
+		  AND s.query NOT ILIKE '%information_schema%'
 		  AND s.query NOT ILIKE '%pg_toast.%'
-		  AND s.query NOT ILIKE '%pg_stat_%'`)
+		  AND s.query NOT ILIKE '%pg_stat_%'
+		  AND s.query NOT ILIKE '%pg_locks%'
+		  AND s.query NOT ILIKE '%pg_database%'
+		  AND s.query NOT ILIKE '%pg_class%'
+		  AND s.query NOT ILIKE '%pg_attribute%'
+		  AND s.query <> 'SELECT /* SQL_OPTIMA */   1'
+		  AND s.query <> 'SELECT /* SQL_OPTIMA */   $1'`)
 	// Replication / physical & logical decoding (walsender, pg_recvlogical, etc.)
 	b.WriteString(`
 		  AND s.query NOT ILIKE '%IDENTIFY_SYSTEM%'
@@ -89,6 +97,12 @@ func buildPgStatStatementsFilters() string {
 		  AND s.query NOT ILIKE '%pg_sync_replication_slots%'
 		  AND s.query NOT ILIKE '%BASE_BACKUP%'
 		  AND s.query NOT ILIKE '%TIMELINE_HISTORY%'`)
+
+	// Performance thresholds: Ignore very light/rare queries
+	b.WriteString(`
+		  AND s.calls > 10
+		  AND (s.total_exec_time / NULLIF(s.calls, 0)) > 5`)
+
 	roles := pgStatStatementsExcludedRoleNames()
 	if len(roles) > 0 {
 		b.WriteString(`

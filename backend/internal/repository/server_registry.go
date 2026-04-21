@@ -58,7 +58,7 @@ func (r *ServerRegistryRepository) List(ctx context.Context, activeOnly bool) ([
 		return nil, fmt.Errorf("timescale not configured")
 	}
 	q := `
-		SELECT id, name, db_type, host, port, username, auth_type, ssl_mode, is_active, created_at, updated_at, COALESCE(created_by,''), last_test_at
+		SELECT  id, name, db_type, host, port, username, auth_type, ssl_mode, is_active, created_at, updated_at, COALESCE(created_by,''), last_test_at
 		FROM optima_servers
 	`
 	args := []any{}
@@ -103,7 +103,7 @@ func (r *ServerRegistryRepository) GetByName(ctx context.Context, name string) (
 	var id uuid.UUID
 	var dbType, authType, sslMode string
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, name, db_type, host, port, username, auth_type, ssl_mode, is_active, created_at, updated_at
+		SELECT  id, name, db_type, host, port, username, auth_type, ssl_mode, is_active, created_at, updated_at
 		FROM optima_servers
 		WHERE name = $1 AND is_active = TRUE
 		LIMIT 1
@@ -132,7 +132,7 @@ func (r *ServerRegistryRepository) GetEncrypted(ctx context.Context, id string) 
 	var encSecret, encDEK []byte
 	var createdBy string
 	err = r.pool.QueryRow(ctx, `
-		SELECT name, db_type, host, port, username, auth_type, encrypted_secret, encrypted_dek, ssl_mode, is_active, created_at, updated_at, COALESCE(created_by,'')
+		SELECT  name, db_type, host, port, username, auth_type, encrypted_secret, encrypted_dek, ssl_mode, is_active, created_at, updated_at, COALESCE(created_by,'')
 		FROM optima_servers
 		WHERE id = $1
 	`, uid).Scan(&s.Name, &dbType, &s.Host, &s.Port, &s.Username, &authType, &encSecret, &encDEK, &sslMode, &s.IsActive, &s.CreatedAt, &s.UpdatedAt, &createdBy)

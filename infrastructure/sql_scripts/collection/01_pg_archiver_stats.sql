@@ -3,7 +3,7 @@
 -- Target Table: postgres_archiver_stats (TimescaleDB)
 -- Description: Retrieves WAL archiver statistics from pg_stat_archiver
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     archived_count,
     failed_count,
     last_archived_wal,

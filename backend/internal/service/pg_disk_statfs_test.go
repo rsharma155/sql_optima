@@ -23,4 +23,3 @@ func TestComputeUsedPct_Basic(t *testing.T) {
 		t.Fatalf("expected ~40, got %v", got)
 	}
 }
-

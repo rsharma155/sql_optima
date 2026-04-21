@@ -12,16 +12,16 @@ import "strings"
 type HaProvider string
 
 const (
-	HaProviderAuto      HaProvider = "auto"
-	HaProviderCNPG      HaProvider = "cnpg"
-	HaProviderPatroni   HaProvider = "patroni"
-	HaProviderStreaming HaProvider = "streaming"
+	HaProviderAuto       HaProvider = "auto"
+	HaProviderCNPG       HaProvider = "cnpg"
+	HaProviderPatroni    HaProvider = "patroni"
+	HaProviderStreaming  HaProvider = "streaming"
 	HaProviderStandalone HaProvider = "standalone"
 )
 
 type HaDetection struct {
-	Provider HaProvider `json:"provider"`
-	DetectedBy string   `json:"detected_by,omitempty"`
+	Provider   HaProvider `json:"provider"`
+	DetectedBy string     `json:"detected_by,omitempty"`
 }
 
 func NormalizeHaProvider(s string) HaProvider {
@@ -65,4 +65,3 @@ func DetectHaProviderAuto(clusterName string, replicationAppNames []string, hasS
 	}
 	return HaDetection{Provider: HaProviderStandalone, DetectedBy: "no-standbys"}
 }
-

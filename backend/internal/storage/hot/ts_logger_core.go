@@ -163,16 +163,19 @@ type PostgresReplicationSlotRow struct {
 }
 
 type QueryStoreStatsRow struct {
-	CaptureTimestamp time.Time `json:"capture_timestamp"`
-	ServerName       string    `json:"server_name"`
-	DatabaseName     string    `json:"database_name"`
-	QueryHash        string    `json:"query_hash"`
-	QueryText        string    `json:"query_text"`
-	Executions       int64     `json:"executions"`
-	AvgDurationMs    float64   `json:"avg_duration_ms"`
-	AvgCpuMs         float64   `json:"avg_cpu_ms"`
-	AvgLogicalReads  float64   `json:"avg_logical_reads"`
-	TotalCpuMs       float64   `json:"total_cpu_ms"`
+	CaptureTimestamp  time.Time `json:"capture_timestamp"`
+	ServerName        string    `json:"server_name"`
+	DatabaseName      string    `json:"database_name"`
+	QueryHash         string    `json:"query_hash"`
+	QueryText         string    `json:"query_text"`
+	PlanID            int64     `json:"plan_id"`
+	IntervalID        int64     `json:"interval_id"`
+	Executions        int64     `json:"executions"`
+	AvgDurationMs     float64   `json:"avg_duration_ms"`
+	AvgCpuMs          float64   `json:"avg_cpu_ms"`
+	AvgLogicalReads   float64   `json:"avg_logical_reads"`
+	TotalCpuMs        float64   `json:"total_cpu_ms"`
+	LastExecutionTime time.Time `json:"last_execution_time"`
 }
 
 type LongRunningQueryRow struct {
@@ -270,30 +273,50 @@ type PostgresQueryDictionaryRow struct {
 
 // PostgresQueryStatsSnapRow is one row in postgres_query_stats (snapshot of pg_stat_statements counters).
 type PostgresQueryStatsSnapRow struct {
-	QueryID         int64
-	QueryText       string
-	Calls           int64
-	TotalTimeMs     float64
-	MeanTimeMs      float64
-	Rows            int64
-	TempBlksRead    int64
-	TempBlksWritten int64
-	BlkReadTimeMs   float64
-	BlkWriteTimeMs  float64
+	QueryID           int64
+	QueryText         string
+	Calls             int64
+	TotalTimeMs       float64
+	MeanTimeMs        float64
+	Rows              int64
+	TempBlksRead      int64
+	TempBlksWritten   int64
+	BlkReadTimeMs     float64
+	BlkWriteTimeMs    float64
+	SharedBlksHit     int64
+	SharedBlksRead    int64
+	SharedBlksDirtied int64
+	SharedBlksWritten int64
+	WalBytes          int64
+	WalRecords        int64
+	WalFpi            int64
+	TotalPlanTime     float64
+	MeanPlanTime      float64
+	Plans             int64
 }
 
 // PostgresQueryStatsDelta is per-query activity derived from two snapshots (end minus baseline).
 type PostgresQueryStatsDelta struct {
-	QueryID         int64
-	QueryText       string
-	Calls           int64
-	TotalTimeMs     float64
-	MeanTimeMs      float64
-	Rows            int64
-	TempBlksRead    int64
-	TempBlksWritten int64
-	BlkReadTimeMs   float64
-	BlkWriteTimeMs  float64
+	QueryID           int64
+	QueryText         string
+	Calls             int64
+	TotalTimeMs       float64
+	MeanTimeMs        float64
+	Rows              int64
+	TempBlksRead      int64
+	TempBlksWritten   int64
+	BlkReadTimeMs     float64
+	BlkWriteTimeMs    float64
+	SharedBlksHit     int64
+	SharedBlksRead    int64
+	SharedBlksDirtied int64
+	SharedBlksWritten int64
+	WalBytes          int64
+	WalRecords        int64
+	WalFpi            int64
+	TotalPlanTime     float64
+	MeanPlanTime      float64
+	Plans             int64
 }
 
 type CPUSchedulerStatsRow struct {

@@ -177,14 +177,21 @@ type PostgresControlCenterHistory struct {
 	HealthScore        []int     `json:"health_score"`
 }
 
-func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, instanceName string, limit int) (*PostgresControlCenterHistory, error) {
+func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, instanceName string, from, to string, limit int) (*PostgresControlCenterHistory, error) {
 	if limit <= 0 {
-		limit = 60
+		limit = 180
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	q := `
+	where := `server_instance_name = $1`
+	args := []interface{}{instanceName}
+	if from != "" && to != "" {
+		where += ` AND capture_timestamp >= $2 AND capture_timestamp <= $3`
+		args = append(args, from, to)
+	}
+
+	query := fmt.Sprintf(`
 		SELECT capture_timestamp,
 		       wal_rate_mb_per_min,
 		       max_replication_lag_seconds,
@@ -194,12 +201,30 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 		       blocking_sessions,
 		       health_score
 		FROM postgres_control_center_stats
-		WHERE server_instance_name = $1
+		WHERE %s
 		ORDER BY capture_timestamp DESC
-		LIMIT $2
-	`
+		LIMIT $%d
+	`, where, len(args)+1)
 
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	if from != "" && to != "" {
+		query = fmt.Sprintf(`
+			SELECT capture_timestamp,
+				wal_rate_mb_per_min,
+				max_replication_lag_seconds,
+				checkpoint_req_ratio,
+				autovacuum_workers,
+				dead_tuple_ratio_pct,
+				blocking_sessions,
+				health_score
+			FROM postgres_control_center_stats
+			WHERE %s
+			ORDER BY capture_timestamp DESC
+		`, where)
+	} else {
+		args = append(args, limit)
+	}
+
+	rows, err := tl.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -245,21 +270,40 @@ type PostgresReplicationLagSeries struct {
 	LagMB       []float64 `json:"lag_mb"`
 }
 
-func (tl *TimescaleLogger) GetPostgresReplicationLagDetail(ctx context.Context, instanceName string, limit int) (map[string]PostgresReplicationLagSeries, error) {
+func (tl *TimescaleLogger) GetPostgresReplicationLagDetail(ctx context.Context, instanceName string, from, to string, limit int) (map[string]PostgresReplicationLagSeries, error) {
 	if limit <= 0 {
-		limit = 60
+		limit = 180
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	q := `
+	where := `server_instance_name = $1`
+	args := []interface{}{instanceName}
+	if from != "" && to != "" {
+		where += ` AND capture_timestamp >= $2 AND capture_timestamp <= $3`
+		args = append(args, from, to)
+	}
+
+	query := fmt.Sprintf(`
 		SELECT capture_timestamp, replica_name, lag_mb
 		FROM postgres_replication_lag_detail
-		WHERE server_instance_name = $1
+		WHERE %s
 		ORDER BY capture_timestamp DESC
-		LIMIT $2
-	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+		LIMIT $%d
+	`, where, len(args)+1)
+
+	if from != "" && to != "" {
+		query = fmt.Sprintf(`
+			SELECT capture_timestamp, replica_name, lag_mb
+			FROM postgres_replication_lag_detail
+			WHERE %s
+			ORDER BY capture_timestamp DESC
+		`, where)
+	} else {
+		args = append(args, limit)
+	}
+
+	rows, err := tl.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

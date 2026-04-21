@@ -3,4 +3,4 @@
 -- Target Table: N/A (blocking analysis)
 -- Description: Gets blocking PIDs for a specific session
 
-SELECT pg_blocking_pids($1);
+SELECT /* SQL_OPTIMA */   pg_blocking_pids($1);

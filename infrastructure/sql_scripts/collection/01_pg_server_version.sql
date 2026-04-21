@@ -3,4 +3,4 @@
 -- Target Table: N/A (server info)
 -- Description: Gets PostgreSQL version string
 
-SELECT version();
+SELECT /* SQL_OPTIMA */   version();

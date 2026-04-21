@@ -3,7 +3,7 @@
 -- Target Table: N/A (database listing)
 -- Description: Lists user databases ordered by name, excluding templates and postgres
 
-SELECT datname 
+SELECT /* SQL_OPTIMA */   datname 
 FROM pg_database 
 WHERE datistemplate = false 
   AND datname NOT IN ('postgres') 

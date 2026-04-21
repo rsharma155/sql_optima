@@ -62,4 +62,3 @@ func TestAnalyzePairs_CycleDoesNotLoop(t *testing.T) {
 	}
 	// Roots may be empty in cycles (everyone is blocked).
 }
-

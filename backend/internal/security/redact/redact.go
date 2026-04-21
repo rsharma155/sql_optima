@@ -29,4 +29,3 @@ func String(s string) string {
 	s = reMssqlPassword.ReplaceAllString(s, "$1=REDACTED")
 	return s
 }
-

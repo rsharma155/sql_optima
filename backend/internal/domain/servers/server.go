@@ -38,11 +38,11 @@ type Server struct {
 }
 
 type CredentialPayload struct {
-	Password                 string                 `json:"password"`
-	SSLMode                  string                 `json:"sslmode,omitempty"`
-	TrustServerCertificate   bool                   `json:"trust_server_certificate,omitempty"`
-	Database                 string                 `json:"database,omitempty"` // PG: dbname (default postgres). SQL Server: initial catalog (default master).
-	Extra                    map[string]interface{} `json:"extra,omitempty"`
+	Password               string                 `json:"password"`
+	SSLMode                string                 `json:"sslmode,omitempty"`
+	TrustServerCertificate bool                   `json:"trust_server_certificate,omitempty"`
+	Database               string                 `json:"database,omitempty"` // PG: dbname (default postgres). SQL Server: initial catalog (default master).
+	Extra                  map[string]interface{} `json:"extra,omitempty"`
 }
 
 type CreateServerInput struct {

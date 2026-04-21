@@ -1,0 +1,150 @@
+<!-- pg_stat_statements Dashboard — Enhanced Query Performance Analytics -->
+<div class="page-view active dashboard-sky-theme">
+  <div class="page-title flex-between dashboard-page-title-compact">
+    <div>
+      <h4><i class="fa-solid fa-chart-line"></i> pg_stat_statements Dashboard
+        <span class="text-sm text-muted ml-2" id="pgss-instance-label"></span>
+      </h4>
+    </div>
+    <div class="flex-row gap-2">
+      <button class="btn btn-sm btn-outline" data-action="call" data-fn="PgStatStatementsView">
+        <i class="fa-solid fa-arrows-rotate"></i> Refresh
+      </button>
+    </div>
+  </div>
+
+  <!-- Status banner -->
+  <div id="pgss-status-banner" class="alert alert-warning mt-2" style="display:none;">
+    <i class="fa-solid fa-exclamation-triangle"></i>
+    <span id="pgss-status-msg"></span>
+  </div>
+
+  <!-- Time range filter -->
+  <div class="glass-panel mt-3" style="padding:0.75rem 1rem;">
+    <div class="flex-row gap-3 align-center flex-wrap">
+      <label class="text-sm text-muted">From</label>
+      <input type="datetime-local" id="pgss-from" class="form-control form-control-sm" style="max-width:220px"/>
+      <label class="text-sm text-muted">To</label>
+      <input type="datetime-local" id="pgss-to" class="form-control form-control-sm" style="max-width:220px"/>
+      <button class="btn btn-sm btn-primary" data-action="call" data-fn="pgssApplyTimeRange">
+        <i class="fa-solid fa-filter"></i> Apply
+      </button>
+      <span class="text-sm text-muted ml-auto" id="pgss-range-label"></span>
+    </div>
+  </div>
+
+  <!-- Row 1: Workload overview charts (3 panels) -->
+  <div class="charts-grid mt-3" style="grid-template-columns:1fr 1fr 1fr;">
+    <div class="chart-card glass-panel pgss-chart-card">
+      <h6>Query Load (ms/sec)</h6>
+      <div class="chart-container"><canvas id="pgss-chart-load"></canvas></div>
+    </div>
+    <div class="chart-card glass-panel">
+      <h6>Queries/sec &amp; Rows/sec</h6>
+      <div class="chart-container"><canvas id="pgss-chart-qps"></canvas></div>
+    </div>
+    <div class="chart-card glass-panel">
+      <h6>Cache Hit Ratio %</h6>
+      <div class="chart-container"><canvas id="pgss-chart-cache"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Row 2: Latency + WAL + Planning/Exec split -->
+  <div class="charts-grid mt-3" style="grid-template-columns:1fr 1fr 1fr;">
+    <div class="chart-card glass-panel">
+      <h6>Latency Percentiles</h6>
+      <div class="chart-container"><canvas id="pgss-chart-latency"></canvas></div>
+    </div>
+    <div class="chart-card glass-panel">
+      <h6>WAL Bytes/sec</h6>
+      <div class="chart-container"><canvas id="pgss-chart-wal"></canvas></div>
+    </div>
+    <div class="chart-card glass-panel">
+      <h6>Exec vs Plan Time %</h6>
+      <div class="chart-container"><canvas id="pgss-chart-execplan"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Row 3: Top queries table -->
+  <div class="table-card glass-panel mt-3">
+    <div class="flex-between mb-2">
+      <h6><i class="fa-solid fa-ranking-star"></i> Top Queries</h6>
+      <ul class="nav-tabs" id="pgss-sort-tabs">
+        <li class="active" data-action="call" data-fn="pgssSort" data-sort="total_time">Total Time</li>
+        <li data-action="call" data-fn="pgssSort" data-sort="mean_time">Avg Latency</li>
+        <li data-action="call" data-fn="pgssSort" data-sort="calls">Calls</li>
+        <li data-action="call" data-fn="pgssSort" data-sort="io">I/O</li>
+        <li data-action="call" data-fn="pgssSort" data-sort="temp">Temp</li>
+        <li data-action="call" data-fn="pgssSort" data-sort="wal">WAL</li>
+      </ul>
+    </div>
+    <style>
+        .pgss-table { table-layout: fixed; width: 100%; border-collapse: collapse; }
+        .pgss-table th, .pgss-table td { 
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+            white-space: nowrap; 
+            padding: 0.5rem 0.4rem;
+            vertical-align: middle;
+        }
+        .pgss-col-id { width: 35px; color: var(--text-muted); font-size: 0.75rem; }
+        .pgss-col-flags { width: 50px; text-align: center; }
+        .pgss-col-query { width: 35%; cursor: pointer; color: var(--accent); }
+        .pgss-col-stat { width: 85px; text-align: right; font-variant-numeric: tabular-nums; }
+        .pgss-query-text { 
+            display: block; 
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+            max-width: 100%;
+            font-family: var(--font-mono, monospace);
+            font-size: 0.8rem;
+        }
+        .pgss-query-text:hover { text-decoration: underline; color: var(--accent-light); }
+        
+        /* Adjust for smaller screens */
+        @media (max-width: 1200px) {
+            .pgss-col-stat { width: 75px; font-size: 0.75rem; }
+        }
+    </style>
+    <div class="table-responsive">
+      <table class="pgss-table data-table">
+        <thead>
+          <tr>
+            <th class="pgss-col-id">#</th>
+            <th class="pgss-col-flags">Flags</th>
+            <th class="pgss-col-query">Query</th>
+            <th class="pgss-col-stat">Total Time</th>
+            <th class="pgss-col-stat">% DB</th>
+            <th class="pgss-col-stat">Calls</th>
+            <th class="pgss-col-stat">Avg ms</th>
+            <th class="pgss-col-stat">Rows/Call</th>
+            <th class="pgss-col-stat">Cache %</th>
+            <th class="pgss-col-stat">Temp MB</th>
+            <th class="pgss-col-stat">WAL MB</th>
+          </tr>
+        </thead>
+        <tbody id="pgss-top-tbody"></tbody>
+      </table>
+    </div>
+
+  </div>
+
+  <!-- Row 4: Regressions table -->
+  <div class="table-card glass-panel mt-3">
+    <h6><i class="fa-solid fa-arrow-trend-up text-danger"></i> Query Regressions (last 30 min vs previous 30 min)</h6>
+    <div class="table-responsive">
+      <table class="data-table pgss-regression-table" id="pgss-regression-table">
+        <thead>
+          <tr>
+            <th>Query</th>
+            <th>Prev Avg ms</th>
+            <th>Curr Avg ms</th>
+            <th>Change %</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="pgss-regression-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>

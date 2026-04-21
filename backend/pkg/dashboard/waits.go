@@ -13,13 +13,13 @@ import "strings"
 type WaitCategory string
 
 const (
-	WaitCPU      WaitCategory = "CPU"
-	WaitIO       WaitCategory = "IO"
-	WaitLog      WaitCategory = "Log"
-	WaitLocking  WaitCategory = "Locking"
-	WaitMemory   WaitCategory = "Memory"
-	WaitNetwork  WaitCategory = "Network"
-	WaitOther    WaitCategory = "Other"
+	WaitCPU     WaitCategory = "CPU"
+	WaitIO      WaitCategory = "IO"
+	WaitLog     WaitCategory = "Log"
+	WaitLocking WaitCategory = "Locking"
+	WaitMemory  WaitCategory = "Memory"
+	WaitNetwork WaitCategory = "Network"
+	WaitOther   WaitCategory = "Other"
 )
 
 // CategorizeWaitType maps wait types to categories based on Upgrade_main_dashboard.md patterns.
@@ -45,9 +45,9 @@ func CategorizeWaitType(waitType string) WaitCategory {
 
 // WaitDelta is a delta sample computed from cumulative wait_time_ms.
 type WaitDelta struct {
-	WaitType  string       `json:"wait_type"`
-	Category  WaitCategory `json:"wait_category"`
-	DeltaMs   float64      `json:"wait_time_ms_delta"`
+	WaitType string       `json:"wait_type"`
+	Category WaitCategory `json:"wait_category"`
+	DeltaMs  float64      `json:"wait_time_ms_delta"`
 }
 
 // ComputeWaitDeltas converts cumulative wait_time_ms totals into per-interval deltas.
@@ -69,4 +69,3 @@ func ComputeWaitDeltas(prev map[string]float64, curr map[string]float64) (deltas
 	}
 	return deltas, nextPrev
 }
-

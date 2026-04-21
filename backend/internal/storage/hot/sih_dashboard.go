@@ -188,12 +188,16 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		args := []interface{}{engine, serverID, to}
 		where := `engine=$1 AND server_id=$2 AND time <= $3::timestamptz`
 		where, args, _ = sihAppendFilters(where, args, f, 4)
+		// Prefer monitor.table_usage_stats as it is 15m cadence vs 6h for table_size_history
 		q := fmt.Sprintf(`
-			SELECT db_name, schema_name, table_name, COALESCE(table_size_mb,0)::float8 AS v
+			SELECT db_name, schema_name, table_name, 
+			       COALESCE(table_size_mb,0)::float8 AS v, 
+			       COALESCE(index_size_mb,0)::float8 AS v2,
+			       COALESCE(row_count,0)::float8 AS rows
 			FROM (
 				SELECT DISTINCT ON (db_name, schema_name, table_name)
-					db_name, schema_name, table_name, table_size_mb, time
-				FROM monitor.table_size_history
+					db_name, schema_name, table_name, table_size_mb, index_size_mb, row_count, time
+				FROM monitor.table_usage_stats
 				WHERE %s
 				ORDER BY db_name, schema_name, table_name, time DESC
 			) t
@@ -203,15 +207,49 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		rows, err := tl.pool.Query(ctx, q, args...)
 		if err != nil {
 			if isMissingRelation(err) {
-				return nil, schemaMissingErr("monitor.table_size_history")
+				return nil, schemaMissingErr("monitor.table_usage_stats")
 			}
 			return nil, err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var r StorageIndexHealthTopRow
-			if err := rows.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.Value); err == nil {
+			var rc float64
+			if err := rows.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.Value, &r.Value2, &rc); err == nil {
+				// We can store row count in Value field if we adjust others, or just use Value as Total Size.
+				// Total Size = Table Size + Index Size
+				r.Value = r.Value + r.Value2
 				largestTables = append(largestTables, r)
+			}
+		}
+		// Fallback to table_size_history if usage stats empty (e.g. just started)
+		if len(largestTables) == 0 {
+			q2 := fmt.Sprintf(`
+				SELECT db_name, schema_name, table_name, 
+				       COALESCE(table_size_mb,0)::float8 AS v, 
+				       COALESCE(index_size_mb,0)::float8 AS v2,
+				       COALESCE(row_count,0)::float8 AS rows
+				FROM (
+					SELECT DISTINCT ON (db_name, schema_name, table_name)
+						db_name, schema_name, table_name, table_size_mb, index_size_mb, row_count, time
+					FROM monitor.table_size_history
+					WHERE %s
+					ORDER BY db_name, schema_name, table_name, time DESC
+				) t
+				ORDER BY v DESC
+				LIMIT 10
+			`, where)
+			rows2, _ := tl.pool.Query(ctx, q2, args...)
+			if rows2 != nil {
+				defer rows2.Close()
+				for rows2.Next() {
+					var r StorageIndexHealthTopRow
+					var rc float64
+					if err := rows2.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.Value, &r.Value2, &rc); err == nil {
+						r.Value = r.Value + r.Value2
+						largestTables = append(largestTables, r)
+					}
+				}
 			}
 		}
 	}
@@ -279,6 +317,28 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 				growth = append(growth, p)
 			}
 		}
+		// If growth empty, try bucket from table_usage_stats (short window support)
+		if len(growth) == 0 {
+			q2 := fmt.Sprintf(`
+				SELECT time_bucket('1 day', time) AS bucket,
+					SUM(COALESCE(table_size_mb,0))::float8 AS table_mb,
+					SUM(COALESCE(index_size_mb,0))::float8 AS index_mb
+				FROM monitor.table_usage_stats
+				WHERE %s
+				GROUP BY bucket
+				ORDER BY bucket ASC
+			`, where)
+			rows2, _ := tl.pool.Query(ctx, q2, args...)
+			if rows2 != nil {
+				defer rows2.Close()
+				for rows2.Next() {
+					var p StorageIndexHealthGrowthPoint
+					if err := rows2.Scan(&p.Bucket, &p.TableSizeMB, &p.IndexSizeMB); err == nil {
+						growth = append(growth, p)
+					}
+				}
+			}
+		}
 	}
 
 	// ---------------- Derived growth summary (daily deltas, % trends, projection) ----------------
@@ -302,12 +362,13 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 			args = append(args, "%"+f.TableLike+"%")
 		}
 
+		// Prefer monitor.table_usage_stats for summary as it is more frequent
 		q := fmt.Sprintf(`
 			SELECT time_bucket('1 day', time) AS bucket,
 			       SUM(COALESCE(table_size_mb,0))::float8 AS table_mb,
 			       SUM(COALESCE(index_size_mb,0))::float8 AS index_mb,
 			       SUM(COALESCE(row_count,0))::bigint AS rows
-			FROM monitor.table_size_history
+			FROM monitor.table_usage_stats
 			WHERE %s
 			GROUP BY bucket
 			ORDER BY bucket ASC
@@ -315,7 +376,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		rows, err := tl.pool.Query(ctx, q, args...)
 		if err != nil {
 			if isMissingRelation(err) {
-				return nil, schemaMissingErr("monitor.table_size_history")
+				return nil, schemaMissingErr("monitor.table_usage_stats")
 			}
 			return nil, err
 		}
@@ -332,6 +393,29 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 			var p pt
 			if err := rows.Scan(&p.bucket, &p.tableMB, &p.indexMB, &p.rowCount); err == nil {
 				pts = append(pts, p)
+			}
+		}
+		// Fallback to table_size_history if no usage stats
+		if len(pts) == 0 {
+			q2 := fmt.Sprintf(`
+				SELECT time_bucket('1 day', time) AS bucket,
+					SUM(COALESCE(table_size_mb,0))::float8 AS table_mb,
+					SUM(COALESCE(index_size_mb,0))::float8 AS index_mb,
+					SUM(COALESCE(row_count,0))::bigint AS rows
+				FROM monitor.table_size_history
+				WHERE %s
+				GROUP BY bucket
+				ORDER BY bucket ASC
+			`, where)
+			rows2, _ := tl.pool.Query(ctx, q2, args...)
+			if rows2 != nil {
+				defer rows2.Close()
+				for rows2.Next() {
+					var p pt
+					if err := rows2.Scan(&p.bucket, &p.tableMB, &p.indexMB, &p.rowCount); err == nil {
+						pts = append(pts, p)
+					}
+				}
 			}
 		}
 		if len(pts) > 0 {
@@ -479,17 +563,24 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		}
 	}
 
+	// Final KPI adjustments from summaries
+	kpis.TotalDBSizeMB = gSummary.CurrentTableMB + gSummary.CurrentIndexMB
+	kpis.Growth7dPct = gSummary.Growth7dPct
+	for _, u := range unused {
+		kpis.UnusedIndexMB += u.Value2
+	}
+
 	return &StorageIndexHealthDashboard{
 		Engine: engine, Instance: serverID, From: from, To: to,
-		KPIs:                     kpis,
-		TopScans:                 topScans,
-		SeekScanLookup:           seekScan,
-		LargestTables:            largestTables,
-		LargestIndexes:           largestIndexes,
-		Growth:                   growth,
-		GrowthSummary:            gSummary,
-		UnusedIndexes:            unused,
-		HighScanTables:           highScan,
-		DuplicateIndexCandidates: dup,
+		KPIs:                kpis,
+		TopScans:            topScans,
+		SeekScanLookup:      seekScan,
+		LargestTables:       largestTables,
+		LargestIndexes:      largestIndexes,
+		Growth:              growth,
+		GrowthSummary:       gSummary,
+		UnusedIndexes:       unused,
+		HighScanTables:      highScan,
+		RawDuplicateIndexes: dup,
 	}, nil
 }

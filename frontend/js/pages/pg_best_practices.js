@@ -101,11 +101,14 @@ function pgBpMapStatusForDrawer(status) {
 function pgBpEffectiveValueCell(check) {
     const cur = (check.current_value || '').trim();
     const def = (check.default_value || '').trim();
+    if (!cur) {
+        return `<td><span class="text-muted" style="font-size:0.7rem;">N/A</span></td>`;
+    }
     const same = !def || def === 'N/A' || cur === def;
     const sub = same
         ? '<div class="text-muted" style="font-size:0.62rem;margin-top:4px;line-height:1.35">Same as <code>reset_val</code> (on-disk default): running value matches what a reload would keep.</div>'
         : `<div class="text-muted" style="font-size:0.62rem;margin-top:4px;line-height:1.35"><strong>Drift:</strong> on-disk reset target is <code style="font-size:0.65rem;">${window.escapeHtml(def)}</code> — live <code>setting</code> differs until reload/restart.</div>`;
-    return `<td><code style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;font-size:0.7rem;">${window.escapeHtml(check.current_value)}</code>${sub}</td>`;
+    return `<td><code style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;font-size:0.7rem;">${window.escapeHtml(cur)}</code>${sub}</td>`;
 }
 
 function renderPgSettingsBestPracticesAudit(inst, data, sourceHeader) {

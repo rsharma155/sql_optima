@@ -8,7 +8,9 @@ This directory is the **single source** for SQL Optima database scripts (merged 
 |------|-------------|
 | `00_timescale_schema.sql` | Main TimescaleDB schema: hypertables, indexes, compression |
 | `01_seed_data.sql` | Default users, widgets, and collection schedules |
-| `02_rule_engine.sql` | **Canonical** rule engine schema (if used). This is the consolidated replacement for the former `rule_engine/*.sql` scripts. |
+| `03_additional_pg_rules.sql` | Additional PostgreSQL-specific rules for the rule engine |
+| `04_alert_engine.sql` | **Canonical** alert engine schema |
+| `05_os_metrics_collector.sql` | Schema for host-level OS metrics collector (agent data) |
 | `pgsql_init.sql` | PostgreSQL instance bootstrap helper |
 | `sqlserver_init.sql` | SQL Server–side helper scripts |
 | `SST.sql` | *(Optional)* System setup test — include in repo if you maintain it |

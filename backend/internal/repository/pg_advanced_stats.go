@@ -29,10 +29,10 @@ type PgDbIOStat struct {
 }
 
 type PgSettingSnapRow struct {
-	Name   string `json:"name"`
+	Name    string `json:"name"`
 	Setting string `json:"setting"`
-	Unit   string `json:"unit"`
-	Source string `json:"source"`
+	Unit    string `json:"unit"`
+	Source  string `json:"source"`
 }
 
 func (c *PgRepository) GetWaitEventCounts(instanceName string) ([]PgWaitEventCount, error) {
@@ -44,7 +44,7 @@ func (c *PgRepository) GetWaitEventCounts(instanceName string) ([]PgWaitEventCou
 	}
 
 	q := `
-		SELECT COALESCE(wait_event_type, '') AS wait_event_type,
+		SELECT /* SQL_OPTIMA */   COALESCE(wait_event_type, '') AS wait_event_type,
 		       COALESCE(wait_event, '') AS wait_event,
 		       COUNT(*)::int AS sessions_count
 		FROM pg_stat_activity
@@ -78,7 +78,7 @@ func (c *PgRepository) GetDbIOStats(instanceName string) ([]PgDbIOStat, error) {
 	}
 
 	q := `
-		SELECT datname,
+		SELECT /* SQL_OPTIMA */   datname,
 		       blks_read,
 		       blks_hit,
 		       temp_files,
@@ -151,7 +151,7 @@ func (c *PgRepository) GetSettingsSnapshot(instanceName string) ([]PgSettingSnap
 	}
 
 	q := fmt.Sprintf(`
-		SELECT name,
+		SELECT /* SQL_OPTIMA */   name,
 		       COALESCE(setting,'') AS setting,
 		       COALESCE(unit,'') AS unit,
 		       COALESCE(source,'') AS source
@@ -184,4 +184,3 @@ func (c *PgRepository) GetSettingsSnapshot(instanceName string) ([]PgSettingSnap
 
 // Compile-time check: ensure we still import sql when needed in this file.
 var _ = sql.ErrNoRows
-

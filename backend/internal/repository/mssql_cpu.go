@@ -18,17 +18,17 @@ import (
 // CollectKPIs fetches key performance indicators
 func (c *MssqlRepository) CollectKPIs(ctx context.Context, db *sql.DB) (map[string]interface{}, error) {
 	query := `
-		SELECT 
-			(SELECT COUNT(*) FROM sys.dm_exec_sessions s
+		SELECT /* SQL_OPTIMA */   
+			(SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_exec_sessions s
 			 WHERE s.status = 'running'
 			   AND s.is_user_process = 1
 			   AND s.database_id > 4
 			   AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
 			   AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 			   AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')) AS active_sessions,
-			(SELECT total_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS total_memory_mb,
-			(SELECT available_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS available_memory_mb,
-			(SELECT ISNULL(cntr_value, 0) FROM sys.dm_os_performance_counters WHERE counter_name='Batch Requests/sec') AS batch_requests_sec
+			(SELECT /* SQL_OPTIMA */   total_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS total_memory_mb,
+			(SELECT /* SQL_OPTIMA */   available_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS available_memory_mb,
+			(SELECT /* SQL_OPTIMA */   ISNULL(cntr_value, 0) FROM sys.dm_os_performance_counters WHERE counter_name='Batch Requests/sec') AS batch_requests_sec
 		OPTION (RECOMPILE)`
 
 	var activeSessions, totalMemory, availableMemory, batchRequests int
@@ -52,18 +52,18 @@ func (c *MssqlRepository) CollectKPIs(ctx context.Context, db *sql.DB) (map[stri
 // Returns CPU history array and current CPU load
 func (c *MssqlRepository) CollectCPUMetrics(db *sql.DB) ([]models.CPUTick, float64, error) {
 	cpuQuery := `
-		DECLARE @ts_now bigint = (SELECT cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
-		SELECT TOP(256)
+		DECLARE @ts_now bigint = (SELECT /* SQL_OPTIMA */   cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
+		SELECT /* SQL_OPTIMA */   TOP(256)
 		    SQLProcessUtilization AS [SQL_Server_CPU], 
 		    SystemIdle AS [System_Idle_CPU], 
 		    100 - SystemIdle - SQLProcessUtilization AS [Other_Process_CPU],
 		    CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETDATE()), 120) AS [Event_Time]
 		FROM ( 
-		    SELECT record.value('(./Record/@id)[1]', 'int') AS record_id, 
+		    SELECT /* SQL_OPTIMA */   record.value('(./Record/@id)[1]', 'int') AS record_id, 
 		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') AS [SystemIdle], 
 		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') AS [SQLProcessUtilization], [timestamp] 
 		    FROM ( 
-		        SELECT [timestamp], CONVERT(xml, record) AS [record] 
+		        SELECT /* SQL_OPTIMA */   [timestamp], CONVERT(xml, record) AS [record] 
 		        FROM sys.dm_os_ring_buffers WITH (NOLOCK)
 		        WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
 		        AND record LIKE N'%<SystemHealth>%'
@@ -101,7 +101,7 @@ func (c *MssqlRepository) CollectCPUMetrics(db *sql.DB) ([]models.CPUTick, float
 
 // CollectActiveSessions counts currently running user sessions
 func (c *MssqlRepository) CollectActiveSessions(db *sql.DB) (int, error) {
-	sessionQuery := `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
+	sessionQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
 	var count int
 	err := db.QueryRow(sessionQuery).Scan(&count)
 	return count, err
@@ -110,7 +110,7 @@ func (c *MssqlRepository) CollectActiveSessions(db *sql.DB) (int, error) {
 // CollectCPUSchedulerStats collects CPU scheduler and workload group metrics with pressure warnings
 func (c *MssqlRepository) CollectCPUSchedulerStats(ctx context.Context, db *sql.DB) (*models.CPUSchedulerStats, error) {
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			GETDATE() AS capture_timestamp,
 			osi.max_workers_count,
 			osi.scheduler_count,
@@ -134,13 +134,13 @@ func (c *MssqlRepository) CollectCPUSchedulerStats(ctx context.Context, db *sql.
 			osm.available_physical_memory_kb AS available_physical_memory_kb,
 			osm.system_memory_state_desc AS system_memory_state_desc,
 			CASE WHEN osm.available_physical_memory_kb < osm.total_physical_memory_kb * 0.10 THEN 1 ELSE 0 END AS physical_memory_pressure_warning,
-			(SELECT COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64) AS total_node_count,
-			(SELECT COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64 AND node_state_desc LIKE '%ONLINE%') AS nodes_online_count,
-			(SELECT COUNT(*) FROM sys.dm_os_schedulers WHERE is_online = 0) AS offline_cpu_count,
-			CASE WHEN EXISTS (SELECT 1 FROM sys.dm_os_schedulers WHERE is_online = 0) THEN 1 ELSE 0 END AS offline_cpu_warning
+			(SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64) AS total_node_count,
+			(SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64 AND node_state_desc LIKE '%ONLINE%') AS nodes_online_count,
+			(SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_os_schedulers WHERE is_online = 0) AS offline_cpu_count,
+			CASE WHEN EXISTS (SELECT /* SQL_OPTIMA */   1 FROM sys.dm_os_schedulers WHERE is_online = 0) THEN 1 ELSE 0 END AS offline_cpu_warning
 		FROM sys.dm_os_sys_info osi
 		CROSS JOIN (
-			SELECT 
+			SELECT /* SQL_OPTIMA */   
 				SUM(runnable_tasks_count) AS runnable_tasks_count,
 				SUM(work_queue_count) AS work_queue_count,
 				SUM(current_workers_count) AS current_workers_count
@@ -200,7 +200,7 @@ func (c *MssqlRepository) CollectCPUSchedulerStats(ctx context.Context, db *sql.
 // CollectServerProperties collects server hardware properties
 func (c *MssqlRepository) CollectServerProperties(ctx context.Context, db *sql.DB) (*models.ServerProperties, error) {
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			GETDATE() AS capture_timestamp,
 			osi.cpu_count,
 			osi.hyperthread_ratio,
@@ -210,7 +210,7 @@ func (c *MssqlRepository) CollectServerProperties(ctx context.Context, db *sql.D
 			osi.virtual_memory_kb / 1024.0 / 1024.0 AS virtual_memory_gb,
 			'' AS cpu_type,
 			CASE WHEN osi.hyperthread_ratio < osi.cpu_count THEN 1 ELSE 0 END AS hyperthread_enabled,
-			(SELECT COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64) AS numa_nodes,
+			(SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64) AS numa_nodes,
 			osi.max_workers_count,
 			CONVERT(VARCHAR(64), HASHBYTES('SHA2_256', 
 				CONCAT(osi.cpu_count, osi.hyperthread_ratio, osi.socket_count, osi.cores_per_socket, 

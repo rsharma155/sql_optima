@@ -26,7 +26,7 @@ func (c *PgRepository) GetDeadlocksTotalByDB(instanceName string) ([]PgDeadlockT
 	}
 
 	q := `
-		SELECT datname, deadlocks
+		SELECT /* SQL_OPTIMA */   datname, deadlocks
 		FROM pg_stat_database
 		WHERE datname IS NOT NULL AND datname <> ''
 		ORDER BY deadlocks DESC, datname
@@ -51,4 +51,3 @@ func (c *PgRepository) GetDeadlocksTotalByDB(instanceName string) ([]PgDeadlockT
 	}
 	return out, rows.Err()
 }
-

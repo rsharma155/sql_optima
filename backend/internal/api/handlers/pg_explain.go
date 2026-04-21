@@ -142,12 +142,12 @@ func PgExplainAnalyze(w http.ResponseWriter, r *http.Request) {
 	bundle.HeuristicInsights = explain.BuildHeuristicPlanInsights(&result.Plan.Plan, queryText)
 
 	resp := map[string]any{
-		"success":      true,
-		"result":       result,
+		"success":            true,
+		"result":             result,
 		"performance_report": perfReport,
-		"plan_graph":   g,
-		"plan_mermaid": explain.MermaidFlowchart(g),
-		"sql_context":  bundle,
+		"plan_graph":         g,
+		"plan_mermaid":       explain.MermaidFlowchart(g),
+		"sql_context":        bundle,
 	}
 
 	writeExplainJSON(w, http.StatusOK, resp)

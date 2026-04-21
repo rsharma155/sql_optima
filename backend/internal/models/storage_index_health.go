@@ -10,21 +10,21 @@ package models
 import "time"
 
 type IndexUsageStat struct {
-	Time        time.Time `json:"time"`
-	Engine      string    `json:"engine"` // sqlserver | postgres
-	ServerID    string    `json:"server_id"`
-	DBName      string    `json:"db_name"`
-	SchemaName  string    `json:"schema_name"`
-	TableName   string    `json:"table_name"`
-	IndexName   string    `json:"index_name"`
-	Seeks       int64     `json:"seeks"`
-	Scans       int64     `json:"scans"`
-	Lookups     int64     `json:"lookups"`
-	Updates     int64     `json:"updates"`
-	IndexSizeMB float64   `json:"index_size_mb"`
-	IsUnique    bool      `json:"is_unique"`
-	IsPK        bool      `json:"is_pk"`
-	FillFactor  int       `json:"fillfactor"`
+	Time           time.Time  `json:"time"`
+	Engine         string     `json:"engine"` // sqlserver | postgres
+	ServerID       string     `json:"server_id"`
+	DBName         string     `json:"db_name"`
+	SchemaName     string     `json:"schema_name"`
+	TableName      string     `json:"table_name"`
+	IndexName      string     `json:"index_name"`
+	Seeks          int64      `json:"seeks"`
+	Scans          int64      `json:"scans"`
+	Lookups        int64      `json:"lookups"`
+	Updates        int64      `json:"updates"`
+	IndexSizeMB    float64    `json:"index_size_mb"`
+	IsUnique       bool       `json:"is_unique"`
+	IsPK           bool       `json:"is_pk"`
+	FillFactor     int        `json:"fillfactor"`
 	LastUserSeek   *time.Time `json:"last_user_seek,omitempty"`
 	LastUserScan   *time.Time `json:"last_user_scan,omitempty"`
 	LastUserLookup *time.Time `json:"last_user_lookup,omitempty"`
@@ -59,18 +59,17 @@ type TableSizeHistory struct {
 }
 
 type IndexDefinition struct {
-	Time            time.Time `json:"time"`
-	Engine          string    `json:"engine"`
-	ServerID        string    `json:"server_id"`
-	DBName          string    `json:"db_name"`
-	SchemaName      string    `json:"schema_name"`
-	TableName       string    `json:"table_name"`
-	IndexName       string    `json:"index_name"`
-	KeyColumns      string    `json:"key_columns"`
-	IncludeColumns  string    `json:"include_columns"`
-	FilterDefinition string   `json:"filter_definition"`
-	IsUnique        bool      `json:"is_unique"`
-	IsPK            bool      `json:"is_pk"`
-	IndexType       string    `json:"index_type"`
+	Time             time.Time `json:"time"`
+	Engine           string    `json:"engine"`
+	ServerID         string    `json:"server_id"`
+	DBName           string    `json:"db_name"`
+	SchemaName       string    `json:"schema_name"`
+	TableName        string    `json:"table_name"`
+	IndexName        string    `json:"index_name"`
+	KeyColumns       string    `json:"key_columns"`
+	IncludeColumns   string    `json:"include_columns"`
+	FilterDefinition string    `json:"filter_definition"`
+	IsUnique         bool      `json:"is_unique"`
+	IsPK             bool      `json:"is_pk"`
+	IndexType        string    `json:"index_type"`
 }
-

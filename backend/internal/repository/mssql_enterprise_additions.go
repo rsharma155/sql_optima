@@ -27,14 +27,14 @@ func (c *MssqlRepository) CollectPlanCacheHealth(db *sql.DB) (map[string]interfa
 	// single-use pressure is a common DBA signal for "Optimize for ad hoc workloads" / parameterization.
 	q := `
 		WITH plans AS (
-			SELECT
+			SELECT /* SQL_OPTIMA */  
 				objtype,
 				usecounts,
 				size_in_bytes
 			FROM sys.dm_exec_cached_plans WITH (NOLOCK)
 		),
 		agg AS (
-			SELECT
+			SELECT /* SQL_OPTIMA */  
 				SUM(size_in_bytes) / 1048576.0 AS total_cache_mb,
 				SUM(CASE WHEN usecounts = 1 THEN size_in_bytes ELSE 0 END) / 1048576.0 AS single_use_cache_mb,
 				SUM(CASE WHEN objtype = 'Adhoc' THEN size_in_bytes ELSE 0 END) / 1048576.0 AS adhoc_cache_mb,
@@ -42,7 +42,7 @@ func (c *MssqlRepository) CollectPlanCacheHealth(db *sql.DB) (map[string]interfa
 				SUM(CASE WHEN objtype = 'Proc' THEN size_in_bytes ELSE 0 END) / 1048576.0 AS proc_cache_mb
 			FROM plans
 		)
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			ISNULL(total_cache_mb, 0),
 			ISNULL(single_use_cache_mb, 0),
 			CASE WHEN ISNULL(total_cache_mb,0) > 0 THEN (ISNULL(single_use_cache_mb,0) / total_cache_mb) * 100.0 ELSE 0 END,
@@ -56,12 +56,12 @@ func (c *MssqlRepository) CollectPlanCacheHealth(db *sql.DB) (map[string]interfa
 		return nil, err
 	}
 	return map[string]interface{}{
-		"total_cache_mb":        total,
-		"single_use_cache_mb":   single,
-		"single_use_cache_pct":  pct,
-		"adhoc_cache_mb":        adhoc,
-		"prepared_cache_mb":     prep,
-		"proc_cache_mb":         proc,
+		"total_cache_mb":       total,
+		"single_use_cache_mb":  single,
+		"single_use_cache_pct": pct,
+		"adhoc_cache_mb":       adhoc,
+		"prepared_cache_mb":    prep,
+		"proc_cache_mb":        proc,
 	}, nil
 }
 
@@ -77,7 +77,7 @@ func (c *MssqlRepository) FetchMemoryGrantWaiters(instanceName string) ([]map[st
 func (c *MssqlRepository) CollectMemoryGrantWaiters(db *sql.DB) ([]map[string]interface{}, error) {
 	// User databases only (database_id > 4), user sessions, exclude typical system sp_/xp_ batches.
 	q := `
-		SELECT TOP 20
+		SELECT /* SQL_OPTIMA */   TOP 20
 			mg.session_id,
 			mg.request_id,
 			DB_NAME(ISNULL(r.database_id, s.database_id)) AS database_name,
@@ -122,16 +122,16 @@ func (c *MssqlRepository) CollectMemoryGrantWaiters(db *sql.DB) ([]map[string]in
 			continue
 		}
 		out = append(out, map[string]interface{}{
-			"session_id":           sid,
-			"request_id":           rid,
-			"database_name":        dbName,
-			"login_name":           login,
-			"requested_memory_kb":  reqKB,
-			"granted_memory_kb":    grKB,
-			"required_memory_kb":   needKB,
-			"wait_time_ms":         waitMs,
-			"dop":                  dop,
-			"query_text":           qtxt,
+			"session_id":          sid,
+			"request_id":          rid,
+			"database_name":       dbName,
+			"login_name":          login,
+			"requested_memory_kb": reqKB,
+			"granted_memory_kb":   grKB,
+			"required_memory_kb":  needKB,
+			"wait_time_ms":        waitMs,
+			"dop":                 dop,
+			"query_text":          qtxt,
 		})
 	}
 	return out, rows.Err()
@@ -151,14 +151,14 @@ func (c *MssqlRepository) CollectTempdbTopConsumers(db *sql.DB) ([]map[string]in
 	// Page counts are 8KB pages -> MB = pages*8/1024.
 	q := `
 		WITH usage AS (
-			SELECT
+			SELECT /* SQL_OPTIMA */  
 				tsu.session_id,
 				SUM(tsu.user_objects_alloc_page_count - tsu.user_objects_dealloc_page_count) AS user_pages,
 				SUM(tsu.internal_objects_alloc_page_count - tsu.internal_objects_dealloc_page_count) AS internal_pages
 			FROM tempdb.sys.dm_db_task_space_usage tsu WITH (NOLOCK)
 			GROUP BY tsu.session_id
 		)
-		SELECT TOP 20
+		SELECT /* SQL_OPTIMA */   TOP 20
 			u.session_id,
 			DB_NAME(r.database_id) AS database_name,
 			s.login_name,
@@ -219,4 +219,3 @@ func (c *MssqlRepository) CollectTempdbTopConsumers(db *sql.DB) ([]map[string]in
 	}
 	return out, rows.Err()
 }
-

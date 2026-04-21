@@ -19,9 +19,22 @@ import {
     showQueryModal,
     boot
 } from './modules/app-client.js';
+import { loadTemplate, escapeHtml, truncate } from './modules/ui-manager.js';
+import { AuthManager } from './modules/auth-manager.js';
+import { ViewLoader } from './modules/view-loader.js';
+import { GlobalEstate } from './modules/global-estate.js';
+import { PgOverview } from './modules/pg-overview.js';
 
 window.appState = appState;
 window.apiClient = apiClient;
+window.AuthManager = AuthManager;
+window._auth = AuthManager;
+window.loadTemplate = loadTemplate;
+window.escapeHtml = escapeHtml;
+window.truncate = truncate;
+window.ViewLoader = ViewLoader;
+window.GlobalEstate = GlobalEstate;
+window.PgOverview = PgOverview;
 window.setDashboardRefresh = setDashboardRefresh;
 window.setJobsRefresh = setJobsRefresh;
 window.showQueryModal = showQueryModal;

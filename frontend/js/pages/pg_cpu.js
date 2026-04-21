@@ -76,6 +76,33 @@ async function initPgCpu() {
     renderPgCpuLineChart(points);
     renderPgCpuDonut(dbRows);
     renderPgCpuTopQueries(topQueries);
+
+    // Add OS Collector Status Note
+    const osConfigured = sat.os_collector_configured;
+    const pageTitle = document.querySelector('.pg-cpu-page .page-title');
+    if (pageTitle) {
+        let statusNote = document.getElementById('os-collector-status-note');
+        if (!statusNote) {
+            statusNote = document.createElement('div');
+            statusNote.id = 'os-collector-status-note';
+            statusNote.style.fontSize = '0.65rem';
+            statusNote.style.padding = '2px 8px';
+            statusNote.style.borderRadius = '4px';
+            statusNote.style.marginTop = '0.4rem';
+            statusNote.style.display = 'inline-block';
+            pageTitle.querySelector('div').appendChild(statusNote);
+        }
+        
+        if (osConfigured) {
+            statusNote.innerHTML = '<i class="fa-solid fa-circle-check text-success"></i> OS Collector Active';
+            statusNote.style.background = 'rgba(34, 197, 94, 0.1)';
+            statusNote.style.color = 'var(--success)';
+        } else {
+            statusNote.innerHTML = '<i class="fa-solid fa-circle-exclamation text-warning"></i> OS Collector not configured. OS level metrics unavailable.';
+            statusNote.style.background = 'rgba(245, 158, 11, 0.1)';
+            statusNote.style.color = 'var(--warning)';
+        }
+    }
 }
 
 function pgCpuShowQueryModal(row) {
@@ -114,6 +141,7 @@ function pgCpuShowQueryModal(row) {
 }
 
 function updatePgCpuKpis(sat) {
+    const osConfigured = sat.os_collector_configured;
     const host = pgCpuNum(sat.host_cpu_percent);
     const pg = pgCpuNum(sat.postgres_cpu_percent);
     const satPct = pgCpuNum(sat.cpu_saturation_pct);
@@ -129,26 +157,41 @@ function updatePgCpuKpis(sat) {
     const loadEl = document.getElementById('kpi-load-cores');
     const badge = document.getElementById('cpu-saturation-badge');
 
-    if (hostEl) hostEl.textContent = host > 0 ? host.toFixed(1) + '%' : 'N/A';
-    if (pgEl) pgEl.textContent = pg > 0 ? pg.toFixed(1) + '%' : 'N/A';
+    if (hostEl) {
+        if (osConfigured) {
+            hostEl.textContent = host > 0 ? host.toFixed(1) + '%' : '0.0%';
+        } else {
+            hostEl.textContent = 'N/A';
+        }
+    }
+    if (pgEl) pgEl.textContent = pg > 0 ? pg.toFixed(1) + '%' : '0.0%';
     if (connEl) connEl.textContent = String(active);
     if (perEl) perEl.textContent = perConn > 0 ? perConn.toFixed(2) + '%' : (active > 0 ? '0%' : 'N/A');
 
     if (loadEl) {
-        loadEl.textContent = (load1 > 0 || cores > 0) ? `${load1.toFixed(2)} / ${cores}` : 'N/A';
+        if (osConfigured) {
+            loadEl.textContent = `${load1.toFixed(2)} / ${cores}`;
+        } else {
+            loadEl.textContent = 'N/A';
+        }
     }
 
     if (badge) {
-        badge.textContent = satPct > 0 ? satPct.toFixed(0) + '%' : 'N/A';
-        badge.classList.remove('saturation-badge--danger', 'saturation-badge--warn', 'saturation-badge--ok', 'saturation-badge--muted');
-        if (satPct <= 0 && cores === 0) {
+        if (!osConfigured) {
+            badge.textContent = 'N/A';
             badge.classList.add('saturation-badge--muted');
-        } else if (satPct > 100) {
-            badge.classList.add('saturation-badge--danger');
-        } else if (satPct > 80) {
-            badge.classList.add('saturation-badge--warn');
         } else {
-            badge.classList.add('saturation-badge--ok');
+            badge.textContent = satPct > 0 ? satPct.toFixed(0) + '%' : '0%';
+            badge.classList.remove('saturation-badge--danger', 'saturation-badge--warn', 'saturation-badge--ok', 'saturation-badge--muted');
+            if (satPct <= 0 && cores === 0) {
+                badge.classList.add('saturation-badge--muted');
+            } else if (satPct > 100) {
+                badge.classList.add('saturation-badge--danger');
+            } else if (satPct > 80) {
+                badge.classList.add('saturation-badge--warn');
+            } else {
+                badge.classList.add('saturation-badge--ok');
+            }
         }
     }
 }

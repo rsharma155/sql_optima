@@ -3,7 +3,7 @@
 -- Target Table: sqlserver_query_store_stats (TimescaleDB)
 -- Description: Fetches top 50 queries from Query Store for the last completed 15-minute interval
 
-SELECT TOP 50
+SELECT /* SQL_OPTIMA */   TOP 50
     CONVERT(VARCHAR(64), q.query_hash, 1) AS query_hash,
     LEFT(qt.query_sql_text, 500) AS query_text,
     ISNULL(rs.count_executions, 0) AS executions,
@@ -17,6 +17,7 @@ INNER JOIN sys.query_store_plan p ON q.query_id = p.query_id
 INNER JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
 INNER JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
 WHERE rsi.end_time >= DATEADD(minute, -16, GETUTCDATE())
+  AND qt.query_sql_text NOT LIKE '%/* SQL_OPTIMA */%'
   AND q.is_internal_query = 0
   AND ISNULL(rs.count_executions, 0) > 0
 ORDER BY (rs.avg_cpu_time * rs.count_executions) DESC;

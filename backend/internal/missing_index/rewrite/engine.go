@@ -268,4 +268,3 @@ func sortRulesByPriority(rules []Rule) {
 		}
 	}
 }
-

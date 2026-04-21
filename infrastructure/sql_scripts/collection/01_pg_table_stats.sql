@@ -3,7 +3,7 @@
 -- Target Table: N/A (table storage analysis)
 -- Description: Returns table statistics including size, bloat, and vacuum info from pg_stat_user_tables
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     schemaname,
     tablename,
     pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as total_size,

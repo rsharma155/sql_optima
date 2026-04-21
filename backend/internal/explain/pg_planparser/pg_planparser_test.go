@@ -79,4 +79,3 @@ func TestFlattenPlan_DerivedFields(t *testing.T) {
 		t.Fatalf("expected sort method")
 	}
 }
-

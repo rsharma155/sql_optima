@@ -3,7 +3,7 @@
 -- Target Table: N/A (alerting)
 -- Description: Checks for tables with high dead tuple counts from pg_stat_user_tables
 
-SELECT
+SELECT /* SQL_OPTIMA */  
     schemaname || '.' || tablename as table_name,
     n_dead_tup as dead_tuples,
     CASE WHEN n_live_tup > 0 THEN (n_dead_tup::float / n_live_tup) * 100 ELSE 0 END as bloat_pct

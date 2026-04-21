@@ -287,6 +287,10 @@ func (h *SetupHandlers) PostBootstrapAdmin(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Ensure KMS is available — if Vault wasn't ready at boot the
+	// server registry would be unusable without this.
+	h.deps.Metrics.EnsureServerKMS(h.deps.JWTSecret)
+
 	if h.deps.Metrics.AuditRepo != nil {
 		actx, acancel := context.WithTimeout(r.Context(), 3*time.Second)
 		_ = h.deps.Metrics.AuditRepo.Log(actx, "SETUP_ADMIN_CREATED", "", created.Username, clientIP(r), map[string]interface{}{"user_id": created.UserID})

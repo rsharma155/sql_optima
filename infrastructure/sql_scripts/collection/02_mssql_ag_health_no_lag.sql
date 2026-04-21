@@ -3,7 +3,7 @@
 -- Target Table: sqlserver_ag_health (TimescaleDB)
 -- Description: Fetches AG health metrics without secondary_lag_seconds (pre-2016 SP1)
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     ag.name AS ag_name,
     ar.replica_server_name,
     COALESCE(DB_NAME(dbs.database_id), 'N/A') AS database_name,

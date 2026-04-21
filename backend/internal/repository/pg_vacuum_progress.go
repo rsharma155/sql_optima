@@ -14,19 +14,19 @@ import (
 )
 
 type PgVacuumProgressRow struct {
-	CaptureTimestamp  time.Time `json:"capture_timestamp"`
-	PID               int64     `json:"pid"`
-	DatabaseName      string    `json:"database_name,omitempty"`
-	UserName          string    `json:"user_name,omitempty"`
-	RelationName      string    `json:"relation_name,omitempty"`
-	Phase             string    `json:"phase,omitempty"`
-	HeapBlksTotal     int64     `json:"heap_blks_total"`
-	HeapBlksScanned   int64     `json:"heap_blks_scanned"`
-	HeapBlksVacuumed  int64     `json:"heap_blks_vacuumed"`
-	IndexVacuumCount  int64     `json:"index_vacuum_count"`
-	MaxDeadTuples     int64     `json:"max_dead_tuples"`
-	NumDeadTuples     int64     `json:"num_dead_tuples"`
-	ProgressPct       float64   `json:"progress_pct"`
+	CaptureTimestamp time.Time `json:"capture_timestamp"`
+	PID              int64     `json:"pid"`
+	DatabaseName     string    `json:"database_name,omitempty"`
+	UserName         string    `json:"user_name,omitempty"`
+	RelationName     string    `json:"relation_name,omitempty"`
+	Phase            string    `json:"phase,omitempty"`
+	HeapBlksTotal    int64     `json:"heap_blks_total"`
+	HeapBlksScanned  int64     `json:"heap_blks_scanned"`
+	HeapBlksVacuumed int64     `json:"heap_blks_vacuumed"`
+	IndexVacuumCount int64     `json:"index_vacuum_count"`
+	MaxDeadTuples    int64     `json:"max_dead_tuples"`
+	NumDeadTuples    int64     `json:"num_dead_tuples"`
+	ProgressPct      float64   `json:"progress_pct"`
 }
 
 func vacuumProgressPct(total, scanned int64) float64 {
@@ -60,7 +60,7 @@ func (c *PgRepository) GetVacuumProgress(instanceName string) ([]PgVacuumProgres
 
 	// pg_stat_progress_vacuum requires privileges; use left joins for names.
 	q := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			now() AT TIME ZONE 'UTC' AS capture_timestamp,
 			p.pid,
 			COALESCE(a.datname,'') AS database_name,
@@ -109,4 +109,3 @@ func (c *PgRepository) GetVacuumProgress(instanceName string) ([]PgVacuumProgres
 	}
 	return out, rows.Err()
 }
-

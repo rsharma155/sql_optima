@@ -3,7 +3,7 @@
 -- Target Table: sqlserver_connection_history (TimescaleDB)
 -- Description: Groups active connections by login name and database
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     ISNULL(s.login_name, 'Unknown'),
     ISNULL(DB_NAME(s.database_id), 'Unknown'),
     COUNT(s.session_id) as active_connections,

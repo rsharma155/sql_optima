@@ -49,7 +49,12 @@ func (tl *TimescaleLogger) LogAGHealth(ctx context.Context, instanceName string,
 	return nil
 }
 
-func (tl *TimescaleLogger) GetAGHealthSummary(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetAGHealthSummary(ctx context.Context, instanceName string, from, to string, limit int) ([]map[string]interface{}, error) {
+	start, end, err := parseTimeRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+
 	if limit <= 0 {
 		limit = 50
 	}
@@ -69,13 +74,13 @@ func (tl *TimescaleLogger) GetAGHealthSummary(ctx context.Context, instanceName 
 			COUNT(*) AS sample_count
 		FROM sqlserver_ag_health
 		WHERE server_instance_name = $1
-		  AND capture_timestamp >= NOW() - INTERVAL '1 hour'
+		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		GROUP BY ag_name, replica_server_name, database_name, replica_role, synchronization_state, is_primary_replica
 		ORDER BY MAX(log_send_queue_kb) DESC, MAX(redo_queue_kb) DESC
-		LIMIT $2
+		LIMIT $4
 	`
 
-	rows, err := tl.pool.Query(ctx, query, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, query, instanceName, start, end, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +113,52 @@ func (tl *TimescaleLogger) GetAGHealthSummary(ctx context.Context, instanceName 
 		})
 	}
 	return results, rows.Err()
+}
+
+func (tl *TimescaleLogger) GetAGHealthTimeSeries(ctx context.Context, instanceName string, from, to string) ([]map[string]interface{}, error) {
+	start, end, err := parseTimeRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	query := `
+		SELECT 
+			time_bucket('5 minutes', capture_timestamp) AS bucket,
+			replica_role,
+			synchronization_state,
+			AVG(log_send_queue_kb) AS avg_log_send_queue_kb,
+			AVG(redo_queue_kb) AS avg_redo_queue_kb,
+			MAX(secondary_lag_seconds) AS max_lag_sec
+		FROM sqlserver_ag_health
+		WHERE server_instance_name = $1
+		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
+		GROUP BY bucket, replica_role, synchronization_state
+		ORDER BY bucket ASC
+	`
+	rows, err := tl.pool.Query(ctx, query, instanceName, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var bucket time.Time
+		var role, state string
+		var avgLog, avgRedo, maxLag float64
+		if err := rows.Scan(&bucket, &role, &state, &avgLog, &avgRedo, &maxLag); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"timestamp":             bucket,
+			"replica_role":          role,
+			"synchronization_state": state,
+			"avg_log_send_queue_kb": avgLog,
+			"avg_redo_queue_kb":     avgRedo,
+			"max_lag_sec":           maxLag,
+		})
+	}
+	return results, nil
 }
 
 func (tl *TimescaleLogger) LogAGHealthFromMap(ctx context.Context, instanceName string, agStats []map[string]interface{}) error {

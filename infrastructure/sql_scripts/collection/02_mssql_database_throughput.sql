@@ -3,7 +3,7 @@
 -- Target Table: sqlserver_database_throughput (TimescaleDB)
 -- Description: Fetches per-database index usage throughput statistics
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     DB_NAME(s.database_id) AS database_name,
     ISNULL(SUM(s.user_seeks), 0) AS idx_seeks,
     ISNULL(SUM(s.user_scans), 0) AS idx_scans,

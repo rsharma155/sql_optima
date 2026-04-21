@@ -18,4 +18,3 @@ func TestDeadTupleRatioComputationGuard(t *testing.T) {
 		t.Fatalf("expected ~10%%, got %v", got)
 	}
 }
-

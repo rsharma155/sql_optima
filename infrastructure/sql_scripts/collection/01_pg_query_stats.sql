@@ -3,7 +3,7 @@
 -- Target Table: N/A (query performance from pg_stat_statements)
 -- Description: Returns top queries by total execution time from pg_stat_statements
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     queryid,
     LEFT(query, 100) as query,
     calls,
@@ -16,5 +16,6 @@ SELECT
     blk_write_time
 FROM pg_stat_statements 
 WHERE query NOT LIKE '%pg_stat_statements%'
+  AND query NOT LIKE '%/* SQL_OPTIMA */%'
 ORDER BY total_exec_time DESC
 LIMIT 50;

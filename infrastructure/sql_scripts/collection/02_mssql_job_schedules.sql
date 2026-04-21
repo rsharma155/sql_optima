@@ -3,7 +3,7 @@
 -- Target Table: N/A (job scheduling)
 -- Description: Returns next run schedules for all jobs
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     ISNULL(j.name, 'Unknown'),
     ISNULL(s.next_run_date, 0),
     ISNULL(s.next_run_time, 0)

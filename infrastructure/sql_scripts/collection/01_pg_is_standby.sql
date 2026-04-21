@@ -3,4 +3,4 @@
 -- Target Table: N/A (checks replication role)
 -- Description: Checks if this instance is a standby using pg_is_in_recovery()
 
-SELECT pg_is_in_recovery();
+SELECT /* SQL_OPTIMA */   pg_is_in_recovery();

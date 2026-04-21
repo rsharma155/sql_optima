@@ -27,15 +27,15 @@ const (
 )
 
 type Finding struct {
-	Code       string   `json:"code"`
-	Severity   Severity `json:"severity"`
-	Title      string   `json:"title"`
-	Message    string   `json:"message"`
-	NodeID     int      `json:"node_id,omitempty"`
-	NodeType   string   `json:"node_type,omitempty"`
-	Relation   string   `json:"relation_name,omitempty"`
+	Code       string         `json:"code"`
+	Severity   Severity       `json:"severity"`
+	Title      string         `json:"title"`
+	Message    string         `json:"message"`
+	NodeID     int            `json:"node_id,omitempty"`
+	NodeType   string         `json:"node_type,omitempty"`
+	Relation   string         `json:"relation_name,omitempty"`
 	Evidence   map[string]any `json:"evidence,omitempty"`
-	Suggestion string   `json:"suggestion,omitempty"`
+	Suggestion string         `json:"suggestion,omitempty"`
 }
 
 type Options struct {
@@ -126,14 +126,14 @@ func DetectFindings(nodes []pg_planparser.FlatNode, totalExecMs float64, cardina
 		// Sequential scan on large table
 		if strings.Contains(nt, "seq scan") && n.RowsProcessed > opts.LargeSeqScanRowThreshold {
 			out = append(out, Finding{
-				Code:     "large_seq_scan",
-				Severity: SeverityHigh,
-				Title:    "Large sequential scan detected",
-				Message:  "Sequential scan processes a large number of rows.",
-				NodeID:   n.NodeID,
-				NodeType: n.NodeType,
-				Relation: n.RelationName,
-				Evidence: map[string]any{"rows_processed": n.RowsProcessed},
+				Code:       "large_seq_scan",
+				Severity:   SeverityHigh,
+				Title:      "Large sequential scan detected",
+				Message:    "Sequential scan processes a large number of rows.",
+				NodeID:     n.NodeID,
+				NodeType:   n.NodeType,
+				Relation:   n.RelationName,
+				Evidence:   map[string]any{"rows_processed": n.RowsProcessed},
 				Suggestion: "Consider adding a selective index for filter/join columns, or reduce scanned rows via predicates/partitioning.",
 			})
 		}
@@ -158,14 +158,14 @@ func DetectFindings(nodes []pg_planparser.FlatNode, totalExecMs float64, cardina
 		// Excessive nested loops
 		if strings.Contains(nt, "nested loop") && n.RowsProcessed > opts.ExcessiveNestedLoopRows {
 			out = append(out, Finding{
-				Code:     "excessive_nested_loop",
-				Severity: SeverityHigh,
-				Title:    "Excessive nested loops",
-				Message:  "Nested Loop processes high row volume; may indicate missing indexes or mis-estimates.",
-				NodeID:   n.NodeID,
-				NodeType: n.NodeType,
-				Relation: n.RelationName,
-				Evidence: map[string]any{"rows_processed": n.RowsProcessed},
+				Code:       "excessive_nested_loop",
+				Severity:   SeverityHigh,
+				Title:      "Excessive nested loops",
+				Message:    "Nested Loop processes high row volume; may indicate missing indexes or mis-estimates.",
+				NodeID:     n.NodeID,
+				NodeType:   n.NodeType,
+				Relation:   n.RelationName,
+				Evidence:   map[string]any{"rows_processed": n.RowsProcessed},
 				Suggestion: "Ensure join keys are indexed and statistics are up to date; consider rewriting to enable Hash/Merge join.",
 			})
 		}
@@ -278,4 +278,3 @@ func round2(x float64) float64 {
 func isFinite(x float64) bool {
 	return !math.IsNaN(x) && !math.IsInf(x, 0)
 }
-

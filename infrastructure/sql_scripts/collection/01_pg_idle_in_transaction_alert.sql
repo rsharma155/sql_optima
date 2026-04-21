@@ -3,7 +3,7 @@
 -- Target Table: N/A (alerting)
 -- Description: Checks for long-running idle-in-transaction sessions from pg_stat_activity
 
-SELECT
+SELECT /* SQL_OPTIMA */  
     pid,
     EXTRACT(EPOCH FROM (now() - xact_start)) / 60 as duration_minutes,
     query

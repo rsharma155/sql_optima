@@ -3,7 +3,7 @@
 -- Target Table: N/A (DBA health observation)
 -- Description: Calculates XID wraparound percentage toward forced read-only mode
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     COALESCE(MAX(age(datfrozenxid)), 0),
     COALESCE((MAX(age(datfrozenxid))::float / NULLIF(current_setting('autovacuum_freeze_max_age')::float, 0)) * 100, 0)
 FROM pg_database 
