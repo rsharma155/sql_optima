@@ -23,15 +23,15 @@ import (
 // It intentionally stores both raw node fields (when available) and derived runtime metrics.
 type FlatNode struct {
 	// Basic metadata
-	NodeID        int    `json:"node_id"`
-	NodeType      string `json:"node_type"`
-	RelationName  string `json:"relation_name,omitempty"`
-	JoinType      string `json:"join_type,omitempty"`
-	ParentNodeID  int    `json:"parent_node_id,omitempty"`
-	DepthLevel    int    `json:"depth_level"`
-	ParallelAware bool   `json:"parallel_aware,omitempty"`
-	WorkersPlanned  int  `json:"workers_planned,omitempty"`
-	WorkersLaunched int  `json:"workers_launched,omitempty"`
+	NodeID          int    `json:"node_id"`
+	NodeType        string `json:"node_type"`
+	RelationName    string `json:"relation_name,omitempty"`
+	JoinType        string `json:"join_type,omitempty"`
+	ParentNodeID    int    `json:"parent_node_id,omitempty"`
+	DepthLevel      int    `json:"depth_level"`
+	ParallelAware   bool   `json:"parallel_aware,omitempty"`
+	WorkersPlanned  int    `json:"workers_planned,omitempty"`
+	WorkersLaunched int    `json:"workers_launched,omitempty"`
 
 	// Cost & timing
 	StartupCost       float64 `json:"startup_cost,omitempty"`
@@ -48,16 +48,16 @@ type FlatNode struct {
 	RowsProcessed     int64   `json:"rows_processed,omitempty"`
 
 	// Memory / disk signals (optional)
-	SortMethod     string `json:"sort_method,omitempty"`
-	SortSpaceUsed  int    `json:"sort_space_used,omitempty"`
-	SortSpaceType  string `json:"sort_space_type,omitempty"`
-	PeakMemoryUsage int   `json:"peak_memory_usage_kb,omitempty"`
-	HashBuckets    int    `json:"hash_buckets,omitempty"`
-	HashBatches    int    `json:"hash_batches,omitempty"`
-	SharedHitBlocks   int `json:"shared_hit_blocks,omitempty"`
-	SharedReadBlocks  int `json:"shared_read_blocks,omitempty"`
-	TempReadBlocks    int `json:"temp_read_blocks,omitempty"`
-	TempWrittenBlocks int `json:"temp_written_blocks,omitempty"`
+	SortMethod        string `json:"sort_method,omitempty"`
+	SortSpaceUsed     int    `json:"sort_space_used,omitempty"`
+	SortSpaceType     string `json:"sort_space_type,omitempty"`
+	PeakMemoryUsage   int    `json:"peak_memory_usage_kb,omitempty"`
+	HashBuckets       int    `json:"hash_buckets,omitempty"`
+	HashBatches       int    `json:"hash_batches,omitempty"`
+	SharedHitBlocks   int    `json:"shared_hit_blocks,omitempty"`
+	SharedReadBlocks  int    `json:"shared_read_blocks,omitempty"`
+	TempReadBlocks    int    `json:"temp_read_blocks,omitempty"`
+	TempWrittenBlocks int    `json:"temp_written_blocks,omitempty"`
 
 	// Conditions (used for index heuristics)
 	JoinCond  string   `json:"join_cond,omitempty"`
@@ -90,13 +90,13 @@ func FlattenPlan(plan *types.Plan) []FlatNode {
 		rowsProcessed := int64(n.ActualRows) * int64(loops)
 
 		fn := FlatNode{
-			NodeID:         n.ID,
-			NodeType:       strings.TrimSpace(n.NodeType),
-			RelationName:   strings.TrimSpace(n.RelationName),
-			JoinType:       strings.TrimSpace(n.JoinType),
-			ParentNodeID:   parentID,
-			DepthLevel:     depth,
-			WorkersPlanned: n.WorkersPlanned,
+			NodeID:          n.ID,
+			NodeType:        strings.TrimSpace(n.NodeType),
+			RelationName:    strings.TrimSpace(n.RelationName),
+			JoinType:        strings.TrimSpace(n.JoinType),
+			ParentNodeID:    parentID,
+			DepthLevel:      depth,
+			WorkersPlanned:  n.WorkersPlanned,
 			WorkersLaunched: n.WorkersLaunched,
 
 			StartupCost:       n.StartupCost,
@@ -111,17 +111,17 @@ func FlattenPlan(plan *types.Plan) []FlatNode {
 			NodeExecutionTime: nodeExec,
 			RowsProcessed:     rowsProcessed,
 
-			SortMethod:      strings.TrimSpace(n.SortMethod),
-			SortSpaceUsed:   n.SortSpaceUsed,
-			SortSpaceType:   strings.TrimSpace(n.SortSpaceType),
-			HashBuckets:     n.Buckets,
-			HashBatches:     n.Batches,
-			Filter:          strings.TrimSpace(n.Filter),
-			IndexCond:       strings.TrimSpace(n.IndexCond),
-			HashCond:        strings.TrimSpace(n.HashCond),
-			MergeCond:       strings.TrimSpace(n.MergeCond),
-			GroupKey:        append([]string(nil), n.GroupKey...),
-			SortKey:         append([]string(nil), n.SortKey...),
+			SortMethod:    strings.TrimSpace(n.SortMethod),
+			SortSpaceUsed: n.SortSpaceUsed,
+			SortSpaceType: strings.TrimSpace(n.SortSpaceType),
+			HashBuckets:   n.Buckets,
+			HashBatches:   n.Batches,
+			Filter:        strings.TrimSpace(n.Filter),
+			IndexCond:     strings.TrimSpace(n.IndexCond),
+			HashCond:      strings.TrimSpace(n.HashCond),
+			MergeCond:     strings.TrimSpace(n.MergeCond),
+			GroupKey:      append([]string(nil), n.GroupKey...),
+			SortKey:       append([]string(nil), n.SortKey...),
 		}
 		if n.Buffers != nil {
 			fn.SharedHitBlocks = n.Buffers.SharedHit
@@ -270,4 +270,3 @@ func PlanHash(rawPlanJSON []byte) (string, error) {
 	sum := sha256.Sum256(canon)
 	return hex.EncodeToString(sum[:]), nil
 }
-

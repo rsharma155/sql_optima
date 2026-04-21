@@ -16,14 +16,16 @@ type JobSummary struct {
 }
 
 type JobDetail struct {
-	JobName        string `json:"job_name"`
-	Enabled        bool   `json:"enabled"`
-	Owner          string `json:"owner"`
-	CreatedDate    string `json:"created_date"`
-	CurrentStatus  string `json:"current_status"`
-	LastRunDate    int    `json:"last_run_date"`
-	LastRunTime    int    `json:"last_run_time"`
-	LastRunStatus  string `json:"last_run_status"`
+	JobName       string `json:"job_name"`
+	Category      string `json:"category"`
+	Description   string `json:"description"`
+	Enabled       bool   `json:"enabled"`
+	Owner         string `json:"owner"`
+	CreatedDate   string `json:"created_date"`
+	CurrentStatus string `json:"current_status"`
+	LastRunDate   int    `json:"last_run_date"`
+	LastRunTime   int    `json:"last_run_time"`
+	LastRunStatus string `json:"last_run_status"`
 }
 
 type JobSchedule struct {

@@ -164,13 +164,13 @@ func CategoryLabelForNodeType(nodeType string) string {
 // =============================================================================
 
 type CardinalityNode struct {
-	NodeID           int     `json:"node_id"`
-	NodeType         string  `json:"node_type"`
-	RelationName     string  `json:"relation_name,omitempty"`
-	PlanRows         int     `json:"plan_rows,omitempty"`
-	ActualRows       int     `json:"actual_rows,omitempty"`
-	EstimationError  float64 `json:"estimation_error"`
-	Classification   string  `json:"classification"`
+	NodeID          int     `json:"node_id"`
+	NodeType        string  `json:"node_type"`
+	RelationName    string  `json:"relation_name,omitempty"`
+	PlanRows        int     `json:"plan_rows,omitempty"`
+	ActualRows      int     `json:"actual_rows,omitempty"`
+	EstimationError float64 `json:"estimation_error"`
+	Classification  string  `json:"classification"`
 }
 
 type CardinalitySummary struct {
@@ -242,4 +242,3 @@ func severityScore(r float64) float64 {
 	}
 	return 1.0 / r
 }
-

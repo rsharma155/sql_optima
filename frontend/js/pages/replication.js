@@ -12,6 +12,22 @@ window.PgReplicationView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...'};
     const database = window.appState.currentDatabase || 'all';
 
+    const now = new Date();
+    const oneHourAgo = new Date(now.getTime() - 3600000);
+    const pad = n => String(n).padStart(2, '0');
+    const fmtLocal = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+    window.appState.repl = window.appState.repl || {};
+    const state = window.appState.repl;
+    state.fromLocal = state.fromLocal || fmtLocal(oneHourAgo);
+    state.toLocal = state.toLocal || fmtLocal(now);
+
+    const buildUrl = (base) => {
+        const fromIso = new Date(state.fromLocal).toISOString();
+        const toIso = new Date(state.toLocal).toISOString();
+        return `${base}?instance=${encodeURIComponent(inst.name)}&from=${fromIso}&to=${toIso}&limit=500`;
+    };
+
     let replPayload = null;
     let replData = {
         is_primary: false,
@@ -27,10 +43,10 @@ window.PgReplicationView = async function() {
     let slots = [];
     try {
         const [replResp, histResp, lagResp, slotsResp] = await Promise.all([
-            window.apiClient.authenticatedFetch(`/api/postgres/replication?instance=${encodeURIComponent(inst.name)}`),
-            window.apiClient.authenticatedFetch(`/api/postgres/control-center/history?instance=${encodeURIComponent(inst.name)}&limit=180`),
-            window.apiClient.authenticatedFetch(`/api/postgres/replication-lag/history?instance=${encodeURIComponent(inst.name)}&limit=180`),
-            window.apiClient.authenticatedFetch(`/api/postgres/replication-slots?instance=${encodeURIComponent(inst.name)}`),
+            window.apiClient.authenticatedFetch(buildUrl('/api/postgres/replication')),
+            window.apiClient.authenticatedFetch(buildUrl('/api/postgres/control-center/history')),
+            window.apiClient.authenticatedFetch(buildUrl('/api/postgres/replication-lag/history')),
+            window.apiClient.authenticatedFetch(buildUrl('/api/postgres/replication-slots')),
         ]);
         if (replResp.ok) {
             const contentType = replResp.headers.get('content-type') || '';
@@ -79,14 +95,21 @@ window.PgReplicationView = async function() {
         <div class="page-view active dashboard-sky-theme pg-replication-page">
             <div class="page-title flex-between dashboard-page-title-compact">
                 <div class="dashboard-title-line" style="flex:1; min-width:0;">
-                    <h1>Replication, HA &amp; Cluster Health</h1>
+                    <h1>Replication &amp; HA</h1>
                     <span class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Database: <span class="text-accent">${window.escapeHtml(database)}</span></span>
                 </div>
-                <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
+                <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.6rem; flex-wrap:wrap; justify-content:flex-end;">
+                    <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; border: 1px solid var(--border-color);">
+                        <label class="text-muted" style="margin:0;">from:</label>
+                        <input type="datetime-local" id="replFrom" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; width:10.5rem;" value="${state.fromLocal}" />
+                        <label class="text-muted" style="margin:0;">to:</label>
+                        <input type="datetime-local" id="replTo" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; width:10.5rem;" value="${state.toLocal}" />
+                        <button type="button" class="btn btn-xs btn-accent" id="replApply" style="padding:1px 6px;"><i class="fa-solid fa-filter"></i> Apply</button>
+                    </div>
                     <div id="pgReplStatusStrip"></div>
                     <span class="badge badge-outline" style="font-size:0.65rem;">Mode: ${window.escapeHtml(haLabel)}</span>
                     <button class="btn btn-sm btn-outline" data-action="navigate-back"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgReplicationView"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button class="btn btn-sm btn-outline text-accent" id="replRefreshBtn"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>
 
@@ -388,4 +411,16 @@ window.PgReplicationView = async function() {
                 </div>`;
         })
         .catch(() => {});
+
+    // Bind events
+    document.getElementById('replApply').onclick = () => {
+        state.fromLocal = document.getElementById('replFrom').value;
+        state.toLocal = document.getElementById('replTo').value;
+        window.PgReplicationView();
+    };
+    document.getElementById('replRefreshBtn').onclick = () => {
+        state.fromLocal = null; // reset to default 1h
+        state.toLocal = null;
+        window.PgReplicationView();
+    };
 }

@@ -35,6 +35,102 @@ func mssqlPreferLiveSource(r *http.Request) bool {
 	return strings.EqualFold(r.URL.Query().Get("source"), "live")
 }
 
+// DashboardTimeSeries returns historical risk health snapshots for a time window.
+func (h *MssqlHandlers) DashboardTimeSeries(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	if instance == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name required"})
+		return
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	now := time.Now().UTC()
+	from := now.Add(-1 * time.Hour)
+	to := now
+
+	if fromStr != "" {
+		if t, err := time.Parse(time.RFC3339, fromStr); err == nil {
+			from = t.UTC()
+		}
+	}
+	if toStr != "" {
+		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
+			to = t.UTC()
+		}
+	}
+
+	history, err := h.metricsSvc.GetSQLServerRiskHealthHistory(r.Context(), instance, from, to)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance": instance,
+		"from":     from.Format(time.RFC3339),
+		"to":       to.Format(time.RFC3339),
+		"series":   history,
+	})
+}
+
+// TableDrilldown returns a comprehensive analytical package for a specific table (SQL Server).
+func (h *MssqlHandlers) TableDrilldown(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	engine := r.URL.Query().Get("engine")
+	instance := r.URL.Query().Get("instance")
+	db := r.URL.Query().Get("db")
+	schema := r.URL.Query().Get("schema")
+	table := r.URL.Query().Get("table")
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
+	if instance == "" || db == "" || table == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "instance, db, and table are required"})
+		return
+	}
+
+	// Default to sqlserver if engine not provided
+	if engine == "" {
+		engine = "sqlserver"
+	}
+
+	// Default 24h range if missing
+	if from == "" || to == "" {
+		end := time.Now().UTC()
+		start := end.Add(-24 * time.Hour)
+		from = start.Format(time.RFC3339)
+		to = end.Format(time.RFC3339)
+	}
+
+	// 1. Table Growth History
+	growth, err := h.metricsSvc.GetTableSizeHistory(r.Context(), engine, instance, from, to, db, schema, table)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "growth: " + err.Error()})
+		return
+	}
+
+	// 2. Index Usage History
+	indices, _ := h.metricsSvc.GetIndexUsageHistory(r.Context(), engine, instance, from, to, db, schema, table)
+
+	// 3. Fragmentation History
+	frag, _ := h.metricsSvc.GetIndexFragmentationHistory(r.Context(), engine, instance, from, to, db, schema, table)
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance":      instance,
+		"database":      db,
+		"table":         table,
+		"growth_series": growth,
+		"index_usage":   indices,
+		"fragmentation": frag,
+	})
+}
+
 func (h *MssqlHandlers) Overview(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
@@ -235,9 +331,12 @@ func (h *MssqlHandlers) Jobs(w http.ResponseWriter, r *http.Request) {
 	preferLive := mssqlPreferLiveSource(r)
 	ctx := r.Context()
 
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
 	// Timescale-first: reconstruct job view from hot storage.
 	if !preferLive && h.metricsSvc.IsTimescaleConnected() {
-		jobData, err := h.metricsSvc.GetJobsFromTimescale(ctx, instance)
+		jobData, err := h.metricsSvc.GetJobsFromTimescale(ctx, instance, from, to)
 		if err == nil && jobData != nil {
 			w.Header().Set("X-Data-Source", "timescale")
 			json.NewEncoder(w).Encode(jobData)
@@ -508,6 +607,52 @@ func (h *MssqlHandlers) AGHealth(w http.ResponseWriter, r *http.Request) {
 		"ag_health":    stats,
 		"ag_stats":     stats,
 	})
+}
+
+func (h *MssqlHandlers) AGHealthTimeSeries(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
+	if instance == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance required"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if !h.metricsSvc.IsTimescaleConnected() {
+		json.NewEncoder(w).Encode(map[string]interface{}{"history": []any{}})
+		return
+	}
+
+	history, err := h.metricsSvc.GetTimescaleDBLogger().GetAGHealthTimeSeries(r.Context(), instance, from, to)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"history": history})
+}
+
+func (h *MssqlHandlers) ReplicationStatus(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	if instance == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance required"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	stats, err := h.metricsSvc.MsRepo.FetchReplicationStatus(instance)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"replication": stats})
 }
 
 func (h *MssqlHandlers) DBThroughput(w http.ResponseWriter, r *http.Request) {

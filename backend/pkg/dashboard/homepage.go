@@ -21,12 +21,12 @@ const (
 // HealthInputs are the raw signals used to compute health score.
 // All pointer fields are optional; nil means "unknown / not collected".
 type HealthInputs struct {
-	BlockingSessions     *int
-	MaxLogUsedPercent    *float64
-	TempdbUsedPercent    *float64
-	MemoryGrantsPending  *int
-	FailedLoginsLast5Min *int
-	PLE                 *float64
+	BlockingSessions       *int
+	MaxLogUsedPercent      *float64
+	TempdbUsedPercent      *float64
+	MemoryGrantsPending    *int
+	FailedLoginsLast5Min   *int
+	PLE                    *float64
 	DominantWaitIsWriteLog *bool
 }
 
@@ -92,11 +92,10 @@ type HomepageV2 struct {
 	Timestamp    string    `json:"timestamp"`
 	GeneratedAt  time.Time `json:"generated_at"`
 
-	HealthRisk        map[string]any `json:"health_risk"`
-	WorkloadCapacity  map[string]any `json:"workload_capacity"`
-	RootCause         map[string]any `json:"root_cause"`
-	MemoryStorage     map[string]any `json:"memory_storage_internals"`
-	LiveDiagnostics   map[string]any `json:"live_diagnostics"`
-	Compat            map[string]any `json:"compat,omitempty"` // optional: legacy fields for gradual frontend migration
+	HealthRisk       map[string]any `json:"health_risk"`
+	WorkloadCapacity map[string]any `json:"workload_capacity"`
+	RootCause        map[string]any `json:"root_cause"`
+	MemoryStorage    map[string]any `json:"memory_storage_internals"`
+	LiveDiagnostics  map[string]any `json:"live_diagnostics"`
+	Compat           map[string]any `json:"compat,omitempty"` // optional: legacy fields for gradual frontend migration
 }
-

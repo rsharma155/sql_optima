@@ -1,7 +1,8 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
 // Purpose: Optional Linux host probes for PostgreSQL CPU dashboard (host vs. postgres process CPU, load, cores).
-//          Intended for co-located collectors; set SQL_OPTIMA_PG_COLLECT_HOST_CPU=1 to enable.
+//
+//	Intended for co-located collectors; set SQL_OPTIMA_PG_COLLECT_HOST_CPU=1 to enable.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma

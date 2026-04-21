@@ -53,11 +53,11 @@ window.PgAutovacuumView = async function PgAutovacuumView() {
 
             <!-- Tab Nav -->
             <div class="tabs-container">
-                <button class="tab-btn active" data-tab="bloat"><i class="fa-solid fa-database" style="margin-right:.35rem;opacity:.75;"></i>Table Bloat<span class="tab-badge" id="tabBadge-bloat">…</span></button>
-                <button class="tab-btn" data-tab="idle"><i class="fa-solid fa-hourglass-half" style="margin-right:.35rem;opacity:.75;"></i>Idle In Transaction<span class="tab-badge" id="tabBadge-idle">…</span></button>
+                <button class="tab-btn active" data-tab="bloat"><i class="fa-solid fa-database" style="margin-right:.35rem;opacity:.75;"></i>Table Bloat<span class="tab-badge" id="tabBadge-bloat" style="display:none;"></span></button>
+                <button class="tab-btn" data-tab="idle"><i class="fa-solid fa-hourglass-half" style="margin-right:.35rem;opacity:.75;"></i>Idle In Transaction<span class="tab-badge" id="tabBadge-idle" style="display:none;"></span></button>
                 <button class="tab-btn" data-tab="xid"><i class="fa-solid fa-rotate" style="margin-right:.35rem;opacity:.75;"></i>XID Wraparound Risk</button>
-                <button class="tab-btn" data-tab="longtxn"><i class="fa-solid fa-clock" style="margin-right:.35rem;opacity:.75;"></i>Long-Running Transactions<span class="tab-badge" id="tabBadge-longtxn">…</span></button>
-                <button class="tab-btn" data-tab="idxbloat"><i class="fa-solid fa-layer-group" style="margin-right:.35rem;opacity:.75;"></i>Index Bloat<span class="tab-badge" id="tabBadge-idxbloat">…</span></button>
+                <button class="tab-btn" data-tab="longtxn"><i class="fa-solid fa-clock" style="margin-right:.35rem;opacity:.75;"></i>Long-Running Transactions<span class="tab-badge" id="tabBadge-longtxn" style="display:none;"></span></button>
+                <button class="tab-btn" data-tab="idxbloat"><i class="fa-solid fa-layer-group" style="margin-right:.35rem;opacity:.75;"></i>Index Bloat<span class="tab-badge" id="tabBadge-idxbloat" style="display:none;"></span></button>
             </div>
 
             <!-- Bloat Tab -->
@@ -71,7 +71,7 @@ window.PgAutovacuumView = async function PgAutovacuumView() {
                         <table class="data-table" style="font-size:0.82rem;">
                             <thead>
                                 <tr>
-                                    <th>Schema</th><th>Table</th><th>Total Size</th>
+                                    <th>Database</th><th>Schema</th><th>Table</th><th>Total Size</th>
                                     <th>Live Tuples</th><th>Dead Tuples</th><th>Dead %</th>
                                     <th>Est. Waste</th><th>Seq Scans</th>
                                     <th>Last Autovacuum</th><th>Vacuum Lag</th><th>Last Vacuum</th>
@@ -79,7 +79,7 @@ window.PgAutovacuumView = async function PgAutovacuumView() {
                                 </tr>
                             </thead>
                             <tbody id="pgBloatTbody">
-                                <tr><td colspan="13" class="text-center text-muted">Loading…</td></tr>
+                                <tr><td colspan="14" class="text-center text-muted">Loading…</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -160,13 +160,13 @@ window.PgAutovacuumView = async function PgAutovacuumView() {
                         <table class="data-table" style="font-size:0.82rem;">
                             <thead>
                                 <tr>
-                                    <th>Schema</th><th>Table</th><th>Index</th>
+                                    <th>Database</th><th>Schema</th><th>Table</th><th>Index</th>
                                     <th>Index Size</th><th>Scans</th>
                                     <th>Unique</th><th>Primary</th><th>Recommendation</th>
                                 </tr>
                             </thead>
                             <tbody id="pgIdxBloatTbody">
-                                <tr><td colspan="8" class="text-center text-muted">Loading…</td></tr>
+                                <tr><td colspan="9" class="text-center text-muted">Loading…</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -203,7 +203,7 @@ window.PgAutovacuumView = async function PgAutovacuumView() {
                 const rows = data.tables || [];
                 meta.textContent = `${rows.length} tables with dead tuples`;
                 if (rows.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="13" class="text-center text-muted">No bloat detected — all tables healthy</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="14" class="text-center text-muted">No bloat detected — all tables healthy</td></tr>`;
                 } else {
                     tbody.innerHTML = rows.map(r => {
                         const deadPctCls = r.dead_pct >= 30 ? 'text-danger' : r.dead_pct >= 10 ? 'text-warning' : '';
@@ -214,6 +214,7 @@ window.PgAutovacuumView = async function PgAutovacuumView() {
                         const vacLagStr = vacLagSec < 0 ? 'Never' : vacLagSec < 3600 ? `${(vacLagSec/60).toFixed(0)}m` : vacLagSec < 86400 ? `${(vacLagSec/3600).toFixed(1)}h` : `${(vacLagSec/86400).toFixed(1)}d`;
                         const vacLagCls = vacLagSec < 0 ? 'text-danger' : vacLagSec > 86400 ? 'text-warning' : '';
                         return `<tr>
+                            <td><span class="qa-badge qa-badge--accent" style="border:none;background:rgba(56,189,248,0.1);">${esc(r.database_name || 'postgres')}</span></td>
                             <td>${esc(r.schema)}</td>
                             <td><strong>${esc(r.table)}</strong></td>
                             <td>${esc(r.total_size || fmtBytes(r.total_bytes))}</td>
@@ -232,7 +233,7 @@ window.PgAutovacuumView = async function PgAutovacuumView() {
                 }
             } else {
                 if (meta) meta.textContent = 'Load error';
-                if (tbody) tbody.innerHTML = `<tr><td colspan="13" class="text-center text-danger">Failed to load bloat data</td></tr>`;
+                if (tbody) tbody.innerHTML = `<tr><td colspan="14" class="text-center text-danger">Failed to load bloat data</td></tr>`;
             }
         } catch (e) { console.error('Bloat render error:', e); }
 
@@ -291,7 +292,6 @@ window.PgAutovacuumView = async function PgAutovacuumView() {
                 if (dbs.length === 0) {
                     body.innerHTML = `<p class="text-muted text-center">No database freeze risk data available</p>`;
                 } else {
-                    const maxAge = Math.max(...dbs.map(d => Number(d.freeze_age || 0)));
                     body.innerHTML = `
                         <div style="max-width:800px;">
                         ${dbs.map(d => {
@@ -385,13 +385,14 @@ window.PgAutovacuumView = async function PgAutovacuumView() {
                 const indexes = data.indexes || [];
                 if (meta) meta.textContent = `${indexes.length} indexes`;
                 if (indexes.length === 0) {
-                    if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">No index data available</td></tr>`;
+                    if (tbody) tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted">No index data available</td></tr>`;
                 } else if (tbody) {
                     tbody.innerHTML = indexes.map(ix => {
                         const recCls = (ix.recommendation || '').startsWith('Unused') ? 'text-danger'
                             : (ix.recommendation || '').startsWith('Large') ? 'text-warning' : 'text-muted';
                         const scansCls = ix.idx_scans === 0 && !ix.is_primary && !ix.is_unique ? 'text-danger' : '';
                         return `<tr>
+                            <td><span class="qa-badge qa-badge--accent" style="border:none;background:rgba(56,189,248,0.1);">${esc(ix.database_name || 'postgres')}</span></td>
                             <td>${esc(ix.schema)}</td>
                             <td>${esc(ix.table)}</td>
                             <td><strong>${esc(ix.index_name)}</strong></td>
@@ -410,18 +411,20 @@ window.PgAutovacuumView = async function PgAutovacuumView() {
 
         // ---- Update tab badges ----
         try {
-            const bloatCount = document.getElementById('pgBloatTbody')?.querySelectorAll('tr:not(.text-muted)').length || 0;
-            const idleCount  = document.getElementById('pgIdleTbody')?.querySelectorAll('tr:not(.text-muted)').length || 0;
-            const longCount  = document.getElementById('pgLongTxnTbody')?.querySelectorAll('tr:not(.text-muted)').length || 0;
-            const idxCount   = document.getElementById('pgIdxBloatTbody')?.querySelectorAll('tr:not(.text-muted)').length || 0;
             const bb = document.getElementById('tabBadge-bloat');
             const bi = document.getElementById('tabBadge-idle');
             const bl = document.getElementById('tabBadge-longtxn');
             const bx = document.getElementById('tabBadge-idxbloat');
-            if (bb) bb.textContent = bloatCount;
-            if (bi) bi.textContent = idleCount;
-            if (bl) bl.textContent = longCount;
-            if (bx) bx.textContent = idxCount;
+            
+            const bloatRows = document.getElementById('pgBloatTbody')?.querySelectorAll('tr:not(.text-muted):not(.text-danger)') || [];
+            const idleRows  = document.getElementById('pgIdleTbody')?.querySelectorAll('tr:not(.text-muted)') || [];
+            const longRows  = document.getElementById('pgLongTxnTbody')?.querySelectorAll('tr:not(.text-muted)') || [];
+            const idxRows   = document.getElementById('pgIdxBloatTbody')?.querySelectorAll('tr:not(.text-muted)') || [];
+
+            if (bb) { bb.textContent = bloatRows.length; bb.style.display = bloatRows.length > 0 ? '' : 'none'; }
+            if (bi) { bi.textContent = idleRows.length; bi.style.display = idleRows.length > 0 ? '' : 'none'; }
+            if (bl) { bl.textContent = longRows.length; bl.style.display = longRows.length > 0 ? '' : 'none'; }
+            if (bx) { bx.textContent = idxRows.length; bx.style.display = idxRows.length > 0 ? '' : 'none'; }
         } catch (_) {}
     };
 

@@ -43,4 +43,3 @@ func TestStorageIndexHealthTimescale_Dashboard_PostgresEngine_Returns503WhenTime
 		t.Fatalf("expected 503, got %d", rr.Code)
 	}
 }
-

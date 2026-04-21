@@ -3,7 +3,7 @@
 -- Target Table: N/A (session monitoring)
 -- Description: Returns active sessions with blocking information from pg_stat_activity
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     pid,
     usename,
     datname,

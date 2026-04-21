@@ -57,7 +57,7 @@ func CollectSQLServerIndexUsage(ctx context.Context, dbq Queryer) ([]SqlServerIn
 			CAST(COALESCE(sz.total_pages, 0) * 8.0 / 1024.0 AS float) AS index_size_mb,
 			CAST(i.is_unique AS bit) AS is_unique,
 			CASE WHEN i.is_primary_key = 1 THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS is_pk,
-			COALESCE(NULLIF(i.fill_factor, 0), 0) AS fillfactor
+			COALESCE(NULLIF(i.fill_factor, 0), 0) AS fill_factor
 		FROM sys.indexes i
 		LEFT JOIN sys.dm_db_index_usage_stats s
 		       ON s.database_id = DB_ID() AND s.object_id = i.object_id AND s.index_id = i.index_id

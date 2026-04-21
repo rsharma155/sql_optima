@@ -3,7 +3,7 @@
 -- Target Table: N/A (best practices audit)
 -- Description: Fetches database-level configuration settings for health audit
 
-SELECT
+SELECT /* SQL_OPTIMA */  
     name AS [Database_Name],
     page_verify_option_desc AS [Page_Verify],
     is_auto_shrink_on AS [Auto_Shrink],

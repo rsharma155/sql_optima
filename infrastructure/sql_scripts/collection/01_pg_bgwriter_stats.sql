@@ -3,7 +3,7 @@
 -- Target Table: postgres_bgwriter_stats (TimescaleDB)
 -- Description: Retrieves full background writer and checkpointer statistics from pg_stat_bgwriter
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     checkpoints_timed,
     checkpoints_req,
     checkpoint_write_time,

@@ -3,7 +3,7 @@
 -- Target Table: sqlserver_top_queries (TimescaleDB)
 -- Description: Captures recent high-CPU queries from plan cache meeting significant criteria
 
-SELECT TOP 20
+SELECT /* SQL_OPTIMA */   TOP 20
     ISNULL(s.login_name, 'System') as login_name,
     ISNULL(s.program_name, 'System') as program_name,
     ISNULL(DB_NAME(CAST(f.value AS INT)), 'Unknown') as database_name,

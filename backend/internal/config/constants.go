@@ -59,7 +59,7 @@ var (
 
 	// Query Store collection interval (every 15 minutes)
 	// This is separate from the main metrics collection
-	QueryStoreCollectionInterval = 15 * time.Minute
+	QueryStoreCollectionInterval = 5 * time.Minute
 
 	// Data retention periods (days)
 	DefaultRetentionDays       = 30

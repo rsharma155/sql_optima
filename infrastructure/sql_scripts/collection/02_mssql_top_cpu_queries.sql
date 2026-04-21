@@ -3,7 +3,7 @@
 -- Target Table: sqlserver_top_queries (TimescaleDB)
 -- Description: Returns top CPU-consuming queries from plan cache with statement-level text extraction
 
-SELECT TOP 20
+SELECT /* SQL_OPTIMA */   TOP 20
     DB_NAME(qt.dbid) AS [Database_Name],
     qs.execution_count AS [Executions],
     qs.total_worker_time / 1000.0 AS [Total_CPU_ms],

@@ -3,7 +3,7 @@
 -- Target Table: N/A (session monitoring)
 -- Description: Returns all currently active queries from pg_stat_activity
 
-SELECT
+SELECT /* SQL_OPTIMA */  
     pid,
     COALESCE(usename::text, '') AS usename,
     COALESCE(datname::text, '') AS datname,

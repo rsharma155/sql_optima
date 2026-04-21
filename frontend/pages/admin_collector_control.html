@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collector Control Center - SQL Optima</title>
+    <link rel="stylesheet" href="/assets/css/styles.css">
+    <style>
+        .config-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .config-table th, .config-table td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        .config-table tr:hover { background: #f9f9f9; }
+        .frequency-input { width: 80px; padding: 5px; border: 1px solid #ddd; border-radius: 4px; background: white; color: black; }
+        .btn-save { padding: 5px 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .btn-save:hover { background: #0056b3; }
+        .module-badge { padding: 2px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; }
+        .module-postgres { background: #e3f2fd; color: #1976d2; }
+        .module-mssql { background: #fbe9e7; color: #d84315; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <div class="header-container">
+                <div class="logo">SQL Optima <span class="badge">Admin</span></div>
+                <nav>
+                    <a href="/pages/overview.html">Dashboard</a>
+                    <a href="/pages/global_estate.html">Global Estate</a>
+                    <a href="/pages/admin_collector_control.html" class="active">Collectors</a>
+                </nav>
+                <div class="user-info">
+                    <span id="username-display">Admin</span>
+                    <button id="logout-btn">Logout</button>
+                </div>
+            </div>
+        </header>
+
+        <main class="container">
+            <div class="page-header">
+                <h1>Collector Control Center</h1>
+                <p>Manage metric collection frequencies across all database engines.</p>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>Collector Frequencies</h2>
+                </div>
+                <div id="loading" class="loading">Loading configurations...</div>
+                <div id="config-container" style="display: none;">
+                    <table class="config-table">
+                        <thead>
+                            <tr>
+                                <th>Collector Name</th>
+                                <th>Module</th>
+                                <th>Frequency (seconds)</th>
+                                <th>Last Updated</th>
+                                <th>Updated By</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="config-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script type="module" src="/js/pages/admin_collector_control_standalone.js"></script>
+</body>
+</html>

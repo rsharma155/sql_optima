@@ -26,4 +26,3 @@ type XeFileTargetState struct {
 	LastFileName       *string
 	LastOffset         *int64
 }
-

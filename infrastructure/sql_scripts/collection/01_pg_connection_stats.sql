@@ -3,7 +3,7 @@
 -- Target Table: postgres_connection_stats (TimescaleDB)
 -- Description: Returns active, idle, and total connection counts from pg_stat_activity
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     COUNT(*) as total,
     COUNT(*) FILTER (WHERE state = 'active') as active,
     COUNT(*) FILTER (WHERE state = 'idle') as idle

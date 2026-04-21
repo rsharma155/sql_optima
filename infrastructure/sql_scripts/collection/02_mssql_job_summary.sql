@@ -3,7 +3,7 @@
 -- Target Table: sqlserver_job_metrics (TimescaleDB)
 -- Description: Gets SQL Agent job summary counts (total, enabled, disabled)
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     COUNT(*) AS TotalJobs,
     SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS EnabledJobs,
     SUM(CASE WHEN enabled = 0 THEN 1 ELSE 0 END) AS DisabledJobs

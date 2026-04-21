@@ -3,7 +3,7 @@
 -- Target Table: N/A (job failure history)
 -- Description: Returns last 100 job step failures with error messages
 
-SELECT TOP 100
+SELECT /* SQL_OPTIMA */   TOP 100
     ISNULL(j.name, 'Unknown'),
     ISNULL(h.step_name, 'Unknown'),
     ISNULL(SUBSTRING(h.message, 1, 300), 'No Trace'),

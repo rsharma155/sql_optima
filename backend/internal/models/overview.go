@@ -14,14 +14,14 @@ type InstanceOverview struct {
 	Timestamp    string `json:"timestamp"`
 
 	// Postgres (from cache + throughput response)
-	DatabaseCount   int     `json:"database_count,omitempty"`
-	LastTps         float64 `json:"last_tps,omitempty"`
-	LastCacheHitPct float64 `json:"last_cache_hit_pct,omitempty"`
-	ActiveConns     int     `json:"active_connections,omitempty"`
-	IdleConns       int     `json:"idle_connections,omitempty"`
-	TotalConns      int     `json:"total_connections,omitempty"`
-	ReplicationLag  float64 `json:"replication_lag_mb,omitempty"`
-	ReplicationStatus string `json:"replication_status,omitempty"`
+	DatabaseCount     int     `json:"database_count,omitempty"`
+	LastTps           float64 `json:"last_tps,omitempty"`
+	LastCacheHitPct   float64 `json:"last_cache_hit_pct,omitempty"`
+	ActiveConns       int     `json:"active_connections,omitempty"`
+	IdleConns         int     `json:"idle_connections,omitempty"`
+	TotalConns        int     `json:"total_connections,omitempty"`
+	ReplicationLag    float64 `json:"replication_lag_mb,omitempty"`
+	ReplicationStatus string  `json:"replication_status,omitempty"`
 
 	// SQL Server (from cached dashboard)
 	AvgCPULoad    float64 `json:"avg_cpu_load,omitempty"`

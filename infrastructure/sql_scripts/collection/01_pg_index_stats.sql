@@ -3,7 +3,7 @@
 -- Target Table: N/A (index usage analysis)
 -- Description: Returns potentially unused indexes (idx_scan = 0) from pg_stat_user_indexes
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     indexrelname,
     tablename,
     pg_size_pretty(pg_relation_size(indexrelid)) as size,

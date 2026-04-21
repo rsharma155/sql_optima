@@ -38,4 +38,3 @@ func TestDetectFindings_DiskSortAndHashSpill(t *testing.T) {
 		t.Fatalf("expected hash_spill finding")
 	}
 }
-

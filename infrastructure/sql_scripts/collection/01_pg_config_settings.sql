@@ -3,7 +3,7 @@
 -- Target Table: N/A (configuration audit)
 -- Description: Returns PostgreSQL configuration settings for key categories from pg_settings
 
-SELECT
+SELECT /* SQL_OPTIMA */  
     name,
     setting,
     unit,

@@ -52,6 +52,8 @@ func sanitizeDBError(err error, dbType string) error {
 	if err == nil {
 		return nil
 	}
+	// Log raw error so operators can inspect via `docker logs api` without exposing to callers.
+	log.Printf("[server-test] connection error (%s): %v", dbType, err)
 	errStr := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(errStr, "no such host") || strings.Contains(errStr, "lookup"):
@@ -61,8 +63,13 @@ func sanitizeDBError(err error, dbType string) error {
 	// Check SSL/TLS BEFORE auth: TLS handshake errors from go-mssqldb can contain
 	// "login" or "password" keywords and would otherwise be misclassified.
 	case strings.Contains(errStr, "ssl") || strings.Contains(errStr, "tls") || strings.Contains(errStr, "certificate") || strings.Contains(errStr, "handshake"):
-		return errors.New("SSL/TLS error - check SSL mode or certificates")
-	case strings.Contains(errStr, "authentication failed") || strings.Contains(errStr, "password") || strings.Contains(errStr, "login failed"):
+		return errors.New("SSL/TLS error - try enabling 'Trust server certificate' or set SSL mode to 'disable'")
+	// "Cannot open database" means the login works but the catalog is inaccessible.
+	// Must be checked before the generic "login failed" case because SQL Server often
+	// appends "The login failed." to that message, which would otherwise be misclassified.
+	case strings.Contains(errStr, "cannot open database") || strings.Contains(errStr, "initial catalog"):
+		return errors.New("cannot open database - enter the exact database name in the 'Initial database' field, or ensure the login has access to 'master'")
+	case strings.Contains(errStr, "authentication failed") || strings.Contains(errStr, "login failed"):
 		return errors.New("authentication failed - check username and password")
 	case strings.Contains(errStr, "timeout"):
 		return errors.New("connection timeout - server may be slow or unreachable")
@@ -215,6 +222,11 @@ func (h *AdminServerHandlers) TestServerDraft(w http.ResponseWriter, r *http.Req
 		Database:               strings.TrimSpace(req.Database),
 		TrustServerCertificate: req.TrustServerCertificate,
 		Actor:                  "",
+	}
+	// For a connection test the display name is not needed — use a placeholder so
+	// Validate() doesn't reject an otherwise valid set of credentials.
+	if strings.TrimSpace(in.Name) == "" {
+		in.Name = "_test"
 	}
 	if err := in.Validate(); err != nil {
 		w.WriteHeader(http.StatusBadRequest)

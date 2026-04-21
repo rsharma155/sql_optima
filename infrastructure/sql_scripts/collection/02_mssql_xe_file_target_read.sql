@@ -3,7 +3,7 @@
 -- Target Table: sql_server_xevents (SQLite)
 -- Description: Reads Extended Events from file target with cursor-based pagination
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     object_name AS event_type,
     CAST(event_data AS XML) AS event_data_xml,
     file_name,

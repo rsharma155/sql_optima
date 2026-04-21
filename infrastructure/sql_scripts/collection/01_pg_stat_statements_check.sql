@@ -3,4 +3,4 @@
 -- Target Table: N/A (extension check)
 -- Description: Checks if pg_stat_statements extension is installed
 
-SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');
+SELECT /* SQL_OPTIMA */   EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');

@@ -3,7 +3,7 @@
 -- Target Table: N/A (blocking hierarchy)
 -- Description: Returns active requests with blocking session details
 
-SELECT
+SELECT /* SQL_OPTIMA */  
     r.session_id as blocked_session_id,
     ISNULL(r.blocking_session_id, 0) as blocking_session_id,
     ISNULL(DB_NAME(r.database_id), 'Unknown') as database_name,

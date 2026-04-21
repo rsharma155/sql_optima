@@ -56,6 +56,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	authH := handlers.NewAuthHandlers(metricsSvc, loginLimiter)
 	adminH := handlers.NewAdminHandlers(metricsSvc)
 	adminServersH := handlers.NewAdminServerHandlers(metricsSvc)
+	adminCollectorH := handlers.NewAdminCollectorHandlers(metricsSvc)
 	widgetAdminH := handlers.NewWidgetAdminHandlers(metricsSvc)
 	mssqlH := handlers.NewMssqlHandlers(metricsSvc, cfg)
 	postgresH := handlers.NewPostgresHandlers(metricsSvc, cfg)
@@ -65,10 +66,14 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	healthH := handlers.NewHealthHandlers(metricsSvc, cfg)
 	dashboardH := handlers.NewDashboardHandlers(metricsSvc, cfg)
 	queryH := handlers.NewQueryHandlers(metricsSvc, cfg)
+	mssqlQAH := handlers.NewMssqlQueryAnalysisHandlers(metricsSvc, cfg)
+	mssqlWQH := handlers.NewMssqlWatchedQueryHandlers(metricsSvc, cfg)
+	osMetricsH := handlers.NewOSMetricsHandler(metricsSvc)
 
 	mon := &monitoringHandlers{
 		Mssql: mssqlH, Postgres: postgresH, Live: liveH, Timescale: timescaleH,
 		Health: healthH, Dashboard: dashboardH, Query: queryH, SIH: sihH,
+		MssqlQueryAnalysis: mssqlQAH, MssqlWatchedQuery: mssqlWQH,
 	}
 
 	// ── Alert engine wiring ────────────────────────────────────
@@ -121,6 +126,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	}
 	openAPI.HandleFunc("/logout", authH.Logout).Methods("POST")
 	openAPI.HandleFunc("/auth/logout", authH.Logout).Methods("POST")
+	openAPI.HandleFunc("/os/metrics", osMetricsH.ReceiveMetrics).Methods("POST")
 
 	if sec.AuthRequired {
 		// Strict: only auth endpoints stay public; config is moved behind JWT below.
@@ -216,4 +222,6 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	adminAPI.HandleFunc("/widgets/{id}/restore", widgetAdminH.RestoreWidget).Methods("POST")
 	adminAPI.HandleFunc("/widgets/{id}", widgetAdminH.GetWidget).Methods("GET")
 	adminAPI.HandleFunc("/widgets", widgetAdminH.ListWidgets).Methods("GET")
+	adminAPI.HandleFunc("/collector-configs", adminCollectorH.ListConfigs).Methods("GET")
+	adminAPI.HandleFunc("/collector-configs/{id}", adminCollectorH.UpdateConfig).Methods("PUT")
 }

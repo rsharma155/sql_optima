@@ -501,6 +501,9 @@ func (h *PostgresHandlers) ControlCenter(w http.ResponseWriter, r *http.Request)
 func (h *PostgresHandlers) ControlCenterHistory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	instance := r.URL.Query().Get("instance")
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -522,7 +525,7 @@ func (h *PostgresHandlers) ControlCenterHistory(w http.ResponseWriter, r *http.R
 			limit = n
 		}
 	}
-	hist, err := h.metricsSvc.GetPostgresControlCenterHistory(r.Context(), instance, limit)
+	hist, err := h.metricsSvc.GetPostgresControlCenterHistory(r.Context(), instance, from, to, limit)
 	if err != nil {
 		log.Printf("[API] PG control-center history error for %s: %v", instance, err)
 		hist = &hot.PostgresControlCenterHistory{}
@@ -536,6 +539,9 @@ func (h *PostgresHandlers) ControlCenterHistory(w http.ResponseWriter, r *http.R
 func (h *PostgresHandlers) ReplicationLagHistory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	instance := r.URL.Query().Get("instance")
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -557,7 +563,7 @@ func (h *PostgresHandlers) ReplicationLagHistory(w http.ResponseWriter, r *http.
 			limit = n
 		}
 	}
-	series, err := h.metricsSvc.GetPostgresReplicationLagDetail(r.Context(), instance, limit)
+	series, err := h.metricsSvc.GetPostgresReplicationLagDetail(r.Context(), instance, from, to, limit)
 	if err != nil {
 		log.Printf("[API] PG replication lag history error for %s: %v", instance, err)
 		series = map[string]hot.PostgresReplicationLagSeries{}
@@ -1158,9 +1164,10 @@ func (h *PostgresHandlers) TableMaintenanceHistory(w http.ResponseWriter, r *htt
 	}
 	schema := r.URL.Query().Get("schema")
 	table := r.URL.Query().Get("table")
-	if strings.TrimSpace(schema) == "" || strings.TrimSpace(table) == "" {
+	database := r.URL.Query().Get("database")
+	if strings.TrimSpace(schema) == "" || strings.TrimSpace(table) == "" || strings.TrimSpace(database) == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "schema and table are required"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "database, schema and table are required"})
 		return
 	}
 	limit := 180
@@ -1169,7 +1176,7 @@ func (h *PostgresHandlers) TableMaintenanceHistory(w http.ResponseWriter, r *htt
 			limit = n
 		}
 	}
-	rows, err := h.metricsSvc.GetPostgresTableMaintenanceHistory(r.Context(), instance, schema, table, limit)
+	rows, err := h.metricsSvc.GetPostgresTableMaintenanceHistory(r.Context(), instance, database, schema, table, limit)
 	if err != nil {
 		rows = []hot.PostgresTableMaintRow{}
 	}
@@ -2168,7 +2175,45 @@ func (h *PostgresHandlers) Alerts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// BloatEstimates returns per-table bloat heuristics (dead tuples, estimated waste) live from the instance.
+// PgMemoryIntelligence returns time-series data for the enhanced memory dashboard.
+func (h *PostgresHandlers) PgMemoryIntelligence(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	toT := time.Now().UTC()
+	fromT := toT.Add(-1 * time.Hour)
+	if fromStr != "" && toStr != "" {
+		var perr error
+		fromT, perr = time.Parse(time.RFC3339, fromStr)
+		if perr != nil {
+			log.Printf("[PostgresHandlers] PgMemoryIntelligence: failed to parse from=%s: %v", fromStr, perr)
+		}
+		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
+			toT = t
+		} else {
+			log.Printf("[PostgresHandlers] PgMemoryIntelligence: failed to parse to=%s: %v", toStr, err)
+		}
+	}
+
+	log.Printf("[PostgresHandlers] PgMemoryIntelligence: instance=%s from=%v to=%v", instance, fromT, toT)
+	data, err := h.metricsSvc.GetPgMemoryDashboardData(r.Context(), instance, fromT, toT)
+	if err != nil {
+		log.Printf("[PostgresHandlers] PgMemoryIntelligence error for %s: %v", instance, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(data)
+}
+
 func (h *PostgresHandlers) BloatEstimates(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	instance := r.URL.Query().Get("instance")

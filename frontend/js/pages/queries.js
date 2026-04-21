@@ -13,6 +13,9 @@ window.PgQueriesView = async function() {
     setTimeout(initPgQueries, 50);
 };
 
+// Redirect legacy pg-stat-statements route to the merged page
+window.PgStatStatementsView = window.PgQueriesView;
+
 function pgQueriesFormatLocal(dt) {
     const pad = n => String(n).padStart(2, '0');
     return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate()) + 'T' + pad(dt.getHours()) + ':' + pad(dt.getMinutes());
@@ -27,11 +30,11 @@ async function initPgQueries() {
     const fromEl = document.getElementById('pgQueriesFrom');
     const toEl = document.getElementById('pgQueriesTo');
     const now = new Date();
-    const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    if (fromEl && !fromEl.dataset.touched) {
+    const hourAgo = new Date(now.getTime() - 3600000); // 1 hour
+    if (fromEl) {
         fromEl.value = pgQueriesFormatLocal(hourAgo);
     }
-    if (toEl && !toEl.dataset.touched) {
+    if (toEl) {
         toEl.value = pgQueriesFormatLocal(now);
     }
 
@@ -41,6 +44,7 @@ async function initPgQueries() {
             if (fromEl) fromEl.dataset.touched = '1';
             if (toEl) toEl.dataset.touched = '1';
             loadPgQueriesPageData();
+            loadPgssAll();
         };
     }
 
@@ -90,7 +94,19 @@ async function initPgQueries() {
         // non-fatal
     }
 
-    await loadPgQueriesPageData();
+    // Lazy-load snapshot data when Deep Diagnostics is expanded
+    const diagPanel = document.querySelector('.pgss-diagnostics-panel');
+    if (diagPanel) {
+        diagPanel.addEventListener('toggle', function onDiagToggle() {
+            if (diagPanel.open && !diagPanel.dataset.loaded) {
+                diagPanel.dataset.loaded = '1';
+                loadPgQueriesPageData();
+            }
+        });
+    }
+
+    // Initialize pgss time-series section (merged from pg_stat_statements page)
+    initPgssSection(inst.name);
 }
 
 async function loadPgQueriesPageData() {
@@ -114,10 +130,6 @@ async function loadPgQueriesPageData() {
         }
     }
 
-    const tbody = document.getElementById('pg-queries-tbody');
-    if (tbody) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner"></div> Loading query stats…</td></tr>';
-    }
     if (typeof window.setChartOverlayState === 'function') {
         window.setChartOverlayState('pgQryDistChart', 'loading', 'Loading chart…');
         window.setChartOverlayState('pgQrySlowChart', 'loading', 'Loading chart…');
@@ -161,12 +173,8 @@ async function loadPgQueriesPageData() {
                     }
                     noteEl.textContent = t;
                 }
-                const cAt = document.getElementById('pgQueriesCollectedAt');
                 if (data.collected_at) {
                     collectedAt = data.collected_at;
-                }
-                if (cAt && collectedAt) {
-                    cAt.textContent = new Date(collectedAt).toLocaleString();
                 }
                 if (data.pg_stat_statements_enabled === false) {
                     pgStatStatementsEnabled = false;
@@ -204,16 +212,8 @@ async function loadPgQueriesPageData() {
 
     window._pgQueriesData = queries;
     window._pgQueriesCollectedAt = collectedAt;
-    window._pgQuerySqlById = {};
-    window._pgQueryUserById = {};
-    (queries || []).forEach(q => {
-        const id = q && q.query_id !== undefined ? String(q.query_id) : '';
-        if (!id) return;
-        window._pgQuerySqlById[id] = q.query || '';
-        window._pgQueryUserById[id] = q.user || '';
-    });
 
-    renderQueriesTable(queries, 'total');
+    // Render diagnostic charts only (snapshot table removed — merged into Top Queries)
 
     const distCtx = document.getElementById('pgQryDistChart');
     if (distCtx && queries.length > 0) {
@@ -335,17 +335,17 @@ function renderQueriesTable(queries, sortBy) {
         const fingerprint = query.query_id !== undefined ? String(query.query_id) : '-';
         const user = query.user || '';
         const fullSql = query.query || '';
-        const sqlPreview = fullSql.substring(0, 80) + (fullSql.length > 80 ? '...' : '');
+        const sqlPreview = fullSql.substring(0, 60) + (fullSql.length > 60 ? '...' : '');
         const escPreview = window.escapeHtml(sqlPreview);
         const escUser = window.escapeHtml(user || '-');
 
         return `
             <tr>
                 <td>${escUser || '<span class="text-muted">-</span>'}</td>
-                <td style="max-width:520px">
-                    <div class="code-snippet w-100 pg-sql-preview" style="display:block; cursor:pointer; text-decoration:underline; text-underline-offset:2px;" title="View full SQL and capture time" data-action="call" data-fn="pgOpenQuerySql" data-arg="${window.escapeHtml(fingerprint)}">
+                <td style="max-width:350px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                    <span class="pg-sql-preview" style="cursor:pointer; text-decoration:underline; text-underline-offset:2px; color:var(--accent);" title="View full SQL and capture time" onclick="window.pgOpenQuerySql('${fingerprint}')">
                         ${escPreview}
-                    </div>
+                    </span>
                 </td>
                 <td><span class="badge badge-outline">${(query.calls || 0).toLocaleString()}</span></td>
                 <td>${timeStr}</td>
@@ -487,3 +487,431 @@ window.resetPgQueries = function() {
             .catch(err => alert(`Error: ${err.message}`));
     }
 };
+
+// ============================================================
+// pg_stat_statements Time-Series Section (merged)
+// ============================================================
+window._pgssCurrentSort = 'total_time';
+window._pgssCurrentSortDir = 'desc';
+window._pgssRefreshTimer = null;
+window._pgssTopQueriesCache = [];
+
+window.pgssSort = function (el) {
+    const sort = el?.dataset?.sort || 'total_time';
+    document.querySelectorAll('#pgss-sort-tabs li').forEach(t => t.classList.remove('active'));
+    if (el) el.classList.add('active');
+    window._pgssCurrentSort = sort;
+    loadPgssTopQueries();
+};
+
+window.pgssHeaderSort = function(key) {
+    const keyMap = {
+        total_time: 'total_time_ms', pct_db: 'pct_db_time', calls: 'calls',
+        avg_ms: 'avg_ms', rows_per_call: 'rows_per_call', plan_ratio: 'plan_ratio',
+        reads_per_call: 'reads_per_call', hit_pct: 'hit_pct', temp_mb: 'temp_mb', wal_mb: 'wal_mb'
+    };
+    if (window._pgssCurrentSort === key) {
+        window._pgssCurrentSortDir = window._pgssCurrentSortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+        window._pgssCurrentSort = key;
+        window._pgssCurrentSortDir = 'desc';
+    }
+    // Update header icons
+    document.querySelectorAll('#pgss-top-table .pgss-sortable-th').forEach(th => {
+        const icon = th.querySelector('i');
+        if (!icon) return;
+        if (th.dataset.sortKey === key) {
+            th.dataset.sortDir = window._pgssCurrentSortDir;
+            icon.className = window._pgssCurrentSortDir === 'desc' ? 'fa-solid fa-sort-down' : 'fa-solid fa-sort-up';
+        } else {
+            delete th.dataset.sortDir;
+            icon.className = 'fa-solid fa-sort';
+        }
+    });
+    // Client-side re-sort from cache
+    const field = keyMap[key] || key;
+    const dir = window._pgssCurrentSortDir === 'desc' ? -1 : 1;
+    const sorted = [...window._pgssTopQueriesCache].sort((a, b) => {
+        const va = a[field] ?? 0, vb = b[field] ?? 0;
+        return (va - vb) * dir;
+    });
+    pgssRenderTopRows(sorted);
+};
+
+window.pgssApplyTimeRange = function () {
+    loadPgssAll();
+};
+
+function initPgssSection(instanceName) {
+    // Clear any previous auto-refresh timer
+    if (window._pgssRefreshTimer) {
+        clearInterval(window._pgssRefreshTimer);
+        window._pgssRefreshTimer = null;
+    }
+
+    window.currentCharts = window.currentCharts || {};
+    const pgssChartIds = ['pgss-chart-load','pgss-chart-qps','pgss-chart-cache','pgss-chart-latency','pgss-chart-wal','pgss-chart-execplan','pgss-chart-io-pressure'];
+    pgssChartIds.forEach(id => pgssDestroyChart(id));
+
+    const label = document.getElementById('pgss-instance-label');
+    if (label) label.textContent = instanceName;
+
+    checkPgssStatus(instanceName);
+    loadPgssAll();
+
+    // Wire up sortable column headers
+    document.querySelectorAll('#pgss-top-table .pgss-sortable-th').forEach(th => {
+        th.addEventListener('click', () => window.pgssHeaderSort(th.dataset.sortKey));
+    });
+
+    // Auto-refresh every 60 seconds
+    window._pgssRefreshTimer = setInterval(() => {
+        if (!document.getElementById('pgss-instance-label')) {
+            clearInterval(window._pgssRefreshTimer);
+            window._pgssRefreshTimer = null;
+            return;
+        }
+        loadPgssAll();
+    }, 60000);
+}
+
+function getPgssTimeRange() {
+    const fromEl = document.getElementById('pgQueriesFrom');
+    const toEl = document.getElementById('pgQueriesTo');
+    const from = fromEl?.value ? new Date(fromEl.value).toISOString() : new Date(Date.now() - 3600000).toISOString();
+    const to = toEl?.value ? new Date(toEl.value).toISOString() : new Date().toISOString();
+    return { from, to };
+}
+
+async function checkPgssStatus(instance) {
+    try {
+        const resp = await window.apiClient.authenticatedFetch(`/api/postgres/pgss/status?instance=${encodeURIComponent(instance)}`);
+        if (resp.ok) {
+            const data = await resp.json();
+            const banner = document.getElementById('pgss-status-banner');
+            const msg = document.getElementById('pgss-status-msg');
+            if (!data.ready && banner && msg) {
+                banner.style.display = '';
+                msg.textContent = data.message || 'pg_stat_statements is not available on this instance.';
+            }
+        }
+    } catch (_) { /* non-fatal */ }
+}
+
+async function loadPgssAll() {
+    await Promise.all([
+        loadPgssSummary(),
+        loadPgssWorkload(),
+        loadPgssLatency(),
+        loadPgssTopQueries(),
+        loadPgssRegressions()
+    ]);
+}
+
+async function loadPgssSummary() {
+    const inst = (window.appState.config.instances || [])[window.appState.currentInstanceIdx] || { name: '' };
+    const { from, to } = getPgssTimeRange();
+    try {
+        const resp = await window.apiClient.authenticatedFetch(
+            `/api/postgres/pgss/summary?instance=${encodeURIComponent(inst.name)}&from=${from}&to=${to}`
+        );
+        if (!resp.ok) return;
+        const d = await resp.json();
+
+        pgssSetKpi('pgss-kpi-load', d.query_load_ms_sec, 1, [500, 2000]);
+        pgssSetKpi('pgss-kpi-qps', d.qps, 0, null);
+        pgssSetKpi('pgss-kpi-p99', d.p99_ms, 2, [50, 200]);
+        pgssSetKpi('pgss-kpi-cache', d.cache_hit_pct, 1, null, true);
+        pgssSetKpi('pgss-kpi-temp', d.temp_mb_sec, 2, [1, 10]);
+        pgssSetKpi('pgss-kpi-wal', d.wal_mb_sec, 2, [5, 50]);
+    } catch (_) { /* non-fatal */ }
+}
+
+function pgssSetKpi(id, value, decimals, thresholds, invertThresholds) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (value == null || isNaN(value)) { el.textContent = '--'; return; }
+    el.textContent = typeof value === 'number' ? value.toFixed(decimals) : value;
+
+    const cell = document.getElementById(id + '-cell');
+    if (!cell || !thresholds) return;
+    cell.classList.remove('pgss-kpi-warn', 'pgss-kpi-critical');
+
+    if (invertThresholds) {
+        // lower is worse (e.g. cache hit %)
+        if (value < thresholds[0]) cell.classList.add('pgss-kpi-critical');
+        else if (value < thresholds[1]) cell.classList.add('pgss-kpi-warn');
+    } else {
+        // higher is worse
+        if (value >= thresholds[1]) cell.classList.add('pgss-kpi-critical');
+        else if (value >= thresholds[0]) cell.classList.add('pgss-kpi-warn');
+    }
+}
+
+async function loadPgssWorkload() {
+    const inst = (window.appState.config.instances || [])[window.appState.currentInstanceIdx] || { name: '' };
+    const { from, to } = getPgssTimeRange();
+    try {
+        const resp = await window.apiClient.authenticatedFetch(
+            `/api/postgres/pgss/workload?instance=${encodeURIComponent(inst.name)}&from=${from}&to=${to}`
+        );
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const pts = data.points || [];
+        const labels = pts.map(p => new Date(p.ts).toLocaleTimeString());
+
+        pgssRenderLineChart('pgss-chart-load', labels, [
+            { label: 'Query Load ms/s', data: pts.map(p => p.query_load_ms_sec), borderColor: '#38bdf8', fill: true, backgroundColor: 'rgba(56,189,248,0.15)' },
+            { label: 'CPU Saturation', data: pts.map(p => p.cpu_saturation_ms_sec || 4000), borderColor: '#ef4444', borderDash: [5, 3], borderWidth: 1, pointRadius: 0, fill: false }
+        ]);
+        pgssRenderLineChart('pgss-chart-qps', labels, [
+            { label: 'QPS', data: pts.map(p => p.qps), borderColor: '#a78bfa', yAxisID: 'y' },
+            { label: 'Rows/s', data: pts.map(p => p.rows_sec), borderColor: '#34d399', yAxisID: 'y1' }
+        ], true);
+        pgssRenderLineChart('pgss-chart-cache', labels, [
+            { label: 'Cache Hit %', data: pts.map(p => p.cache_hit_ratio), borderColor: '#facc15', fill: true, backgroundColor: 'rgba(250,204,21,0.1)' }
+        ]);
+        // I/O Pressure (stacked: shared reads + temp writes)
+        pgssRenderStackedArea('pgss-chart-io-pressure', labels, [
+            { label: 'Blk Read/s', data: pts.map(p => p.blks_read_sec || 0), backgroundColor: 'rgba(248,113,113,0.45)' },
+            { label: 'Temp Write/s', data: pts.map(p => p.temp_blks_written_sec || 0), backgroundColor: 'rgba(245,158,11,0.4)' }
+        ]);
+        pgssRenderLineChart('pgss-chart-wal', labels, [
+            { label: 'WAL bytes/s', data: pts.map(p => p.wal_bytes_sec), borderColor: '#f87171', fill: true, backgroundColor: 'rgba(248,113,113,0.12)' }
+        ]);
+        pgssRenderStackedArea('pgss-chart-execplan', labels, [
+            { label: 'Exec %', data: pts.map(p => p.exec_pct), backgroundColor: 'rgba(56,189,248,0.5)' },
+            { label: 'Plan %', data: pts.map(p => p.plan_pct), backgroundColor: 'rgba(250,204,21,0.5)' }
+        ]);
+        // Show planning warning if any point has plan_pct > 10
+        const planWarn = document.getElementById('pgss-planning-warning');
+        if (planWarn) {
+            const hasHighPlan = pts.some(p => (p.plan_pct || 0) > 10);
+            planWarn.style.display = hasHighPlan ? '' : 'none';
+        }
+    } catch (_) { /* non-fatal */ }
+}
+
+async function loadPgssLatency() {
+    const inst = (window.appState.config.instances || [])[window.appState.currentInstanceIdx] || { name: '' };
+    const { from, to } = getPgssTimeRange();
+    try {
+        const resp = await window.apiClient.authenticatedFetch(
+            `/api/postgres/pgss/latency?instance=${encodeURIComponent(inst.name)}&from=${from}&to=${to}`
+        );
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const pts = data.points || [];
+        const labels = pts.map(p => new Date(p.ts).toLocaleTimeString());
+        pgssRenderLineChart('pgss-chart-latency', labels, [
+            { label: 'p50', data: pts.map(p => p.p50), borderColor: '#34d399' },
+            { label: 'p95', data: pts.map(p => p.p95), borderColor: '#facc15' },
+            { label: 'p99', data: pts.map(p => p.p99), borderColor: '#f87171' }
+        ]);
+    } catch (_) { /* non-fatal */ }
+}
+
+async function loadPgssTopQueries() {
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || { name: '' };
+    const { from, to } = getPgssTimeRange();
+    const sort = window._pgssCurrentSort || 'total_time';
+    const grid = document.getElementById('pgss-top-grid');
+    if (!grid) return;
+    
+    // Remove existing rows (keep header which is first child)
+    const header = grid.querySelector('.pgss-grid-header');
+    grid.innerHTML = '';
+    if (header) grid.appendChild(header);
+
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'text-center p-4';
+    loadingDiv.style.gridColumn = '1 / -1';
+    loadingDiv.innerHTML = '<div class="spinner"></div>';
+    grid.appendChild(loadingDiv);
+
+    try {
+        const resp = await window.apiClient.authenticatedFetch(
+            `/api/postgres/pgss/top?instance=${encodeURIComponent(inst.name)}&from=${from}&to=${to}&sort=${sort}`
+        );
+        if (!resp.ok) { 
+            loadingDiv.innerHTML = 'Error loading data'; 
+            return; 
+        }
+        const data = await resp.json();
+        const queries = data.queries || [];
+
+        // Show time range on the table header
+        const rangeEl = document.getElementById('pgss-top-time-range');
+        if (rangeEl) {
+            const fmtFrom = new Date(from).toLocaleString();
+            const fmtTo = new Date(to).toLocaleString();
+            rangeEl.textContent = fmtFrom + ' → ' + fmtTo;
+        }
+
+        grid.removeChild(loadingDiv);
+
+        if (queries.length === 0) {
+            window._pgssTopQueriesCache = [];
+            const empty = document.createElement('div');
+            empty.className = 'text-center text-muted p-4';
+            empty.style.gridColumn = '1 / -1';
+            empty.textContent = 'No data for selected time range';
+            grid.appendChild(empty);
+            return;
+        }
+        // Store query texts for detail modal
+        window._pgssQueryTexts = {};
+        queries.forEach(q => { if (q.query_id) window._pgssQueryTexts[String(q.query_id)] = q.query || ''; });
+        window._pgssTopQueriesCache = queries;
+
+        pgssRenderTopRows(queries);
+    } catch (e) { 
+        console.error('loadPgssTopQueries failed', e);
+        loadingDiv.innerHTML = 'Error'; 
+    }
+}
+
+function pgssRenderTopRows(queries) {
+    const grid = document.getElementById('pgss-top-grid');
+    if (!grid || !queries) return;
+    
+    // Remove existing rows (keep header which is first child)
+    const header = grid.querySelector('.pgss-grid-header');
+    grid.innerHTML = '';
+    if (header) grid.appendChild(header);
+
+    queries.forEach((q, i) => {
+        const flags = (q.flags || []).map(f => {
+            const lower = f.toLowerCase();
+            return `<span class="pgss-badge pgss-badge-${pgssEscapeHtml(lower)}">${pgssEscapeHtml(f)}</span>`;
+        }).join('');
+        const qid = q.query_id != null ? String(q.query_id) : '';
+        
+        const row = document.createElement('div');
+        row.className = 'pgss-grid-row';
+        row.innerHTML = `
+            <div>${i + 1}</div>
+            <div style="justify-content:center;">${flags || '<span class="text-muted">—</span>'}</div>
+            <div class="pgss-grid-cell-query" onclick="window.pgssOpenQuery('${qid}')" title="Click to view full SQL">
+                ${pgssEscapeHtml(pgssTrancate(q.query, 80))}
+            </div>
+            <div class="pgss-grid-cell-stat">${pgssFmtMs(q.total_time_ms)}</div>
+            <div class="pgss-grid-cell-stat">${q.pct_db_time != null ? q.pct_db_time.toFixed(1) + '%' : '-'}</div>
+            <div class="pgss-grid-cell-stat">${pgssFmtNum(q.calls)}</div>
+            <div class="pgss-grid-cell-stat" style="font-weight:600;color:var(--accent);">${pgssFmtMs(q.avg_ms)}</div>
+            <div class="pgss-grid-cell-stat">${q.rows_per_call?.toFixed(1) ?? '-'}</div>
+            <div class="pgss-grid-cell-stat">${q.plan_ratio != null ? (q.plan_ratio * 100).toFixed(1) + '%' : '-'}</div>
+            <div class="pgss-grid-cell-stat">${q.reads_per_call?.toFixed(1) ?? '-'}</div>
+            <div class="pgss-grid-cell-stat">${q.hit_pct?.toFixed(1) ?? '-'}%</div>
+            <div class="pgss-grid-cell-stat">${Number(q.temp_mb || 0).toFixed(2)}</div>
+            <div class="pgss-grid-cell-stat">${Number(q.wal_mb || 0).toFixed(2)}</div>
+        `;
+        grid.appendChild(row);
+    });
+}
+
+window.pgssOpenQuery = function(queryId) {
+    const qid = String(queryId || '');
+    const sql = (window._pgssQueryTexts && window._pgssQueryTexts[qid]) || '';
+    const { from, to } = getPgssTimeRange();
+    window.showPgQueryDetails('', sql, { window_from: from, window_to: to });
+};
+
+async function loadPgssRegressions() {
+    const inst = (window.appState.config.instances || [])[window.appState.currentInstanceIdx] || { name: '' };
+    const tbody = document.getElementById('pgss-regression-tbody');
+    if (!tbody) return;
+    try {
+        const resp = await window.apiClient.authenticatedFetch(
+            `/api/postgres/pgss/regressions?instance=${encodeURIComponent(inst.name)}`
+        );
+        if (!resp.ok) { tbody.innerHTML = '<tr><td colspan="5">Error loading</td></tr>'; return; }
+        const data = await resp.json();
+        const regs = data.regressions || [];
+        if (regs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-muted">No regressions detected</td></tr>';
+            return;
+        }
+        tbody.innerHTML = regs.map(r => `
+            <tr>
+                <td style="max-width:420px; cursor:pointer; text-decoration:underline; text-underline-offset:2px;" title="Click to view full query" data-action="call" data-fn="pgssOpenRegressionQuery" data-arg="${pgssEscapeHtml(r.query || '')}">${pgssEscapeHtml(pgssTrancate(r.query, 80))}</td>
+                <td>${pgssFmtMs(r.prev_avg_ms)}</td>
+                <td>${pgssFmtMs(r.curr_avg_ms)}</td>
+                <td class="${r.change_pct > 50 ? 'text-danger' : r.change_pct > 20 ? 'text-warning' : ''}">+${r.change_pct.toFixed(0)}%</td>
+                <td><span class="badge ${r.status === 'Degraded' ? 'badge-danger' : 'badge-warning'}">${r.status}</span></td>
+            </tr>
+        `).join('');
+    } catch (_) { tbody.innerHTML = '<tr><td colspan="5">Error</td></tr>'; }
+}
+
+window.pgssOpenRegressionQuery = function(sql) {
+    window.showPgQueryDetails('', sql || '', window._pgQueriesMeta || {});
+};
+
+// ---- pgss chart helpers ----
+function pgssRenderLineChart(canvasId, labels, datasets, dualAxis) {
+    pgssDestroyChart(canvasId);
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+    const cfg = {
+        type: 'line',
+        data: { labels, datasets: datasets.map(ds => ({ tension: 0.3, pointRadius: 0, borderWidth: 1.5, fill: ds.fill || false, ...ds })) },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
+            scales: {
+                x: { ticks: { color: '#64748b', maxTicksLimit: 12 }, grid: { color: 'rgba(100,116,139,0.15)' } },
+                y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } }
+            }
+        }
+    };
+    if (dualAxis) {
+        cfg.options.scales.y1 = { position: 'right', ticks: { color: '#64748b' }, grid: { drawOnChartArea: false } };
+    }
+    window.currentCharts[canvasId] = new Chart(ctx, cfg);
+}
+
+function pgssRenderStackedArea(canvasId, labels, datasets) {
+    pgssDestroyChart(canvasId);
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+    window.currentCharts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets: datasets.map(ds => ({ fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1, ...ds })) },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
+            scales: {
+                x: { stacked: true, ticks: { color: '#64748b', maxTicksLimit: 12 }, grid: { color: 'rgba(100,116,139,0.15)' } },
+                y: { stacked: true, max: 100, ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } }
+            }
+        }
+    });
+}
+
+function pgssDestroyChart(id) {
+    if (window.currentCharts && window.currentCharts[id]) {
+        window.currentCharts[id].destroy();
+        delete window.currentCharts[id];
+    }
+}
+
+// ---- pgss formatting helpers ----
+function pgssEscapeHtml(s) {
+    if (!s) return '';
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function pgssTrancate(s, n) {
+    if (!s) return '';
+    return s.length > n ? s.slice(0, n) + '…' : s;
+}
+function pgssFmtMs(ms) {
+    if (ms == null) return '-';
+    if (ms >= 1000) return (ms / 1000).toFixed(2) + ' s';
+    return ms.toFixed(2) + ' ms';
+}
+function pgssFmtNum(n) {
+    if (n == null) return '-';
+    return n.toLocaleString();
+}

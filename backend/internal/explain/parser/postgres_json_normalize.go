@@ -16,16 +16,16 @@ import (
 
 // pgBufferKeyToSnake maps PostgreSQL per-node buffer field names to types.Buffers JSON keys.
 var pgBufferKeyToSnake = map[string]string{
-	"Shared Hit Blocks":      "shared_hit",
-	"Shared Read Blocks":     "shared_read",
-	"Shared Dirtied Blocks":  "shared_dirtied",
-	"Shared Written Blocks":  "shared_written",
-	"Local Hit Blocks":       "local_hit",
-	"Local Read Blocks":      "local_read",
-	"Local Dirtied Blocks":   "local_dirtied",
-	"Local Written Blocks":   "local_written",
-	"Temp Read Blocks":       "temp_read",
-	"Temp Written Blocks":    "temp_written",
+	"Shared Hit Blocks":     "shared_hit",
+	"Shared Read Blocks":    "shared_read",
+	"Shared Dirtied Blocks": "shared_dirtied",
+	"Shared Written Blocks": "shared_written",
+	"Local Hit Blocks":      "local_hit",
+	"Local Read Blocks":     "local_read",
+	"Local Dirtied Blocks":  "local_dirtied",
+	"Local Written Blocks":  "local_written",
+	"Temp Read Blocks":      "temp_read",
+	"Temp Written Blocks":   "temp_written",
 }
 
 // pgNodeFieldAliases maps normalized snake_case PostgreSQL names to types.PlanNode JSON tags.
@@ -312,16 +312,16 @@ func normalizeExplainObject(m map[string]interface{}) map[string]interface{} {
 
 // pgJSONKeyTypoToCanonical fixes keys produced by broken serializers (e.g. "nodetype" instead of "node_type").
 var pgJSONKeyTypoToCanonical = map[string]string{
-	"nodetype":       "node_type",
-	"totalcost":      "total_cost",
-	"startupcost":    "startup_cost",
-	"planrows":       "plan_rows",
-	"planwidth":      "plan_width",
-	"relationname":   "relation_name",
-	"indexname":      "index_name",
-	"actualrows":     "actual_rows",
-	"actualloops":    "actual_loops",
-	"actualtotaltime": "actual_total_time",
+	"nodetype":          "node_type",
+	"totalcost":         "total_cost",
+	"startupcost":       "startup_cost",
+	"planrows":          "plan_rows",
+	"planwidth":         "plan_width",
+	"relationname":      "relation_name",
+	"indexname":         "index_name",
+	"actualrows":        "actual_rows",
+	"actualloops":       "actual_loops",
+	"actualtotaltime":   "actual_total_time",
 	"actualstartuptime": "actual_startup_time",
 }
 

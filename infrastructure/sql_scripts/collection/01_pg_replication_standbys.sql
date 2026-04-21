@@ -3,7 +3,7 @@
 -- Target Table: postgres_replication_stats (TimescaleDB)
 -- Description: Gets standby replication information from pg_stat_replication on primary
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     application_name as app_name,
     client_addr,
     state,

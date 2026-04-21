@@ -161,8 +161,8 @@
                     <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Connection State</h3></div>
                     <div class="chart-container doughnut-container" style="height:110px;"><canvas id="pgConnChart"></canvas></div>
                 </div>
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Blocking (Mini)</h3></div>
+                <div class="chart-card glass-panel" style="padding:0.75rem; cursor:pointer;" data-action="navigate" data-route="pg-locks" title="Click to open Locks & Blocking Dashboard">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Blocking (Mini) <i class="fa-solid fa-arrow-up-right-from-square text-muted" style="font-size:0.65rem;"></i></h3></div>
                     <div style="height:110px; overflow:auto;">
                         <table class="table table-sm" style="margin:0; font-size:0.75rem;">
                             <thead><tr><th>PID</th><th>Wait</th><th>Query</th></tr></thead>
@@ -180,16 +180,16 @@
                     <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">WAL Generation Trend</h3></div>
                     <div class="chart-container" style="height:110px;"><canvas id="pgWalRateChart"></canvas></div>
                 </div>
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Autovacuum Activity</h3></div>
+                <div class="chart-card glass-panel" style="padding:0.75rem; cursor:pointer;" data-action="navigate" data-route="pg-autovacuum" title="Click to open Autovacuum & Bloat Risk dashboard">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Autovacuum Activity <i class="fa-solid fa-arrow-up-right-from-square text-muted" style="font-size:0.65rem;"></i></h3></div>
                     <div class="chart-container" style="height:110px;"><canvas id="pgAutovacChart"></canvas></div>
                 </div>
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Dead Tuple Ratio</h3></div>
+                <div class="chart-card glass-panel" style="padding:0.75rem; cursor:pointer;" data-action="navigate" data-route="pg-storage" title="Click to open Storage, Tuples & Vacuum Status dashboard">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Dead Tuple Ratio <i class="fa-solid fa-arrow-up-right-from-square text-muted" style="font-size:0.65rem;"></i></h3></div>
                     <div class="chart-container" style="height:110px;"><canvas id="pgDeadTupleChart"></canvas></div>
                 </div>
-                <div class="chart-card glass-panel" id="pgReplLagChartCard" style="padding:0.75rem; display:none;">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Replication Lag (Replicas)</h3></div>
+                <div class="chart-card glass-panel" id="pgReplLagChartCard" style="padding:0.75rem; display:none; cursor:pointer;" data-action="navigate" data-route="pg-replication" title="Click to open Replication, HA & Cluster Health dashboard">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Replication Lag (Replicas) <i class="fa-solid fa-arrow-up-right-from-square text-muted" style="font-size:0.65rem;"></i></h3></div>
                     <div class="chart-container" style="height:110px;"><canvas id="pgReplLagDetailChart"></canvas></div>
                 </div>
             </div>

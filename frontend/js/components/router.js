@@ -286,6 +286,22 @@ window.appNavigate = function(route, skipHistory = false) {
                 setTimeout(() => window.appNavigate('performance-debt'), 200);
             }
             break;
+        case 'query-analysis':
+            if (window.mssql_QueryAnalysisDashboard) {
+                window.mssql_QueryAnalysisDashboard();
+            } else {
+                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Query Analysis…</h3></div>';
+                setTimeout(() => window.appNavigate('query-analysis'), 200);
+            }
+            break;
+        case 'watched-queries':
+            if (window.mssql_WatchedQueryAnalyzer) {
+                window.mssql_WatchedQueryAnalyzer();
+            } else {
+                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Watched Queries…</h3></div>';
+                setTimeout(() => window.appNavigate('watched-queries'), 200);
+            }
+            break;
         case 'storage-index-health': {
             const sihInst = window.appState.config?.instances?.[window.appState.currentInstanceIdx];
             const runPg = () => {
@@ -353,6 +369,7 @@ window.appNavigate = function(route, skipHistory = false) {
         case 'pg-memory': window.PgMemoryView(); break;
         // CNPG is being merged into replication engine; keep route for backward links.
         case 'pg-cnpg': window.CNPGClusterTopologyView(); break;
+        case 'pg-stat-statements': window.PgQueriesView(); break; // merged into Query Performance
         case 'pg-best-practices':
             if (typeof window.PgBestPracticesView === 'function') {
                 window.PgBestPracticesView();
@@ -480,6 +497,8 @@ window.router = {
             brand.className='fa-solid fa-database xl-icon logo-icon text-accent'; 
             sidebarNav.innerHTML = `
                 <li data-route="pg-dashboard" id="nav-pg-dashboard"><i class="fa-solid fa-gauge-high"></i> Control Center</li>
+                <li data-route="pg-cpu" class="sub-nav"><i class="fa-solid fa-microchip"></i> CPU Usage</li>
+                <li data-route="pg-memory" class="sub-nav"><i class="fa-solid fa-memory"></i> Memory Usage</li>
                 <li data-route="pg-sessions"><i class="fa-solid fa-network-wired"></i> Sessions & Activity</li>
                 <li data-route="pg-locks"><i class="fa-solid fa-link-slash"></i> Locks & Blocking</li>
                 <li data-route="pg-queries"><i class="fa-solid fa-bolt"></i> Query Performance</li>
@@ -487,10 +506,8 @@ window.router = {
                 <li data-route="pg-storage"><i class="fa-solid fa-hard-drive"></i> Storage & Vacuum</li>
                 <li data-route="pg-autovacuum"><i class="fa-solid fa-broom"></i> Autovacuum & Bloat</li>
                 <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Index & Table Health</li>
-                <li data-route="pg-replication"><i class="fa-solid fa-clone"></i> Replication, HA & Cluster</li>
+                <li data-route="pg-replication"><i class="fa-solid fa-clone"></i> Replication & HA</li>
                 <li data-route="pg-best-practices"><i class="fa-solid fa-shield-halved"></i> Best Practices</li>
-                <li data-route="pg-cpu"><i class="fa-solid fa-microchip"></i> CPU Usage</li>
-                <li data-route="pg-memory"><i class="fa-solid fa-memory"></i> Memory Usage</li>
                 <li data-route="pg-alerts"><i class="fa-solid fa-bell text-danger"></i> Alerts & Events</li>
                 ${adminLi}
             `;
@@ -504,8 +521,10 @@ window.router = {
                 <!-- Query Bottlenecks is now treated as a drilldown from Top Offenders -->
                 <li data-route="drilldown-ha"><i class="fa-solid fa-server"></i> HA/AG Monitor</li>
                 <li data-route="enterprise-metrics"><i class="fa-solid fa-chart-line"></i> Enterprise Metrics</li>
-                <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Storage & Index Health</li>
+                <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Storage & Index</li>
                 <li data-route="performance-debt"><i class="fa-solid fa-screwdriver-wrench"></i> Performance Debt</li>
+                <li data-route="query-analysis"><i class="fa-solid fa-magnifying-glass-chart"></i> Query Analysis</li>
+                <li data-route="watched-queries"><i class="fa-solid fa-binoculars"></i> Watched Queries</li>
                 <li data-route="jobs" id="nav-agent-jobs"><i class="fa-solid fa-briefcase"></i> SQL Agent Jobs</li>
                 <li data-route="alerts"><i class="fa-solid fa-triangle-exclamation"></i> Alerts <span id="alerts-badge" class="badge badge-danger">0</span></li>
                 <li data-route="best-practices"><i class="fa-solid fa-shield-halved"></i> Best Practices</li>

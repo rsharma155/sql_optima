@@ -91,16 +91,12 @@ window.CpuDrilldown = async function() {
     `;
 
     const now = new Date();
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    const hh = String(now.getHours()).padStart(2, '0');
-    const min = String(now.getMinutes()).padStart(2, '0');
-    
-    document.getElementById('cpuDrillFrom').value = `${yyyy}-${mm}-${dd}T${String(oneHourAgo.getHours()).padStart(2,'0')}:${String(oneHourAgo.getMinutes()).padStart(2,'0')}`;
-    document.getElementById('cpuDrillTo').value = `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+    const oneHourAgo = new Date(now.getTime() - 3600000);
+    const pad = n => String(n).padStart(2, '0');
+    const fmtLocal = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
+    document.getElementById('cpuDrillFrom').value = fmtLocal(oneHourAgo);
+    document.getElementById('cpuDrillTo').value = fmtLocal(now);
     window.appState.cpuQueriesTableData = [];
     window.appState.currentQueryMetric = 'cpu';
     window.updateCpuDrillMetricHeaders();

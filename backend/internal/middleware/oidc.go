@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	oidcMu      sync.RWMutex
+	oidcMu       sync.RWMutex
 	oidcVerifier *oidc.IDTokenVerifier
 )
 

@@ -24,4 +24,3 @@ func CompilationSeverity(ratio float64) Severity {
 	}
 	return SeverityOK
 }
-

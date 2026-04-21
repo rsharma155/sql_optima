@@ -44,4 +44,3 @@ func TestCategoryTimeAttribution_Buckets(t *testing.T) {
 		t.Fatalf("expected hash join top, got %v", bd[0].TimeMs)
 	}
 }
-

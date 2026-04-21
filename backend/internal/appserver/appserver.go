@@ -27,6 +27,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rsharma155/sql_optima/internal/api"
 	"github.com/rsharma155/sql_optima/internal/api/handlers"
@@ -73,6 +74,50 @@ func parseEnvInt(key string, defaultVal int) int {
 		return defaultVal
 	}
 	return n
+}
+
+func ensureCollectorConfigsTable(ctx context.Context, pool *pgxpool.Pool) {
+	if pool == nil {
+		return
+	}
+	query := `
+    CREATE TABLE IF NOT EXISTS optima_collector_configs (
+        id SERIAL PRIMARY KEY,
+        collector_name VARCHAR(100) UNIQUE NOT NULL,
+        module VARCHAR(100) NOT NULL,
+        frequency_seconds INTEGER NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_by VARCHAR(100)
+    );
+    
+    INSERT INTO optima_collector_configs (collector_name, module, frequency_seconds) VALUES
+    ('Postgres Active Queries', 'Postgres', 15),
+    ('Postgres Blocking Locks', 'Postgres', 15),
+    ('Postgres CPU and Memory', 'Postgres', 60),
+    ('Postgres Wait Stats', 'Postgres', 60),
+    ('Postgres Storage I/O', 'Postgres', 60),
+    ('Postgres Long Running Queries', 'Postgres', 60),
+    ('Postgres Query Stats', 'Postgres', 60),
+    ('SQL Server Active Queries', 'MSSQL', 15),
+    ('SQL Server Blocking Locks', 'MSSQL', 15),
+    ('SQL Server CPU and Memory', 'MSSQL', 60),
+    ('SQL Server Wait Stats', 'MSSQL', 60),
+    ('SQL Server Storage I/O', 'MSSQL', 60),
+    ('SQL Server Long Running Queries', 'MSSQL', 60),
+    ('SQL Server Query Store', 'MSSQL', 900),
+    ('SQL Server Procedure Stats', 'MSSQL', 120),
+    ('SQL Server Memory Clerks', 'MSSQL', 300),
+    ('SQL Server Plan Cache', 'MSSQL', 300),
+    ('SQL Server Database Size', 'MSSQL', 3600),
+    ('SQL Server Configuration', 'MSSQL', 86400)
+    ON CONFLICT (collector_name) DO NOTHING;
+    `
+	if _, err := pool.Exec(ctx, query); err != nil {
+		log.Printf("[init] Failed to ensure optima_collector_configs table: %v", err)
+	} else {
+		log.Printf("[init] optima_collector_configs table ensured and seeded")
+	}
 }
 
 // Main starts the SQL Optima API and static UI.
@@ -135,6 +180,10 @@ func Main() {
 		errorLog.Print(errMsg)
 		tsHotStorage = nil
 		usingEnvTimescale = false
+	}
+
+	if tsHotStorage != nil {
+		ensureCollectorConfigsTable(context.Background(), tsHotStorage.Pool())
 	}
 
 	var kms servers.KeyManagementService
@@ -204,6 +253,9 @@ func Main() {
 	go metricsSvc.StartEnterpriseMetricsCollector(ctx)
 	go metricsSvc.StartPerformanceDebtCollector(ctx)
 	go metricsSvc.StartPostgresEnterpriseCollector(ctx)
+	go metricsSvc.StartQueryAnalysisCollector(ctx)
+	go metricsSvc.StartWatchedQueryCollector(ctx)
+	go metricsSvc.StartMssqlStorageHistoryCollector(ctx)
 
 	// ── Alert evaluation loop ──────────────────────────────────
 	if tsPool := metricsSvc.GetTimescaleDBPool(); tsPool != nil {
@@ -269,9 +321,17 @@ func Main() {
 		AllowTimescaleReconf: allowTSReconf,
 	})
 
-	r.PathPrefix("/assets/css/").Handler(http.StripPrefix("/assets/css/", http.FileServer(http.Dir(filepath.Join(frontendDir, "assets", "css")))))
-	r.PathPrefix("/js/").Handler(http.StripPrefix("/js/", http.FileServer(http.Dir(filepath.Join(frontendDir, "js")))))
-	r.PathPrefix("/pages/").Handler(http.StripPrefix("/pages/", http.FileServer(http.Dir(filepath.Join(frontendDir, "pages")))))
+	noCacheFS := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			next.ServeHTTP(w, req)
+		})
+	}
+	r.PathPrefix("/assets/css/").Handler(noCacheFS(http.StripPrefix("/assets/css/", http.FileServer(http.Dir(filepath.Join(frontendDir, "assets", "css"))))))
+	r.PathPrefix("/js/").Handler(noCacheFS(http.StripPrefix("/js/", http.FileServer(http.Dir(filepath.Join(frontendDir, "js"))))))
+	r.PathPrefix("/pages/").Handler(noCacheFS(http.StripPrefix("/pages/", http.FileServer(http.Dir(filepath.Join(frontendDir, "pages"))))))
 
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		// If an /api/* path reaches the SPA fallback, it means the API route wasn't registered
@@ -348,7 +408,6 @@ func Main() {
 ======================================================
 `, port, addr)
 	_, _ = fmt.Fprint(os.Stdout, banner)
-	fmt.Fprint(os.Stderr, banner)
 
 	sig := <-sigChan
 	log.Printf("Received signal: %v, shutting down gracefully...", sig)

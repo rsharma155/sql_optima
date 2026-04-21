@@ -390,10 +390,6 @@ function renderEnterpriseMetrics(inst, metrics) {
                         <h1>Enterprise Metrics</h1>
                         <span class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Advanced Performance Monitoring</span>
                     </div>
-                    <p class="text-muted enterprise-metrics-intro" style="margin:0.4rem 0 0 0; font-size:0.8rem; line-height:1.45; max-width:100%;">
-                        Snapshots are read from <strong>TimescaleDB</strong> (collector) to avoid hammering SQL Server on each refresh. Use <strong>Real-Time Diagnostics</strong> for live DMV queries. Pass <code>?source=live</code> on API calls only if you intentionally need direct DMV data from this UI tier.
-                        <span style="display:block; margin-top:0.35rem;">Where a database applies, metrics are limited to <strong>user databases</strong> (<code>database_id &gt; 4</code>), exclude replication <code>distribution</code>, and omit typical <code>sp_%</code> / <code>xp_%</code> batches and user-process-only sessions. Instance-wide panels (latches, spinlocks, memory clerks, plan cache, wait categories, TempDB file space) are unchanged.</span>
-                    </p>
                 </div>
                 <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
                     <span id="enterpriseDataSourceBadge" class="badge badge-info" style="display:none; font-size:0.65rem;">Source</span>

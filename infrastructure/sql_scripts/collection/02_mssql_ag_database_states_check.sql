@@ -3,4 +3,4 @@
 -- Target Table: N/A (AG capability check)
 -- Description: Checks if database states DMV is available
 
-SELECT COUNT(*) FROM sys.dm_hadr_availability_database_states;
+SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_hadr_availability_database_states;

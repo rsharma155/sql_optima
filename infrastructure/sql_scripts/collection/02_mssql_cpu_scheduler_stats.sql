@@ -3,7 +3,7 @@
 -- Target Table: sqlserver_cpu_scheduler_stats (TimescaleDB)
 -- Description: Collects CPU scheduler and workload group metrics with pressure warnings
 
-SELECT 
+SELECT /* SQL_OPTIMA */   
     GETDATE() AS capture_timestamp,
     @server_instance_name AS server_instance_name,
     osi.max_workers_count,
@@ -30,13 +30,13 @@ SELECT
     osm.available_physical_memory_kb AS available_physical_memory_kb,
     osm.system_memory_state_desc AS system_memory_state_desc,
     CASE WHEN osm.available_physical_memory_kb < osm.total_physical_memory_kb * 0.10 THEN 1 ELSE 0 END AS physical_memory_pressure_warning,
-    (SELECT COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64) AS total_node_count,
-    (SELECT COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64 AND node_state_desc LIKE '%ONLINE%') AS nodes_online_count,
-    (SELECT COUNT(*) FROM sys.dm_os_schedulers WHERE is_online = 0) AS offline_cpu_count,
-    CASE WHEN EXISTS (SELECT 1 FROM sys.dm_os_schedulers WHERE is_online = 0) THEN 1 ELSE 0 END AS offline_cpu_warning
+    (SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64) AS total_node_count,
+    (SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64 AND node_state_desc LIKE '%ONLINE%') AS nodes_online_count,
+    (SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_os_schedulers WHERE is_online = 0) AS offline_cpu_count,
+    CASE WHEN EXISTS (SELECT /* SQL_OPTIMA */   1 FROM sys.dm_os_schedulers WHERE is_online = 0) THEN 1 ELSE 0 END AS offline_cpu_warning
 FROM sys.dm_os_sys_info osi
 CROSS JOIN (
-    SELECT 
+    SELECT /* SQL_OPTIMA */   
         SUM(runnable_tasks_count) AS runnable_tasks_count,
         SUM(work_queue_count) AS work_queue_count,
         SUM(current_workers_count) AS current_workers_count
@@ -44,7 +44,7 @@ CROSS JOIN (
     WHERE is_online = 1
 ) sched
 CROSS JOIN (
-    SELECT 
+    SELECT /* SQL_OPTIMA */   
         SUM(active_request_count) AS active_request_count,
         SUM(queued_request_count) AS queued_request_count,
         SUM(blocked_task_count) AS blocked_task_count,

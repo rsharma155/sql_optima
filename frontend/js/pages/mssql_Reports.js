@@ -486,7 +486,7 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
                 title: 'Low Page Life Expectancy',
                 description: `Average PLE is ${avgPLE.toFixed(0)} seconds - buffer pool under pressure`,
                 timestamp: now,
-                route: 'dashboard',
+                route: 'drilldown-memory',
                 actionText: 'View PLE Chart'
             });
             anomalies.healthScore -= 8;

@@ -3,4 +3,4 @@
 -- Target Table: N/A (alerting)
 -- Description: Gets current connection count for threshold alerting
 
-SELECT count(*) FROM pg_stat_activity;
+SELECT /* SQL_OPTIMA */   count(*) FROM pg_stat_activity;

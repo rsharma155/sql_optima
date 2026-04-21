@@ -123,7 +123,6 @@ SELECT
     AVG(other_ms_per_sec) AS avg_other_ms,
     COUNT(*) AS sample_count
 FROM sqlserver_wait_history
-WHERE capture_timestamp >= NOW() - INTERVAL '30 days'
 GROUP BY 
     time_bucket('1 hour', capture_timestamp),
     server_instance_name,
@@ -152,7 +151,6 @@ SELECT
     COUNT(*) AS sample_count,
     MIN(query_text) AS sample_query_text
 FROM sqlserver_top_queries
-WHERE capture_timestamp >= NOW() - INTERVAL '30 days'
 GROUP BY 
     time_bucket('1 hour', capture_timestamp),
     server_instance_name,

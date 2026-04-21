@@ -38,4 +38,3 @@ func TestDelta_NegativeCounterReset(t *testing.T) {
 		t.Fatalf("expected 0 got %d", d)
 	}
 }
-

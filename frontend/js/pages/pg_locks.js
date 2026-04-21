@@ -34,9 +34,9 @@ async function initPgLocks() {
     const fromEl = document.getElementById('pgLocksFrom');
     const toEl = document.getElementById('pgLocksTo');
     const now = new Date();
-    const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    if (fromEl && !fromEl.dataset.touched) fromEl.value = pgLocksFormatLocal(hourAgo);
-    if (toEl && !toEl.dataset.touched) toEl.value = pgLocksFormatLocal(now);
+    const hourAgo = new Date(now.getTime() - 3600000); // 1 hour
+    if (fromEl) fromEl.value = pgLocksFormatLocal(hourAgo);
+    if (toEl) toEl.value = pgLocksFormatLocal(now);
 
     const applyBtn = document.getElementById('pgLocksApplyRange');
     if (applyBtn) {
