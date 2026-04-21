@@ -53,7 +53,7 @@ jobs:
 
       # gosec — SAST for Go source
       - name: gosec security scan
-        uses: securego/gosec@v2
+        uses: securego/gosec@v2.25.0
         with:
           args: -no-fail -fmt sarif -out gosec-results.sarif ./...
           working-directory: backend
