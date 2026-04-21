@@ -36,10 +36,11 @@ func init() {
 // PgRepository manages PostgreSQL database connections and provides methods for querying metrics.
 // It supports connection pooling, automatic database discovery, and thread-safe operations.
 type PgRepository struct {
-	conns  map[string]*sql.DB // Connection pool per instance
-	status map[string]string  // Instance status: "online", "offline", "error"
-	mutex  sync.RWMutex       // Thread-safe access to connections
-	cfg    *config.Config     // Application configuration
+	conns   map[string]*sql.DB // Connection pool per instance (default DB)
+	pgConns map[string]*sql.DB // Cache for per-database connections: "instanceName/dbName" -> *sql.DB
+	status  map[string]string  // Instance status: "online", "offline", "error"
+	mutex   sync.RWMutex       // Thread-safe access to connections
+	cfg     *config.Config     // Application configuration
 
 	// Lightweight in-memory cache for size deltas (growth estimation).
 	lastDbSizeBytes map[string]int64
@@ -52,6 +53,84 @@ func (c *PgRepository) GetConn(instanceName string) (*sql.DB, bool) {
 	defer c.mutex.RUnlock()
 	db, ok := c.conns[instanceName]
 	return db, ok
+}
+
+// GetConnForDB returns a connection to a specific database on an instance.
+func (c *PgRepository) GetConnForDB(instanceName, dbName string) (*sql.DB, error) {
+	key := instanceName + "/" + dbName
+	c.mutex.RLock()
+	db, ok := c.pgConns[key]
+	c.mutex.RUnlock()
+	if ok && db != nil {
+		if err := db.Ping(); err == nil {
+			return db, nil
+		}
+	}
+
+	// Not found or dead, create new
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	// Double check after lock
+	if db, ok := c.pgConns[key]; ok && db != nil {
+		if err := db.Ping(); err == nil {
+			return db, nil
+		}
+	}
+
+	var inst *config.Instance
+	for i := range c.cfg.Instances {
+		if c.cfg.Instances[i].Name == instanceName {
+			inst = &c.cfg.Instances[i]
+			break
+		}
+	}
+	if inst == nil {
+		return nil, fmt.Errorf("instance %s not found in config", instanceName)
+	}
+
+	port := inst.Port
+	if port == 0 {
+		port = 5432
+	}
+	user := inst.User
+	password := inst.Password
+	envPrefix := fmt.Sprintf("DB_%s", strings.ToUpper(strings.ReplaceAll(inst.Name, "-", "_")))
+	if user == "" {
+		user = os.Getenv(envPrefix + "_USER")
+	}
+	if password == "" {
+		password = os.Getenv(envPrefix + "_PASSWORD")
+	}
+	if user == "" {
+		user = "postgres"
+	}
+
+	pgURL := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(user, password),
+		Host:   net.JoinHostPort(inst.Host, fmt.Sprintf("%d", port)),
+		Path:   dbName,
+	}
+	q := pgURL.Query()
+	q.Set("sslmode", "disable") // keep it simple for now, or inherit from inst
+	pgURL.RawQuery = q.Encode()
+
+	newDb, err := sql.Open("postgres", pgURL.String())
+	if err != nil {
+		return nil, err
+	}
+	newDb.SetMaxOpenConns(2)
+	newDb.SetMaxIdleConns(1)
+	newDb.SetConnMaxLifetime(time.Minute * 5)
+
+	if err := newDb.Ping(); err != nil {
+		newDb.Close()
+		return nil, err
+	}
+
+	c.pgConns[key] = newDb
+	return newDb, nil
 }
 
 // HasConnection returns true if the instance has an active connection in the pool.
@@ -67,6 +146,7 @@ func (c *PgRepository) HasConnection(instanceName string) bool {
 func NewPgRepository(cfg *config.Config) *PgRepository {
 	c := &PgRepository{
 		conns:           make(map[string]*sql.DB),
+		pgConns:         make(map[string]*sql.DB),
 		status:          make(map[string]string),
 		cfg:             cfg,
 		lastDbSizeBytes: make(map[string]int64),
@@ -149,8 +229,8 @@ func NewPgRepository(cfg *config.Config) *PgRepository {
 			db.SetConnMaxLifetime(time.Minute * 10)
 
 			c.conns[inst.Name] = db
-			c.status[inst.Name] = "unknown"
-			log.Printf("[POSTGRES] DEBUG: Added connection to pool for %s, total: %d, conns map: %v", inst.Name, len(c.conns), c.conns)
+			c.status[inst.Name] = "online"
+			log.Printf("[POSTGRES] DEBUG: Added connection to pool for %s, total: %d", inst.Name, len(c.conns))
 
 			// Auto-discover databases if not configured
 			if len(inst.Databases) == 0 {
@@ -161,7 +241,7 @@ func NewPgRepository(cfg *config.Config) *PgRepository {
 						}
 					}()
 
-					query := "SELECT datname FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres')"
+					query := "SELECT /* SQL_OPTIMA */   datname FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres')"
 					rows, err := db.Query(query)
 					if err == nil {
 						var discoverDbs []string
@@ -502,7 +582,7 @@ func (c *PgRepository) GetConnectionStats(instanceName string) (active int, idle
 	}
 
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			COUNT(*) as total,
 			COUNT(*) FILTER (WHERE state = 'active') as active,
 			COUNT(*) FILTER (WHERE state = 'idle') as idle
@@ -526,7 +606,7 @@ func (c *PgRepository) GetReplicationLag(instanceName string) (lagMB float64, st
 
 	// Check if this is a standby using pg_is_in_recovery()
 	var isStandby bool
-	err = db.QueryRow("SELECT pg_is_in_recovery()").Scan(&isStandby)
+	err = db.QueryRow("SELECT /* SQL_OPTIMA */   pg_is_in_recovery()").Scan(&isStandby)
 	if err != nil {
 		return 0, "unknown", err
 	}
@@ -537,7 +617,7 @@ func (c *PgRepository) GetReplicationLag(instanceName string) (lagMB float64, st
 
 	// Calculate lag on standby using LSN difference
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			CASE 
 				WHEN pg_last_wal_replay_lsn() IS NOT NULL AND pg_last_wal_receive_lsn() IS NOT NULL 
 				THEN EXTRACT(EPOCH FROM (pg_last_wal_receive_lsn() - pg_last_wal_replay_lsn())) / 1024 / 1024
@@ -575,7 +655,7 @@ func (c *PgRepository) GetServerInfo(instanceName string) (version string, uptim
 	}
 
 	// Get version string and extract version number
-	err = db.QueryRow("SELECT version()").Scan(&version)
+	err = db.QueryRow("SELECT /* SQL_OPTIMA */   version()").Scan(&version)
 	if err != nil {
 		return "", "", err
 	}
@@ -590,7 +670,7 @@ func (c *PgRepository) GetServerInfo(instanceName string) (version string, uptim
 
 	// Get server start time and calculate uptime
 	var startTime time.Time
-	err = db.QueryRow("SELECT pg_postmaster_start_time()").Scan(&startTime)
+	err = db.QueryRow("SELECT /* SQL_OPTIMA */   pg_postmaster_start_time()").Scan(&startTime)
 	if err != nil {
 		return version, "", err
 	}
@@ -619,13 +699,13 @@ func (c *PgRepository) GetSystemStats(instanceName string) (cpuUsage float64, me
 
 	// Estimate CPU based on active connections vs max connections
 	var activeConnections int
-	err = db.QueryRow("SELECT count(*) FROM pg_stat_activity WHERE state = 'active'").Scan(&activeConnections)
+	err = db.QueryRow("SELECT /* SQL_OPTIMA */   count(*) FROM pg_stat_activity WHERE state = 'active'").Scan(&activeConnections)
 	if err != nil {
 		return 0, 0, err
 	}
 
 	var maxConnections int
-	err = db.QueryRow("SELECT setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConnections)
+	err = db.QueryRow("SELECT /* SQL_OPTIMA */   setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConnections)
 	if err != nil {
 		maxConnections = 100 // fallback
 	}
@@ -638,7 +718,7 @@ func (c *PgRepository) GetSystemStats(instanceName string) (cpuUsage float64, me
 	// Estimate memory based on shared buffers
 	var sharedBuffersMB int
 	err = db.QueryRow(`
-		SELECT (setting::bigint * 8192) / 1024 / 1024
+		SELECT /* SQL_OPTIMA */   (setting::bigint * 8192) / 1024 / 1024
 		FROM pg_settings
 		WHERE name = 'shared_buffers'
 	`).Scan(&sharedBuffersMB)
@@ -675,7 +755,7 @@ func (c *PgRepository) GetDatabases(instanceName string) ([]string, error) {
 	}
 
 	// List all non-template databases including postgres (needed for CNPG)
-	query := "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true ORDER BY datname"
+	query := "SELECT /* SQL_OPTIMA */   datname FROM pg_database WHERE datistemplate = false AND datallowconn = true ORDER BY datname"
 	rows, err := db.Query(query)
 	if err != nil {
 		log.Printf("[POSTGRES] GetDatabases: query failed for %s: %v", instanceName, err)
@@ -708,7 +788,7 @@ func (c *PgRepository) GetLongRunningQueries(instanceName string, minDurationSec
 	}
 
 	query := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			pid,
 			COALESCE(usename::text, '') AS usename,
 			COALESCE(datname::text, '') AS datname,
@@ -775,7 +855,7 @@ func (c *PgRepository) GetActiveQueries(instanceName string) ([]models.PgSession
 	}
 
 	query := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			pid,
 			COALESCE(usename::text, '') AS usename,
 			COALESCE(datname::text, '') AS datname,
@@ -855,7 +935,7 @@ func (c *PgRepository) GetSessions(instanceName string) ([]PgSession, error) {
 	}
 
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			pid,
 			usename,
 			datname,
@@ -928,7 +1008,7 @@ func (c *PgRepository) GetLocks(instanceName string) ([]PgLock, error) {
 	}
 
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			l.pid,
 			l.locktype,
 			COALESCE(r.relname || ' (' || r.oid || ')', 'virtual') as relation,
@@ -1000,16 +1080,16 @@ func (c *PgRepository) GetBlockingTree(instanceName string) ([]PgBlockingNode, e
 	// limited visibility of other sessions.
 	pairsQ := `
 		WITH waiting AS (
-			SELECT *
+			SELECT /* SQL_OPTIMA */   *
 			FROM pg_locks
 			WHERE NOT granted
 		),
 		holding AS (
-			SELECT *
+			SELECT /* SQL_OPTIMA */   *
 			FROM pg_locks
 			WHERE granted
 		)
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			w.pid  AS blocked_pid,
 			h.pid  AS blocking_pid
 		FROM waiting w
@@ -1066,7 +1146,7 @@ func (c *PgRepository) GetBlockingTree(instanceName string) ([]PgBlockingNode, e
 	}
 
 	actQ := fmt.Sprintf(`
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			a.pid,
 			a.usename,
 			a.datname,
@@ -1149,7 +1229,7 @@ func (c *PgRepository) GetBlockingTreeFast(instanceName string) ([]PgBlockingNod
 	pidSet := make(map[int]struct{})
 
 	rows, err := db.Query(`
-		SELECT a.pid AS blocked_pid, unnest(pg_blocking_pids(a.pid)) AS blocking_pid
+		SELECT /* SQL_OPTIMA */   a.pid AS blocked_pid, unnest(pg_blocking_pids(a.pid)) AS blocking_pid
 		FROM pg_stat_activity a
 		WHERE cardinality(pg_blocking_pids(a.pid)) > 0
 	`)
@@ -1186,7 +1266,7 @@ func (c *PgRepository) GetBlockingTreeFast(instanceName string) ([]PgBlockingNod
 	}
 
 	actQ := fmt.Sprintf(`
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			a.pid,
 			COALESCE(a.usename,''),
 			COALESCE(a.datname,''),
@@ -1281,20 +1361,27 @@ func (c *PgRepository) GetBlockingTreeFast(instanceName string) ([]PgBlockingNod
 
 // PgQueryStat represents query performance statistics from pg_stat_statements.
 type PgQueryStat struct {
-	QueryID         int64   `json:"query_id"`
-	Query           string  `json:"query"`
-	UserName        string  `json:"user,omitempty"`
-	Calls           int64   `json:"calls"`
-	TotalTime       float64 `json:"total_time"`
-	MeanTime        float64 `json:"mean_time"`
-	Rows            int64   `json:"rows"`
-	TempBlksRead    int64   `json:"temp_blks_read"`
-	TempBlksWritten int64   `json:"temp_blks_written"`
-	BlkReadTime     float64 `json:"blk_read_time"`
-	BlkWriteTime    float64 `json:"blk_write_time"`
-	SharedBlksRead  int64   `json:"shared_blks_read,omitempty"`
-	SharedBlksHit   int64   `json:"shared_blks_hit,omitempty"`
-	WalBytes        int64   `json:"wal_bytes,omitempty"`
+	QueryID           int64   `json:"query_id"`
+	Query             string  `json:"query"`
+	UserName          string  `json:"user,omitempty"`
+	Calls             int64   `json:"calls"`
+	TotalTime         float64 `json:"total_time"`
+	MeanTime          float64 `json:"mean_time"`
+	Rows              int64   `json:"rows"`
+	TempBlksRead      int64   `json:"temp_blks_read"`
+	TempBlksWritten   int64   `json:"temp_blks_written"`
+	BlkReadTime       float64 `json:"blk_read_time"`
+	BlkWriteTime      float64 `json:"blk_write_time"`
+	SharedBlksRead    int64   `json:"shared_blks_read,omitempty"`
+	SharedBlksHit     int64   `json:"shared_blks_hit,omitempty"`
+	SharedBlksDirtied int64   `json:"shared_blks_dirtied,omitempty"`
+	SharedBlksWritten int64   `json:"shared_blks_written,omitempty"`
+	WalBytes          int64   `json:"wal_bytes,omitempty"`
+	WalRecords        int64   `json:"wal_records,omitempty"`
+	WalFpi            int64   `json:"wal_fpi,omitempty"`
+	TotalPlanTime     float64 `json:"total_plan_time,omitempty"`
+	MeanPlanTime      float64 `json:"mean_plan_time,omitempty"`
+	Plans             int64   `json:"plans,omitempty"`
 }
 
 // GetQueryStats returns top queries by total execution time from pg_stat_statements.
@@ -1323,12 +1410,12 @@ func (c *PgRepository) GetQueryStatsWithLimit(instanceName string, limit int) ([
 
 	// Check if pg_stat_statements is available
 	var exists bool
-	err := db.QueryRow("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists)
+	err := db.QueryRow("SELECT /* SQL_OPTIMA */   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists)
 	if err != nil || !exists {
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
-	query := `SELECT 
+	query := `SELECT /* SQL_OPTIMA */   
 			s.queryid,
 			LEFT(s.query, 400) as query,
 			COALESCE(r.rolname, '') as user_name,
@@ -1379,12 +1466,12 @@ func (c *PgRepository) GetQueryStatsForSnapshot(instanceName string) ([]PgQueryS
 	}
 
 	var exists bool
-	err := db.QueryRow("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists)
+	err := db.QueryRow("SELECT /* SQL_OPTIMA */   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists)
 	if err != nil || !exists {
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
-	query := `SELECT 
+	query := `SELECT /* SQL_OPTIMA */   
 			s.queryid,
 			LEFT(s.query, 400) as query,
 			COALESCE(r.rolname, '') as user_name,
@@ -1398,7 +1485,14 @@ func (c *PgRepository) GetQueryStatsForSnapshot(instanceName string) ([]PgQueryS
 			s.blk_write_time,
 			s.shared_blks_read,
 			s.shared_blks_hit,
-			COALESCE(s.wal_bytes,0)
+			COALESCE(s.shared_blks_dirtied,0),
+			COALESCE(s.shared_blks_written,0),
+			COALESCE(s.wal_bytes,0),
+			COALESCE(s.wal_records,0),
+			COALESCE(s.wal_fpi,0),
+			COALESCE(s.total_plan_time,0),
+			COALESCE(s.mean_plan_time,0),
+			COALESCE(s.plans,0)
 		FROM pg_stat_statements s
 		LEFT JOIN pg_roles r ON r.oid = s.userid
 		WHERE ` + buildPgStatStatementsFilters() + `
@@ -1413,7 +1507,11 @@ func (c *PgRepository) GetQueryStatsForSnapshot(instanceName string) ([]PgQueryS
 	var stats []PgQueryStat
 	for rows.Next() {
 		var s PgQueryStat
-		err := rows.Scan(&s.QueryID, &s.Query, &s.UserName, &s.Calls, &s.TotalTime, &s.MeanTime, &s.Rows, &s.TempBlksRead, &s.TempBlksWritten, &s.BlkReadTime, &s.BlkWriteTime, &s.SharedBlksRead, &s.SharedBlksHit, &s.WalBytes)
+		err := rows.Scan(&s.QueryID, &s.Query, &s.UserName, &s.Calls, &s.TotalTime, &s.MeanTime, &s.Rows,
+			&s.TempBlksRead, &s.TempBlksWritten, &s.BlkReadTime, &s.BlkWriteTime,
+			&s.SharedBlksRead, &s.SharedBlksHit, &s.SharedBlksDirtied, &s.SharedBlksWritten,
+			&s.WalBytes, &s.WalRecords, &s.WalFpi,
+			&s.TotalPlanTime, &s.MeanPlanTime, &s.Plans)
 		if err != nil {
 			continue
 		}
@@ -1447,7 +1545,7 @@ func (c *PgRepository) GetTableStats(instanceName string) ([]PgTableStat, error)
 	}
 
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			schemaname,
 			relname,
 			pg_size_pretty(pg_total_relation_size(quote_ident(schemaname)||'.'||quote_ident(relname))) as total_size,
@@ -1500,7 +1598,7 @@ func (c *PgRepository) GetIndexStats(instanceName string) ([]PgIndexStat, error)
 	}
 
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			indexrelname,
 			relname,
 			pg_size_pretty(pg_relation_size(indexrelid)) as size,
@@ -1547,12 +1645,12 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 
 	// Best-effort HA "cluster_name" signal (often set by operators).
 	var clusterName string
-	_ = db.QueryRow("SELECT COALESCE(setting,'') FROM pg_settings WHERE name='cluster_name'").Scan(&clusterName)
+	_ = db.QueryRow("SELECT /* SQL_OPTIMA */   COALESCE(setting,'') FROM pg_settings WHERE name='cluster_name'").Scan(&clusterName)
 	var appNames []string
 
 	// Step 1: Determine Node Role
 	var isStandby bool
-	err := db.QueryRow("SELECT pg_is_in_recovery() AS is_standby").Scan(&isStandby)
+	err := db.QueryRow("SELECT /* SQL_OPTIMA */   pg_is_in_recovery() AS is_standby").Scan(&isStandby)
 	if err != nil {
 		return nil, fmt.Errorf("failed to determine node role: %w", err)
 	}
@@ -1563,7 +1661,7 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 		stats.ClusterState = "primary"
 
 		rows, err := db.Query(`
-			SELECT 
+			SELECT /* SQL_OPTIMA */   
 				application_name AS replica_pod_name,
 				client_addr AS pod_ip,
 				state,
@@ -1602,7 +1700,7 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 
 		var localLagMB float64
 		err = db.QueryRow(`
-			SELECT 
+			SELECT /* SQL_OPTIMA */   
 				CASE 
 					WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0
 					ELSE COALESCE(pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn()) / 1024.0 / 1024.0, 0)
@@ -1625,7 +1723,7 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 	// Get WAL generation rate (approximation)
 	var walRate float64
 	err = db.QueryRow(`
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			CASE 
 				WHEN pg_is_in_recovery() = false AND pg_current_wal_lsn() IS NOT NULL 
 				THEN 0
@@ -1638,7 +1736,7 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 
 	// Get BGWriter efficiency
 	var buffersBackend, maxwrittenClean int64
-	err = db.QueryRow("SELECT buffers_backend, maxwritten_clean FROM pg_stat_bgwriter").Scan(&buffersBackend, &maxwrittenClean)
+	err = db.QueryRow("SELECT /* SQL_OPTIMA */   buffers_backend, maxwritten_clean FROM pg_stat_bgwriter").Scan(&buffersBackend, &maxwrittenClean)
 	if err == nil && (buffersBackend+maxwrittenClean) > 0 {
 		stats.BgWriterEffPct = float64(buffersBackend) / float64(buffersBackend+maxwrittenClean) * 100
 	}
@@ -1657,7 +1755,7 @@ func (c *PgRepository) GetConfig(instanceName string) ([]models.PgConfigSetting,
 	}
 
 	query := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			name,
 			setting,
 			unit,
@@ -1703,7 +1801,7 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 
 	// Check for long-running idle-in-transaction queries
 	longTxnQuery := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			pid,
 			EXTRACT(EPOCH FROM (now() - xact_start)) / 60 as duration_minutes,
 			query
@@ -1739,12 +1837,12 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 
 	// Check connection count threshold
 	var connCount int
-	if err := db.QueryRow("SELECT count(*) FROM pg_stat_activity").Scan(&connCount); err != nil {
+	if err := db.QueryRow("SELECT /* SQL_OPTIMA */   count(*) FROM pg_stat_activity").Scan(&connCount); err != nil {
 		log.Printf("[POSTGRES] Failed to query connection count: %v", err)
 	}
 
 	var maxConn int
-	if err := db.QueryRow("SELECT setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConn); err != nil {
+	if err := db.QueryRow("SELECT /* SQL_OPTIMA */   setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConn); err != nil {
 		log.Printf("[POSTGRES] Failed to query max_connections: %v", err)
 	}
 
@@ -1774,7 +1872,7 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 
 	// Check for tables with high bloat
 	bloatQuery := `
-		SELECT
+		SELECT /* SQL_OPTIMA */  
 			schemaname || '.' || tablename as table_name,
 			n_dead_tup as dead_tuples,
 			CASE WHEN n_live_tup > 0 THEN (n_dead_tup::float / n_live_tup) * 100 ELSE 0 END as bloat_pct
@@ -1844,7 +1942,7 @@ func (c *PgRepository) FetchBGWriterStats(instanceName string) (*BGWriterStats, 
 
 	stats := &BGWriterStats{}
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			checkpoints_timed,
 			checkpoints_req,
 			checkpoint_write_time,
@@ -1906,7 +2004,7 @@ func (c *PgRepository) FetchArchiverStats(instanceName string) (*ArchiverStats, 
 
 	stats := &ArchiverStats{}
 	query := `
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			archived_count,
 			failed_count,
 			last_archived_wal,
@@ -1951,12 +2049,12 @@ func (c *PgRepository) FetchNormalizedQueryStats(instanceName string) ([]Normali
 
 	// Check if pg_stat_statements is available
 	var exists bool
-	err := db.QueryRow("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists)
+	err := db.QueryRow("SELECT /* SQL_OPTIMA */   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists)
 	if err != nil || !exists {
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
-	query := `SELECT 
+	query := `SELECT /* SQL_OPTIMA */   
 			s.queryid,
 			s.query,
 			s.calls,
@@ -2024,7 +2122,7 @@ func (c *PgRepository) FetchDBObservationMetrics(instanceName string) (*DBObserv
 	var xidAge int64
 	var xidPct float64
 	err := db.QueryRow(`
-		SELECT 
+		SELECT /* SQL_OPTIMA */   
 			COALESCE(MAX(age(datfrozenxid)), 0),
 			COALESCE((MAX(age(datfrozenxid))::float / NULLIF(current_setting('autovacuum_freeze_max_age')::float, 0)) * 100, 0)
 		FROM pg_database 
@@ -2039,7 +2137,7 @@ func (c *PgRepository) FetchDBObservationMetrics(instanceName string) (*DBObserv
 
 	// Query 2: Index Hit Rate
 	err = db.QueryRow(`
-		SELECT CASE WHEN (SUM(idx_tup_fetch) + SUM(seq_tup_read)) > 0 
+		SELECT /* SQL_OPTIMA */   CASE WHEN (SUM(idx_tup_fetch) + SUM(seq_tup_read)) > 0 
 			THEN (SUM(idx_tup_fetch)::float / NULLIF((SUM(idx_tup_fetch) + SUM(seq_tup_read)), 0)) * 100 
 			ELSE 0 END
 		FROM pg_stat_user_tables
@@ -2050,7 +2148,7 @@ func (c *PgRepository) FetchDBObservationMetrics(instanceName string) (*DBObserv
 
 	// Query 3: Idle in Transaction Count
 	err = db.QueryRow(`
-		SELECT COUNT(*) FROM pg_stat_activity
+		SELECT /* SQL_OPTIMA */   COUNT(*) FROM pg_stat_activity
 		WHERE state IN ('idle in transaction', 'idle in transaction (aborted)')
 	`).Scan(&metrics.IdleInTransactionCnt)
 	if err != nil {
@@ -2086,7 +2184,7 @@ func (c *PgRepository) TerminateSession(instanceName string, pid int) error {
 		return fmt.Errorf("connection not found")
 	}
 
-	_, err := db.Exec("SELECT pg_terminate_backend($1)", pid)
+	_, err := db.Exec("SELECT /* SQL_OPTIMA */   pg_terminate_backend($1)", pid)
 	if err != nil {
 		return fmt.Errorf("failed to terminate session %d: %w", pid, err)
 	}
@@ -2105,7 +2203,7 @@ func (c *PgRepository) ResetQueryStats(instanceName string) error {
 		return fmt.Errorf("connection not found")
 	}
 
-	_, err := db.Exec("SELECT pg_stat_statements_reset()")
+	_, err := db.Exec("SELECT /* SQL_OPTIMA */   pg_stat_statements_reset()")
 	if err != nil {
 		return fmt.Errorf("failed to reset query stats: %w", err)
 	}
