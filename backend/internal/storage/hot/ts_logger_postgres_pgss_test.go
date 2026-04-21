@@ -1,6 +1,7 @@
 package hot
 
 import (
+	"context"
 	"testing"
 	"time"
 )
