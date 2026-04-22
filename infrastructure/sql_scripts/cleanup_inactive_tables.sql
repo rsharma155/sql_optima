@@ -18,12 +18,12 @@ DROP MATERIALIZED VIEW IF EXISTS system_metrics_1h CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS system_metrics_1d CASCADE;
 
 -- 2. SQL Server Inactive Tables (User identified as inactive / Missing implementation)
-DROP TABLE IF EXISTS mssql_database_size CASCADE;        -- Superseded by snapshot.mssql_db_storage_history
-DROP TABLE IF EXISTS mssql_server_config CASCADE;        -- No active Go implementation
-DROP TABLE IF EXISTS mssql_database_config CASCADE;      -- No active Go implementation
-DROP TABLE IF EXISTS mssql_qs_runtime CASCADE;           -- Superseded by query_store_stats
-DROP TABLE IF EXISTS mssql_collection_log CASCADE;       -- No active Go implementation
-DROP TABLE IF EXISTS mssql_tempdb_stats CASCADE;         -- No active background collector
+DROP TABLE IF EXISTS sqlserver_database_size CASCADE;        -- Superseded by snapshot.sqlserver_db_storage_history
+DROP TABLE IF EXISTS sqlserver_server_config CASCADE;        -- No active Go implementation
+DROP TABLE IF EXISTS sqlserver_database_config CASCADE;      -- No active Go implementation
+DROP TABLE IF EXISTS sqlserver_qs_runtime CASCADE;           -- Superseded by query_store_stats
+DROP TABLE IF EXISTS sqlserver_collection_log CASCADE;       -- No active Go implementation
+DROP TABLE IF EXISTS sqlserver_tempdb_stats CASCADE;         -- No active background collector
 
 -- 3. Application/Configuration Tables (Superseded by 'optima_*' prefix or unused)
 DROP TABLE IF EXISTS alert_thresholds CASCADE;           -- Superseded by optima_alert_rules

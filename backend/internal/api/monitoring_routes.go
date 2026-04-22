@@ -16,21 +16,21 @@ import (
 
 // monitoringHandlers groups HTTP handlers registered for dashboard and live APIs.
 type monitoringHandlers struct {
-	Mssql              *handlers.MssqlHandlers
-	Postgres           *handlers.PostgresHandlers
-	Live               *handlers.LiveHandlers
-	Timescale          *handlers.TimescaleHandlers
-	Health             *handlers.HealthHandlers
-	Dashboard          *handlers.DashboardHandlers
-	Query              *handlers.QueryHandlers
-	SIH                *handlers.StorageIndexHealthTimescaleHandlers
-	MssqlQueryAnalysis *handlers.MssqlQueryAnalysisHandlers
-	MssqlWatchedQuery  *handlers.MssqlWatchedQueryHandlers
+	SqlServer              *handlers.SqlServerHandlers
+	Postgres               *handlers.PostgresHandlers
+	Live                   *handlers.LiveHandlers
+	Timescale              *handlers.TimescaleHandlers
+	Health                 *handlers.HealthHandlers
+	Dashboard              *handlers.DashboardHandlers
+	Query                  *handlers.QueryHandlers
+	SIH                    *handlers.StorageIndexHealthTimescaleHandlers
+	SqlServerQueryAnalysis *handlers.SqlServerQueryAnalysisHandlers
+	SqlServerWatchedQuery  *handlers.SqlServerWatchedQueryHandlers
 }
 
 // registerMonitoringReadRoutes attaches read-only monitoring endpoints (viewer, dba, or admin).
 func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBestPractices http.HandlerFunc) {
-	m := h.Mssql
+	m := h.SqlServer
 	p := h.Postgres
 	l := h.Live
 	ts := h.Timescale
@@ -38,11 +38,11 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	q := h.Query
 	sih := h.SIH
 
-	sr.HandleFunc("/mssql/dashboard", m.Dashboard).Methods("GET")
-	sr.HandleFunc("/mssql/dashboard/v2", m.DashboardV2).Methods("GET")
-	sr.HandleFunc("/mssql/dashboard/timeseries", m.DashboardTimeSeries).Methods("GET")
-	sr.HandleFunc("/mssql/storage-index/table-drilldown", m.TableDrilldown).Methods("GET")
-	sr.HandleFunc("/mssql/performance-debt", m.PerformanceDebt).Methods("GET")
+	sr.HandleFunc("/sqlserver/dashboard", m.Dashboard).Methods("GET")
+	sr.HandleFunc("/sqlserver/dashboard/v2", m.DashboardV2).Methods("GET")
+	sr.HandleFunc("/sqlserver/dashboard/timeseries", m.DashboardTimeSeries).Methods("GET")
+	sr.HandleFunc("/sqlserver/storage-index/table-drilldown", m.TableDrilldown).Methods("GET")
+	sr.HandleFunc("/sqlserver/performance-debt", m.PerformanceDebt).Methods("GET")
 	sr.HandleFunc("/postgres/dashboard", p.Dashboard).Methods("GET")
 	sr.HandleFunc("/postgres/db-observation", p.DBObservation).Methods("GET")
 	sr.HandleFunc("/postgres/overview", p.Overview).Methods("GET")
@@ -104,39 +104,39 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/postgres/pgss/top", p.PgssTop).Methods("GET")
 	sr.HandleFunc("/postgres/pgss/regressions", p.PgssRegressions).Methods("GET")
 	sr.HandleFunc("/postgres/pgss/summary", p.PgssSummary).Methods("GET")
-	sr.HandleFunc("/mssql/cpu-drilldown", m.CPUDrilldown).Methods("GET")
-	sr.HandleFunc("/mssql/cpu-scheduler-stats", m.CPUSchedulerStats).Methods("GET")
-	sr.HandleFunc("/mssql/server-properties", m.ServerProperties).Methods("GET")
-	sr.HandleFunc("/mssql/ag-health", m.AGHealth).Methods("GET")
-	sr.HandleFunc("/mssql/ag-health/history", m.AGHealthTimeSeries).Methods("GET")
-	sr.HandleFunc("/mssql/replication-status", m.ReplicationStatus).Methods("GET")
-	sr.HandleFunc("/mssql/log-shipping", m.LogShipping).Methods("GET")
-	sr.HandleFunc("/mssql/db-throughput", m.DBThroughput).Methods("GET")
-	sr.HandleFunc("/mssql/best-practices", m.BestPractices).Methods("GET")
-	sr.HandleFunc("/mssql/guardrails", m.Guardrails).Methods("GET")
-	sr.HandleFunc("/mssql/jobs", m.Jobs).Methods("GET")
-	sr.HandleFunc("/mssql/overview", m.Overview).Methods("GET")
-	sr.HandleFunc("/mssql/latch-stats", m.LatchStats).Methods("GET")
-	sr.HandleFunc("/mssql/waiting-tasks", m.WaitingTasks).Methods("GET")
-	sr.HandleFunc("/mssql/memory-grants", m.MemoryGrants).Methods("GET")
-	sr.HandleFunc("/mssql/scheduler-wg", m.SchedulerWorkers).Methods("GET")
-	sr.HandleFunc("/mssql/procedure-stats", m.ProcedureStats).Methods("GET")
-	sr.HandleFunc("/mssql/file-io-latency", m.FileIOLatency).Methods("GET")
-	sr.HandleFunc("/mssql/spinlock-stats", m.SpinlockStats).Methods("GET")
-	sr.HandleFunc("/mssql/memory-clerks", m.MemoryClerks).Methods("GET")
-	sr.HandleFunc("/mssql/tempdb-stats", m.TempdbStats).Methods("GET")
-	sr.HandleFunc("/mssql/plan-cache-health", m.PlanCacheHealth).Methods("GET")
-	sr.HandleFunc("/mssql/memory-grant-waiters", m.MemoryGrantWaiters).Methods("GET")
-	sr.HandleFunc("/mssql/tempdb-top-consumers", m.TempdbTopConsumers).Methods("GET")
-	sr.HandleFunc("/mssql/wait-categories", m.WaitCategories).Methods("GET")
+	sr.HandleFunc("/sqlserver/cpu-drilldown", m.CPUDrilldown).Methods("GET")
+	sr.HandleFunc("/sqlserver/cpu-scheduler-stats", m.CPUSchedulerStats).Methods("GET")
+	sr.HandleFunc("/sqlserver/server-properties", m.ServerProperties).Methods("GET")
+	sr.HandleFunc("/sqlserver/ag-health", m.AGHealth).Methods("GET")
+	sr.HandleFunc("/sqlserver/ag-health/history", m.AGHealthTimeSeries).Methods("GET")
+	sr.HandleFunc("/sqlserver/replication-status", m.ReplicationStatus).Methods("GET")
+	sr.HandleFunc("/sqlserver/log-shipping", m.LogShipping).Methods("GET")
+	sr.HandleFunc("/sqlserver/db-throughput", m.DBThroughput).Methods("GET")
+	sr.HandleFunc("/sqlserver/best-practices", m.BestPractices).Methods("GET")
+	sr.HandleFunc("/sqlserver/guardrails", m.Guardrails).Methods("GET")
+	sr.HandleFunc("/sqlserver/jobs", m.Jobs).Methods("GET")
+	sr.HandleFunc("/sqlserver/overview", m.Overview).Methods("GET")
+	sr.HandleFunc("/sqlserver/latch-stats", m.LatchStats).Methods("GET")
+	sr.HandleFunc("/sqlserver/waiting-tasks", m.WaitingTasks).Methods("GET")
+	sr.HandleFunc("/sqlserver/memory-grants", m.MemoryGrants).Methods("GET")
+	sr.HandleFunc("/sqlserver/scheduler-wg", m.SchedulerWorkers).Methods("GET")
+	sr.HandleFunc("/sqlserver/procedure-stats", m.ProcedureStats).Methods("GET")
+	sr.HandleFunc("/sqlserver/file-io-latency", m.FileIOLatency).Methods("GET")
+	sr.HandleFunc("/sqlserver/spinlock-stats", m.SpinlockStats).Methods("GET")
+	sr.HandleFunc("/sqlserver/memory-clerks", m.MemoryClerks).Methods("GET")
+	sr.HandleFunc("/sqlserver/tempdb-stats", m.TempdbStats).Methods("GET")
+	sr.HandleFunc("/sqlserver/plan-cache-health", m.PlanCacheHealth).Methods("GET")
+	sr.HandleFunc("/sqlserver/memory-grant-waiters", m.MemoryGrantWaiters).Methods("GET")
+	sr.HandleFunc("/sqlserver/tempdb-top-consumers", m.TempdbTopConsumers).Methods("GET")
+	sr.HandleFunc("/sqlserver/wait-categories", m.WaitCategories).Methods("GET")
 	sr.HandleFunc("/timescale/status", ts.Status).Methods("GET")
-	sr.HandleFunc("/timescale/mssql/metrics", ts.MssqlMetrics).Methods("GET")
-	sr.HandleFunc("/timescale/mssql/cpu-history", ts.MssqlCPUHistory).Methods("GET")
-	sr.HandleFunc("/timescale/mssql/memory-drilldown", ts.MssqlMemoryDrilldown).Methods("GET")
-	sr.HandleFunc("/timescale/mssql/top-queries", ts.MssqlTopQueries).Methods("GET")
-	sr.HandleFunc("/timescale/mssql/query-stats-dashboard", ts.MssqlQueryStatsDashboard).Methods("GET")
-	sr.HandleFunc("/timescale/mssql/query-stats-timeseries", ts.MssqlQueryStatsTimeSeries).Methods("GET")
-	sr.HandleFunc("/timescale/mssql/long-running-queries", ts.MssqlLongRunningQueries).Methods("GET")
+	sr.HandleFunc("/timescale/sqlserver/metrics", ts.SqlServerMetrics).Methods("GET")
+	sr.HandleFunc("/timescale/sqlserver/cpu-history", ts.SqlServerCPUHistory).Methods("GET")
+	sr.HandleFunc("/timescale/sqlserver/memory-drilldown", ts.SqlServerMemoryDrilldown).Methods("GET")
+	sr.HandleFunc("/timescale/sqlserver/top-queries", ts.SqlServerTopQueries).Methods("GET")
+	sr.HandleFunc("/timescale/sqlserver/query-stats-dashboard", ts.SqlServerQueryStatsDashboard).Methods("GET")
+	sr.HandleFunc("/timescale/sqlserver/query-stats-timeseries", ts.SqlServerQueryStatsTimeSeries).Methods("GET")
+	sr.HandleFunc("/timescale/sqlserver/long-running-queries", ts.SqlServerLongRunningQueries).Methods("GET")
 	sr.HandleFunc("/timescale/postgres/throughput", ts.PostgresThroughput).Methods("GET")
 	sr.HandleFunc("/timescale/postgres/connections", ts.PostgresConnections).Methods("GET")
 	if sih != nil {
@@ -165,31 +165,31 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/rules/best-practices", rulesBestPractices).Methods("GET")
 
 	// SQL Server Query Analysis Dashboard
-	if qa := h.MssqlQueryAnalysis; qa != nil {
-		sr.HandleFunc("/mssql/query-analysis/summary", qa.Summary).Methods("GET")
-		sr.HandleFunc("/mssql/query-analysis/regressions", qa.Regressions).Methods("GET")
-		sr.HandleFunc("/mssql/query-analysis/plan-instability", qa.PlanInstability).Methods("GET")
-		sr.HandleFunc("/mssql/query-analysis/top-queries", qa.TopQueries).Methods("GET")
-		sr.HandleFunc("/mssql/query-analysis/query-plans", qa.QueryPlans).Methods("GET")
-		sr.HandleFunc("/mssql/query-analysis/query-wait-stats", qa.QueryWaitStats).Methods("GET")
+	if qa := h.SqlServerQueryAnalysis; qa != nil {
+		sr.HandleFunc("/sqlserver/query-analysis/summary", qa.Summary).Methods("GET")
+		sr.HandleFunc("/sqlserver/query-analysis/regressions", qa.Regressions).Methods("GET")
+		sr.HandleFunc("/sqlserver/query-analysis/plan-instability", qa.PlanInstability).Methods("GET")
+		sr.HandleFunc("/sqlserver/query-analysis/top-queries", qa.TopQueries).Methods("GET")
+		sr.HandleFunc("/sqlserver/query-analysis/query-plans", qa.QueryPlans).Methods("GET")
+		sr.HandleFunc("/sqlserver/query-analysis/query-wait-stats", qa.QueryWaitStats).Methods("GET")
 	}
 
 	// SQL Server Watched Query Analyzer
-	if wq := h.MssqlWatchedQuery; wq != nil {
-		sr.HandleFunc("/mssql/watched-queries", wq.List).Methods("GET")
-		sr.HandleFunc("/mssql/watched-queries", wq.Add).Methods("POST")
-		sr.HandleFunc("/mssql/watched-queries", wq.Delete).Methods("DELETE")
-		sr.HandleFunc("/mssql/watched-queries/detail", wq.Detail).Methods("GET")
-		sr.HandleFunc("/mssql/watched-queries/event", wq.AddEvent).Methods("POST")
+	if wq := h.SqlServerWatchedQuery; wq != nil {
+		sr.HandleFunc("/sqlserver/watched-queries", wq.List).Methods("GET")
+		sr.HandleFunc("/sqlserver/watched-queries", wq.Add).Methods("POST")
+		sr.HandleFunc("/sqlserver/watched-queries", wq.Delete).Methods("DELETE")
+		sr.HandleFunc("/sqlserver/watched-queries/detail", wq.Detail).Methods("GET")
+		sr.HandleFunc("/sqlserver/watched-queries/event", wq.AddEvent).Methods("POST")
 	}
 }
 
 // registerMonitoringElevatedRoutes attaches diagnostics that should be limited to dba or admin.
-func registerMonitoringElevatedRoutes(sr *mux.Router, m *handlers.MssqlHandlers, explainAnalyze, explainOptimize, explainIndexAdvisor http.HandlerFunc) {
+func registerMonitoringElevatedRoutes(sr *mux.Router, m *handlers.SqlServerHandlers, explainAnalyze, explainOptimize, explainIndexAdvisor http.HandlerFunc) {
 	sr.HandleFunc("/postgres/explain/analyze", explainAnalyze).Methods("POST")
 	sr.HandleFunc("/postgres/explain/optimize", explainOptimize).Methods("POST")
 	sr.HandleFunc("/postgres/explain/index-advisor", explainIndexAdvisor).Methods("POST")
-	sr.HandleFunc("/mssql/xevents", m.XEvents).Methods("GET")
+	sr.HandleFunc("/sqlserver/xevents", m.XEvents).Methods("GET")
 }
 
 // registerPostgresDBAMutations attaches mutating Postgres endpoints (dba or admin).

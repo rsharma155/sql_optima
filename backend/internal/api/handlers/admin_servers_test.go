@@ -235,7 +235,7 @@ func TestTestServerDraft_SSLModeDisable_ReachesSuccess(t *testing.T) {
 // TestSanitizeDBError_TLSNotMaskedAsAuth ensures TLS handshake errors are reported
 // as SSL errors, not mis-classified as authentication failures.
 func TestSanitizeDBError_TLSNotMaskedAsAuth(t *testing.T) {
-	tlsErr := errors.New("mssql: connection error: tls: failed to verify certificate: x509")
+	tlsErr := errors.New("sqlserver: connection error: tls: failed to verify certificate: x509")
 	got := sanitizeDBError(tlsErr, "sqlserver")
 	if got == nil {
 		t.Fatal("expected non-nil error")
@@ -248,7 +248,7 @@ func TestSanitizeDBError_TLSNotMaskedAsAuth(t *testing.T) {
 // TestSanitizeDBError_LoginFailedIsAuth verifies genuine login failures are still
 // reported as authentication errors.
 func TestSanitizeDBError_LoginFailedIsAuth(t *testing.T) {
-	authErr := errors.New("mssql: login failed for user 'sa'")
+	authErr := errors.New("sqlserver: login failed for user 'sa'")
 	got := sanitizeDBError(authErr, "sqlserver")
 	if got == nil {
 		t.Fatal("expected non-nil error")

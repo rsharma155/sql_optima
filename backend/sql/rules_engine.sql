@@ -170,7 +170,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ============================================================
--- Sample Rules (MSSQL examples)
+-- Sample Rules (SQLSERVER examples)
 -- ============================================================
 INSERT INTO ruleengine.rules (rule_name, category, description, detection_sql, fix_script, comparison_type, threshold_value, priority) VALUES 
 ('Max Server Memory', 'Memory', 'SQL Server memory should be capped - default unlimited will starve the OS',

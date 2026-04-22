@@ -139,7 +139,7 @@ SELECT add_retention_policy('system_metrics_1d', INTERVAL '365 days', if_not_exi
 -- --------------------------------------------------------------------------
 
 -- SQL Server System Metrics (main table)
-CREATE TABLE IF NOT EXISTS mssql_metrics (
+CREATE TABLE IF NOT EXISTS sqlserver_metrics (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     avg_cpu_load DOUBLE PRECISION,
@@ -152,17 +152,17 @@ CREATE TABLE IF NOT EXISTS mssql_metrics (
     free_disk_mb DOUBLE PRECISION,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_metrics', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_metrics_server ON mssql_metrics (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_metrics SET (
+SELECT create_hypertable('sqlserver_metrics', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_metrics_server ON sqlserver_metrics (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_metrics SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_metrics', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_metrics', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- SQL Server CPU History
-CREATE TABLE IF NOT EXISTS mssql_cpu_history (
+CREATE TABLE IF NOT EXISTS sqlserver_cpu_history (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     sql_process DOUBLE PRECISION,
@@ -170,17 +170,17 @@ CREATE TABLE IF NOT EXISTS mssql_cpu_history (
     other_process DOUBLE PRECISION,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_cpu_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_cpu_server ON mssql_cpu_history (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_cpu_history SET (
+SELECT create_hypertable('sqlserver_cpu_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_cpu_server ON sqlserver_cpu_history (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_cpu_history SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_cpu_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_cpu_history', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- SQL Server Memory History (Page Life Expectancy)
-CREATE TABLE IF NOT EXISTS mssql_memory_history (
+CREATE TABLE IF NOT EXISTS sqlserver_memory_history (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     page_life_expectancy DOUBLE PRECISION,
@@ -188,17 +188,17 @@ CREATE TABLE IF NOT EXISTS mssql_memory_history (
     size_mb DOUBLE PRECISION,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_memory_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_memory_server ON mssql_memory_history (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_memory_history SET (
+SELECT create_hypertable('sqlserver_memory_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_memory_server ON sqlserver_memory_history (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_memory_history SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_memory_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_memory_history', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- SQL Server Wait Statistics History
-CREATE TABLE IF NOT EXISTS mssql_wait_history (
+CREATE TABLE IF NOT EXISTS sqlserver_wait_history (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     wait_type TEXT,
@@ -209,18 +209,18 @@ CREATE TABLE IF NOT EXISTS mssql_wait_history (
     other_ms_per_sec DOUBLE PRECISION,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_wait_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_wait_server ON mssql_wait_history (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_mssql_wait_type ON mssql_wait_history (wait_type);
-ALTER TABLE mssql_wait_history SET (
+SELECT create_hypertable('sqlserver_wait_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_wait_server ON sqlserver_wait_history (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_wait_type ON sqlserver_wait_history (wait_type);
+ALTER TABLE sqlserver_wait_history SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,wait_type',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_wait_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_wait_history', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- SQL Server File I/O History
-CREATE TABLE IF NOT EXISTS mssql_file_io_history (
+CREATE TABLE IF NOT EXISTS sqlserver_file_io_history (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT,
@@ -232,18 +232,18 @@ CREATE TABLE IF NOT EXISTS mssql_file_io_history (
     num_writes BIGINT,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_file_io_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_fileio_server ON mssql_file_io_history (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_mssql_fileio_db ON mssql_file_io_history (database_name);
-ALTER TABLE mssql_file_io_history SET (
+SELECT create_hypertable('sqlserver_file_io_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_fileio_server ON sqlserver_file_io_history (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_fileio_db ON sqlserver_file_io_history (database_name);
+ALTER TABLE sqlserver_file_io_history SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_file_io_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_file_io_history', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- SQL Server Connection History
-CREATE TABLE IF NOT EXISTS mssql_connection_history (
+CREATE TABLE IF NOT EXISTS sqlserver_connection_history (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     login_name TEXT,
@@ -252,17 +252,17 @@ CREATE TABLE IF NOT EXISTS mssql_connection_history (
     active_requests INTEGER,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_connection_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_conn_server ON mssql_connection_history (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_connection_history SET (
+SELECT create_hypertable('sqlserver_connection_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_conn_server ON sqlserver_connection_history (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_connection_history SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_connection_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_connection_history', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- SQL Server Lock History
-CREATE TABLE IF NOT EXISTS mssql_lock_history (
+CREATE TABLE IF NOT EXISTS sqlserver_lock_history (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT,
@@ -270,17 +270,17 @@ CREATE TABLE IF NOT EXISTS mssql_lock_history (
     deadlocks INTEGER,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_lock_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_lock_server ON mssql_lock_history (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_lock_history SET (
+SELECT create_hypertable('sqlserver_lock_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_lock_server ON sqlserver_lock_history (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_lock_history SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_lock_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_lock_history', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- SQL Server Disk Usage History
-CREATE TABLE IF NOT EXISTS mssql_disk_history (
+CREATE TABLE IF NOT EXISTS sqlserver_disk_history (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT,
@@ -289,17 +289,17 @@ CREATE TABLE IF NOT EXISTS mssql_disk_history (
     free_mb DOUBLE PRECISION,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_disk_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_disk_server ON mssql_disk_history (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_disk_history SET (
+SELECT create_hypertable('sqlserver_disk_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_disk_server ON sqlserver_disk_history (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_disk_history SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_disk_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_disk_history', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- SQL Server Top Queries (with Delta CPU tracking)
-CREATE TABLE IF NOT EXISTS mssql_top_queries (
+CREATE TABLE IF NOT EXISTS sqlserver_top_queries (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     login_name TEXT,
@@ -314,23 +314,23 @@ CREATE TABLE IF NOT EXISTS mssql_top_queries (
     query_hash TEXT,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_top_queries', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_topq_server ON mssql_top_queries (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_mssql_topq_hash ON mssql_top_queries (query_hash) WHERE query_hash IS NOT NULL;
-ALTER TABLE mssql_top_queries SET (
+SELECT create_hypertable('sqlserver_top_queries', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_topq_server ON sqlserver_top_queries (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_topq_hash ON sqlserver_top_queries (query_hash) WHERE query_hash IS NOT NULL;
+ALTER TABLE sqlserver_top_queries SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_top_queries', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_top_queries IS 'Tracks CPU-intensive queries with delta metrics. Login/Client App may show Unknown/Disconnected for quick background queries.';
+SELECT add_compression_policy('sqlserver_top_queries', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_top_queries IS 'Tracks CPU-intensive queries with delta metrics. Login/Client App may show Unknown/Disconnected for quick background queries.';
 
 -- --------------------------------------------------------------------------
 -- SQL SERVER - Query Stats Delta Pipeline (staging -> snapshot -> interval)
 -- --------------------------------------------------------------------------
 -- These tables back `ProcessQueryStatsDelta` (ON CONFLICT upserts) and must have a matching PK/unique constraint.
 
-CREATE TABLE IF NOT EXISTS mssql_query_stats_staging (
+CREATE TABLE IF NOT EXISTS sqlserver_query_stats_staging (
     capture_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     server_instance_name TEXT NOT NULL,
     database_name TEXT,
@@ -347,7 +347,7 @@ CREATE TABLE IF NOT EXISTS mssql_query_stats_staging (
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS mssql_query_stats_snapshot (
+CREATE TABLE IF NOT EXISTS sqlserver_query_stats_snapshot (
     capture_time TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT,
@@ -365,17 +365,17 @@ CREATE TABLE IF NOT EXISTS mssql_query_stats_snapshot (
     inserted_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (server_instance_name, query_hash, database_name, login_name, client_app, capture_time)
 );
-SELECT create_hypertable('mssql_query_stats_snapshot', 'capture_time', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_query_stats_snapshot_hash ON mssql_query_stats_snapshot (query_hash);
-CREATE INDEX IF NOT EXISTS idx_query_stats_snapshot_time ON mssql_query_stats_snapshot (capture_time DESC);
-ALTER TABLE mssql_query_stats_snapshot SET (
+SELECT create_hypertable('sqlserver_query_stats_snapshot', 'capture_time', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_query_stats_snapshot_hash ON sqlserver_query_stats_snapshot (query_hash);
+CREATE INDEX IF NOT EXISTS idx_query_stats_snapshot_time ON sqlserver_query_stats_snapshot (capture_time DESC);
+ALTER TABLE sqlserver_query_stats_snapshot SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,query_hash',
     timescaledb.compress_orderby = 'capture_time DESC'
 );
-SELECT add_retention_policy('mssql_query_stats_snapshot', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_retention_policy('sqlserver_query_stats_snapshot', INTERVAL '7 days', if_not_exists => TRUE);
 
-CREATE TABLE IF NOT EXISTS mssql_query_stats_interval (
+CREATE TABLE IF NOT EXISTS sqlserver_query_stats_interval (
     bucket_start TIMESTAMPTZ NOT NULL,
     bucket_end TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
@@ -397,32 +397,32 @@ CREATE TABLE IF NOT EXISTS mssql_query_stats_interval (
     inserted_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (bucket_end, query_hash, database_name, login_name, client_app, server_instance_name)
 );
-SELECT create_hypertable('mssql_query_stats_interval', 'bucket_end', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_query_stats_interval_hash ON mssql_query_stats_interval (query_hash);
-CREATE INDEX IF NOT EXISTS idx_query_stats_interval_time ON mssql_query_stats_interval (bucket_end DESC);
-CREATE INDEX IF NOT EXISTS idx_query_stats_interval_server ON mssql_query_stats_interval (server_instance_name, bucket_end DESC);
-ALTER TABLE mssql_query_stats_interval SET (
+SELECT create_hypertable('sqlserver_query_stats_interval', 'bucket_end', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_query_stats_interval_hash ON sqlserver_query_stats_interval (query_hash);
+CREATE INDEX IF NOT EXISTS idx_query_stats_interval_time ON sqlserver_query_stats_interval (bucket_end DESC);
+CREATE INDEX IF NOT EXISTS idx_query_stats_interval_server ON sqlserver_query_stats_interval (server_instance_name, bucket_end DESC);
+ALTER TABLE sqlserver_query_stats_interval SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,query_hash',
     timescaledb.compress_orderby = 'bucket_end DESC'
 );
-SELECT add_compression_policy('mssql_query_stats_interval', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_query_stats_interval', INTERVAL '7 days', if_not_exists => TRUE);
 
--- Safety: older installs may have created mssql_query_stats_interval without the required PK/unique,
+-- Safety: older installs may have created sqlserver_query_stats_interval without the required PK/unique,
 -- causing ON CONFLICT errors (SQLSTATE 42P10). Add the PK if missing.
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'mssql_query_stats_interval') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'sqlserver_query_stats_interval') THEN
         IF NOT EXISTS (
             SELECT 1
             FROM pg_constraint
-            WHERE conrelid = 'mssql_query_stats_interval'::regclass
+            WHERE conrelid = 'sqlserver_query_stats_interval'::regclass
               AND contype IN ('p','u')
-              AND conname = 'mssql_query_stats_interval_pkey'
+              AND conname = 'sqlserver_query_stats_interval_pkey'
         ) THEN
             BEGIN
-                ALTER TABLE mssql_query_stats_interval
-                ADD CONSTRAINT mssql_query_stats_interval_pkey
+                ALTER TABLE sqlserver_query_stats_interval
+                ADD CONSTRAINT sqlserver_query_stats_interval_pkey
                 PRIMARY KEY (bucket_end, query_hash, database_name, login_name, client_app, server_instance_name);
             EXCEPTION WHEN OTHERS THEN
                 NULL;
@@ -525,7 +525,7 @@ SELECT add_compression_policy('postgres_settings_snapshot', INTERVAL '14 days', 
 -- --------------------------------------------------------------------------
 
 -- SQL Server Database Throughput
-CREATE TABLE IF NOT EXISTS mssql_database_throughput (
+CREATE TABLE IF NOT EXISTS sqlserver_database_throughput (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT NOT NULL,
@@ -539,19 +539,19 @@ CREATE TABLE IF NOT EXISTS mssql_database_throughput (
     batch_requests_per_sec DOUBLE PRECISION DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_database_throughput', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_db_throughput_server_time ON mssql_database_throughput (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_db_throughput_db ON mssql_database_throughput (database_name, capture_timestamp DESC);
-ALTER TABLE mssql_database_throughput SET (
+SELECT create_hypertable('sqlserver_database_throughput', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_db_throughput_server_time ON sqlserver_database_throughput (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_db_throughput_db ON sqlserver_database_throughput (database_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_database_throughput SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_database_throughput', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_database_throughput IS 'Tracks database-level throughput metrics including TPS, batch requests, and I/O statistics';
+SELECT add_compression_policy('sqlserver_database_throughput', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_database_throughput IS 'Tracks database-level throughput metrics including TPS, batch requests, and I/O statistics';
 
 -- SQL Server Query Store Stats (Historical)
-CREATE TABLE IF NOT EXISTS mssql_query_store_stats (
+CREATE TABLE IF NOT EXISTS sqlserver_query_store_stats (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT,
@@ -577,20 +577,20 @@ CREATE TABLE IF NOT EXISTS mssql_query_store_stats (
     runtime_stats_interval_id BIGINT,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_query_store_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_qs_stats_server_time ON mssql_query_store_stats (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_qs_stats_query_hash ON mssql_query_store_stats (query_hash);
-CREATE INDEX IF NOT EXISTS idx_qs_stats_database ON mssql_query_store_stats (database_name, capture_timestamp DESC);
-ALTER TABLE mssql_query_store_stats SET (
+SELECT create_hypertable('sqlserver_query_store_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_qs_stats_server_time ON sqlserver_query_store_stats (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_qs_stats_query_hash ON sqlserver_query_store_stats (query_hash);
+CREATE INDEX IF NOT EXISTS idx_qs_stats_database ON sqlserver_query_store_stats (database_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_query_store_stats SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name,query_hash',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_query_store_stats', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_query_store_stats IS 'Stores historical Query Store statistics for bottleneck analysis';
+SELECT add_compression_policy('sqlserver_query_store_stats', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_query_store_stats IS 'Stores historical Query Store statistics for bottleneck analysis';
 
 -- SQL Server Availability Group Health
-CREATE TABLE IF NOT EXISTS mssql_ag_health (
+CREATE TABLE IF NOT EXISTS sqlserver_ag_health (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     ag_name TEXT,
@@ -611,24 +611,24 @@ CREATE TABLE IF NOT EXISTS mssql_ag_health (
     secondary_lag_seconds BIGINT DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_ag_health', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_ag_health_server_time ON mssql_ag_health (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_ag_health_ag_name ON mssql_ag_health (ag_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_ag_health_db ON mssql_ag_health (database_name, capture_timestamp DESC);
-ALTER TABLE mssql_ag_health SET (
+SELECT create_hypertable('sqlserver_ag_health', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_ag_health_server_time ON sqlserver_ag_health (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_ag_health_ag_name ON sqlserver_ag_health (ag_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_ag_health_db ON sqlserver_ag_health (database_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_ag_health SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,ag_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_ag_health', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_ag_health IS 'Tracks AlwaysOn Availability Group health metrics including sync state and queue sizes';
+SELECT add_compression_policy('sqlserver_ag_health', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_ag_health IS 'Tracks AlwaysOn Availability Group health metrics including sync state and queue sizes';
 
 -- --------------------------------------------------------------------------
 -- 1.4: SQL SERVER - Agent Jobs
 -- --------------------------------------------------------------------------
 
 -- SQL Server Agent Jobs Summary
-CREATE TABLE IF NOT EXISTS mssql_job_metrics (
+CREATE TABLE IF NOT EXISTS sqlserver_job_metrics (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     total_jobs INTEGER,
@@ -638,19 +638,19 @@ CREATE TABLE IF NOT EXISTS mssql_job_metrics (
     failed_jobs_24h INTEGER,
     error_message TEXT,
     inserted_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT mssql_job_metrics_unique UNIQUE (capture_timestamp, server_instance_name)
+    CONSTRAINT sqlserver_job_metrics_unique UNIQUE (capture_timestamp, server_instance_name)
 );
-SELECT create_hypertable('mssql_job_metrics', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_job_server ON mssql_job_metrics (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_job_metrics SET (
+SELECT create_hypertable('sqlserver_job_metrics', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_job_server ON sqlserver_job_metrics (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_job_metrics SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_job_metrics', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_job_metrics', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- SQL Server Job Details
-CREATE TABLE IF NOT EXISTS mssql_job_details (
+CREATE TABLE IF NOT EXISTS sqlserver_job_details (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     job_name TEXT NOT NULL,
@@ -665,18 +665,18 @@ CREATE TABLE IF NOT EXISTS mssql_job_details (
     last_run_status TEXT,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_job_details', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_jobdetail_server ON mssql_job_details (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_mssql_jobdetail_name ON mssql_job_details (job_name);
-ALTER TABLE mssql_job_details SET (
+SELECT create_hypertable('sqlserver_job_details', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_jobdetail_server ON sqlserver_job_details (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_jobdetail_name ON sqlserver_job_details (job_name);
+ALTER TABLE sqlserver_job_details SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,job_name,job_category',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_job_details', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_job_details', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- SQL Server Agent Schedules
-CREATE TABLE IF NOT EXISTS mssql_agent_schedules (
+CREATE TABLE IF NOT EXISTS sqlserver_agent_schedules (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     job_name TEXT NOT NULL,
@@ -686,17 +686,17 @@ CREATE TABLE IF NOT EXISTS mssql_agent_schedules (
     status TEXT,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_agent_schedules', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_sched_server ON mssql_agent_schedules (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_agent_schedules SET (
+SELECT create_hypertable('sqlserver_agent_schedules', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_sched_server ON sqlserver_agent_schedules (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_agent_schedules SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,job_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_agent_schedules', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_agent_schedules', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- SQL Server Job Failures
-CREATE TABLE IF NOT EXISTS mssql_job_failures (
+CREATE TABLE IF NOT EXISTS sqlserver_job_failures (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     job_name TEXT,
@@ -706,21 +706,21 @@ CREATE TABLE IF NOT EXISTS mssql_job_failures (
     run_time INTEGER,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_job_failures', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_jobfail_server ON mssql_job_failures (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_job_failures SET (
+SELECT create_hypertable('sqlserver_job_failures', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_jobfail_server ON sqlserver_job_failures (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_job_failures SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,job_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_job_failures', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_job_failures', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- --------------------------------------------------------------------------
 -- SQL SERVER - CPU Enhancements (merged from 006_cpu_enhancement.sql)
 -- --------------------------------------------------------------------------
 
 -- SQL Server Server Properties (hardware / static-ish)
-CREATE TABLE IF NOT EXISTS mssql_server_properties (
+CREATE TABLE IF NOT EXISTS sqlserver_server_properties (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     cpu_count INTEGER DEFAULT 0,
@@ -736,21 +736,21 @@ CREATE TABLE IF NOT EXISTS mssql_server_properties (
     properties_hash TEXT,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_server_properties', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_server_props_server_time ON mssql_server_properties (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_server_properties SET (
+SELECT create_hypertable('sqlserver_server_properties', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_server_props_server_time ON sqlserver_server_properties (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_server_properties SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_server_properties', INTERVAL '365 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_server_properties', INTERVAL '365 days', if_not_exists => TRUE);
 
 -- --------------------------------------------------------------------------
 -- SQL SERVER - DBA Homepage (Phase 2)
 -- --------------------------------------------------------------------------
 
 -- Risk & Health strip signals (computed from collectors)
-CREATE TABLE IF NOT EXISTS mssql_risk_health (
+CREATE TABLE IF NOT EXISTS sqlserver_risk_health (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     blocking_sessions INTEGER DEFAULT 0,
@@ -765,17 +765,17 @@ CREATE TABLE IF NOT EXISTS mssql_risk_health (
     buffer_cache_hit_ratio DOUBLE PRECISION DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_risk_health', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_risk_health_server_time ON mssql_risk_health (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_risk_health SET (
+SELECT create_hypertable('sqlserver_risk_health', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_risk_health_server_time ON sqlserver_risk_health (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_risk_health SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_risk_health', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_risk_health', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- Wait deltas by type/category (for wait-category donut)
-CREATE TABLE IF NOT EXISTS mssql_waits_delta (
+CREATE TABLE IF NOT EXISTS sqlserver_waits_delta (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     wait_type TEXT NOT NULL,
@@ -783,18 +783,18 @@ CREATE TABLE IF NOT EXISTS mssql_waits_delta (
     wait_time_ms_delta DOUBLE PRECISION DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_waits_delta', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_waits_delta_server_time ON mssql_waits_delta (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_waits_delta_category ON mssql_waits_delta (server_instance_name, wait_category, capture_timestamp DESC);
-ALTER TABLE mssql_waits_delta SET (
+SELECT create_hypertable('sqlserver_waits_delta', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_waits_delta_server_time ON sqlserver_waits_delta (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_waits_delta_category ON sqlserver_waits_delta (server_instance_name, wait_category, capture_timestamp DESC);
+ALTER TABLE sqlserver_waits_delta SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,wait_category,wait_type',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_waits_delta', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_waits_delta', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- SQL Server CPU Scheduler Stats (pressure signals)
-CREATE TABLE IF NOT EXISTS mssql_cpu_scheduler_stats (
+CREATE TABLE IF NOT EXISTS sqlserver_cpu_scheduler_stats (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     max_workers_count INTEGER DEFAULT 0,
@@ -825,20 +825,20 @@ CREATE TABLE IF NOT EXISTS mssql_cpu_scheduler_stats (
     offline_cpu_warning BOOLEAN DEFAULT FALSE,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_cpu_scheduler_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_cpu_scheduler_server_time ON mssql_cpu_scheduler_stats (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_cpu_scheduler_stats SET (
+SELECT create_hypertable('sqlserver_cpu_scheduler_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_cpu_scheduler_server_time ON sqlserver_cpu_scheduler_stats (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_cpu_scheduler_stats SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_cpu_scheduler_stats', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_cpu_scheduler_stats', INTERVAL '30 days', if_not_exists => TRUE);
 
 -- --------------------------------------------------------------------------
 -- SQL SERVER - Long Running Queries (merged from 03_add_long_running_queries.sql)
 -- --------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS mssql_long_running_queries (
+CREATE TABLE IF NOT EXISTS sqlserver_long_running_queries (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     session_id INTEGER NOT NULL,
@@ -861,20 +861,20 @@ CREATE TABLE IF NOT EXISTS mssql_long_running_queries (
     percent_complete TEXT,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE IF EXISTS mssql_long_running_queries
+ALTER TABLE IF EXISTS sqlserver_long_running_queries
     ADD COLUMN IF NOT EXISTS query_hash TEXT;
-SELECT create_hypertable('mssql_long_running_queries', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_mssql_lrq_server_time ON mssql_long_running_queries (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_mssql_lrq_database ON mssql_long_running_queries (database_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_mssql_lrq_session ON mssql_long_running_queries (session_id);
-CREATE INDEX IF NOT EXISTS idx_mssql_lrq_queryhash ON mssql_long_running_queries (server_instance_name, query_hash, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_mssql_lrq_blocking ON mssql_long_running_queries (blocking_session_id) WHERE blocking_session_id > 0;
-ALTER TABLE mssql_long_running_queries SET (
+SELECT create_hypertable('sqlserver_long_running_queries', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_lrq_server_time ON sqlserver_long_running_queries (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_lrq_database ON sqlserver_long_running_queries (database_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_lrq_session ON sqlserver_long_running_queries (session_id);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_lrq_queryhash ON sqlserver_long_running_queries (server_instance_name, query_hash, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_lrq_blocking ON sqlserver_long_running_queries (blocking_session_id) WHERE blocking_session_id > 0;
+ALTER TABLE sqlserver_long_running_queries SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_long_running_queries', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_long_running_queries', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- --------------------------------------------------------------------------
 -- 1.5: SQL SERVER - Advanced Enterprise Metrics
@@ -884,7 +884,7 @@ SELECT add_compression_policy('mssql_long_running_queries', INTERVAL '7 days', i
 -- SQL SERVER - Performance Debt / Maintenance & Risk (hourly snapshot)
 -- --------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS mssql_performance_debt_findings (
+CREATE TABLE IF NOT EXISTS sqlserver_performance_debt_findings (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT NOT NULL DEFAULT 'master',
@@ -900,20 +900,20 @@ CREATE TABLE IF NOT EXISTS mssql_performance_debt_findings (
     fix_script TEXT DEFAULT '',
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_performance_debt_findings', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_perfdebt_server_time ON mssql_performance_debt_findings (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_perfdebt_server_section_time ON mssql_performance_debt_findings (server_instance_name, section, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_perfdebt_server_db_type ON mssql_performance_debt_findings (server_instance_name, database_name, finding_type);
-CREATE INDEX IF NOT EXISTS idx_perfdebt_server_findingkey ON mssql_performance_debt_findings (server_instance_name, database_name, finding_key, capture_timestamp DESC);
-ALTER TABLE mssql_performance_debt_findings SET (
+SELECT create_hypertable('sqlserver_performance_debt_findings', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_perfdebt_server_time ON sqlserver_performance_debt_findings (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_perfdebt_server_section_time ON sqlserver_performance_debt_findings (server_instance_name, section, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_perfdebt_server_db_type ON sqlserver_performance_debt_findings (server_instance_name, database_name, finding_type);
+CREATE INDEX IF NOT EXISTS idx_perfdebt_server_findingkey ON sqlserver_performance_debt_findings (server_instance_name, database_name, finding_key, capture_timestamp DESC);
+ALTER TABLE sqlserver_performance_debt_findings SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name,section,finding_type',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_performance_debt_findings', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_performance_debt_findings', INTERVAL '30 days', if_not_exists => TRUE);
 
 -- Latch Wait Statistics
-CREATE TABLE IF NOT EXISTS mssql_latch_waits (
+CREATE TABLE IF NOT EXISTS sqlserver_latch_waits (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     wait_type TEXT NOT NULL,
@@ -922,23 +922,23 @@ CREATE TABLE IF NOT EXISTS mssql_latch_waits (
     signal_wait_time_ms BIGINT DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_latch_waits', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_latch_waits_server_time ON mssql_latch_waits (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_latch_waits_type ON mssql_latch_waits (wait_type, capture_timestamp DESC);
-ALTER TABLE mssql_latch_waits SET (
+SELECT create_hypertable('sqlserver_latch_waits', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_latch_waits_server_time ON sqlserver_latch_waits (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_latch_waits_type ON sqlserver_latch_waits (wait_type, capture_timestamp DESC);
+ALTER TABLE sqlserver_latch_waits SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,wait_type',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_latch_waits', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_latch_waits IS 'Tracks latch wait statistics for internal synchronization objects';
+SELECT add_compression_policy('sqlserver_latch_waits', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_latch_waits IS 'Tracks latch wait statistics for internal synchronization objects';
 
 -- --------------------------------------------------------------------------
 -- SQL SERVER - Memory Performance Analyzer (Timescale-backed)
 -- --------------------------------------------------------------------------
 
 -- Memory Metrics (single-row per scrape; must-have production signals)
-CREATE TABLE IF NOT EXISTS mssql_memory_metrics (
+CREATE TABLE IF NOT EXISTS sqlserver_memory_metrics (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     -- OS & SQL overview
@@ -966,41 +966,41 @@ CREATE TABLE IF NOT EXISTS mssql_memory_metrics (
     hash_warnings_per_sec DOUBLE PRECISION DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_memory_metrics', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_memory_metrics_server_time ON mssql_memory_metrics (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_memory_metrics SET (
+SELECT create_hypertable('sqlserver_memory_metrics', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_memory_metrics_server_time ON sqlserver_memory_metrics (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_memory_metrics SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_memory_metrics', INTERVAL '14 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_memory_metrics IS 'Memory Performance Analyzer: SQL vs target, OS pressure, workspace grants, PLE, plan cache, and spill indicators';
+SELECT add_compression_policy('sqlserver_memory_metrics', INTERVAL '14 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_memory_metrics IS 'Memory Performance Analyzer: SQL vs target, OS pressure, workspace grants, PLE, plan cache, and spill indicators';
 
-ALTER TABLE mssql_memory_metrics ADD COLUMN IF NOT EXISTS waiting_memory_grants INTEGER DEFAULT 0;
-ALTER TABLE mssql_memory_metrics ADD COLUMN IF NOT EXISTS sort_warnings_per_sec DOUBLE PRECISION DEFAULT 0;
-ALTER TABLE mssql_memory_metrics ADD COLUMN IF NOT EXISTS hash_warnings_per_sec DOUBLE PRECISION DEFAULT 0;
+ALTER TABLE sqlserver_memory_metrics ADD COLUMN IF NOT EXISTS waiting_memory_grants INTEGER DEFAULT 0;
+ALTER TABLE sqlserver_memory_metrics ADD COLUMN IF NOT EXISTS sort_warnings_per_sec DOUBLE PRECISION DEFAULT 0;
+ALTER TABLE sqlserver_memory_metrics ADD COLUMN IF NOT EXISTS hash_warnings_per_sec DOUBLE PRECISION DEFAULT 0;
 
 -- Buffer Pool by Database (multi-row per scrape)
-CREATE TABLE IF NOT EXISTS mssql_buffer_pool_db (
+CREATE TABLE IF NOT EXISTS sqlserver_buffer_pool_db (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT,
     buffer_mb BIGINT DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_buffer_pool_db', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_buffer_pool_db_server_time ON mssql_buffer_pool_db (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_buffer_pool_db_db_time ON mssql_buffer_pool_db (server_instance_name, database_name, capture_timestamp DESC);
-ALTER TABLE mssql_buffer_pool_db SET (
+SELECT create_hypertable('sqlserver_buffer_pool_db', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_buffer_pool_db_server_time ON sqlserver_buffer_pool_db (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_buffer_pool_db_db_time ON sqlserver_buffer_pool_db (server_instance_name, database_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_buffer_pool_db SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_buffer_pool_db', INTERVAL '14 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_buffer_pool_db IS 'Memory Performance Analyzer: buffer pool usage by database (MB) per scrape';
+SELECT add_compression_policy('sqlserver_buffer_pool_db', INTERVAL '14 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_buffer_pool_db IS 'Memory Performance Analyzer: buffer pool usage by database (MB) per scrape';
 
 -- Memory Clerks Detailed
-CREATE TABLE IF NOT EXISTS mssql_memory_clerks (
+CREATE TABLE IF NOT EXISTS sqlserver_memory_clerks (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     clerk_type TEXT NOT NULL,
@@ -1011,19 +1011,19 @@ CREATE TABLE IF NOT EXISTS mssql_memory_clerks (
     awe_memory_mb DOUBLE PRECISION DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_memory_clerks', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_memory_clerks_server_time ON mssql_memory_clerks (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_memory_clerks_type ON mssql_memory_clerks (clerk_type, capture_timestamp DESC);
-ALTER TABLE mssql_memory_clerks SET (
+SELECT create_hypertable('sqlserver_memory_clerks', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_memory_clerks_server_time ON sqlserver_memory_clerks (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_clerks_type ON sqlserver_memory_clerks (clerk_type, capture_timestamp DESC);
+ALTER TABLE sqlserver_memory_clerks SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,clerk_type',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_memory_clerks', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_memory_clerks IS 'Tracks detailed memory clerk breakdown by type';
+SELECT add_compression_policy('sqlserver_memory_clerks', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_memory_clerks IS 'Tracks detailed memory clerk breakdown by type';
 
 -- Waiting Tasks
-CREATE TABLE IF NOT EXISTS mssql_waiting_tasks (
+CREATE TABLE IF NOT EXISTS sqlserver_waiting_tasks (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     wait_type TEXT NOT NULL,
@@ -1032,19 +1032,19 @@ CREATE TABLE IF NOT EXISTS mssql_waiting_tasks (
     wait_duration_ms BIGINT DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_waiting_tasks', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_waiting_tasks_server_time ON mssql_waiting_tasks (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_waiting_tasks_type ON mssql_waiting_tasks (wait_type, capture_timestamp DESC);
-ALTER TABLE mssql_waiting_tasks SET (
+SELECT create_hypertable('sqlserver_waiting_tasks', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_waiting_tasks_server_time ON sqlserver_waiting_tasks (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_waiting_tasks_type ON sqlserver_waiting_tasks (wait_type, capture_timestamp DESC);
+ALTER TABLE sqlserver_waiting_tasks SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,wait_type',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_waiting_tasks', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_waiting_tasks IS 'Tracks currently waiting tasks for blocking analysis';
+SELECT add_compression_policy('sqlserver_waiting_tasks', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_waiting_tasks IS 'Tracks currently waiting tasks for blocking analysis';
 
 -- Procedure Stats
-CREATE TABLE IF NOT EXISTS mssql_procedure_stats (
+CREATE TABLE IF NOT EXISTS sqlserver_procedure_stats (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT,
@@ -1057,19 +1057,19 @@ CREATE TABLE IF NOT EXISTS mssql_procedure_stats (
     total_physical_reads BIGINT DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_procedure_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_proc_stats_server_time ON mssql_procedure_stats (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_proc_stats_object ON mssql_procedure_stats (database_name, object_name, capture_timestamp DESC);
-ALTER TABLE mssql_procedure_stats SET (
+SELECT create_hypertable('sqlserver_procedure_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_proc_stats_server_time ON sqlserver_procedure_stats (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_proc_stats_object ON sqlserver_procedure_stats (database_name, object_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_procedure_stats SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name,object_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_procedure_stats', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_procedure_stats IS 'Tracks stored procedure execution statistics';
+SELECT add_compression_policy('sqlserver_procedure_stats', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_procedure_stats IS 'Tracks stored procedure execution statistics';
 
 -- Spinlock Stats
-CREATE TABLE IF NOT EXISTS mssql_spinlock_stats (
+CREATE TABLE IF NOT EXISTS sqlserver_spinlock_stats (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     spinlock_type TEXT,
@@ -1078,23 +1078,23 @@ CREATE TABLE IF NOT EXISTS mssql_spinlock_stats (
     sleep_time_ms BIGINT DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_spinlock_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_spinlock_stats_server_time ON mssql_spinlock_stats (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_spinlock_stats_type ON mssql_spinlock_stats (spinlock_type, capture_timestamp DESC);
-ALTER TABLE mssql_spinlock_stats SET (
+SELECT create_hypertable('sqlserver_spinlock_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_spinlock_stats_server_time ON sqlserver_spinlock_stats (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_spinlock_stats_type ON sqlserver_spinlock_stats (spinlock_type, capture_timestamp DESC);
+ALTER TABLE sqlserver_spinlock_stats SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,spinlock_type',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_spinlock_stats', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_spinlock_stats IS 'Tracks spinlock contention statistics for internal synchronization';
+SELECT add_compression_policy('sqlserver_spinlock_stats', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_spinlock_stats IS 'Tracks spinlock contention statistics for internal synchronization';
 
 -- --------------------------------------------------------------------------
 -- SQL SERVER - Enterprise Metrics Additions (DBA-high value)
 -- --------------------------------------------------------------------------
 
 -- Plan Cache Health (single-use plans / cache pressure)
-CREATE TABLE IF NOT EXISTS mssql_plan_cache_health (
+CREATE TABLE IF NOT EXISTS sqlserver_plan_cache_health (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     total_cache_mb DOUBLE PRECISION DEFAULT 0,
@@ -1105,18 +1105,18 @@ CREATE TABLE IF NOT EXISTS mssql_plan_cache_health (
     proc_cache_mb DOUBLE PRECISION DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_plan_cache_health', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_plan_cache_health_server_time ON mssql_plan_cache_health (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_plan_cache_health SET (
+SELECT create_hypertable('sqlserver_plan_cache_health', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_plan_cache_health_server_time ON sqlserver_plan_cache_health (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_plan_cache_health SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_plan_cache_health', INTERVAL '14 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_plan_cache_health IS 'Tracks plan cache size and single-use plan pressure (optimize for ad hoc workloads)';
+SELECT add_compression_policy('sqlserver_plan_cache_health', INTERVAL '14 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_plan_cache_health IS 'Tracks plan cache size and single-use plan pressure (optimize for ad hoc workloads)';
 
 -- Memory Grant Waiters (RESOURCE_SEMAPHORE pressure)
-CREATE TABLE IF NOT EXISTS mssql_memory_grant_waiters (
+CREATE TABLE IF NOT EXISTS sqlserver_memory_grant_waiters (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     session_id INTEGER,
@@ -1131,19 +1131,19 @@ CREATE TABLE IF NOT EXISTS mssql_memory_grant_waiters (
     query_text TEXT,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_memory_grant_waiters', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_memgrant_waiters_server_time ON mssql_memory_grant_waiters (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_memgrant_waiters_server_sid ON mssql_memory_grant_waiters (server_instance_name, session_id, capture_timestamp DESC);
-ALTER TABLE mssql_memory_grant_waiters SET (
+SELECT create_hypertable('sqlserver_memory_grant_waiters', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_memgrant_waiters_server_time ON sqlserver_memory_grant_waiters (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_memgrant_waiters_server_sid ON sqlserver_memory_grant_waiters (server_instance_name, session_id, capture_timestamp DESC);
+ALTER TABLE sqlserver_memory_grant_waiters SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_memory_grant_waiters', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_memory_grant_waiters IS 'Tracks memory grant waiters (grant_time IS NULL) for diagnosing workspace memory pressure';
+SELECT add_compression_policy('sqlserver_memory_grant_waiters', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_memory_grant_waiters IS 'Tracks memory grant waiters (grant_time IS NULL) for diagnosing workspace memory pressure';
 
 -- TempDB Top Consumers (per-session)
-CREATE TABLE IF NOT EXISTS mssql_tempdb_top_consumers (
+CREATE TABLE IF NOT EXISTS sqlserver_tempdb_top_consumers (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     session_id INTEGER,
@@ -1157,19 +1157,19 @@ CREATE TABLE IF NOT EXISTS mssql_tempdb_top_consumers (
     query_text TEXT,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_tempdb_top_consumers', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_tempdb_consumers_server_time ON mssql_tempdb_top_consumers (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_tempdb_consumers_server_sid ON mssql_tempdb_top_consumers (server_instance_name, session_id, capture_timestamp DESC);
-ALTER TABLE mssql_tempdb_top_consumers SET (
+SELECT create_hypertable('sqlserver_tempdb_top_consumers', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_tempdb_consumers_server_time ON sqlserver_tempdb_top_consumers (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_tempdb_consumers_server_sid ON sqlserver_tempdb_top_consumers (server_instance_name, session_id, capture_timestamp DESC);
+ALTER TABLE sqlserver_tempdb_top_consumers SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_tempdb_top_consumers', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_tempdb_top_consumers IS 'Tracks top tempdb consumers by session for troubleshooting tempdb pressure and spills';
+SELECT add_compression_policy('sqlserver_tempdb_top_consumers', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_tempdb_top_consumers IS 'Tracks top tempdb consumers by session for troubleshooting tempdb pressure and spills';
 
 -- Tempdb Stats
-CREATE TABLE IF NOT EXISTS mssql_tempdb_stats (
+CREATE TABLE IF NOT EXISTS sqlserver_tempdb_stats (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     version_store_size_kb BIGINT DEFAULT 0,
@@ -1179,18 +1179,18 @@ CREATE TABLE IF NOT EXISTS mssql_tempdb_stats (
     internal_objects_dealloc_kb BIGINT DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_tempdb_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_tempdb_stats_server_time ON mssql_tempdb_stats (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_tempdb_stats SET (
+SELECT create_hypertable('sqlserver_tempdb_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_tempdb_stats_server_time ON sqlserver_tempdb_stats (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_tempdb_stats SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_tempdb_stats', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_tempdb_stats IS 'Tracks tempdb space usage including version store and user/internal objects';
+SELECT add_compression_policy('sqlserver_tempdb_stats', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_tempdb_stats IS 'Tracks tempdb space usage including version store and user/internal objects';
 
 -- TempDB File Usage (used by Enterprise Metrics dashboard)
-CREATE TABLE IF NOT EXISTS mssql_tempdb_files (
+CREATE TABLE IF NOT EXISTS sqlserver_tempdb_files (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT,
@@ -1204,18 +1204,18 @@ CREATE TABLE IF NOT EXISTS mssql_tempdb_files (
     used_percent DOUBLE PRECISION DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_tempdb_files', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_tempdb_files_server_time ON mssql_tempdb_files (server_instance_name, capture_timestamp DESC);
-ALTER TABLE mssql_tempdb_files SET (
+SELECT create_hypertable('sqlserver_tempdb_files', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_tempdb_files_server_time ON sqlserver_tempdb_files (server_instance_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_tempdb_files SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,file_type',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_tempdb_files', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_tempdb_files IS 'Tracks tempdb file-level usage for Enterprise Metrics dashboard';
+SELECT add_compression_policy('sqlserver_tempdb_files', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_tempdb_files IS 'Tracks tempdb file-level usage for Enterprise Metrics dashboard';
 
 -- Database Size Growth
-CREATE TABLE IF NOT EXISTS mssql_database_size (
+CREATE TABLE IF NOT EXISTS sqlserver_database_size (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT NOT NULL,
@@ -1225,19 +1225,19 @@ CREATE TABLE IF NOT EXISTS mssql_database_size (
     space_used_gb DOUBLE PRECISION DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_database_size', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_db_size_server_time ON mssql_database_size (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_db_size_database ON mssql_database_size (database_name, capture_timestamp DESC);
-ALTER TABLE mssql_database_size SET (
+SELECT create_hypertable('sqlserver_database_size', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_db_size_server_time ON sqlserver_database_size (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_db_size_database ON sqlserver_database_size (database_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_database_size SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_database_size', INTERVAL '30 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_database_size IS 'Tracks database size for growth trending';
+SELECT add_compression_policy('sqlserver_database_size', INTERVAL '30 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_database_size IS 'Tracks database size for growth trending';
 
 -- Server Configuration
-CREATE TABLE IF NOT EXISTS mssql_server_config (
+CREATE TABLE IF NOT EXISTS sqlserver_server_config (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     config_name TEXT NOT NULL,
@@ -1245,19 +1245,19 @@ CREATE TABLE IF NOT EXISTS mssql_server_config (
     is_default BOOLEAN DEFAULT FALSE,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_server_config', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_server_config_server_time ON mssql_server_config (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_server_config_name ON mssql_server_config (config_name, capture_timestamp DESC);
-ALTER TABLE mssql_server_config SET (
+SELECT create_hypertable('sqlserver_server_config', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_server_config_server_time ON sqlserver_server_config (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_server_config_name ON sqlserver_server_config (config_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_server_config SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,config_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_server_config', INTERVAL '30 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_server_config IS 'Tracks server-level configuration settings';
+SELECT add_compression_policy('sqlserver_server_config', INTERVAL '30 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_server_config IS 'Tracks server-level configuration settings';
 
 -- Database Configuration
-CREATE TABLE IF NOT EXISTS mssql_database_config (
+CREATE TABLE IF NOT EXISTS sqlserver_database_config (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT NOT NULL,
@@ -1266,19 +1266,19 @@ CREATE TABLE IF NOT EXISTS mssql_database_config (
     is_default BOOLEAN DEFAULT FALSE,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_database_config', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_db_config_server_time ON mssql_database_config (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_db_config_database ON mssql_database_config (database_name, capture_timestamp DESC);
-ALTER TABLE mssql_database_config SET (
+SELECT create_hypertable('sqlserver_database_config', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_db_config_server_time ON sqlserver_database_config (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_db_config_database ON sqlserver_database_config (database_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_database_config SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name,config_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_database_config', INTERVAL '30 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_database_config IS 'Tracks database-level configuration settings';
+SELECT add_compression_policy('sqlserver_database_config', INTERVAL '30 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_database_config IS 'Tracks database-level configuration settings';
 
 -- Session Memory Grants
-CREATE TABLE IF NOT EXISTS mssql_memory_grants (
+CREATE TABLE IF NOT EXISTS sqlserver_memory_grants (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     session_id SMALLINT NOT NULL,
@@ -1290,19 +1290,19 @@ CREATE TABLE IF NOT EXISTS mssql_memory_grants (
     query_duration_sec DOUBLE PRECISION DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_memory_grants', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_memory_grants_server_time ON mssql_memory_grants (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_memory_grants_session ON mssql_memory_grants (session_id, capture_timestamp DESC);
-ALTER TABLE mssql_memory_grants SET (
+SELECT create_hypertable('sqlserver_memory_grants', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_memory_grants_server_time ON sqlserver_memory_grants (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_grants_session ON sqlserver_memory_grants (session_id, capture_timestamp DESC);
+ALTER TABLE sqlserver_memory_grants SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,session_id',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_memory_grants', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_memory_grants IS 'Tracks query memory grants detail';
+SELECT add_compression_policy('sqlserver_memory_grants', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_memory_grants IS 'Tracks query memory grants detail';
 
 -- Scheduler Workload Groups
-CREATE TABLE IF NOT EXISTS mssql_scheduler_wg (
+CREATE TABLE IF NOT EXISTS sqlserver_scheduler_wg (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     pool_name TEXT NOT NULL,
@@ -1312,19 +1312,19 @@ CREATE TABLE IF NOT EXISTS mssql_scheduler_wg (
     cpu_usage_percent DOUBLE PRECISION DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_scheduler_wg', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_scheduler_wg_server_time ON mssql_scheduler_wg (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_scheduler_wg_group ON mssql_scheduler_wg (group_name, capture_timestamp DESC);
-ALTER TABLE mssql_scheduler_wg SET (
+SELECT create_hypertable('sqlserver_scheduler_wg', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_scheduler_wg_server_time ON sqlserver_scheduler_wg (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_scheduler_wg_group ON sqlserver_scheduler_wg (group_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_scheduler_wg SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,pool_name,group_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_scheduler_wg', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_scheduler_wg IS 'Tracks CPU scheduler and workload group statistics';
+SELECT add_compression_policy('sqlserver_scheduler_wg', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_scheduler_wg IS 'Tracks CPU scheduler and workload group statistics';
 
 -- File I/O Latency
-CREATE TABLE IF NOT EXISTS mssql_file_io_latency (
+CREATE TABLE IF NOT EXISTS sqlserver_file_io_latency (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT NOT NULL,
@@ -1336,19 +1336,19 @@ CREATE TABLE IF NOT EXISTS mssql_file_io_latency (
     write_bytes_per_sec DOUBLE PRECISION DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_file_io_latency', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_file_io_server_time ON mssql_file_io_latency (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_file_io_database ON mssql_file_io_latency (database_name, capture_timestamp DESC);
-ALTER TABLE mssql_file_io_latency SET (
+SELECT create_hypertable('sqlserver_file_io_latency', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_file_io_server_time ON sqlserver_file_io_latency (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_file_io_database ON sqlserver_file_io_latency (database_name, capture_timestamp DESC);
+ALTER TABLE sqlserver_file_io_latency SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name,file_name',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_file_io_latency', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_file_io_latency IS 'Tracks file I/O latency statistics';
+SELECT add_compression_policy('sqlserver_file_io_latency', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_file_io_latency IS 'Tracks file I/O latency statistics';
 
 -- Query Store Runtime Stats
-CREATE TABLE IF NOT EXISTS mssql_qs_runtime (
+CREATE TABLE IF NOT EXISTS sqlserver_qs_runtime (
     capture_timestamp TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT NOT NULL,
@@ -1360,16 +1360,16 @@ CREATE TABLE IF NOT EXISTS mssql_qs_runtime (
     total_cpu_ms DOUBLE PRECISION DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
-SELECT create_hypertable('mssql_qs_runtime', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_qs_runtime_server_time ON mssql_qs_runtime (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_qs_runtime_query ON mssql_qs_runtime (database_name, query_id, capture_timestamp DESC);
-ALTER TABLE mssql_qs_runtime SET (
+SELECT create_hypertable('sqlserver_qs_runtime', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+CREATE INDEX IF NOT EXISTS idx_qs_runtime_server_time ON sqlserver_qs_runtime (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_qs_runtime_query ON sqlserver_qs_runtime (database_name, query_id, capture_timestamp DESC);
+ALTER TABLE sqlserver_qs_runtime SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name,database_name,query_id',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
-SELECT add_compression_policy('mssql_qs_runtime', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE mssql_qs_runtime IS 'Tracks Query Store runtime statistics';
+SELECT add_compression_policy('sqlserver_qs_runtime', INTERVAL '7 days', if_not_exists => TRUE);
+COMMENT ON TABLE sqlserver_qs_runtime IS 'Tracks Query Store runtime statistics';
 
 -- --------------------------------------------------------------------------
 -- 1.6: POSTGRESQL - Core Metrics
@@ -2420,7 +2420,7 @@ CREATE INDEX IF NOT EXISTS idx_dashboard_exports_user ON dashboard_exports (user
 -- --------------------------------------------------------------------------
 -- 3.1: Collection Schedule
 -- --------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS mssql_collection_schedule (
+CREATE TABLE IF NOT EXISTS sqlserver_collection_schedule (
     schedule_id SERIAL PRIMARY KEY,
     collector_name TEXT NOT NULL UNIQUE,
     enabled BOOLEAN DEFAULT TRUE,
@@ -2437,7 +2437,7 @@ CREATE TABLE IF NOT EXISTS mssql_collection_schedule (
 -- --------------------------------------------------------------------------
 -- 3.2: Collection Log
 -- --------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS mssql_collection_log (
+CREATE TABLE IF NOT EXISTS sqlserver_collection_log (
     log_id BIGSERIAL PRIMARY KEY,
     collection_time TIMESTAMPTZ DEFAULT NOW(),
     collector_name TEXT NOT NULL,
@@ -2446,8 +2446,8 @@ CREATE TABLE IF NOT EXISTS mssql_collection_log (
     duration_ms BIGINT DEFAULT 0,
     error_message TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_collection_log_time ON mssql_collection_log (collection_time DESC);
-CREATE INDEX IF NOT EXISTS idx_collection_log_collector ON mssql_collection_log (collector_name, collection_time DESC);
+CREATE INDEX IF NOT EXISTS idx_collection_log_time ON sqlserver_collection_log (collection_time DESC);
+CREATE INDEX IF NOT EXISTS idx_collection_log_collector ON sqlserver_collection_log (collector_name, collection_time DESC);
 
 -- ============================================================================
 -- SECTION 3.3: STORAGE & INDEX HEALTH (Cross-engine, unified)
@@ -2797,33 +2797,33 @@ BEGIN
 END $$;
 
 -- ============================================================================
--- MIGRATION: Add error_message column to existing mssql_job_metrics table
+-- MIGRATION: Add error_message column to existing sqlserver_job_metrics table
 -- Run this only if you already have the schema and need to add the column
 -- ============================================================================
 DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'mssql_job_metrics' 
+        WHERE table_name = 'sqlserver_job_metrics' 
         AND column_name = 'error_message'
     ) THEN
-        ALTER TABLE mssql_job_metrics ADD COLUMN error_message TEXT;
-        RAISE NOTICE 'Migration: Added error_message column to mssql_job_metrics';
+        ALTER TABLE sqlserver_job_metrics ADD COLUMN error_message TEXT;
+        RAISE NOTICE 'Migration: Added error_message column to sqlserver_job_metrics';
     ELSE
-        RAISE NOTICE 'Migration: error_message column already exists in mssql_job_metrics';
+        RAISE NOTICE 'Migration: error_message column already exists in sqlserver_job_metrics';
     END IF;
 END $$;
 
-COMMENT ON COLUMN mssql_job_metrics.error_message IS 'Stores error message if job collection failed (e.g., permission denied on msdb tables)';
+COMMENT ON COLUMN sqlserver_job_metrics.error_message IS 'Stores error message if job collection failed (e.g., permission denied on msdb tables)';
 
 -- ============================================================================
 -- LEGACY MIGRATION COMPATIBILITY OBJECTS
 -- Consolidated from infrastructure/sql_scripts/migrations/*.sql
 -- ============================================================================
 
--- 002_mssql_enterprise_monitor.sql / 004_fix_top_queries_table.sql
-ALTER TABLE mssql_top_queries ADD COLUMN IF NOT EXISTS wait_type TEXT;
-CREATE INDEX IF NOT EXISTS idx_top_queries_query_text ON mssql_top_queries USING gin (to_tsvector('english', query_text));
+-- 002_sqlserver_enterprise_monitor.sql / 004_fix_top_queries_table.sql
+ALTER TABLE sqlserver_top_queries ADD COLUMN IF NOT EXISTS wait_type TEXT;
+CREATE INDEX IF NOT EXISTS idx_top_queries_query_text ON sqlserver_top_queries USING gin (to_tsvector('english', query_text));
 
 -- 001_create_query_store_stats.sql
 CREATE MATERIALIZED VIEW IF NOT EXISTS query_store_stats_hourly
@@ -2855,8 +2855,8 @@ EXCEPTION WHEN OTHERS THEN
     NULL;
 END $$;
 
--- 002_mssql_enterprise_monitor.sql
-CREATE MATERIALIZED VIEW IF NOT EXISTS mssql_ag_health_summary AS
+-- 002_sqlserver_enterprise_monitor.sql
+CREATE MATERIALIZED VIEW IF NOT EXISTS sqlserver_ag_health_summary AS
 SELECT
     time_bucket('5 minutes', capture_timestamp) AS bucket,
     server_instance_name,
@@ -2869,12 +2869,12 @@ SELECT
     AVG(redo_queue_kb) AS avg_redo_queue_kb,
     MAX(log_send_queue_kb) AS max_log_send_queue_kb,
     MAX(redo_queue_kb) AS max_redo_queue_kb
-FROM mssql_ag_health
+FROM sqlserver_ag_health
 WHERE capture_timestamp >= NOW() - INTERVAL '7 days'
 GROUP BY 1, 2, 3, 4, 5
 WITH NO DATA;
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS mssql_db_throughput_summary AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS sqlserver_db_throughput_summary AS
 SELECT
     time_bucket('1 minute', capture_timestamp) AS bucket,
     server_instance_name,
@@ -2883,7 +2883,7 @@ SELECT
     AVG(batch_requests_per_sec) AS avg_batch_requests,
     SUM(total_reads) AS total_reads,
     SUM(total_writes) AS total_writes
-FROM mssql_database_throughput
+FROM sqlserver_database_throughput
 WHERE capture_timestamp >= NOW() - INTERVAL '7 days'
 GROUP BY 1, 2, 3
 WITH NO DATA;
@@ -2954,13 +2954,13 @@ SELECT add_compression_policy('optima_incidents', INTERVAL '7 days', if_not_exis
 
 -- ============================================================================
 -- SECTION: SQL Server Query Analysis Dashboard Tables
--- mssql_watched_queries, mssql_watched_query_snapshots,
--- mssql_watched_query_events, mssql_query_regressions, mssql_plan_instability
--- Source: backend/migrations/00003_mssql_query_analysis.sql
+-- sqlserver_watched_queries, sqlserver_watched_query_snapshots,
+-- sqlserver_watched_query_events, sqlserver_query_regressions, sqlserver_plan_instability
+-- Source: backend/migrations/00003_sqlserver_query_analysis.sql
 -- ============================================================================
 
 -- 1. Watched queries registry (max 10 per instance, enforced at application layer)
-CREATE TABLE IF NOT EXISTS mssql_watched_queries (
+CREATE TABLE IF NOT EXISTS sqlserver_watched_queries (
     id                    SERIAL PRIMARY KEY,
     server_instance_name  TEXT NOT NULL,
     database_name         TEXT NOT NULL DEFAULT 'master',
@@ -2973,9 +2973,9 @@ CREATE TABLE IF NOT EXISTS mssql_watched_queries (
 );
 
 -- 2. Watched query time-series snapshots (collected every 5 min)
-CREATE TABLE IF NOT EXISTS mssql_watched_query_snapshots (
+CREATE TABLE IF NOT EXISTS sqlserver_watched_query_snapshots (
     snapshot_time         TIMESTAMPTZ NOT NULL,
-    watched_id            INT NOT NULL REFERENCES mssql_watched_queries(id) ON DELETE CASCADE,
+    watched_id            INT NOT NULL REFERENCES sqlserver_watched_queries(id) ON DELETE CASCADE,
     server_instance_name  TEXT NOT NULL,
     executions            BIGINT,
     avg_duration_ms       DOUBLE PRECISION,
@@ -2989,30 +2989,30 @@ CREATE TABLE IF NOT EXISTS mssql_watched_query_snapshots (
     wait_stats            JSONB
 );
 
-SELECT create_hypertable('mssql_watched_query_snapshots', 'snapshot_time', if_not_exists => TRUE);
-CREATE INDEX IF NOT EXISTS idx_mssql_wqs_watched ON mssql_watched_query_snapshots (watched_id, snapshot_time DESC);
-CREATE INDEX IF NOT EXISTS idx_mssql_wqs_instance ON mssql_watched_query_snapshots (server_instance_name, snapshot_time DESC);
+SELECT create_hypertable('sqlserver_watched_query_snapshots', 'snapshot_time', if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_wqs_watched ON sqlserver_watched_query_snapshots (watched_id, snapshot_time DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_wqs_instance ON sqlserver_watched_query_snapshots (server_instance_name, snapshot_time DESC);
 
-ALTER TABLE mssql_watched_query_snapshots SET (
+ALTER TABLE sqlserver_watched_query_snapshots SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'watched_id,server_instance_name',
     timescaledb.compress_orderby = 'snapshot_time DESC'
 );
-SELECT add_compression_policy('mssql_watched_query_snapshots', INTERVAL '7 days', if_not_exists => TRUE);
-SELECT add_retention_policy('mssql_watched_query_snapshots', INTERVAL '90 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_watched_query_snapshots', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_retention_policy('sqlserver_watched_query_snapshots', INTERVAL '90 days', if_not_exists => TRUE);
 
 -- 3. Watched query optimization event markers
-CREATE TABLE IF NOT EXISTS mssql_watched_query_events (
+CREATE TABLE IF NOT EXISTS sqlserver_watched_query_events (
     id           SERIAL PRIMARY KEY,
-    watched_id   INT NOT NULL REFERENCES mssql_watched_queries(id) ON DELETE CASCADE,
+    watched_id   INT NOT NULL REFERENCES sqlserver_watched_queries(id) ON DELETE CASCADE,
     event_time   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     event_type   TEXT NOT NULL,
     notes        TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_mssql_wqe_watched ON mssql_watched_query_events (watched_id, event_time DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_wqe_watched ON sqlserver_watched_query_events (watched_id, event_time DESC);
 
 -- 4. Query regression detection results (collected every 30 min)
-CREATE TABLE IF NOT EXISTS mssql_query_regressions (
+CREATE TABLE IF NOT EXISTS sqlserver_query_regressions (
     capture_time          TIMESTAMPTZ NOT NULL,
     server_instance_name  TEXT NOT NULL,
     database_name         TEXT,
@@ -3025,19 +3025,19 @@ CREATE TABLE IF NOT EXISTS mssql_query_regressions (
     plan_changed          BOOLEAN DEFAULT FALSE
 );
 
-SELECT create_hypertable('mssql_query_regressions', 'capture_time', if_not_exists => TRUE);
-CREATE INDEX IF NOT EXISTS idx_mssql_qr_instance ON mssql_query_regressions (server_instance_name, capture_time DESC);
+SELECT create_hypertable('sqlserver_query_regressions', 'capture_time', if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_qr_instance ON sqlserver_query_regressions (server_instance_name, capture_time DESC);
 
-ALTER TABLE mssql_query_regressions SET (
+ALTER TABLE sqlserver_query_regressions SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_time DESC'
 );
-SELECT add_compression_policy('mssql_query_regressions', INTERVAL '7 days', if_not_exists => TRUE);
-SELECT add_retention_policy('mssql_query_regressions', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_query_regressions', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_retention_policy('sqlserver_query_regressions', INTERVAL '30 days', if_not_exists => TRUE);
 
 -- 5. Plan instability detection results (collected every 30 min)
-CREATE TABLE IF NOT EXISTS mssql_plan_instability (
+CREATE TABLE IF NOT EXISTS sqlserver_plan_instability (
     capture_time          TIMESTAMPTZ NOT NULL,
     server_instance_name  TEXT NOT NULL,
     database_name         TEXT,
@@ -3047,22 +3047,22 @@ CREATE TABLE IF NOT EXISTS mssql_plan_instability (
     last_execution_time   TIMESTAMPTZ
 );
 
-SELECT create_hypertable('mssql_plan_instability', 'capture_time', if_not_exists => TRUE);
-CREATE INDEX IF NOT EXISTS idx_mssql_pi_instance ON mssql_plan_instability (server_instance_name, capture_time DESC);
+SELECT create_hypertable('sqlserver_plan_instability', 'capture_time', if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_pi_instance ON sqlserver_plan_instability (server_instance_name, capture_time DESC);
 
-ALTER TABLE mssql_plan_instability SET (
+ALTER TABLE sqlserver_plan_instability SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_instance_name',
     timescaledb.compress_orderby = 'capture_time DESC'
 );
-SELECT add_compression_policy('mssql_plan_instability', INTERVAL '7 days', if_not_exists => TRUE);
-SELECT add_retention_policy('mssql_plan_instability', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_plan_instability', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_retention_policy('sqlserver_plan_instability', INTERVAL '30 days', if_not_exists => TRUE);
 
 -- ============================================================================
 -- SQL Server Log Shipping Health
 -- Consolidated from migrations/011_log_shipping_health_epic2_2.sql
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS mssql_log_shipping_health (
+CREATE TABLE IF NOT EXISTS sqlserver_log_shipping_health (
     capture_timestamp        TIMESTAMPTZ     NOT NULL,
     server_instance_name     VARCHAR(255)    NOT NULL,
     primary_server           VARCHAR(255)    NOT NULL DEFAULT '',
@@ -3079,17 +3079,17 @@ CREATE TABLE IF NOT EXISTS mssql_log_shipping_health (
     is_primary               BOOLEAN         NOT NULL DEFAULT FALSE
 );
 
-SELECT create_hypertable('mssql_log_shipping_health', 'capture_timestamp',
+SELECT create_hypertable('sqlserver_log_shipping_health', 'capture_timestamp',
     if_not_exists => TRUE, migrate_data => FALSE);
 
-CREATE INDEX IF NOT EXISTS idx_mssql_logship_server
-    ON mssql_log_shipping_health (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_mssql_logship_primary_db
-    ON mssql_log_shipping_health (primary_database, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_logship_server
+    ON sqlserver_log_shipping_health (server_instance_name, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_logship_primary_db
+    ON sqlserver_log_shipping_health (primary_database, capture_timestamp DESC);
 
-ALTER TABLE mssql_log_shipping_health
+ALTER TABLE sqlserver_log_shipping_health
     SET (timescaledb.compress, timescaledb.compress_segmentby = 'server_instance_name');
-SELECT add_compression_policy('mssql_log_shipping_health', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('sqlserver_log_shipping_health', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- ============================================================================
 -- DBA War Room: Continuous Aggregates for Baselines
@@ -3114,7 +3114,7 @@ SELECT
     AVG(parallelism_ms_per_sec) AS avg_parallelism_ms,
     AVG(other_ms_per_sec) AS avg_other_ms,
     COUNT(*) AS sample_count
-FROM mssql_wait_history
+FROM sqlserver_wait_history
 GROUP BY
     time_bucket('1 hour', capture_timestamp),
     server_instance_name,
@@ -3183,7 +3183,7 @@ SELECT
     AVG(logical_reads) AS avg_logical_reads,
     COUNT(*) AS sample_count,
     MIN(query_text) AS sample_query_text
-FROM mssql_top_queries
+FROM sqlserver_top_queries
 GROUP BY
     time_bucket('1 hour', capture_timestamp),
     server_instance_name,
@@ -3261,7 +3261,7 @@ END $$;
 CREATE SCHEMA IF NOT EXISTS snapshot;
 
 -- 1) Database Storage History
-CREATE TABLE IF NOT EXISTS snapshot.mssql_db_storage_history (
+CREATE TABLE IF NOT EXISTS snapshot.sqlserver_db_storage_history (
     snapshot_time      TIMESTAMPTZ NOT NULL,
     server_name        TEXT NOT NULL,
     instance_name      TEXT NOT NULL,
@@ -3272,17 +3272,17 @@ CREATE TABLE IF NOT EXISTS snapshot.mssql_db_storage_history (
 );
 
 SELECT create_hypertable(
-    'snapshot.mssql_db_storage_history',
+    'snapshot.sqlserver_db_storage_history',
     'snapshot_time',
     chunk_time_interval => INTERVAL '7 days',
     if_not_exists => TRUE
 );
 
-CREATE INDEX IF NOT EXISTS idx_mssql_db_storage_history_lookup ON snapshot.mssql_db_storage_history
+CREATE INDEX IF NOT EXISTS idx_sqlserver_db_storage_history_lookup ON snapshot.sqlserver_db_storage_history
 (server_name, instance_name, database_name, snapshot_time DESC);
 
 -- 2) Table Size History
-CREATE TABLE IF NOT EXISTS snapshot.mssql_table_size_history (
+CREATE TABLE IF NOT EXISTS snapshot.sqlserver_table_size_history (
     snapshot_time   TIMESTAMPTZ NOT NULL,
     server_name     TEXT NOT NULL,
     instance_name   TEXT NOT NULL,
@@ -3296,17 +3296,17 @@ CREATE TABLE IF NOT EXISTS snapshot.mssql_table_size_history (
 );
 
 SELECT create_hypertable(
-    'snapshot.mssql_table_size_history',
+    'snapshot.sqlserver_table_size_history',
     'snapshot_time',
     chunk_time_interval => INTERVAL '7 days',
     if_not_exists => TRUE
 );
 
-CREATE INDEX IF NOT EXISTS idx_mssql_table_size_history_lookup ON snapshot.mssql_table_size_history
+CREATE INDEX IF NOT EXISTS idx_sqlserver_table_size_history_lookup ON snapshot.sqlserver_table_size_history
 (server_name, instance_name, database_name, schema_name, table_name, snapshot_time DESC);
 
 -- 3) Index Usage + Size History
-CREATE TABLE IF NOT EXISTS snapshot.mssql_index_usage_history (
+CREATE TABLE IF NOT EXISTS snapshot.sqlserver_index_usage_history (
     snapshot_time   TIMESTAMPTZ NOT NULL,
     server_name     TEXT NOT NULL,
     instance_name   TEXT NOT NULL,
@@ -3323,17 +3323,17 @@ CREATE TABLE IF NOT EXISTS snapshot.mssql_index_usage_history (
 );
 
 SELECT create_hypertable(
-    'snapshot.mssql_index_usage_history',
+    'snapshot.sqlserver_index_usage_history',
     'snapshot_time',
     chunk_time_interval => INTERVAL '7 days',
     if_not_exists => TRUE
 );
 
-CREATE INDEX IF NOT EXISTS idx_mssql_index_usage_history_lookup ON snapshot.mssql_index_usage_history
+CREATE INDEX IF NOT EXISTS idx_sqlserver_index_usage_history_lookup ON snapshot.sqlserver_index_usage_history
 (server_name, instance_name, database_name, schema_name, table_name, index_name, snapshot_time DESC);
 
 -- 4) Index Fragmentation History
-CREATE TABLE IF NOT EXISTS snapshot.mssql_index_fragmentation_history (
+CREATE TABLE IF NOT EXISTS snapshot.sqlserver_index_fragmentation_history (
     snapshot_time   TIMESTAMPTZ NOT NULL,
     server_name     TEXT NOT NULL,
     instance_name   TEXT NOT NULL,
@@ -3346,17 +3346,17 @@ CREATE TABLE IF NOT EXISTS snapshot.mssql_index_fragmentation_history (
 );
 
 SELECT create_hypertable(
-    'snapshot.mssql_index_fragmentation_history',
+    'snapshot.sqlserver_index_fragmentation_history',
     'snapshot_time',
     chunk_time_interval => INTERVAL '7 days',
     if_not_exists => TRUE
 );
 
-CREATE INDEX IF NOT EXISTS idx_mssql_index_frag_history_lookup ON snapshot.mssql_index_fragmentation_history
+CREATE INDEX IF NOT EXISTS idx_sqlserver_index_frag_history_lookup ON snapshot.sqlserver_index_fragmentation_history
 (server_name, instance_name, database_name, schema_name, table_name, index_name, snapshot_time DESC);
 
 -- 5) Table Structure / Risk Snapshot
-CREATE TABLE IF NOT EXISTS snapshot.mssql_table_structure_history (
+CREATE TABLE IF NOT EXISTS snapshot.sqlserver_table_structure_history (
     snapshot_time       TIMESTAMPTZ NOT NULL,
     server_name         TEXT NOT NULL,
     instance_name       TEXT NOT NULL,
@@ -3368,52 +3368,52 @@ CREATE TABLE IF NOT EXISTS snapshot.mssql_table_structure_history (
 );
 
 SELECT create_hypertable(
-    'snapshot.mssql_table_structure_history',
+    'snapshot.sqlserver_table_structure_history',
     'snapshot_time',
     chunk_time_interval => INTERVAL '7 days',
     if_not_exists => TRUE
 );
 
-CREATE INDEX IF NOT EXISTS idx_mssql_table_struct_history_lookup ON snapshot.mssql_table_structure_history
+CREATE INDEX IF NOT EXISTS idx_sqlserver_table_struct_history_lookup ON snapshot.sqlserver_table_structure_history
 (server_name, instance_name, database_name, schema_name, table_name, snapshot_time DESC);
 
 -- 6) Compression Policies
-ALTER TABLE snapshot.mssql_db_storage_history SET (
+ALTER TABLE snapshot.sqlserver_db_storage_history SET (
     timescaledb.compress,
     timescaledb.compress_segmentby = 'server_name,instance_name,database_name'
 );
-SELECT add_compression_policy('snapshot.mssql_db_storage_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('snapshot.sqlserver_db_storage_history', INTERVAL '7 days', if_not_exists => TRUE);
 
-ALTER TABLE snapshot.mssql_table_size_history SET (
+ALTER TABLE snapshot.sqlserver_table_size_history SET (
     timescaledb.compress,
     timescaledb.compress_segmentby = 'server_name,instance_name,database_name'
 );
-SELECT add_compression_policy('snapshot.mssql_table_size_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('snapshot.sqlserver_table_size_history', INTERVAL '7 days', if_not_exists => TRUE);
 
-ALTER TABLE snapshot.mssql_index_usage_history SET (
+ALTER TABLE snapshot.sqlserver_index_usage_history SET (
     timescaledb.compress,
     timescaledb.compress_segmentby = 'server_name,instance_name,database_name'
 );
-SELECT add_compression_policy('snapshot.mssql_index_usage_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('snapshot.sqlserver_index_usage_history', INTERVAL '7 days', if_not_exists => TRUE);
 
-ALTER TABLE snapshot.mssql_index_fragmentation_history SET (
+ALTER TABLE snapshot.sqlserver_index_fragmentation_history SET (
     timescaledb.compress,
     timescaledb.compress_segmentby = 'server_name,instance_name,database_name'
 );
-SELECT add_compression_policy('snapshot.mssql_index_fragmentation_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('snapshot.sqlserver_index_fragmentation_history', INTERVAL '7 days', if_not_exists => TRUE);
 
-ALTER TABLE snapshot.mssql_table_structure_history SET (
+ALTER TABLE snapshot.sqlserver_table_structure_history SET (
     timescaledb.compress,
     timescaledb.compress_segmentby = 'server_name,instance_name,database_name'
 );
-SELECT add_compression_policy('snapshot.mssql_table_structure_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_compression_policy('snapshot.sqlserver_table_structure_history', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- 7) Retention Policies
-SELECT add_retention_policy('snapshot.mssql_db_storage_history', INTERVAL '2 years', if_not_exists => TRUE);
-SELECT add_retention_policy('snapshot.mssql_table_size_history', INTERVAL '2 years', if_not_exists => TRUE);
-SELECT add_retention_policy('snapshot.mssql_index_usage_history', INTERVAL '2 years', if_not_exists => TRUE);
-SELECT add_retention_policy('snapshot.mssql_index_fragmentation_history', INTERVAL '2 years', if_not_exists => TRUE);
-SELECT add_retention_policy('snapshot.mssql_table_structure_history', INTERVAL '2 years', if_not_exists => TRUE);
+SELECT add_retention_policy('snapshot.sqlserver_db_storage_history', INTERVAL '2 years', if_not_exists => TRUE);
+SELECT add_retention_policy('snapshot.sqlserver_table_size_history', INTERVAL '2 years', if_not_exists => TRUE);
+SELECT add_retention_policy('snapshot.sqlserver_index_usage_history', INTERVAL '2 years', if_not_exists => TRUE);
+SELECT add_retention_policy('snapshot.sqlserver_index_fragmentation_history', INTERVAL '2 years', if_not_exists => TRUE);
+SELECT add_retention_policy('snapshot.sqlserver_table_structure_history', INTERVAL '2 years', if_not_exists => TRUE);
 -- SQL Optima — https://github.com/rsharma155/sql_optima
 --
 -- Purpose: Enhanced PostgreSQL Memory Intelligence schema.
@@ -3663,8 +3663,8 @@ ALTER TABLE monitor.pg_memory_derived SET (timescaledb.compress, timescaledb.com
 SELECT add_compression_policy('monitor.pg_memory_derived', INTERVAL '7 days', if_not_exists => TRUE);
 SELECT add_retention_policy('monitor.pg_memory_derived', INTERVAL '180 days', if_not_exists => TRUE);
 
--- MSSQL Query Store Deltas
-CREATE TABLE IF NOT EXISTS monitor.mssql_query_store_staging (
+-- SQLSERVER Query Store Deltas
+CREATE TABLE IF NOT EXISTS monitor.sqlserver_query_store_staging (
     server_instance_name TEXT NOT NULL,
     database_name TEXT NOT NULL,
     query_hash TEXT NOT NULL,
@@ -3679,7 +3679,7 @@ CREATE TABLE IF NOT EXISTS monitor.mssql_query_store_staging (
     last_execution_time TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS monitor.mssql_query_store_snapshot (
+CREATE TABLE IF NOT EXISTS monitor.sqlserver_query_store_snapshot (
     capture_time TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
     database_name TEXT NOT NULL,
@@ -3694,9 +3694,9 @@ CREATE TABLE IF NOT EXISTS monitor.mssql_query_store_snapshot (
     row_fingerprint TEXT NOT NULL,
     PRIMARY KEY (capture_time, server_instance_name, query_hash, plan_id, runtime_stats_interval_id)
 );
-SELECT create_hypertable('monitor.mssql_query_store_snapshot', 'capture_time', if_not_exists => TRUE);
+SELECT create_hypertable('monitor.sqlserver_query_store_snapshot', 'capture_time', if_not_exists => TRUE);
 
-CREATE TABLE IF NOT EXISTS monitor.mssql_query_store_interval (
+CREATE TABLE IF NOT EXISTS monitor.sqlserver_query_store_interval (
     bucket_start TIMESTAMPTZ NOT NULL,
     bucket_end TIMESTAMPTZ NOT NULL,
     server_instance_name TEXT NOT NULL,
@@ -3714,8 +3714,8 @@ CREATE TABLE IF NOT EXISTS monitor.mssql_query_store_interval (
     is_reset BOOLEAN DEFAULT FALSE,
     PRIMARY KEY (bucket_end, server_instance_name, query_hash, plan_id, runtime_stats_interval_id)
 );
-SELECT create_hypertable('monitor.mssql_query_store_interval', 'bucket_end', if_not_exists => TRUE);
-CREATE INDEX IF NOT EXISTS idx_mssql_qs_interval_query ON monitor.mssql_query_store_interval (server_instance_name, query_hash, bucket_end DESC);
+SELECT create_hypertable('monitor.sqlserver_query_store_interval', 'bucket_end', if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_qs_interval_query ON monitor.sqlserver_query_store_interval (server_instance_name, query_hash, bucket_end DESC);
 
 -- Collector Configs
 CREATE TABLE IF NOT EXISTS optima_collector_configs (
@@ -3736,16 +3736,16 @@ INSERT INTO optima_collector_configs (collector_name, module, frequency_seconds)
 ('Postgres Storage I/O', 'Postgres', 60),
 ('Postgres Long Running Queries', 'Postgres', 60),
 ('Postgres Query Stats', 'Postgres', 60),
-('SQL Server Active Queries', 'MSSQL', 15),
-('SQL Server Blocking Locks', 'MSSQL', 15),
-('SQL Server CPU and Memory', 'MSSQL', 60),
-('SQL Server Wait Stats', 'MSSQL', 60),
-('SQL Server Storage I/O', 'MSSQL', 60),
-('SQL Server Long Running Queries', 'MSSQL', 60),
-('SQL Server Query Store', 'MSSQL', 900),
-('SQL Server Procedure Stats', 'MSSQL', 120),
-('SQL Server Memory Clerks', 'MSSQL', 300),
-('SQL Server Plan Cache', 'MSSQL', 300),
-('SQL Server Database Size', 'MSSQL', 3600),
-('SQL Server Configuration', 'MSSQL', 86400)
+('SQL Server Active Queries', 'SQLSERVER', 15),
+('SQL Server Blocking Locks', 'SQLSERVER', 15),
+('SQL Server CPU and Memory', 'SQLSERVER', 60),
+('SQL Server Wait Stats', 'SQLSERVER', 60),
+('SQL Server Storage I/O', 'SQLSERVER', 60),
+('SQL Server Long Running Queries', 'SQLSERVER', 60),
+('SQL Server Query Store', 'SQLSERVER', 900),
+('SQL Server Procedure Stats', 'SQLSERVER', 120),
+('SQL Server Memory Clerks', 'SQLSERVER', 300),
+('SQL Server Plan Cache', 'SQLSERVER', 300),
+('SQL Server Database Size', 'SQLSERVER', 3600),
+('SQL Server Configuration', 'SQLSERVER', 86400)
 ON CONFLICT (collector_name) DO NOTHING;

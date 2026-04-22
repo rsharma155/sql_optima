@@ -2,7 +2,7 @@
 // It handles routing, authentication, and response formatting for all REST endpoints.
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Defines API handlers and routes for all monitoring endpoints. Registers health routes, authentication, and monitoring handlers for both MSSQL and PostgreSQL databases.
+// Purpose: Defines API handlers and routes for all monitoring endpoints. Registers health routes, authentication, and monitoring handlers for both SQLSERVER and PostgreSQL databases.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -58,7 +58,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	adminServersH := handlers.NewAdminServerHandlers(metricsSvc)
 	adminCollectorH := handlers.NewAdminCollectorHandlers(metricsSvc)
 	widgetAdminH := handlers.NewWidgetAdminHandlers(metricsSvc)
-	mssqlH := handlers.NewMssqlHandlers(metricsSvc, cfg)
+	sqlserverH := handlers.NewSqlServerHandlers(metricsSvc, cfg)
 	postgresH := handlers.NewPostgresHandlers(metricsSvc, cfg)
 	liveH := handlers.NewLiveHandlers(metricsSvc, cfg)
 	timescaleH := handlers.NewTimescaleHandlers(metricsSvc, cfg)
@@ -66,14 +66,14 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	healthH := handlers.NewHealthHandlers(metricsSvc, cfg)
 	dashboardH := handlers.NewDashboardHandlers(metricsSvc, cfg)
 	queryH := handlers.NewQueryHandlers(metricsSvc, cfg)
-	mssqlQAH := handlers.NewMssqlQueryAnalysisHandlers(metricsSvc, cfg)
-	mssqlWQH := handlers.NewMssqlWatchedQueryHandlers(metricsSvc, cfg)
+	sqlserverQAH := handlers.NewSqlServerQueryAnalysisHandlers(metricsSvc, cfg)
+	sqlserverWQH := handlers.NewSqlServerWatchedQueryHandlers(metricsSvc, cfg)
 	osMetricsH := handlers.NewOSMetricsHandler(metricsSvc)
 
 	mon := &monitoringHandlers{
-		Mssql: mssqlH, Postgres: postgresH, Live: liveH, Timescale: timescaleH,
+		SqlServer: sqlserverH, Postgres: postgresH, Live: liveH, Timescale: timescaleH,
 		Health: healthH, Dashboard: dashboardH, Query: queryH, SIH: sihH,
-		MssqlQueryAnalysis: mssqlQAH, MssqlWatchedQuery: mssqlWQH,
+		SqlServerQueryAnalysis: sqlserverQAH, SqlServerWatchedQuery: sqlserverWQH,
 	}
 
 	// ── Alert engine wiring ────────────────────────────────────
@@ -83,9 +83,9 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		maintRepo := repository.NewAlertMaintenanceRepository(tsPool)
 
 		evaluators := []service.AlertEvaluator{
-			service.NewMssqlBlockingEvaluator(tsPool),
-			service.NewMssqlFailedJobsEvaluator(tsPool),
-			service.NewMssqlDiskSpaceEvaluator(tsPool),
+			service.NewSqlServerBlockingEvaluator(tsPool),
+			service.NewSqlServerFailedJobsEvaluator(tsPool),
+			service.NewSqlServerDiskSpaceEvaluator(tsPool),
 			service.NewPgReplicationLagEvaluator(tsPool),
 			service.NewPgBlockingEvaluator(tsPool),
 			service.NewPgBackupFreshnessEvaluator(tsPool),
@@ -132,7 +132,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		// Strict: only auth endpoints stay public; config is moved behind JWT below.
 	} else {
 		registerMonitoringReadRoutes(openAPI, mon, rulesBP)
-		registerMonitoringElevatedRoutes(openAPI, mssqlH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
+		registerMonitoringElevatedRoutes(openAPI, sqlserverH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
 		if alertH != nil {
 			registerAlertReadRoutes(openAPI, alertH)
 			registerAlertMutationRoutes(openAPI, alertH)
@@ -183,7 +183,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		dbaAPI.Use(middleware.RequireAuth(""))
 		dbaAPI.Use(middleware.RequireAnyRole("dba", "admin"))
 		dbaAPI.Use(middleware.CSRFProtect)
-		registerMonitoringElevatedRoutes(dbaAPI, mssqlH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
+		registerMonitoringElevatedRoutes(dbaAPI, sqlserverH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
 		registerPostgresDBAMutations(dbaAPI, postgresH)
 		registerDashboardWidgetRoutes(dbaAPI, dashboardH)
 		if alertH != nil {
@@ -195,7 +195,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		legacyAuthed := r.PathPrefix("/api").Subrouter()
 		legacyAuthed.Use(middleware.RequireAuth(""))
 		legacyAuthed.Use(middleware.CSRFProtect)
-		legacyAuthed.HandleFunc("/mssql/xevents", mssqlH.XEvents).Methods("GET")
+		legacyAuthed.HandleFunc("/sqlserver/xevents", sqlserverH.XEvents).Methods("GET")
 		registerPostgresDBAMutations(legacyAuthed, postgresH)
 		registerDashboardWidgetRoutes(legacyAuthed, dashboardH)
 	}

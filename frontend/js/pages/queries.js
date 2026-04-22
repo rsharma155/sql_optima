@@ -343,7 +343,7 @@ function renderQueriesTable(queries, sortBy) {
             <tr>
                 <td>${escUser || '<span class="text-muted">-</span>'}</td>
                 <td style="max-width:350px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-                    <span class="pg-sql-preview" style="cursor:pointer; text-decoration:underline; text-underline-offset:2px; color:var(--accent);" title="View full SQL and capture time" onclick="window.pgOpenQuerySql('${fingerprint}')">
+                    <span class="pg-sql-preview" style="cursor:pointer; text-decoration:underline; text-underline-offset:2px; color:var(--accent);" title="View full SQL and capture time" data-action="call" data-fn="pgOpenQuerySql" data-arg="${fingerprint}">
                         ${escPreview}
                     </span>
                 </td>
@@ -792,7 +792,7 @@ function pgssRenderTopRows(queries) {
         row.innerHTML = `
             <div>${i + 1}</div>
             <div style="justify-content:center;">${flags || '<span class="text-muted">—</span>'}</div>
-            <div class="pgss-grid-cell-query" onclick="window.pgssOpenQuery('${qid}')" title="Click to view full SQL">
+            <div class="pgss-grid-cell-query" data-action="call" data-fn="pgssOpenQuery" data-arg="${qid}" title="Click to view full SQL">
                 ${pgssEscapeHtml(pgssTrancate(q.query, 80))}
             </div>
             <div class="pgss-grid-cell-stat">${pgssFmtMs(q.total_time_ms)}</div>

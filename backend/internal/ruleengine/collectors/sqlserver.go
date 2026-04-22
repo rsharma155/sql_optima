@@ -28,7 +28,7 @@ type SQLServerCollector struct {
 func NewSQLServerCollector(connStr string) (*SQLServerCollector, error) {
 	db, err := sqlserver.OpenMetricsPool(connStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open mssql metrics pool: %w", err)
+		return nil, fmt.Errorf("failed to open sqlserver metrics pool: %w", err)
 	}
 
 	db.SetMaxOpenConns(5)
@@ -39,7 +39,7 @@ func NewSQLServerCollector(connStr string) (*SQLServerCollector, error) {
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
-		return nil, fmt.Errorf("failed to ping mssql: %w", err)
+		return nil, fmt.Errorf("failed to ping sqlserver: %w", err)
 	}
 
 	return &SQLServerCollector{connStr: connStr, db: db}, nil

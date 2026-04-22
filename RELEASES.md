@@ -5,6 +5,13 @@ Until 1.0, releases may include breaking changes. We still aim to keep changes d
 
 ## Unreleased
 
+## 0.3.0
+- **Push-based OS Collector**: Introduced a new lightweight Go collector (`os_collector`) for host-level telemetry. It gathers CPU (user/sys/iowait), detailed Memory (RSS, VSZ, Swap, Slab, Dirty), Load Averages, and Postgres process statistics, pushing them to the backend via a secure API.
+- **Enhanced Rule Engine (V2)**: Refactored the advisory system to be signal-aware. Rules can now evaluate against "signals" (historical snapshots stored in TimescaleDB) using the `expr` language for complex conditional logic, severity weighting, and confidence scoring.
+- **Storage & Index Health**: Fully integrated historical dashboard for both engines, surfacing index usage deltas, unused index candidates, table growth projections, and duplicate index detection based on snapshot history.
+- **API — OS Metrics Endpoint**: Added `POST /api/os/metrics` to receive and store telemetry from remote OS collectors.
+- **Tech Stack**: Updated to Go 1.25.7; added `github.com/expr-lang/expr` for dynamic rule evaluation and `github.com/shirou/gopsutil` for host metrics.
+
 ## 0.2.1
 - **Bug fix — Alert Ack/Resolve 400 error**: `AcknowledgeAlert` and `ResolveAlert` handlers now treat the request body as optional; an empty POST body no longer returns `400 Bad Request`.
 - **Bug fix — "Invalid Date" in charts**: Chart time-series labels were emitted as `"HH:MM"` strings (e.g. `"14:32"`), which `new Date()` cannot parse. Labels are now RFC 3339 ISO timestamps; the existing `toLocalTime` helper formats them as `HH:MM` in the browser.

@@ -35,7 +35,7 @@ type CollectorResult struct {
 	Errors        []error
 }
 
-type MSSQLCollector struct {
+type SQLSERVERCollector struct {
 	conns      map[string]*sql.DB
 	mu         sync.RWMutex
 	result     CollectorResult
@@ -46,16 +46,16 @@ type MSSQLCollector struct {
 	wg         sync.WaitGroup
 }
 
-func NewMSSQLCollector(conns map[string]*sql.DB) *MSSQLCollector {
+func NewSQLSERVERCollector(conns map[string]*sql.DB) *SQLSERVERCollector {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &MSSQLCollector{
+	return &SQLSERVERCollector{
 		conns:  conns,
 		ctx:    ctx,
 		cancel: cancel,
 	}
 }
 
-func (c *MSSQLCollector) Start() {
+func (c *SQLSERVERCollector) Start() {
 	c.liveTicker = time.NewTicker(LiveInterval)
 	c.histTicker = time.NewTicker(HistoricalInterval)
 
@@ -82,7 +82,7 @@ func (c *MSSQLCollector) Start() {
 	}()
 }
 
-func (c *MSSQLCollector) Stop() {
+func (c *SQLSERVERCollector) Stop() {
 	c.cancel()
 	c.liveTicker.Stop()
 	c.histTicker.Stop()
@@ -90,13 +90,13 @@ func (c *MSSQLCollector) Stop() {
 	log.Printf("[Collector] Stopped all collectors")
 }
 
-func (c *MSSQLCollector) GetResult() CollectorResult {
+func (c *SQLSERVERCollector) GetResult() CollectorResult {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.result
 }
 
-func (c *MSSQLCollector) runLiveCollectors() {
+func (c *SQLSERVERCollector) runLiveCollectors() {
 	var wg sync.WaitGroup
 	errors := []error{}
 
@@ -141,7 +141,7 @@ func (c *MSSQLCollector) runLiveCollectors() {
 		len(c.result.ActiveQueries), len(c.result.Blocking), len(errors))
 }
 
-func (c *MSSQLCollector) runHistoricalCollectors() {
+func (c *SQLSERVERCollector) runHistoricalCollectors() {
 	var wg sync.WaitGroup
 	errors := []error{}
 

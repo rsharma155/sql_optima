@@ -150,7 +150,7 @@ func TestAlertService_RunEvaluation_CreatesAlerts(t *testing.T) {
 		engine: alerts.EngineSQLServer,
 		results: []AlertEvaluatorResult{
 			{
-				RuleName:     "mssql_blocking",
+				RuleName:     "sqlserver_blocking",
 				Category:     "blocking",
 				Severity:     alerts.SeverityCritical,
 				Title:        "Active blocking detected",
@@ -183,7 +183,7 @@ func TestAlertService_RunEvaluation_Deduplicates(t *testing.T) {
 		engine: alerts.EngineSQLServer,
 		results: []AlertEvaluatorResult{
 			{
-				RuleName: "mssql_blocking",
+				RuleName: "sqlserver_blocking",
 				Category: "blocking",
 				Severity: alerts.SeverityCritical,
 				Title:    "Active blocking detected",
@@ -215,7 +215,7 @@ func TestAlertService_RunEvaluation_SkipsMaintenanceWindow(t *testing.T) {
 	ev := &mockEvaluator{
 		engine: alerts.EngineSQLServer,
 		results: []AlertEvaluatorResult{
-			{RuleName: "mssql_blocking", Category: "blocking", Severity: alerts.SeverityCritical},
+			{RuleName: "sqlserver_blocking", Category: "blocking", Severity: alerts.SeverityCritical},
 		},
 	}
 

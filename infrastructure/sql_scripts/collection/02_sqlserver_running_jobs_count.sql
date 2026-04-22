@@ -1,0 +1,10 @@
+-- Metric: sqlserver_running_jobs_count
+-- Source: backend/internal/repository/sqlserver_jobs.go:43
+-- Target Table: N/A (job monitoring)
+-- Description: Counts currently running SQL Agent jobs
+
+SELECT /* SQL_OPTIMA */   
+COUNT(*) 
+FROM msdb.dbo.sysjobactivity WITH (NOLOCK) 
+WHERE start_execution_date IS NOT NULL 
+AND stop_execution_date IS NULL;

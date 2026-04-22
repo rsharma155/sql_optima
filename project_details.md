@@ -8,8 +8,37 @@ This document describes how the **Go backend**, **SPA frontend**, and **navigati
 
 1. **Backend (`backend/`)** — HTTP API built with Gorilla `mux`. On startup it optionally reads `config.yaml` for instance definitions and resolves database passwords from environment variables. In Docker mode, instances are managed via the **server registry** (Admin UI / API) and `config.yaml` is not required. A **collector service** polls SQL Server and PostgreSQL and writes snapshots to **TimescaleDB** via the hot storage layer.
 2. **Frontend (`frontend/`)** — Static HTML/CSS/JS SPA. `index.html` loads `js/entry.js` (module bootstrap), `auth.js`, `router.js`, and many page scripts that attach view functions to `window`.
-3. **Routing** — There is **no path-based** router in the URL bar for most views. Navigation is **`window.appNavigate(routeId)`**, which swaps content inside `#router-outlet` and updates the sidebar’s `data-route` items. Browser history is tracked in `appState.navigationHistory` for back navigation where used.
+3. **Routing** — There is **no path-based** router in the URL bar for most views. Navigation is **`window.appNavigate(routeId)`**, which swaps content inside `#router-outlet` and updates the sidebar's `data-route` items. Browser history is tracked in `appState.navigationHistory` for back navigation where used.
 4. **Authentication** — `POST /api/login` and **`POST /api/auth/login`** are the same rate-limited handler (shared per-IP budget, implemented in `internal/api/router.go` via `AuthHandlers.Login`). The UI uses `/api/login` by default. `GET /api/auth/me` requires a valid JWT. Tokens are stored in `localStorage` and `apiClient.authenticatedFetch` sends `Authorization: Bearer …`. Many read-only dashboard APIs are intentionally **public**; mutating endpoints (e.g. kill session, admin) require auth. (A previous bug registered `POST /api/auth/login` behind JWT middleware, which made login impossible on that path; that registration was removed.)
+
+---
+
+## Backend Repository Architecture (Micro-DDD)
+
+The SQL Server repository follows a **micro-architecture** pattern with focused files in `backend/internal/repository/`:
+
+| File | Domain | Public Methods |
+|------|-------|--------------|
+| `sqlserver_repository.go` | Connection pool | `NewSqlServerRepository`, `GetConn`, `HasConnection`, `AsQueryer`, `PingAll` |
+| `sqlserver_status.go` | Instance status | `GetInstanceStatus`, `GetAllInstanceStatuses`, `UpdateInstanceStatus` |
+| `sqlserver_database.go` | Database listing | `ListSQLServerUserDatabases`, `sqlServerQuoteBracket` |
+| `sqlserver_global_metric.go` | System metrics | `GetGlobalMetric` |
+| `sqlserver_long_running_queries.go` | Query performance | `FetchLongRunningQueries` |
+| `sqlserver_query_store.go` | Query Store | `FetchQueryStoreStats`, `FetchQueryStoreSQLText` |
+| `sqlserver_ag_health.go` | HA/AG | `FetchAGHealthStats` |
+| `sqlserver_database_throughput.go` | Throughput | `FetchDatabaseThroughput` |
+| `sqlserver_perf_wrapper.go` | Performance | `FetchLatchStats`, `FetchWaitingTasks`, `FetchMemoryGrants`, `FetchProcedureStats`, `FetchFileIOLatency`, `FetchSpinlockStats`, `FetchMemoryClerks`, `FetchTempdbStats`, `FetchSchedulerWG` |
+| `sqlserver_storage.go` | Storage | `CollectSQLServerStorageMetrics`, `CollectSQLServerTableSizeMetrics` |
+| `sqlserver_index.go` | Indexing | `CollectSQLServerIndexUsageMetrics`, `CollectSQLServerIndexFragmentationMetrics`, `CollectSQLServerTableStructureMetrics` |
+| `sqlserver_replication.go` | Replication | `FetchReplicationStatus` |
+| `sqlserver_log_shipping.go` | Log shipping | `FetchLogShippingHealth` |
+| `sqlserver_connection_stats.go` | Connections | `CollectConnectionStats` |
+
+Benefits:
+- **Isolated debugging** — Fix issues in focused files without scrolling through 1500+ lines
+- **Parallel development** — Multiple features can be developed independently
+- **Testability** — Each file exposes clear public interfaces for mocking
+- **Maintainability** — Clear ownership boundaries per domain area
 
 ---
 
@@ -17,7 +46,7 @@ This document describes how the **Go backend**, **SPA frontend**, and **navigati
 
 ```
 Browser → SecurityHeadersMiddleware → CORS (if enabled) → mux routes
-    → Public /api/* handlers (dashboards, postgres, mssql, timescale, health, rules)
+    → Public /api/* handlers (dashboards, postgres, sqlserver, timescale, health, rules)
     → OR Protected /api/* (JWT) for admin, widgets, xevents, postgres POST actions
 ```
 
@@ -49,15 +78,15 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 | Route | View function | Notes |
 |--------|----------------|--------|
 | `global` | `GlobalEstateView` | Default after boot; no instance required |
-| `dashboard` | `DashboardView` | MSSQL instance dashboard; requires instance |
+| `dashboard` | `DashboardView` | SQLSERVER instance dashboard; requires instance |
 | `drilldown-cpu` | `CpuDrilldown` | |
-| `mssql-cpu-dashboard` | `MssqlCpuDashboardView` | |
+| `sqlserver-cpu-dashboard` | `SqlServerCpuDashboardView` | |
 | `instance-health` | `InstanceHealthDashboardView` | |
-| `drilldown-query` | `mssql_QueryDrilldown` | |
-| `drilldown-top-queries` | `mssql_TopQueriesDrilldown` | |
-| `drilldown-metric-detail` | `mssql_MetricDetailDrilldown` | |
-| `drilldown-deadlocks` | `mssql_DeadlockDashboard` | |
-| `drilldown-deadlock` | `mssql_DeadlockDashboard` | Alias for deadlock UI |
+| `drilldown-query` | `sqlserver_QueryDrilldown` | |
+| `drilldown-top-queries` | `sqlserver_TopQueriesDrilldown` | |
+| `drilldown-metric-detail` | `sqlserver_MetricDetailDrilldown` | |
+| `drilldown-deadlocks` | `sqlserver_DeadlockDashboard` | |
+| `drilldown-deadlock` | `sqlserver_DeadlockDashboard` | Alias for deadlock UI |
 | `drilldown-growth` | `GrowthDrilldown` | |
 | `drilldown-index` | `IndexDrilldown` | |
 | `drilldown-locks` | `LocksDrilldown` | |
@@ -65,14 +94,14 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 | `drilldown-ha` | `HADashboardView` | |
 | `drilldown-pg-enterprise` | `PgEnterpriseDashboardView` | |
 | `enterprise-metrics` | `EnterpriseMetricsView` | Requires instance |
-| `performance-debt` | `mssql_PerformanceDebtDashboard` | |
-| `storage-index-health` | `MssqlStorageIndexHealthView` / `PgStorageIndexHealthView` | Cross-engine Timescale-backed Storage & Index Health dashboard; the router dispatches based on current instance type |
+| `performance-debt` | `sqlserver_PerformanceDebtDashboard` | |
+| `storage-index-health` | `SqlServerStorageIndexHealthView` / `PgStorageIndexHealthView` | Cross-engine Timescale-backed Storage & Index Health dashboard; the router dispatches based on current instance type |
 | `jobs` | `JobsView` | |
 | `alerts` | `AlertsView` | |
 | `incidents` | `AlertsView` | **Alias** (e.g. from Reports actions) |
 | `login` | `LoginView` | Used after logout |
 | `settings` | `SettingsView` | |
-| `best-practices` | `RulesEngineView` | MSSQL-oriented rules dashboard |
+| `best-practices` | `RulesEngineView` | SQLSERVER-oriented rules dashboard |
 | `live-diagnostics` | `LiveDiagnosticsView` | |
 | `pg-dashboard` | `PgDashboardView` | Control Center |
 | `pg-sessions` | `PgSessionsView` | |
@@ -97,7 +126,7 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 
 ## Sidebar vs static HTML
 
-- **`index.html`** initially contains only **Global Estate** in `#sidebar-nav` so users are not offered MSSQL-only links before config and instance selection run.
+- **`index.html`** initially contains only **Global Estate** in `#sidebar-nav` so users are not offered SQLSERVER-only links before config and instance selection run.
 - After an instance is selected, `router.populateDatabaseDropdown()` injects the full **Postgres** or **SQL Server** menu (see `router.js`).
 
 ---
@@ -114,8 +143,8 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 
 ## Security notes (frontend + API)
 
-- **XSS**: User-facing and API error strings assigned to `innerHTML` should go through `window.escapeHtml`. Recent hardening includes router error surfaces, locks drilldown, jobs view, and MSSQL dashboard errors; navigation uses `data-route` equality instead of embedding the route in a CSS selector.
-- **Open dashboards**: Many `GET /api/mssql/*`, `GET /api/postgres/*`, and `GET /api/timescale/*` routes are **unauthenticated** by design. Treat network access as a trust boundary; place the UI/API behind SSO/VPN or enable auth at the reverse proxy if needed.
+- **XSS**: User-facing and API error strings assigned to `innerHTML` should go through `window.escapeHtml`. Recent hardening includes router error surfaces, locks drilldown, jobs view, and SQLSERVER dashboard errors; navigation uses `data-route` equality instead of embedding the route in a CSS selector.
+- **Open dashboards**: Many `GET /api/sqlserver/*`, `GET /api/postgres/*`, and `GET /api/timescale/*` routes are **unauthenticated** by design. Treat network access as a trust boundary; place the UI/API behind SSO/VPN or enable auth at the reverse proxy if needed.
 - **JWT**: Set a strong `JWT_SECRET` in production (`main.go` warns when unset).
 
 ---

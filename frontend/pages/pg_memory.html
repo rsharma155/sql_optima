@@ -111,7 +111,7 @@
             <div id="os-collector-status-container" style="width: 100%; text-align: right;"></div>
             <div style="display:flex; align-items:center; gap:0.75rem;">
                 <span class="text-muted" style="font-size: 0.6rem;">Auto-refresh: 1m</span>
-                <button class="btn btn-xs btn-outline text-accent" onclick="PgMemoryView()"><i class="fa-solid fa-rotate"></i></button>
+                <button class="btn btn-xs btn-outline text-accent" data-action="call" data-fn="PgMemoryView"><i class="fa-solid fa-rotate"></i></button>
             </div>
         </div>
     </div>
@@ -204,7 +204,7 @@
             <div id="cockpit-tab-raw" class="tab-pane" style="display: none;">
                 <div class="flex-between mb-2">
                     <span class="text-muted small">Capture History (Last 100 Samples)</span>
-                    <button class="btn btn-xs btn-outline" onclick="exportPgMemoryCSV()">Export CSV</button>
+                    <button class="btn btn-xs btn-outline" data-action="call" data-fn="exportPgMemoryCSV">Export CSV</button>
                 </div>
                 <div class="table-responsive" style="max-height: 100%;">
                     <table class="data-table small">

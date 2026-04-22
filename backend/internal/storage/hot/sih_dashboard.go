@@ -118,7 +118,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 	if engine == "postgres" {
 		kpis.HighScanTableCount = tl.sihPgHighScanTableCount(ctx, engine, serverID, from, to, f)
 	} else {
-		kpis.HighScanTableCount = tl.sihMssqlHighScanTableCount(ctx, engine, serverID, from, to, f)
+		kpis.HighScanTableCount = tl.sihSqlServerHighScanTableCount(ctx, engine, serverID, from, to, f)
 	}
 
 	// Fastest growing table (7d) - best effort, within provided window.
@@ -162,7 +162,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 	if engine == "postgres" {
 		topScans, err = tl.sihPgTopScans(ctx, engine, serverID, from, to, f)
 	} else {
-		topScans, err = tl.sihMssqlTopScans(ctx, engine, serverID, from, to, f)
+		topScans, err = tl.sihSqlServerTopScans(ctx, engine, serverID, from, to, f)
 	}
 	if err != nil {
 		return nil, err
@@ -171,7 +171,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 	// ---------------- Row 2 Right: Seek vs Scan vs Lookup (SQL Server) or Idx vs Seq scans (Postgres tables) ----------------
 	var seekScan []StorageIndexHealthSeekScanLookupRow
 	if engine == "sqlserver" {
-		seekScan, err = tl.sihMssqlSeekScanLookup(ctx, engine, serverID, from, to, f)
+		seekScan, err = tl.sihSqlServerSeekScanLookup(ctx, engine, serverID, from, to, f)
 		if err != nil {
 			return nil, err
 		}
@@ -548,7 +548,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 	if engine == "postgres" {
 		highScan, err = tl.sihPgHighScanTables(ctx, engine, serverID, from, to, f)
 	} else {
-		highScan, err = tl.sihMssqlHighScanTables(ctx, engine, serverID, from, to, f)
+		highScan, err = tl.sihSqlServerHighScanTables(ctx, engine, serverID, from, to, f)
 	}
 	if err != nil {
 		return nil, err

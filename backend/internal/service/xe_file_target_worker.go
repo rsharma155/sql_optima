@@ -283,7 +283,7 @@ func (w *XeFileTargetWorker) readXeEvents(
 	` */
 
 	// Important: ORDER BY so our "max" is the last row deterministically.
-	// FIX: Use @p1, @p2, @p3 for the mssql driver instead of ?
+	// FIX: Use @p1, @p2, @p3 for the sqlserver driver instead of ?
 	const q = `
 		SELECT 
 			object_name AS event_type,
@@ -367,7 +367,7 @@ func (s *MetricsService) StartXeFileTargetWorker(ctx context.Context) {
 				instanceName := inst.Name
 				dbConn, ok := s.MsRepo.GetConn(instanceName)
 				if !ok || dbConn == nil {
-					log.Printf("[XE] No MSSQL connection for %s", instanceName)
+					log.Printf("[XE] No SQLSERVER connection for %s", instanceName)
 					continue
 				}
 

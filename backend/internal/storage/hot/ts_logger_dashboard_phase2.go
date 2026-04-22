@@ -71,7 +71,7 @@ func (tl *TimescaleLogger) GetSQLServerRiskHealthHistory(ctx context.Context, in
 		       COALESCE(compilations_per_sec,0),
 		       COALESCE(batch_requests_per_sec,0),
 		       COALESCE(buffer_cache_hit_ratio,0)
-		FROM mssql_risk_health
+		FROM sqlserver_risk_health
 		WHERE server_instance_name = $1
 		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC

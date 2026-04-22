@@ -209,7 +209,7 @@ function renderBestPracticesDashboard(inst, data) {
             html += `
                 <tr ${statusClass}>
                     <td style="text-align:center; font-size:1rem;">${statusIcon}</td>
-                    <td style="word-wrap:break-word;"><strong style="font-family:monospace; font-size:0.7rem;">${window.escapeHtml(check.rule_name)}</strong></td>
+                    <td style="word-wrap:break-word;" title="${safeDesc}"><strong style="font-family:monospace; font-size:0.7rem; cursor:help;">${window.escapeHtml(check.rule_name)}</strong></td>
                     <td style="text-align:center;"><code style="background:var(--bg-tertiary); padding:2px 4px; border-radius:4px; font-size:0.65rem; display:inline-block; width:100%;">${safeCurr}</code></td>
                     <td style="text-align:center;"><code style="background:var(--bg-tertiary); padding:2px 4px; border-radius:4px; font-size:0.65rem; display:inline-block; width:100%;">${safeRec}</code></td>
                     <td style="text-align:center;">

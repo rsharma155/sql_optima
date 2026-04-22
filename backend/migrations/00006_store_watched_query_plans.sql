@@ -7,7 +7,7 @@
 -- Copyright (c) 2026 Ravi Sharma
 -- SPDX-License-Identifier: MIT
 
-ALTER TABLE mssql_watched_query_snapshots ADD COLUMN IF NOT EXISTS query_plan TEXT;
+ALTER TABLE sqlserver_watched_query_snapshots ADD COLUMN IF NOT EXISTS query_plan TEXT;
 
 -- +goose Down
-ALTER TABLE mssql_watched_query_snapshots DROP COLUMN IF EXISTS query_plan;
+ALTER TABLE sqlserver_watched_query_snapshots DROP COLUMN IF EXISTS query_plan;

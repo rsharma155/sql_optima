@@ -20,7 +20,7 @@ async function loadConfigs() {
         
         configs.forEach(c => {
             const tr = document.createElement('tr');
-            const moduleClass = c.module.toLowerCase() === 'postgres' ? 'module-postgres' : 'module-mssql';
+            const moduleClass = c.module.toLowerCase() === 'postgres' ? 'module-postgres' : 'module-sqlserver';
             
             tr.innerHTML = `
                 <td><strong>${window.escapeHtml(c.collector_name)}</strong></td>

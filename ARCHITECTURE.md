@@ -2,7 +2,34 @@
 
 SQL Optima is a Go backend + static SPA frontend, with TimescaleDB for historical dashboards, alert state, and server registry. It supports both PostgreSQL and SQL Server as monitored targets.
 
-## Components
+## Code Organization
+
+### Backend Repository Layer (Micro-Architecture)
+
+The SQL Server repository (`backend/internal/repository/`) follows Domain-Driven Design (DDD) principles with focused, single-responsibility files:
+
+- **`sqlserver_repository.go`** — Core connection management, pool configuration, instance initialization
+- **`sqlserver_status.go`** — Instance status management (online/offline/unknown)
+- **`sqlserver_database.go`** — Database listing utilities, bracket quoting helpers
+- **`sqlserver_global_metric.go`** — System-level DMVs (CPU, memory ring buffers)
+- **`sqlserver_long_running_queries.go`** — Long-running query statistics from `dm_exec_requests`
+- **`sqlserver_query_store.go`** — Query Store aggregated statistics
+- **`sqlserver_ag_health.go`** — AlwaysOn Availability Group health metrics
+- **`sqlserver_database_throughput.go`** — Per-database throughput (index usage, batch requests)
+- **`sqlserver_perf_wrapper.go`** — Performance metrics wrapper functions (latches, waits, memory grants, etc.)
+- **`sqlserver_storage.go`** — Database and table size metrics
+- **`sqlserver_index.go`** — Index usage, fragmentation, and table structure metrics
+- **`sqlserver_replication.go`** — Transactional/merge replication status
+- **`sqlserver_log_shipping.go`** — Log shipping health monitoring
+- **`sqlserver_connection_stats.go`** — Connection statistics by application
+
+This split makes it easier to:
+- Debug specific features without navigating a monolithic file
+- Add enhancements in focused, isolated files
+- Write unit tests per domain area
+- Maintain code ownership by feature area
+
+### Components
 
 - **Backend (`backend/`)**
   - Gorilla `mux` HTTP API under `/api/*` with role-based middleware (`RequireAuth`, `RequireAnyRole`)

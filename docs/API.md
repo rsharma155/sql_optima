@@ -23,11 +23,11 @@ Except where noted, endpoints require `Authorization: Bearer <JWT>` from `POST /
 | GET | `/api/global` | — | Per-instance rollup metrics for the estate view. |
 | GET | `/api/postgres/overview` | `instance` | Cached Postgres summary (TPS, cache hit, DB count). |
 | GET | `/api/postgres/dashboard` | `instance`, `database` (optional, default `all`) | Throughput series for charts. |
-| GET | `/api/mssql/overview` | `instance` | Cached SQL Server summary (CPU, memory, locks, top query count). |
-| GET | `/api/mssql/dashboard` | `instance` | Full cached dashboard payload. |
-| GET | `/api/mssql/jobs` | `instance` | Agent job metrics. |
-| GET | `/api/mssql/xevents` | `instance` | Recent extended events from local SQLite buffer. |
-| GET | `/api/mssql/best-practices` | `instance` | Configuration audit / best-practices result. |
+| GET | `/api/sqlserver/overview` | `instance` | Cached SQL Server summary (CPU, memory, locks, top query count). |
+| GET | `/api/sqlserver/dashboard` | `instance` | Full cached dashboard payload. |
+| GET | `/api/sqlserver/jobs` | `instance` | Agent job metrics. |
+| GET | `/api/sqlserver/xevents` | `instance` | Recent extended events from local SQLite buffer. |
+| GET | `/api/sqlserver/best-practices` | `instance` | Configuration audit / best-practices result. |
 
 ## Frontend usage (grep-aligned)
 
@@ -36,7 +36,7 @@ Except where noted, endpoints require `Authorization: Bearer <JWT>` from `POST /
 | `frontend/js/modules/app-client.js` | `/api/config`, `/api/login` |
 | `frontend/js/pages/global.js` | `/api/global` |
 | `frontend/js/pages/overview.js` | `/api/postgres/dashboard` |
-| `frontend/js/pages/mssql_*.js` | `/api/mssql/dashboard`, `/api/mssql/jobs`, `/api/mssql/best-practices` |
+| `frontend/js/pages/sqlserver_*.js` | `/api/sqlserver/dashboard`, `/api/sqlserver/jobs`, `/api/sqlserver/best-practices` |
 
 ## Operational environment
 

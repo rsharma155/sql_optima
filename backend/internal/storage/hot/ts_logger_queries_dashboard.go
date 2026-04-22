@@ -65,7 +65,7 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 		       AVG(avg_cpu_ms) AS avg_cpu_ms,
 		       AVG(avg_duration_ms) AS avg_duration_ms,
 		       AVG(avg_reads) AS avg_reads
-		FROM monitor.mssql_query_store_interval
+		FROM monitor.sqlserver_query_store_interval
 		WHERE UPPER(server_instance_name) = UPPER($1)`,
 		dimensionCol, metricCol)
 
@@ -143,7 +143,7 @@ func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, instance
 	query := fmt.Sprintf(`
 		SELECT time_bucket('5 min', bucket_end) AS time,
 		       SUM(%s) AS value
-		FROM monitor.mssql_query_store_interval
+		FROM monitor.sqlserver_query_store_interval
 		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND bucket_end > now() - INTERVAL '%s'
 		GROUP BY time

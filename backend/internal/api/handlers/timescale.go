@@ -36,7 +36,7 @@ func (h *TimescaleHandlers) Status(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *TimescaleHandlers) MssqlMetrics(w http.ResponseWriter, r *http.Request) {
+func (h *TimescaleHandlers) SqlServerMetrics(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -109,7 +109,7 @@ func (h *TimescaleHandlers) PostgresConnections(w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(map[string]interface{}{"connections": stats})
 }
 
-func (h *TimescaleHandlers) MssqlTopQueries(w http.ResponseWriter, r *http.Request) {
+func (h *TimescaleHandlers) SqlServerTopQueries(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -137,7 +137,7 @@ func (h *TimescaleHandlers) MssqlTopQueries(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]interface{}{"top_queries": queries})
 }
 
-func (h *TimescaleHandlers) MssqlQueryStatsDashboard(w http.ResponseWriter, r *http.Request) {
+func (h *TimescaleHandlers) SqlServerQueryStatsDashboard(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -196,7 +196,7 @@ func (h *TimescaleHandlers) MssqlQueryStatsDashboard(w http.ResponseWriter, r *h
 	})
 }
 
-func (h *TimescaleHandlers) MssqlCPUHistory(w http.ResponseWriter, r *http.Request) {
+func (h *TimescaleHandlers) SqlServerCPUHistory(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -244,7 +244,7 @@ func (h *TimescaleHandlers) MssqlCPUHistory(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (h *TimescaleHandlers) MssqlMemoryDrilldown(w http.ResponseWriter, r *http.Request) {
+func (h *TimescaleHandlers) SqlServerMemoryDrilldown(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -294,7 +294,7 @@ func (h *TimescaleHandlers) MssqlMemoryDrilldown(w http.ResponseWriter, r *http.
 	json.NewEncoder(w).Encode(payload)
 }
 
-func (h *TimescaleHandlers) MssqlQueryStatsTimeSeries(w http.ResponseWriter, r *http.Request) {
+func (h *TimescaleHandlers) SqlServerQueryStatsTimeSeries(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -334,9 +334,9 @@ func (h *TimescaleHandlers) MssqlQueryStatsTimeSeries(w http.ResponseWriter, r *
 	})
 }
 
-func (h *TimescaleHandlers) MssqlLongRunningQueries(w http.ResponseWriter, r *http.Request) {
+func (h *TimescaleHandlers) SqlServerLongRunningQueries(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
-	log.Printf("[API] /api/timescale/mssql/long-running-queries called with instance=%s", instance)
+	log.Printf("[API] /api/timescale/sqlserver/long-running-queries called with instance=%s", instance)
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

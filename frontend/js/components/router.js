@@ -214,7 +214,7 @@ window.appNavigate = function(route, skipHistory = false) {
             break;
         case 'drilldown-cpu': window.CpuDrilldown(); break;
         case 'drilldown-memory': if (window.MemoryDrilldown) window.MemoryDrilldown(); break;
-        case 'mssql-cpu-dashboard': window.MssqlCpuDashboardView(); break;
+        case 'sqlserver-cpu-dashboard': window.SqlServerCpuDashboardView(); break;
         case 'instance-health': 
             appDebug('[Router] instance-health route triggered');
             appDebug('[Router] Checking for InstanceHealthDashboardView...');
@@ -248,15 +248,15 @@ window.appNavigate = function(route, skipHistory = false) {
             }
             tryLoadHealthDashboard();
             break;
-        case 'drilldown-query': if(window.mssql_QueryDrilldown) window.mssql_QueryDrilldown(); break;
-        case 'drilldown-top-queries': if(window.mssql_TopQueriesDrilldown) window.mssql_TopQueriesDrilldown(); break;
-        case 'drilldown-metric-detail': if(window.mssql_MetricDetailDrilldown) window.mssql_MetricDetailDrilldown(); break;
-        case 'drilldown-deadlocks': if(window.mssql_DeadlockDashboard) window.mssql_DeadlockDashboard(); break;
+        case 'drilldown-query': if(window.sqlserver_QueryDrilldown) window.sqlserver_QueryDrilldown(); break;
+        case 'drilldown-top-queries': if(window.sqlserver_TopQueriesDrilldown) window.sqlserver_TopQueriesDrilldown(); break;
+        case 'drilldown-metric-detail': if(window.sqlserver_MetricDetailDrilldown) window.sqlserver_MetricDetailDrilldown(); break;
+        case 'drilldown-deadlocks': if(window.sqlserver_DeadlockDashboard) window.sqlserver_DeadlockDashboard(); break;
         case 'drilldown-growth': window.GrowthDrilldown(); break;
         case 'drilldown-index': window.IndexDrilldown(); break;
         case 'drilldown-locks': window.LocksDrilldown(); break;
         // "Deadlock graph" page: route to the functional dashboard implementation.
-        case 'drilldown-deadlock': if(window.mssql_DeadlockDashboard) window.mssql_DeadlockDashboard(); break;
+        case 'drilldown-deadlock': if(window.sqlserver_DeadlockDashboard) window.sqlserver_DeadlockDashboard(); break;
         case 'drilldown-bottlenecks': window.HistoricalBottlenecksView(); break;
         case 'drilldown-ha': window.HADashboardView(); break;
         case 'drilldown-pg-enterprise': window.PgEnterpriseDashboardView(); break;
@@ -279,24 +279,24 @@ window.appNavigate = function(route, skipHistory = false) {
             waitForEM();
             break;
         case 'performance-debt':
-            if (window.mssql_PerformanceDebtDashboard) {
-                window.mssql_PerformanceDebtDashboard();
+            if (window.sqlserver_PerformanceDebtDashboard) {
+                window.sqlserver_PerformanceDebtDashboard();
             } else {
                 window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Performance Debt…</h3></div>';
                 setTimeout(() => window.appNavigate('performance-debt'), 200);
             }
             break;
         case 'query-analysis':
-            if (window.mssql_QueryAnalysisDashboard) {
-                window.mssql_QueryAnalysisDashboard();
+            if (window.sqlserver_QueryAnalysisDashboard) {
+                window.sqlserver_QueryAnalysisDashboard();
             } else {
                 window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Query Analysis…</h3></div>';
                 setTimeout(() => window.appNavigate('query-analysis'), 200);
             }
             break;
         case 'watched-queries':
-            if (window.mssql_WatchedQueryAnalyzer) {
-                window.mssql_WatchedQueryAnalyzer();
+            if (window.sqlserver_WatchedQueryAnalyzer) {
+                window.sqlserver_WatchedQueryAnalyzer();
             } else {
                 window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Watched Queries…</h3></div>';
                 setTimeout(() => window.appNavigate('watched-queries'), 200);
@@ -312,7 +312,7 @@ window.appNavigate = function(route, skipHistory = false) {
                 }
             };
             const runMs = () => {
-                if (typeof window.MssqlStorageIndexHealthView === 'function') window.MssqlStorageIndexHealthView();
+                if (typeof window.SqlServerStorageIndexHealthView === 'function') window.SqlServerStorageIndexHealthView();
                 else {
                     window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Storage & Index Health…</h3></div>';
                     setTimeout(() => window.appNavigate('storage-index-health'), 200);
@@ -480,7 +480,7 @@ window.router = {
                     window.appState.currentDatabase = 'all';
                 });
         } else {
-            // For MSSQL, use static list
+            // For SQLSERVER, use static list
             dbSel.innerHTML = '<option value="all">-- All Databases --</option>';
             inst.databases.forEach(db => {
                 const opt = document.createElement('option'); opt.value=db; opt.textContent=db; dbSel.appendChild(opt);
@@ -515,7 +515,7 @@ window.router = {
             brand.className='fa-brands fa-microsoft xl-icon logo-icon text-accent'; 
             sidebarNav.innerHTML = `
                 <li data-route="dashboard" id="nav-dashboard"><i class="fa-solid fa-gauge-high"></i> Instance Dashboard</li>
-                <li data-route="mssql-cpu-dashboard"><i class="fa-solid fa-microchip"></i> CPU Dashboard</li>
+                <li data-route="sqlserver-cpu-dashboard"><i class="fa-solid fa-microchip"></i> CPU Dashboard</li>
                 <li data-route="drilldown-memory"><i class="fa-solid fa-memory"></i> Memory Analyzer</li>
                 <li data-route="live-diagnostics"><i class="fa-solid fa-bolt text-warning"></i> Real-Time Diagnostics</li>
                 <!-- Query Bottlenecks is now treated as a drilldown from Top Offenders -->

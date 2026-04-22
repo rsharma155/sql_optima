@@ -21,8 +21,8 @@ func pgCfg() *config.Config {
 	}
 }
 
-// mssqlCfg returns a config with one SQL Server instance for testing.
-func mssqlCfg() *config.Config {
+// sqlserverCfg returns a config with one SQL Server instance for testing.
+func sqlserverCfg() *config.Config {
 	return &config.Config{
 		Instances: []config.Instance{
 			{Name: "ms-test", Type: "sqlserver", Host: "localhost", Port: 1433},
@@ -103,7 +103,7 @@ func TestPgssSummary_InstanceNotFound(t *testing.T) {
 }
 
 func TestPgssSummary_WrongType(t *testing.T) {
-	h := NewPostgresHandlers(&service.MetricsService{}, mssqlCfg())
+	h := NewPostgresHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/summary?instance=ms-test", nil)
 	rr := httptest.NewRecorder()
 	h.PgssSummary(rr, req)
@@ -181,7 +181,7 @@ func TestPgssTop_InvalidSortDefaultsToTotalTime(t *testing.T) {
 // ---- Instance type mismatch tests (SQL Server instance should be rejected by PGSS) ----
 
 func TestPgssStatus_WrongInstanceType(t *testing.T) {
-	h := NewPostgresHandlers(&service.MetricsService{}, mssqlCfg())
+	h := NewPostgresHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/status?instance=ms-test", nil)
 	rr := httptest.NewRecorder()
 	h.PgssStatus(rr, req)
@@ -196,7 +196,7 @@ func TestPgssStatus_WrongInstanceType(t *testing.T) {
 }
 
 func TestPgssWorkload_WrongInstanceType(t *testing.T) {
-	h := NewPostgresHandlers(&service.MetricsService{}, mssqlCfg())
+	h := NewPostgresHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/workload?instance=ms-test", nil)
 	rr := httptest.NewRecorder()
 	h.PgssWorkload(rr, req)
@@ -206,7 +206,7 @@ func TestPgssWorkload_WrongInstanceType(t *testing.T) {
 }
 
 func TestPgssLatency_WrongInstanceType(t *testing.T) {
-	h := NewPostgresHandlers(&service.MetricsService{}, mssqlCfg())
+	h := NewPostgresHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/latency?instance=ms-test", nil)
 	rr := httptest.NewRecorder()
 	h.PgssLatency(rr, req)
@@ -216,7 +216,7 @@ func TestPgssLatency_WrongInstanceType(t *testing.T) {
 }
 
 func TestPgssTop_WrongInstanceType(t *testing.T) {
-	h := NewPostgresHandlers(&service.MetricsService{}, mssqlCfg())
+	h := NewPostgresHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/top?instance=ms-test", nil)
 	rr := httptest.NewRecorder()
 	h.PgssTop(rr, req)
@@ -226,7 +226,7 @@ func TestPgssTop_WrongInstanceType(t *testing.T) {
 }
 
 func TestPgssRegressions_WrongInstanceType(t *testing.T) {
-	h := NewPostgresHandlers(&service.MetricsService{}, mssqlCfg())
+	h := NewPostgresHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/regressions?instance=ms-test", nil)
 	rr := httptest.NewRecorder()
 	h.PgssRegressions(rr, req)

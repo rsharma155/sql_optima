@@ -11,16 +11,16 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/microsoft/go-mssqldb"
+	sqlserver "github.com/microsoft/go-mssqldb"
 )
 
 // OpenMetricsPool returns a *sql.DB for SQL Server monitoring and metrics collection.
 // MonitoringSessionInitSQL is applied via go-mssqldb Connector.SessionInitSQL on connect
 // and pooled connection reset.
 func OpenMetricsPool(connStr string) (*sql.DB, error) {
-	connector, err := mssql.NewConnector(connStr)
+	connector, err := sqlserver.NewConnector(connStr)
 	if err != nil {
-		return nil, fmt.Errorf("mssql DSN: %w", err)
+		return nil, fmt.Errorf("sqlserver DSN: %w", err)
 	}
 	connector.SessionInitSQL = MonitoringSessionInitSQL
 	return sql.OpenDB(connector), nil
