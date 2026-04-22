@@ -17,13 +17,13 @@ import (
 // monitoringHandlers groups HTTP handlers registered for dashboard and live APIs.
 type monitoringHandlers struct {
 	SqlServer              *handlers.SqlServerHandlers
-	Postgres           *handlers.PostgresHandlers
-	Live               *handlers.LiveHandlers
-	Timescale          *handlers.TimescaleHandlers
-	Health             *handlers.HealthHandlers
-	Dashboard          *handlers.DashboardHandlers
-	Query              *handlers.QueryHandlers
-	SIH                *handlers.StorageIndexHealthTimescaleHandlers
+	Postgres               *handlers.PostgresHandlers
+	Live                   *handlers.LiveHandlers
+	Timescale              *handlers.TimescaleHandlers
+	Health                 *handlers.HealthHandlers
+	Dashboard              *handlers.DashboardHandlers
+	Query                  *handlers.QueryHandlers
+	SIH                    *handlers.StorageIndexHealthTimescaleHandlers
 	SqlServerQueryAnalysis *handlers.SqlServerQueryAnalysisHandlers
 	SqlServerWatchedQuery  *handlers.SqlServerWatchedQueryHandlers
 }

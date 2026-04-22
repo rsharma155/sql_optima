@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/config"
+	"github.com/rsharma155/sql_optima/internal/domain/rules"
 	"github.com/rsharma155/sql_optima/internal/ruleengine/models"
 	"github.com/rsharma155/sql_optima/internal/security/sqlsandbox"
 	"github.com/rsharma155/sql_optima/internal/sqlserver"
@@ -464,6 +465,10 @@ func (h *RulesHandler) enrichDashboardEntries(ctx context.Context, serverID int,
 		if strings.TrimSpace(entries[i].Impact) == "" {
 			entries[i].Impact = entries[i].Description
 		}
+		entries[i].WhyThisMatters = rules.GenerateWhyThisMatters(entries[i].RuleID)
+		entries[i].ImpactDetail = rules.GenerateImpact(entries[i].RuleID)
+		entries[i].RiskLevel = rules.GetRiskLevel(entries[i].RuleID)
+		entries[i].ConfidenceNote = rules.GetConfidenceNote(entries[i].RuleID)
 	}
 
 	return nil

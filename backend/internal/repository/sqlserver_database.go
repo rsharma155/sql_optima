@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: SQL Server database-level metrics and configuration.
+// Purpose: SQL Server database listing and utilities.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -8,92 +8,45 @@
 package repository
 
 import (
-	"database/sql"
-	"log"
+	"fmt"
 	"strings"
 )
 
-// CollectDatabaseThroughput fetches database throughput metrics
-func (c *SqlServerRepository) CollectDatabaseThroughput(db *sql.DB) ([]map[string]interface{}, error) {
-	query := `
-		SELECT /* SQL_OPTIMA */   
-			DB_NAME(database_id) AS database_name,
-			CAST(SUM(num_reads) AS BIGINT) AS total_reads,
-			CAST(SUM(num_writes) AS BIGINT) AS total_writes,
-			CAST(SUM(num_reads + num_writes) AS BIGINT) AS total_io,
-			CAST(SUM(io_stall_read_ms) AS BIGINT) AS total_read_stall_ms,
-			CAST(SUM(io_stall_write_ms) AS BIGINT) AS total_write_stall_ms
-		FROM sys.dm_io_virtual_file_stats(NULL, NULL)
-		WHERE database_id > 4
-		GROUP BY database_id
+func (c *SqlServerRepository) ListSQLServerUserDatabases(instanceName string) ([]string, error) {
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return nil, fmt.Errorf("connection not found")
+	}
+	const q = `
+		SELECT /* SQL_OPTIMA */   d.name
+		FROM sys.databases d
+		WHERE d.database_id > 4
+		  AND d.state = 0
+		  AND LOWER(d.name) <> N'distribution'
+		ORDER BY d.name
 	`
-
-	rows, err := db.Query(query)
+	rows, err := db.Query(q)
 	if err != nil {
-		log.Printf("[SQLSERVER] Database Throughput Query Error: %v", err)
 		return nil, err
 	}
 	defer rows.Close()
-
-	var results []map[string]interface{}
+	var names []string
 	for rows.Next() {
-		var resultsMap = make(map[string]interface{})
-		columns, _ := rows.Columns()
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			continue
 		}
-		if err := rows.Scan(valuePtrs...); err == nil {
-			for i, col := range columns {
-				resultsMap[col] = values[i]
-			}
-			results = append(results, resultsMap)
+		n = strings.TrimSpace(n)
+		if n != "" {
+			names = append(names, n)
 		}
 	}
-	return results, nil
+	return names, rows.Err()
 }
 
-// CollectConnectionStats fetches connection statistics by application (Real-Time Diagnostics: user DB workloads only).
-// If database is non-empty, scopes to that DB only.
-func (c *SqlServerRepository) CollectConnectionStats(db *sql.DB, database string) ([]map[string]interface{}, error) {
-	query := `
-		SELECT /* SQL_OPTIMA */   TOP 20
-			ISNULL(program_name, 'Unknown') AS program_name,
-			COUNT(*) AS connection_count,
-			COUNT(DISTINCT login_name) AS unique_logins
-		FROM sys.dm_exec_sessions s
-		WHERE s.is_user_process = 1
-		  AND s.database_id > 4
-		  AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
-		  AND (@p1 = '' OR DB_NAME(s.database_id) = @p1)
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		GROUP BY program_name
-		ORDER BY connection_count DESC
-	`
-
-	rows, err := db.Query(query, strings.TrimSpace(database))
-	if err != nil {
-		return nil, err
+func sqlServerQuoteBracket(ident string) string {
+	if ident == "" {
+		return "[]"
 	}
-	defer rows.Close()
-
-	var results []map[string]interface{}
-	for rows.Next() {
-		var resultsMap = make(map[string]interface{})
-		columns, _ := rows.Columns()
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
-		}
-		if err := rows.Scan(valuePtrs...); err == nil {
-			for i, col := range columns {
-				resultsMap[col] = values[i]
-			}
-			results = append(results, resultsMap)
-		}
-	}
-	return results, nil
+	return "[" + strings.ReplaceAll(ident, "]", "]]") + "]"
 }

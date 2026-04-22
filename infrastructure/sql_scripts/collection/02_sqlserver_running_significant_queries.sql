@@ -3,7 +3,8 @@
 -- Target Table: sqlserver_top_queries (TimescaleDB)
 -- Description: Captures currently running queries with significant resource usage (CPU > 50ms, elapsed > 5s, or logical reads > 5000)
 
-SELECT /* SQL_OPTIMA */   TOP 20
+SELECT /* SQL_OPTIMA */   
+    TOP 20
     ISNULL(s.login_name, 'System') as login_name,
     ISNULL(s.program_name, 'System') as program_name,
     ISNULL(DB_NAME(r.database_id), 'Unknown') as database_name,

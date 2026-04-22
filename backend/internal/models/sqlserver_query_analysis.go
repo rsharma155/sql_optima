@@ -51,18 +51,18 @@ type SqlServerWatchedQuery struct {
 
 // SqlServerWatchedQuerySnapshot represents a point-in-time metric snapshot for a watched query.
 type SqlServerWatchedQuerySnapshot struct {
-	SnapshotTime      time.Time            `json:"snapshot_time"`
-	WatchedID         int                  `json:"watched_id"`
-	Executions        int64                `json:"executions"`
-	AvgDurationMs     float64              `json:"avg_duration_ms"`
-	AvgCpuMs          float64              `json:"avg_cpu_ms"`
-	AvgReads          float64              `json:"avg_reads"`
-	TotalDurationMs   float64              `json:"total_duration_ms"`
-	TotalCpuMs        float64              `json:"total_cpu_ms"`
-	PlanCount         int                  `json:"plan_count"`
-	LastExecutionTime time.Time            `json:"last_execution_time"`
-	QueryPlan         string               `json:"query_plan,omitempty"`
-	QueryText         string               `json:"query_text,omitempty"`
+	SnapshotTime      time.Time                `json:"snapshot_time"`
+	WatchedID         int                      `json:"watched_id"`
+	Executions        int64                    `json:"executions"`
+	AvgDurationMs     float64                  `json:"avg_duration_ms"`
+	AvgCpuMs          float64                  `json:"avg_cpu_ms"`
+	AvgReads          float64                  `json:"avg_reads"`
+	TotalDurationMs   float64                  `json:"total_duration_ms"`
+	TotalCpuMs        float64                  `json:"total_cpu_ms"`
+	PlanCount         int                      `json:"plan_count"`
+	LastExecutionTime time.Time                `json:"last_execution_time"`
+	QueryPlan         string                   `json:"query_plan,omitempty"`
+	QueryText         string                   `json:"query_text,omitempty"`
 	WaitStats         []SqlServerQueryWaitStat `json:"wait_stats,omitempty"`
 }
 

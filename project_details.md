@@ -8,8 +8,37 @@ This document describes how the **Go backend**, **SPA frontend**, and **navigati
 
 1. **Backend (`backend/`)** — HTTP API built with Gorilla `mux`. On startup it optionally reads `config.yaml` for instance definitions and resolves database passwords from environment variables. In Docker mode, instances are managed via the **server registry** (Admin UI / API) and `config.yaml` is not required. A **collector service** polls SQL Server and PostgreSQL and writes snapshots to **TimescaleDB** via the hot storage layer.
 2. **Frontend (`frontend/`)** — Static HTML/CSS/JS SPA. `index.html` loads `js/entry.js` (module bootstrap), `auth.js`, `router.js`, and many page scripts that attach view functions to `window`.
-3. **Routing** — There is **no path-based** router in the URL bar for most views. Navigation is **`window.appNavigate(routeId)`**, which swaps content inside `#router-outlet` and updates the sidebar’s `data-route` items. Browser history is tracked in `appState.navigationHistory` for back navigation where used.
+3. **Routing** — There is **no path-based** router in the URL bar for most views. Navigation is **`window.appNavigate(routeId)`**, which swaps content inside `#router-outlet` and updates the sidebar's `data-route` items. Browser history is tracked in `appState.navigationHistory` for back navigation where used.
 4. **Authentication** — `POST /api/login` and **`POST /api/auth/login`** are the same rate-limited handler (shared per-IP budget, implemented in `internal/api/router.go` via `AuthHandlers.Login`). The UI uses `/api/login` by default. `GET /api/auth/me` requires a valid JWT. Tokens are stored in `localStorage` and `apiClient.authenticatedFetch` sends `Authorization: Bearer …`. Many read-only dashboard APIs are intentionally **public**; mutating endpoints (e.g. kill session, admin) require auth. (A previous bug registered `POST /api/auth/login` behind JWT middleware, which made login impossible on that path; that registration was removed.)
+
+---
+
+## Backend Repository Architecture (Micro-DDD)
+
+The SQL Server repository follows a **micro-architecture** pattern with focused files in `backend/internal/repository/`:
+
+| File | Domain | Public Methods |
+|------|-------|--------------|
+| `sqlserver_repository.go` | Connection pool | `NewSqlServerRepository`, `GetConn`, `HasConnection`, `AsQueryer`, `PingAll` |
+| `sqlserver_status.go` | Instance status | `GetInstanceStatus`, `GetAllInstanceStatuses`, `UpdateInstanceStatus` |
+| `sqlserver_database.go` | Database listing | `ListSQLServerUserDatabases`, `sqlServerQuoteBracket` |
+| `sqlserver_global_metric.go` | System metrics | `GetGlobalMetric` |
+| `sqlserver_long_running_queries.go` | Query performance | `FetchLongRunningQueries` |
+| `sqlserver_query_store.go` | Query Store | `FetchQueryStoreStats`, `FetchQueryStoreSQLText` |
+| `sqlserver_ag_health.go` | HA/AG | `FetchAGHealthStats` |
+| `sqlserver_database_throughput.go` | Throughput | `FetchDatabaseThroughput` |
+| `sqlserver_perf_wrapper.go` | Performance | `FetchLatchStats`, `FetchWaitingTasks`, `FetchMemoryGrants`, `FetchProcedureStats`, `FetchFileIOLatency`, `FetchSpinlockStats`, `FetchMemoryClerks`, `FetchTempdbStats`, `FetchSchedulerWG` |
+| `sqlserver_storage.go` | Storage | `CollectSQLServerStorageMetrics`, `CollectSQLServerTableSizeMetrics` |
+| `sqlserver_index.go` | Indexing | `CollectSQLServerIndexUsageMetrics`, `CollectSQLServerIndexFragmentationMetrics`, `CollectSQLServerTableStructureMetrics` |
+| `sqlserver_replication.go` | Replication | `FetchReplicationStatus` |
+| `sqlserver_log_shipping.go` | Log shipping | `FetchLogShippingHealth` |
+| `sqlserver_connection_stats.go` | Connections | `CollectConnectionStats` |
+
+Benefits:
+- **Isolated debugging** — Fix issues in focused files without scrolling through 1500+ lines
+- **Parallel development** — Multiple features can be developed independently
+- **Testability** — Each file exposes clear public interfaces for mocking
+- **Maintainability** — Clear ownership boundaries per domain area
 
 ---
 

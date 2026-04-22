@@ -130,6 +130,26 @@ func (s *MetricsService) RunSqlServerStorageSnapshotCollection(ctx context.Conte
 			if derr == nil {
 				_, _ = collectors.PersistSQLServerIndexDefinitions(ctx, s.tsLogger, inst.Name, defRows, capture)
 			}
+
+			// E: Index Fragmentation (Daily)
+			fragMetrics, ferr := s.MsRepo.CollectSQLServerIndexFragmentationMetrics(inst.Name, db)
+			if ferr == nil {
+				var rows []hot.IndexFragHistoryRow
+				for _, m := range fragMetrics {
+					rows = append(rows, hot.IndexFragHistoryRow{
+						SnapshotTime:        capture,
+						ServerName:          inst.Name,
+						InstanceName:        inst.Name,
+						DatabaseName:        db,
+						SchemaName:          m["schema_name"].(string),
+						TableName:           m["table_name"].(string),
+						IndexName:           m["index_name"].(string),
+						AvgFragmentationPct: m["avg_fragmentation_pct"].(float64),
+						PageCount:           m["page_count"].(int64),
+					})
+				}
+				_ = s.tsLogger.LogIndexFragmentationHistory(ctx, rows)
+			}
 		}
 
 		// 3. Global SIH Refreshes

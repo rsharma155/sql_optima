@@ -26,7 +26,11 @@ window.runStorageIndexHealthDashboard = async function(opts) {
 
     state.fromLocal = state.fromLocal || fmtLocal(oneHourAgo);
     state.toLocal = state.toLocal || fmtLocal(now);
-    state.db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : (state.db || 'all');
+    
+    // Only set defaults if not already in state
+    if (state.db === undefined) {
+        state.db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : 'all';
+    }
     state.schema = state.schema || 'all';
     state.table = state.table || 'all';
     state.growthMode = state.growthMode || 'abs'; 
@@ -58,7 +62,6 @@ window.runStorageIndexHealthDashboard = async function(opts) {
                 <div class="page-title flex-between dashboard-page-title-compact">
                     <div class="dashboard-title-line" style="flex:1; min-width:0;">
                         <h1><i class="fa-solid fa-boxes-stacked text-accent"></i> ${dashTitle}</h1>
-                        <span class="subtitle">Last snapshot: <span id="sihLastSnap">--</span> • Analysis window defined by range picker</span>
                     </div>
                     <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.6rem; flex-wrap:wrap; justify-content:flex-end;">
                         <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; border: 1px solid var(--border-color);">
@@ -73,6 +76,10 @@ window.runStorageIndexHealthDashboard = async function(opts) {
                             <div style="border-left:1px solid var(--border-color); padding-left:0.5rem; display:flex; align-items:center; gap:0.4rem;">
                                 <label class="text-muted" style="margin:0;">schema:</label>
                                 <select id="sihSchema" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; max-width:100px;"><option value="all">All</option></select>
+                            </div>
+                            <div style="border-left:1px solid var(--border-color); padding-left:0.5rem; display:flex; align-items:center; gap:0.4rem;">
+                                <label class="text-muted" style="margin:0;">table:</label>
+                                <select id="sihTable" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; max-width:140px;"><option value="all">All</option></select>
                             </div>
                             <button type="button" class="btn btn-xs btn-accent" id="sihApply" style="padding:1px 6px;"><i class="fa-solid fa-filter"></i> Apply</button>
                         </div>
@@ -154,7 +161,7 @@ window.runStorageIndexHealthDashboard = async function(opts) {
         if ($('sihDb')) {
             $('sihDb').innerHTML = '<option value="all">All</option>' + (filters.databases || []).map(d => `<option value="${d}" ${state.db===d?'selected':''}>${d}</option>`).join('');
             $('sihSchema').innerHTML = '<option value="all">All</option>' + (filters.schemas || []).map(s => `<option value="${s}" ${state.schema===s?'selected':''}>${s}</option>`).join('');
-            $('sihLastSnap').textContent = filters.last_snapshot ? new Date(filters.last_snapshot).toLocaleTimeString() : '--';
+            $('sihTable').innerHTML = '<option value="all">All</option>' + (filters.tables || []).map(t => `<option value="${t}" ${state.table===t?'selected':''}>${t}</option>`).join('');
         }
 
         const sync = () => {
@@ -162,10 +169,21 @@ window.runStorageIndexHealthDashboard = async function(opts) {
             state.toLocal = $('sihTo').value;
             state.db = $('sihDb').value;
             state.schema = $('sihSchema').value;
+            state.table = $('sihTable').value;
         };
-        const reload = () => { sync(); void window.runStorageIndexHealthDashboard({ skipLoadingShell: true }); };
+        const reload = (e) => { 
+            if (e) e.preventDefault();
+            sync(); 
+            // Widen growth window if needed by state logic inside buildFilterQS or backend.
+            void window.runStorageIndexHealthDashboard({ skipLoadingShell: true }); 
+        };
         $('sihRefresh').onclick = reload;
         $('sihApply').onclick = reload;
+
+        // Auto-reload on dropdown changes for better UX
+        $('sihDb').onchange = reload;
+        $('sihSchema').onchange = reload;
+        $('sihTable').onchange = reload;
 
         // 4. KPIs
         const updateKpi = (id, val, suffix, colorRules) => {
@@ -385,6 +403,27 @@ async function showSihTableDrilldown(instance, db, schema, table) {
         const content = document.getElementById('sihDrillContent');
         const last = (data.growth_series || []).slice(-1)[0] || { table_size_mb: 0, index_size_mb: 0, row_count: 0 };
         
+        // --- Process Data for UI ---
+        // 1. Get Distinct Indexes (Latest Snapshot)
+        const latestIndexes = [];
+        const seenIdx = new Set();
+        (data.index_usage || []).sort((a,b) => new Date(b.time) - new Date(a.time)).forEach(idx => {
+            if (!seenIdx.has(idx.index_name)) {
+                latestIndexes.push(idx);
+                seenIdx.add(idx.index_name);
+            }
+        });
+
+        // 2. Process Fragmentation Details (Latest per Index)
+        const latestFrag = [];
+        const seenFrag = new Set();
+        (data.fragmentation || []).sort((a,b) => new Date(b.snapshot_time) - new Date(a.snapshot_time)).forEach(f => {
+            if (!seenFrag.has(f.index_name)) {
+                latestFrag.push(f);
+                seenFrag.add(f.index_name);
+            }
+        });
+
         content.innerHTML = `
             <div class="sih-drill-pane active" id="drill-breakdown">
                 <div style="display:grid; grid-template-columns: 1.2fr 0.8fr; gap:1.5rem;">
@@ -392,12 +431,12 @@ async function showSihTableDrilldown(instance, db, schema, table) {
                         <h4 class="mb-4 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">Space Allocation</h4>
                         <div style="height:250px;"><canvas id="drillBreakdownChart"></canvas></div>
                         <div class="mt-4">
-                            <h5 class="text-muted mb-2" style="font-size:0.75rem;">Index Breakdown</h5>
+                            <h5 class="text-muted mb-2" style="font-size:0.75rem;">Index Space Breakdown</h5>
                             <div class="table-responsive" style="max-height:200px; overflow:auto;">
                                 <table class="data-table" style="font-size:0.65rem;">
                                     <thead><tr><th>Index Name</th><th class="text-right">Size MB</th></tr></thead>
                                     <tbody>
-                                        ${(data.index_usage || []).sort((a,b)=>b.index_size_mb - a.index_size_mb).map(idx => `
+                                        ${latestIndexes.sort((a,b)=>b.index_size_mb - a.index_size_mb).map(idx => `
                                             <tr><td>${window.escapeHtml(idx.index_name)}</td><td class="text-right">${Number(idx.index_size_mb||0).toFixed(2)}</td></tr>
                                         `).join('') || '<tr><td colspan="2" class="text-center">No index data</td></tr>'}
                                     </tbody>
@@ -425,10 +464,6 @@ async function showSihTableDrilldown(instance, db, schema, table) {
                                 <span class="text-accent" style="font-weight:700;">${((Number(last.table_size_mb)||0) + (Number(last.index_size_mb)||0)).toFixed(2)} MB</span>
                             </div>
                         </div>
-                        <div class="mt-4 p-3 glass-panel" style="background:rgba(59,130,246,0.05); border: 1px solid rgba(59,130,246,0.2);">
-                            <div style="font-size:0.75rem; color:var(--text-secondary);">Avg. Row Size</div>
-                            <div style="font-weight:600;">${last.row_count > 0 ? ((last.table_size_mb * 1024) / last.row_count).toFixed(2) : 0} KB</div>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -438,33 +473,20 @@ async function showSihTableDrilldown(instance, db, schema, table) {
                     <h4 class="mb-4 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">Growth History (Data + Index)</h4>
                     <div class="chart-container" style="height:250px;"><canvas id="drillGrowthChart"></canvas></div>
                 </div>
-                <div class="glass-panel p-3">
-                    <h4 class="mb-3 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">Recent Size Snapshots</h4>
-                    <table class="data-table" style="font-size:0.7rem;">
-                        <thead><tr><th>Time</th><th class="text-right">Rows</th><th class="text-right">Data MB</th><th class="text-right">Index MB</th><th class="text-right">Total MB</th></tr></thead>
-                        <tbody>
-                            ${(data.growth_series || []).slice().reverse().slice(0, 10).map(p => `
-                                <tr>
-                                    <td>${new Date(p.time).toLocaleString()}</td>
-                                    <td class="text-right">${Number(p.row_count||0).toLocaleString()}</td>
-                                    <td class="text-right">${Number(p.table_size_mb||0).toFixed(2)}</td>
-                                    <td class="text-right">${Number(p.index_size_mb||0).toFixed(2)}</td>
-                                    <td class="text-right">${((Number(p.table_size_mb)||0) + (Number(p.index_size_mb)||0)).toFixed(2)}</td>
-                                </tr>
-                            `).join('') || '<tr><td colspan="5" class="text-center">No growth history</td></tr>'}
-                        </tbody>
-                    </table>
-                </div>
             </div>
 
             <div class="sih-drill-pane" id="drill-indexes" style="display:none;">
+                <div class="glass-panel p-4 mb-3" style="height:300px;">
+                    <h4 class="mb-4 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">Index Activity Trends (Seeks + Scans)</h4>
+                    <div class="chart-container" style="height:220px;"><canvas id="drillIndexTrendChart"></canvas></div>
+                </div>
                 <div class="table-card glass-panel" style="border:none;">
                     <table class="data-table">
                         <thead style="background: rgba(255,255,255,0.03);">
                             <tr><th>Index Name</th><th>Type</th><th class="text-right">Size MB</th><th class="text-right">${engine==='postgres'?'Scans':'Seeks'}</th><th class="text-right">${engine==='postgres'?'Tuples':'Scans'}</th><th class="text-right">Updates</th></tr>
                         </thead>
                         <tbody>
-                            ${(data.index_usage || []).map(idx => `
+                            ${latestIndexes.map(idx => `
                                 <tr>
                                     <td><strong class="text-accent">${window.escapeHtml(idx.index_name)}</strong></td>
                                     <td><span class="badge badge-outline" style="font-size:0.65rem;">${window.escapeHtml(idx.index_type || (engine==='postgres'?'BTREE':'NONCLUSTERED'))}</span></td>
@@ -473,24 +495,49 @@ async function showSihTableDrilldown(instance, db, schema, table) {
                                     <td class="text-right">${Number(idx.scans || 0).toLocaleString()}</td>
                                     <td class="text-right">${Number(idx.updates || 0).toLocaleString()}</td>
                                 </tr>
-                            `).join('') || '<tr><td colspan="6" class="text-center p-5 text-muted">No granular index usage data found in current window.</td></tr>'}
+                            `).join('') || '<tr><td colspan="6" class="text-center p-5 text-muted">No granular index usage data found.</td></tr>'}
                         </tbody>
                     </table>
                 </div>
             </div>
 
             <div class="sih-drill-pane" id="drill-frag" style="display:none;">
-                <div class="glass-panel p-4" style="height:450px;">
-                    <h4 class="mb-4 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">${engine==='postgres'?'Read vs Write Activity (Tuples)':'Fragmentation Over Time (%)'}</h4>
-                    <div class="chart-container" style="height:350px;"><canvas id="drillFragChart"></canvas></div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1.5rem;">
+                    <div class="glass-panel p-4" style="height:450px;">
+                        <h4 class="mb-4 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">${engine==='postgres'?'Read Activity Trends':'Fragmentation Over Time (%)'}</h4>
+                        <div class="chart-container" style="height:350px;"><canvas id="drillFragChart"></canvas></div>
+                    </div>
+                    <div class="glass-panel p-4">
+                        <h4 class="mb-4 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">Latest Fragmentation Details</h4>
+                        <div class="table-responsive">
+                             <table class="data-table" style="font-size:0.7rem;">
+                                <thead><tr><th>Index Name</th><th class="text-right">Frag %</th><th class="text-right">Pages</th></tr></thead>
+                                <tbody>
+                                    ${latestFrag.map(f => `
+                                        <tr>
+                                            <td>${window.escapeHtml(f.index_name)}</td>
+                                            <td class="text-right ${f.avg_fragmentation_pct > 30 ? 'text-danger font-bold' : ''}">${Number(f.avg_fragmentation_pct).toFixed(1)}%</td>
+                                            <td class="text-right text-muted">${Number(f.page_count).toLocaleString()}</td>
+                                        </tr>
+                                    `).join('') || '<tr><td colspan="3" class="text-center">No fragmentation data recorded.</td></tr>'}
+                                </tbody>
+                             </table>
+                        </div>
+                    </div>
                 </div>
             </div>`;
         
         setTimeout(() => {
             const chartBase = { responsive:true, maintainAspectRatio:false };
 
+            // DESTROY OLD CHARTS IF ANY
+            if (window.sihDrillCharts) {
+                Object.values(window.sihDrillCharts).forEach(c => c && typeof c.destroy === 'function' && c.destroy());
+            }
+            window.sihDrillCharts = {};
+
             // Breakdown Donut
-            new Chart(document.getElementById('drillBreakdownChart').getContext('2d'), { 
+            window.sihDrillCharts.breakdown = new Chart(document.getElementById('drillBreakdownChart').getContext('2d'), { 
                 type: 'doughnut', 
                 data: { labels: ['Data', 'Index'], datasets: [{ data: [last.table_size_mb, last.index_size_mb], backgroundColor: ['#3b82f6', '#eab308'], borderWidth: 0, hoverOffset: 15 }] }, 
                 options: { ...chartBase, cutout:'75%', plugins:{ legend:{ position:'bottom', labels:{ color:'rgba(255,255,255,0.7)', padding:20, font:{size:12} } }} } 
@@ -498,29 +545,56 @@ async function showSihTableDrilldown(instance, db, schema, table) {
 
             // Growth Chart
             if (data.growth_series?.length) { 
-                new Chart(document.getElementById('drillGrowthChart').getContext('2d'), { 
+                window.sihDrillCharts.growth = new Chart(document.getElementById('drillGrowthChart').getContext('2d'), { 
                     type: 'line', 
                     data: { labels: data.growth_series.map(p => new Date(p.time).toLocaleDateString()), datasets: [{ label: 'Total Space (MB)', data: data.growth_series.map(p => (Number(p.table_size_mb)||0) + (Number(p.index_size_mb)||0)), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#3b82f6' }] }, 
                     options: { ...chartBase, plugins: { legend: { display: false } }, scales: { y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
                 }); 
             }
 
+            // Index Trends Chart
+            if (data.index_usage?.length) {
+                const trendLabels = [...new Set(data.index_usage.map(u => new Date(u.time).toLocaleTimeString()))];
+                // Group activity by time
+                const activityMap = {};
+                data.index_usage.forEach(u => {
+                    const t = new Date(u.time).toLocaleTimeString();
+                    activityMap[t] = (activityMap[t] || 0) + (u.seeks + u.scans);
+                });
+                const updatesMap = {};
+                data.index_usage.forEach(u => {
+                    const t = new Date(u.time).toLocaleTimeString();
+                    updatesMap[t] = (updatesMap[t] || 0) + u.updates;
+                });
+
+                window.sihDrillCharts.indexTrends = new Chart(document.getElementById('drillIndexTrendChart').getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        labels: trendLabels,
+                        datasets: [
+                            { label: 'Read Ops (Seeks+Scans)', data: trendLabels.map(l => activityMap[l] || 0), borderColor: '#10b981', tension: 0.4, fill: false },
+                            { label: 'Write Ops (Updates)', data: trendLabels.map(l => updatesMap[l] || 0), borderColor: '#f59e0b', tension: 0.4, fill: false }
+                        ]
+                    },
+                    options: { ...chartBase, plugins: { legend: { display: true, position: 'top', labels: { color: '#ccc', boxWidth: 12, font: { size: 10 } } } }, scales: { y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)', maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } } } }
+                });
+            }
+
             // Frag / Activity Chart
             if (engine === 'postgres' && data.index_usage?.length) {
-                // For Postgres, use drillFragChart to show Read/Write activity over time if fragmentation is empty
-                 new Chart(document.getElementById('drillFragChart').getContext('2d'), { 
+                 window.sihDrillCharts.frag = new Chart(document.getElementById('drillFragChart').getContext('2d'), { 
                     type: 'line', 
                     data: { 
                         labels: data.index_usage.map(p => new Date(p.time).toLocaleTimeString()), 
                         datasets: [
-                            { label: 'Seeks/Scans', data: data.index_usage.map(p => p.seeks + p.scans), borderColor: '#10b981', tension: 0.4 },
-                            { label: 'Updates', data: data.index_usage.map(p => p.updates), borderColor: '#f59e0b', tension: 0.4 }
+                            { label: 'Total Tuples Read', data: data.index_usage.map(p => p.seeks + p.scans), borderColor: '#10b981', tension: 0.4 },
+                            { label: 'Total Tuples Modified', data: data.index_usage.map(p => p.updates), borderColor: '#f59e0b', tension: 0.4 }
                         ] 
                     }, 
                     options: { ...chartBase, plugins: { legend: { display: true, labels: { color: '#ccc' } } }, scales: { y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
                 });
             } else if (data.fragmentation?.length) { 
-                new Chart(document.getElementById('drillFragChart').getContext('2d'), { 
+                window.sihDrillCharts.frag = new Chart(document.getElementById('drillFragChart').getContext('2d'), { 
                     type: 'line', 
                     data: { labels: data.fragmentation.map(p => new Date(p.snapshot_time).toLocaleDateString()), datasets: [{ label: 'Avg Fragmentation %', data: data.fragmentation.map(p => p.avg_fragmentation_pct), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#ef4444' }] }, 
                     options: { ...chartBase, plugins: { legend: { display: false } }, scales: { y: { min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)', callback: v => v + '%' } }, x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 

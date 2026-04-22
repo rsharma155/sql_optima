@@ -33,9 +33,25 @@
         const instName = inst.name;
 
         // Load modern template
-        outlet.innerHTML = await window.loadTemplate('/pages/sqlserver_watched_queries.html');
+        try {
+            const html = await window.loadTemplate('pages/sqlserver_watched_queries.html');
+            if (html.includes('Error loading view') || html.includes('Template Failed to Load')) {
+                outlet.innerHTML = html;
+                return;
+            }
+            outlet.innerHTML = html;
+        } catch (err) {
+            outlet.innerHTML = `<div class="alert alert-danger">Critical: Failed to load UI template. ${err.message}</div>`;
+            return;
+        }
 
-        document.getElementById('wqRefresh')?.addEventListener('click', () => fetchList());
+        const refreshBtn = document.getElementById('wqRefresh');
+        if (refreshBtn) {
+            refreshBtn.onclick = () => fetchList();
+        } else {
+            console.warn('[WatchedQueries] wqRefresh element not found');
+        }
+
         document.getElementById('wqCloseDetail')?.addEventListener('click', () => {
             document.getElementById('wqDetailPanel').style.display = 'none';
             destroyCharts();

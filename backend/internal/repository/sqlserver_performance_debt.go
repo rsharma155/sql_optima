@@ -157,7 +157,7 @@ func (c *SqlServerRepository) FetchIndexFragmentation(instanceName, databaseName
 		minFragPct = 30
 	}
 	if minPages <= 0 {
-		minPages = 1000
+		minPages = 100
 	}
 
 	q := fmt.Sprintf(`

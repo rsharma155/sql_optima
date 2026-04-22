@@ -35,12 +35,25 @@ func NewAdminCollectorHandlers(metricsSvc *service.MetricsService) *AdminCollect
 	}
 }
 
+func (h *AdminCollectorHandlers) getRepo() *repository.CollectorConfigRepository {
+	if h.repo != nil {
+		return h.repo
+	}
+	if h.metricsSvc != nil {
+		if pool := h.metricsSvc.GetTimescaleDBPool(); pool != nil {
+			h.repo = repository.NewCollectorConfigRepository(pool)
+		}
+	}
+	return h.repo
+}
+
 func (h *AdminCollectorHandlers) ListConfigs(w http.ResponseWriter, r *http.Request) {
-	if h.repo == nil {
-		http.Error(w, "Repository not available", http.StatusServiceUnavailable)
+	repo := h.getRepo()
+	if repo == nil {
+		http.Error(w, "Repository not available (TimescaleDB not connected)", http.StatusServiceUnavailable)
 		return
 	}
-	configs, err := h.repo.ListAll(r.Context())
+	configs, err := repo.ListAll(r.Context())
 	if err != nil {
 		log.Printf("[AdminCollectorHandlers] ListConfigs error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -51,8 +64,9 @@ func (h *AdminCollectorHandlers) ListConfigs(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *AdminCollectorHandlers) UpdateConfig(w http.ResponseWriter, r *http.Request) {
-	if h.repo == nil {
-		http.Error(w, "Repository not available", http.StatusServiceUnavailable)
+	repo := h.getRepo()
+	if repo == nil {
+		http.Error(w, "Repository not available (TimescaleDB not connected)", http.StatusServiceUnavailable)
 		return
 	}
 	vars := mux.Vars(r)

@@ -178,12 +178,27 @@ function renderAGGrid(stats) {
 }
 
 function renderAGCharts(history) {
-    const ctxQ = document.getElementById('agQueueChart').getContext('2d');
-    const ctxL = document.getElementById('agLagChart').getContext('2d');
+    const canvasQ = document.getElementById('agQueueChart');
+    const canvasL = document.getElementById('agLagChart');
+    const ctxQ = canvasQ.getContext('2d');
+    const ctxL = canvasL.getContext('2d');
 
     if (window.currentCharts?.agQueue) window.currentCharts.agQueue.destroy();
     if (window.currentCharts?.agLag) window.currentCharts.agLag.destroy();
     window.currentCharts = window.currentCharts || {};
+
+    if (!history || history.length === 0) {
+        // Clear canvases and show message
+        [canvasQ, canvasL].forEach(c => {
+            const ctx = c.getContext('2d');
+            ctx.clearRect(0, 0, c.width, c.height);
+            ctx.font = '12px Inter, sans-serif';
+            ctx.fillStyle = '#94a3b8';
+            ctx.textAlign = 'center';
+            ctx.fillText('No Availability Groups detected or enabled.', c.width / 2, c.height / 2);
+        });
+        return;
+    }
 
     const labels = history.map(h => new Date(h.timestamp).toLocaleTimeString());
     const logData = history.map(h => h.avg_log_send_queue_kb);
