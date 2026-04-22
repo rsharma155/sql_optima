@@ -108,7 +108,7 @@ window.sqlserver_TopQueriesDrilldown = async function() {
                     <p class="subtitle">Extended Events Query Analysis [${window.escapeHtml(inst.name)}]</p>
                 </div>
                 <div class="custom-select-group">
-                    <button class="btn btn-accent btn-sm" data-action="copy-text" data-text="${sqlText.replace(/'/g, '&#39;')}"><i class="fa-solid fa-copy"></i> Copy SQL</button>
+                    <button class="btn btn-accent btn-sm" data-action="copy-text" data-text="${window.escapeHtml(sqlText)}"><i class="fa-solid fa-copy"></i> Copy SQL</button>
                 </div>
             </div>
 

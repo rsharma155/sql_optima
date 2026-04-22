@@ -2,7 +2,7 @@
 
 A production-grade, dual-engine (PostgreSQL & SQL Server) database monitoring platform with a single-page application UI. Built with Go and vanilla JavaScript, architected around Domain-Driven Design for cross-platform support (Windows, macOS, Linux).
 
-Features include PostgreSQL EXPLAIN plan analysis with optimization and index advisor workflows, live SQL Server diagnostics, TimescaleDB-backed historical dashboards, a rules engine for best-practice checks, and a **cross-engine alert engine** with fingerprint-based deduplication, maintenance windows, and audit history.
+Features include PostgreSQL EXPLAIN plan analysis with optimization and index advisor workflows, live SQL Server diagnostics, TimescaleDB-backed historical dashboards, an **enhanced rules engine** for context-aware best-practice checks, **push-based OS metrics** for host-level telemetry, and a **cross-engine alert engine** with fingerprint-based deduplication, maintenance windows, and audit history.
 
 ---
 
@@ -136,15 +136,19 @@ go run cmd/server/main.go
 
 ---
 
-## Build a standalone binary
+## Build standalone binaries
 
 ```bash
+# Build API server
 cd backend
-go test ./...
 go build -o ../dist/sql-optima ./cmd/server
+
+# Build OS collector (optional, for remote hosts)
+cd ../os_collector
+go build -o ../dist/os-collector .
 ```
 
-Run from anywhere (keep `frontend/` next to the binary or set `SQL_OPTIMA_FRONTEND_DIR`):
+Run the API from anywhere (keep `frontend/` next to the binary or set `SQL_OPTIMA_FRONTEND_DIR`):
 
 ```bash
 export DB_HOST=localhost DB_PORT=5432 DB_USER=dbmonitor \
@@ -233,6 +237,7 @@ psql -U postgres -d <target_db> -c "SELECT grant_db_permissions();"
 | `infrastructure/sql_scripts/` | Schema, seed data, rule engine, alert engine, and target DB setup scripts |
 | `config.yaml` | Optional instance definitions (not needed when using server registry) |
 | `backend/` | Go API, collector, service layer, repository, middleware |
+| `os_collector/` | Lightweight agent for push-based host telemetry |
 | `frontend/` | Static SPA (HTML/CSS/JS) served by the Go backend |
 | `docs/` | API reference, threat model, architecture docs |
 

@@ -901,8 +901,25 @@ window.showQueryModalDirect = function(queryText) {
         <div style="background:var(--bg-base); padding:1rem; border-radius:8px; max-height:60vh; overflow:auto; border:1px solid var(--border-color,#333);">
             <pre style="margin:0; white-space:pre-wrap; font-family:monospace; font-size:0.85rem;">${window.escapeHtml(queryText)}</pre>
         </div>
+        <div style="text-align: center; margin-top: 1rem;">
+            <button id="copySqlBtnDashboard" style="background: var(--accent, #3b82f6); color: #fff; border: none; padding: 0.5rem 1.5rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem;">
+                <i class="fa-solid fa-copy"></i> copy SQL
+            </button>
+        </div>
     </div>`;
     document.body.appendChild(modal);
+    
+    document.getElementById('copySqlBtnDashboard').addEventListener('click', function() {
+        const pre = modal.querySelector('pre');
+        const textToCopy = pre ? pre.textContent : queryText;
+        navigator.clipboard.writeText(textToCopy).then(() => {
+            this.innerHTML = '<i class="fa-solid fa-check"></i> copied!';
+            setTimeout(() => {
+                this.innerHTML = '<i class="fa-solid fa-copy"></i> copy SQL';
+            }, 1500);
+        });
+    });
+
     modal.addEventListener('click', e => { if(e.target === modal) modal.remove(); });
 };
 

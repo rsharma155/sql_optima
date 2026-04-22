@@ -86,7 +86,7 @@ func queryStoreStatsSelectSQL(dbPrefix string) string {
 	return fmt.Sprintf(`
 		SELECT /* SQL_OPTIMA */   TOP 100
 			CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
-			LEFT(qt.query_sql_text, 1000) AS query_text,
+			qt.query_sql_text AS query_text,
 			p.plan_id,
 			rs.runtime_stats_interval_id,
 			ISNULL(rs.count_executions, 0) AS executions,
@@ -149,7 +149,7 @@ func (c *SqlServerRepository) fetchQueryStoreStatsSingleDB(db *sql.DB, labelDB s
 	query := `
 		SELECT /* SQL_OPTIMA */   TOP 100
 			CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
-			LEFT(qt.query_sql_text, 1000) AS query_text,
+			qt.query_sql_text AS query_text,
 			p.plan_id,
 			rs.runtime_stats_interval_id,
 			ISNULL(rs.count_executions, 0) AS executions,

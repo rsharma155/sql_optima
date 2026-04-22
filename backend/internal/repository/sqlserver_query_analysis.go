@@ -52,7 +52,7 @@ func fetchRegressionsForDB(db *sql.DB, dbName string) ([]models.SqlServerQueryRe
 		WITH recent AS (
 			SELECT /* SQL_OPTIMA */  
 				CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
-				CAST(qt.query_sql_text AS NVARCHAR(2000)) AS query_text,
+				qt.query_sql_text AS query_text,
 				AVG(rs.avg_duration / 1000.0) AS avg_duration_ms,
 				AVG(rs.avg_cpu_time / 1000.0) AS avg_cpu_ms,
 				AVG(rs.avg_logical_io_reads) AS avg_reads,
@@ -67,7 +67,7 @@ func fetchRegressionsForDB(db *sql.DB, dbName string) ([]models.SqlServerQueryRe
 			  AND q.is_internal_query = 0
 			  AND qt.query_sql_text NOT LIKE '%%sys.query_store%%'
 			  AND q.last_bind_duration > 0
-			GROUP BY q.query_hash, CAST(qt.query_sql_text AS NVARCHAR(2000))
+			GROUP BY q.query_hash, qt.query_sql_text
 		),
 		previous AS (
 			SELECT /* SQL_OPTIMA */  
@@ -164,7 +164,7 @@ func fetchPlanInstabilityForDB(db *sql.DB, dbName string) ([]models.SqlServerPla
 		USE %s;
 		SELECT /* SQL_OPTIMA */   TOP 50
 			CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
-			CAST(qt.query_sql_text AS NVARCHAR(2000)) AS query_text,
+			qt.query_sql_text AS query_text,
 			COUNT(DISTINCT p.plan_id) AS plan_count,
 			MAX(rs.last_execution_time) AS last_execution_time
 		FROM sys.query_store_plan p
@@ -174,7 +174,7 @@ func fetchPlanInstabilityForDB(db *sql.DB, dbName string) ([]models.SqlServerPla
 		WHERE q.is_internal_query = 0
 		  AND qt.query_sql_text NOT LIKE '%%sys.query_store%%'
 		  AND q.last_bind_duration > 0
-		GROUP BY q.query_hash, CAST(qt.query_sql_text AS NVARCHAR(2000))
+		GROUP BY q.query_hash, qt.query_sql_text
 		HAVING COUNT(DISTINCT p.plan_id) > 3
 		ORDER BY plan_count DESC`, qb)
 

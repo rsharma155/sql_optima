@@ -49,7 +49,7 @@ window.HADashboardView = function() {
                         <input type="datetime-local" id="haTo" class="custom-date-input" value="${window.appState.haTo}">
                         <button id="haApplyRange" class="btn btn-xs btn-accent">Apply</button>
                     </div>
-                    <button class="btn btn-sm btn-outline text-accent" onclick="HADashboardView()"><i class="fa-solid fa-rotate"></i></button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="HADashboardView"><i class="fa-solid fa-rotate"></i></button>
                 </div>
             </div>
 

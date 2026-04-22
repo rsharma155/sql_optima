@@ -203,7 +203,7 @@ function renderJobsContent(inst, metrics) {
                                 <td><strong>${window.escapeHtml(f.job_name)}</strong></td>
                                 <td><span class="badge badge-outline">${window.escapeHtml(f.step_name)}</span></td>
                                 <td style="white-space:nowrap;">${parseRunTime(f.run_date, f.run_time)}</td>
-                                <td class="small" style="max-width:500px; cursor:pointer;" onclick="window.showJobFailureDetail(${idx})">
+                                <td class="small" style="max-width:500px; cursor:pointer;" data-action="jobs-detail" data-idx="${idx}">
                                     ${window.escapeHtml(f.message ? (f.message.slice(0, 120) + '...') : 'No message')}
                                 </td>
                             </tr>
@@ -287,7 +287,7 @@ window.showJobFailureDetail = function(idx) {
         <div style="background:var(--bg-surface); margin:2%; padding:20px; border:1px solid var(--border-color,#333); border-radius:12px; width:95%; max-width:800px; max-height:80vh; overflow-y:auto; color:var(--text-primary,#e0e0e0); box-shadow:0 4px 20px rgba(0,0,0,0.5);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom:1px solid var(--border-color,#333); padding-bottom:0.75rem;">
                 <h3 style="margin:0; color:var(--danger,#ef4444); font-size:1.1rem;"><i class="fa-solid fa-circle-exclamation"></i> Job Failure Details</h3>
-                <button style="background:transparent; border:none; color:var(--text-primary,#e0e0e0); font-size:1.25rem; cursor:pointer;" onclick="this.closest('#job-failure-modal').remove()">&times;</button>
+                <button style="background:transparent; border:none; color:var(--text-primary,#e0e0e0); font-size:1.25rem; cursor:pointer;" data-action="remove-closest" data-selector="#job-failure-modal">&times;</button>
             </div>
             <div style="background:var(--bg-base); padding:1rem; border-radius:8px; border:1px solid var(--border-color,#333);">
                 <pre style="margin:0; white-space:pre-wrap; word-wrap:break-word; color:var(--text-primary,#e0e0e0); font-family:'Courier New',monospace; font-size:0.85rem; line-height:1.5;">${window.escapeHtml(message)}</pre>

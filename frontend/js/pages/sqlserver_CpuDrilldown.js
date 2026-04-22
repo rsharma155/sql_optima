@@ -724,7 +724,8 @@ window.showQueryModalDirect = function(queryText) {
     document.getElementById('queryModalText').textContent = queryText;
     
     document.getElementById('copySqlBtnDirect').addEventListener('click', function() {
-        navigator.clipboard.writeText(queryText).then(() => {
+        const textToCopy = document.getElementById('queryModalText').textContent;
+        navigator.clipboard.writeText(textToCopy).then(() => {
             this.innerHTML = '<i class="fa-solid fa-check"></i> copied!';
             setTimeout(() => {
                 this.innerHTML = '<i class="fa-solid fa-copy"></i> copy SQL';

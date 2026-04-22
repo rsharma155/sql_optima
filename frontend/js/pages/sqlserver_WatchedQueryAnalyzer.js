@@ -149,15 +149,16 @@
                 const data = await resp.json();
                 
                 const meta = document.getElementById('wqDetailMeta');
-                if (data.query) {
+                const wq = data.watched_query;
+                if (wq) {
                     meta.innerHTML = `
-                        <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-code"></i> Query:</span> ${esc(data.query.name || '--')}</div>
-                        <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-database"></i> Database:</span> <span class="qa-badge qa-badge--accent" style="border:none; background:rgba(56,189,248,0.1);">${esc(data.query.database_name || 'master')}</span></div>
-                        <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-hashtag"></i> Hash:</span> <span class="text-mono" style="opacity:0.6; font-size:0.7rem;">${data.query.query_hash}</span></div>
-                        <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-calendar-check"></i> Tracking Since:</span> ${data.query.created_at ? new Date(data.query.created_at).toLocaleString() : '--'}</div>
+                        <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-code"></i> Query:</span> ${esc(wq.name || '--')}</div>
+                        <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-database"></i> Database:</span> <span class="qa-badge qa-badge--accent" style="border:none; background:rgba(56,189,248,0.1);">${esc(wq.database_name || 'master')}</span></div>
+                        <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-hashtag"></i> Hash:</span> <span class="text-mono" style="opacity:0.6; font-size:0.7rem;">${wq.query_hash}</span></div>
+                        <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-calendar-check"></i> Tracking Since:</span> ${wq.created_at ? new Date(wq.created_at).toLocaleString() : '--'}</div>
                     `;
-                    if (data.query.query_text) {
-                        document.getElementById('wqSqlText').textContent = data.query.query_text;
+                    if (wq.query_text) {
+                        document.getElementById('wqSqlText').textContent = wq.query_text;
                     } else {
                         document.getElementById('wqSqlText').innerHTML = '<span class="text-muted italic">No full SQL text available for this query.</span>';
                     }
@@ -228,7 +229,7 @@
                         <td class="text-right font-mono">${fmtMs(r.avg_duration_ms)}</td>
                         <td class="text-right">${fmtNum(r.executions)}</td>
                         <td class="text-center">
-                            <button class="btn btn-xs btn-outline" onclick="window._showPlanXml(${i})"><i class="fa-solid fa-file-code"></i> View</button>
+                            <button class="btn btn-xs btn-outline" data-action="call" data-fn="_showPlanXml" data-idx="${i}"><i class="fa-solid fa-file-code"></i> View</button>
                         </td>
                     </tr>`).join('')}</tbody></table></div>`;
             } catch (err) { body.innerHTML = '<div class="text-danger p-2">Failed to load plan history.</div>'; }
@@ -248,7 +249,7 @@
                         <h4 style="margin:0;"><i class="fa-solid fa-file-code text-accent"></i> Execution Plan XML (ID: ${plan.plan_id})</h4>
                         <div class="flex-row gap-2">
                             <button class="btn btn-xs btn-primary" id="wqCopyXml"><i class="fa-solid fa-copy"></i> Copy XML</button>
-                            <button class="btn btn-xs btn-outline" onclick="this.closest('#wq-xml-modal').remove()"><i class="fa-solid fa-times"></i></button>
+                            <button class="btn btn-xs btn-outline" data-action="close-id" data-target="wq-xml-modal"><i class="fa-solid fa-times"></i></button>
                         </div>
                     </div>
                     <div style="flex:1; overflow:auto; padding:1rem;">

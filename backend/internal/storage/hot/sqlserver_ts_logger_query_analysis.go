@@ -343,14 +343,10 @@ func (tl *TimescaleLogger) GetSqlServerWatchedQuery(ctx context.Context, id int)
 	var r SqlServerWatchedQueryRow
 	const q = `
 		SELECT q.id, q.server_instance_name, COALESCE(q.database_name,'') as database_name, q.query_hash, q.object_id, q.name, 
-		       COALESCE(NULLIF(q.query_text,''), s.query_text, '') as query_text,
+		       COALESCE(q.query_text,'') as query_text,
 		       q.created_at,
 		       (SELECT MAX(last_execution_time) FROM sqlserver_watched_query_snapshots snap WHERE snap.watched_id = q.id) as last_executed
 		FROM sqlserver_watched_queries q
-		LEFT JOIN (
-			SELECT DISTINCT ON (query_hash) query_hash, query_text 
-			FROM sqlserver_query_stats_interval
-		) s ON s.query_hash = q.query_hash
 		WHERE q.id = $1`
 
 	err := tl.pool.QueryRow(ctx, q, id).Scan(
@@ -369,14 +365,10 @@ func (tl *TimescaleLogger) getSqlServerWatchedQueryLegacy(ctx context.Context, i
 	var r SqlServerWatchedQueryRow
 	const q = `
 		SELECT q.id, q.server_instance_name, q.query_hash, q.object_id, q.name, 
-		       COALESCE(NULLIF(q.query_text,''), s.query_text, '') as query_text,
+		       COALESCE(q.query_text,'') as query_text,
 		       q.created_at,
 		       (SELECT MAX(last_execution_time) FROM sqlserver_watched_query_snapshots snap WHERE snap.watched_id = q.id) as last_executed
 		FROM sqlserver_watched_queries q
-		LEFT JOIN (
-			SELECT DISTINCT ON (query_hash) query_hash, query_text 
-			FROM sqlserver_query_stats_interval
-		) s ON s.query_hash = q.query_hash
 		WHERE q.id = $1`
 
 	err := tl.pool.QueryRow(ctx, q, id).Scan(

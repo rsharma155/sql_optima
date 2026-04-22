@@ -196,6 +196,7 @@ func (h *AdminServerHandlers) TestServerDraft(w http.ResponseWriter, r *http.Req
 		TrustServerCertificate bool   `json:"trust_server_certificate"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[TestServerDraft] JSON decode error: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
 		return
@@ -229,6 +230,7 @@ func (h *AdminServerHandlers) TestServerDraft(w http.ResponseWriter, r *http.Req
 		in.Name = "_test"
 	}
 	if err := in.Validate(); err != nil {
+		log.Printf("[TestServerDraft] Validation error: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
