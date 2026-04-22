@@ -26,18 +26,18 @@ INSERT INTO optima_collector_configs (collector_name, module, frequency_seconds)
 ('Postgres Storage I/O', 'Postgres', 60),
 ('Postgres Long Running Queries', 'Postgres', 60),
 ('Postgres Query Stats', 'Postgres', 60),
-('SQL Server Active Queries', 'MSSQL', 15),
-('SQL Server Blocking Locks', 'MSSQL', 15),
-('SQL Server CPU and Memory', 'MSSQL', 60),
-('SQL Server Wait Stats', 'MSSQL', 60),
-('SQL Server Storage I/O', 'MSSQL', 60),
-('SQL Server Long Running Queries', 'MSSQL', 60),
-('SQL Server Query Store', 'MSSQL', 900),
-('SQL Server Procedure Stats', 'MSSQL', 120),
-('SQL Server Memory Clerks', 'MSSQL', 300),
-('SQL Server Plan Cache', 'MSSQL', 300),
-('SQL Server Database Size', 'MSSQL', 3600),
-('SQL Server Configuration', 'MSSQL', 86400)
+('SQL Server Active Queries', 'SQLSERVER', 15),
+('SQL Server Blocking Locks', 'SQLSERVER', 15),
+('SQL Server CPU and Memory', 'SQLSERVER', 60),
+('SQL Server Wait Stats', 'SQLSERVER', 60),
+('SQL Server Storage I/O', 'SQLSERVER', 60),
+('SQL Server Long Running Queries', 'SQLSERVER', 60),
+('SQL Server Query Store', 'SQLSERVER', 900),
+('SQL Server Procedure Stats', 'SQLSERVER', 120),
+('SQL Server Memory Clerks', 'SQLSERVER', 300),
+('SQL Server Plan Cache', 'SQLSERVER', 300),
+('SQL Server Database Size', 'SQLSERVER', 3600),
+('SQL Server Configuration', 'SQLSERVER', 86400)
 ON CONFLICT (collector_name) DO UPDATE SET frequency_seconds = EXCLUDED.frequency_seconds;
 
 COMMENT ON TABLE optima_collector_configs IS 'Persistent storage for metric collector execution frequencies controlled by administrators.';

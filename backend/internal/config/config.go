@@ -34,9 +34,9 @@ type Instance struct {
 	Available bool     `yaml:"available,omitempty" json:"available,omitempty"`
 
 	// Security Additions
-	TrustServerCertificate bool   `yaml:"trust_server_certificate,omitempty" json:"trust_server_certificate,omitempty"` // MSSQL (Azure SQL / MI when CA validation is impractical)
-	IntegratedSecurity     bool   `yaml:"integrated_security,omitempty" json:"integrated_security,omitempty"`           // MSSQL AD Auth
-	Encrypt                *bool  `yaml:"encrypt,omitempty" json:"encrypt,omitempty"`                                   // MSSQL: encrypt connections (default: true)
+	TrustServerCertificate bool   `yaml:"trust_server_certificate,omitempty" json:"trust_server_certificate,omitempty"` // SQLSERVER (Azure SQL / MI when CA validation is impractical)
+	IntegratedSecurity     bool   `yaml:"integrated_security,omitempty" json:"integrated_security,omitempty"`           // SQLSERVER AD Auth
+	Encrypt                *bool  `yaml:"encrypt,omitempty" json:"encrypt,omitempty"`                                   // SQLSERVER: encrypt connections (default: true)
 	SSLMode                string `yaml:"sslmode,omitempty" json:"sslmode,omitempty"`                                   // PG
 	// Initial catalog: PostgreSQL dbname (default postgres), SQL Server database (default master). Used for RDS / Azure endpoints.
 	Database    string `yaml:"database,omitempty" json:"database,omitempty"`

@@ -392,7 +392,7 @@ func (tl *TimescaleLogger) LogQueryStoreStatsDirect(ctx context.Context, rows []
 	serverName := rows[0].ServerName
 
 	for _, r := range rows {
-		batch.Queue(`INSERT INTO monitor.mssql_query_store_staging (
+		batch.Queue(`INSERT INTO monitor.sqlserver_query_store_staging (
 			server_instance_name, database_name, query_hash, query_text, 
 			plan_id, runtime_stats_interval_id, executions, 
 			avg_duration_ms, avg_cpu_ms, avg_logical_reads, total_cpu_ms, last_execution_time
@@ -423,7 +423,7 @@ func (tl *TimescaleLogger) LogQueryStoreStatsDirect(ctx context.Context, rows []
 
 func (tl *TimescaleLogger) ProcessQueryStoreSnapshot(ctx context.Context, instanceName string) error {
 	query := `
-		INSERT INTO monitor.mssql_query_store_snapshot (
+		INSERT INTO monitor.sqlserver_query_store_snapshot (
 			capture_time, server_instance_name, database_name, query_hash, query_text,
 			plan_id, runtime_stats_interval_id, total_executions, total_cpu_ms,
 			total_duration_ms, total_logical_reads, row_fingerprint
@@ -441,13 +441,13 @@ func (tl *TimescaleLogger) ProcessQueryStoreSnapshot(ctx context.Context, instan
 			(s.avg_duration_ms * s.executions),
 			(s.avg_logical_reads * s.executions),
 			md5(s.executions::text || '-' || s.total_cpu_ms::text || '-' || s.runtime_stats_interval_id::text)
-		FROM monitor.mssql_query_store_staging s
+		FROM monitor.sqlserver_query_store_staging s
 		WHERE s.server_instance_name = $1
 		AND NOT EXISTS (
 			SELECT 1
 			FROM (
 				SELECT last.row_fingerprint
-				FROM monitor.mssql_query_store_snapshot last
+				FROM monitor.sqlserver_query_store_snapshot last
 				WHERE last.server_instance_name = s.server_instance_name
 				  AND last.query_hash = s.query_hash
 				  AND last.plan_id = s.plan_id
@@ -461,14 +461,14 @@ func (tl *TimescaleLogger) ProcessQueryStoreSnapshot(ctx context.Context, instan
 	`
 	_, err := tl.pool.Exec(ctx, query, instanceName)
 	if err == nil {
-		_, _ = tl.pool.Exec(ctx, `DELETE FROM monitor.mssql_query_store_staging WHERE server_instance_name = $1`, instanceName)
+		_, _ = tl.pool.Exec(ctx, `DELETE FROM monitor.sqlserver_query_store_staging WHERE server_instance_name = $1`, instanceName)
 	}
 	return err
 }
 
 func (tl *TimescaleLogger) ProcessQueryStoreDelta(ctx context.Context, instanceName string) error {
 	query := `
-		INSERT INTO monitor.mssql_query_store_interval (
+		INSERT INTO monitor.sqlserver_query_store_interval (
 			bucket_start, bucket_end, server_instance_name, database_name, query_hash, query_text,
 			plan_id, runtime_stats_interval_id, delta_executions, delta_cpu_ms,
 			delta_duration_ms, delta_logical_reads, avg_cpu_ms, avg_duration_ms, is_reset
@@ -498,10 +498,10 @@ func (tl *TimescaleLogger) ProcessQueryStoreDelta(ctx context.Context, instanceN
 				curr.total_duration_ms - COALESCE(prev.total_duration_ms, 0) AS dur_delta,
 				curr.total_logical_reads - COALESCE(prev.total_logical_reads, 0) AS reads_delta,
 				(curr.total_executions < COALESCE(prev.total_executions, 0) OR curr.runtime_stats_interval_id != prev.runtime_stats_interval_id) AS reset
-			FROM monitor.mssql_query_store_snapshot curr
+			FROM monitor.sqlserver_query_store_snapshot curr
 			JOIN LATERAL (
 				SELECT total_executions, total_cpu_ms, total_duration_ms, total_logical_reads, capture_time, runtime_stats_interval_id
-				FROM monitor.mssql_query_store_snapshot p
+				FROM monitor.sqlserver_query_store_snapshot p
 				WHERE p.server_instance_name = curr.server_instance_name
 				  AND p.query_hash = curr.query_hash
 				  AND p.plan_id = curr.plan_id
@@ -543,7 +543,7 @@ func (tl *TimescaleLogger) GetQueryStoreStats(ctx context.Context, instanceName 
 		SELECT bucket_end, server_instance_name, database_name,
 		       query_hash, query_text, delta_executions,
 		       avg_duration_ms, avg_cpu_ms, delta_logical_reads, delta_cpu_ms
-		FROM monitor.mssql_query_store_interval
+		FROM monitor.sqlserver_query_store_interval
 		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND bucket_end >= NOW() - INTERVAL '%s'
 		ORDER BY bucket_end DESC, delta_cpu_ms DESC
@@ -599,7 +599,7 @@ func (tl *TimescaleLogger) GetQueryStoreBottlenecks(ctx context.Context, instanc
 			       SUM(delta_cpu_ms) as total_cpu,
 			       AVG(avg_duration_ms) as avg_dur,
 			       AVG(delta_logical_reads) as avg_reads
-			FROM monitor.mssql_query_store_interval
+			FROM monitor.sqlserver_query_store_interval
 			WHERE server_instance_name = $1
 			  AND bucket_end >= NOW() - INTERVAL '%s'
 			  AND ($2::text IS NULL OR $2 = '' OR database_name = $2)

@@ -53,7 +53,7 @@ func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, instanceN
 
 		if shouldInsert {
 			_, err := tl.pool.Exec(ctx, `
-				INSERT INTO mssql_job_details (capture_timestamp, server_instance_name, job_name, job_category, job_description, job_enabled, job_owner, created_date, current_status, last_run_date, last_run_time, last_run_status)
+				INSERT INTO sqlserver_job_details (capture_timestamp, server_instance_name, job_name, job_category, job_description, job_enabled, job_owner, created_date, current_status, last_run_date, last_run_time, last_run_status)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 				timestamp, instanceName,
 				jobName, category, description, enabled, owner, createdDate,
@@ -92,7 +92,7 @@ func (tl *TimescaleLogger) LogSQLServerJobSchedules(ctx context.Context, instanc
 	timestamp := time.Now().UTC()
 	for _, sched := range schedules {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO mssql_agent_schedules (capture_timestamp, server_instance_name, job_name, job_enabled, schedule_name, status)
+			INSERT INTO sqlserver_agent_schedules (capture_timestamp, server_instance_name, job_name, job_enabled, schedule_name, status)
 			VALUES ($1, $2, $3, $4, $5, $6)`,
 			timestamp, instanceName,
 			getStr(sched, "job_name"), getBool(sched, "job_enabled"), getStr(sched, "schedule_name"), getStr(sched, "status"))
@@ -132,7 +132,7 @@ func (tl *TimescaleLogger) LogSQLServerJobFailures(ctx context.Context, instance
 
 		if shouldInsert {
 			_, err := tl.pool.Exec(ctx, `
-				INSERT INTO mssql_job_failures (capture_timestamp, server_instance_name, job_name, step_name, error_message, run_date, run_time)
+				INSERT INTO sqlserver_job_failures (capture_timestamp, server_instance_name, job_name, step_name, error_message, run_date, run_time)
 				VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 				timestamp, instanceName,
 				jobName, stepName, message, runDate, runTime)
@@ -153,7 +153,7 @@ func (tl *TimescaleLogger) LogSQLServerJobMetrics(ctx context.Context, instanceN
 	timestamp := time.Now().UTC()
 
 	_, err := tl.pool.Exec(ctx, `
-		INSERT INTO mssql_job_metrics (capture_timestamp, server_instance_name, total_jobs, enabled_jobs, disabled_jobs, running_jobs, failed_jobs_24h, error_message)
+		INSERT INTO sqlserver_job_metrics (capture_timestamp, server_instance_name, total_jobs, enabled_jobs, disabled_jobs, running_jobs, failed_jobs_24h, error_message)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		timestamp, instanceName,
 		getInt(jobMetrics, "total_jobs"),
@@ -180,7 +180,7 @@ func (tl *TimescaleLogger) GetSQLServerJobDetails(ctx context.Context, instanceN
 		SELECT DISTINCT ON (job_name)
 			capture_timestamp, job_name, job_category, job_description, job_enabled, job_owner, created_date,
 			current_status, last_run_date, last_run_time, last_run_status
-		FROM mssql_job_details
+		FROM sqlserver_job_details
 		WHERE server_instance_name = $1
 		  AND capture_timestamp <= $2
 		  AND capture_timestamp >= $2 - INTERVAL '7 days'
@@ -237,7 +237,7 @@ func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, instanc
 	rows, err := tl.pool.Query(ctx, `
 		SELECT DISTINCT ON (job_name, schedule_name)
 			capture_timestamp, job_name, job_enabled, schedule_name, status
-		FROM mssql_agent_schedules
+		FROM sqlserver_agent_schedules
 		WHERE server_instance_name = $1
 		  AND capture_timestamp <= $2
 		  AND capture_timestamp >= $2 - INTERVAL '7 days'
@@ -283,7 +283,7 @@ func (tl *TimescaleLogger) GetSQLServerJobFailures(ctx context.Context, instance
 	}
 	rows, err := tl.pool.Query(ctx, `
 		SELECT capture_timestamp, job_name, step_name, error_message, run_date, run_time
-		FROM mssql_job_failures
+		FROM sqlserver_job_failures
 		WHERE server_instance_name = $1
 		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		ORDER BY capture_timestamp DESC
@@ -331,7 +331,7 @@ func (tl *TimescaleLogger) GetSQLServerJobMetrics(ctx context.Context, instanceN
 
 	query := `
 		SELECT capture_timestamp, total_jobs, enabled_jobs, disabled_jobs, running_jobs, failed_jobs_24h, error_message
-		FROM mssql_job_metrics
+		FROM sqlserver_job_metrics
 		WHERE server_instance_name = $1
 		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		ORDER BY capture_timestamp DESC

@@ -582,7 +582,7 @@ func (tl *TimescaleLogger) LogTableStructureHistory(ctx context.Context, rows []
 	if len(rows) == 0 {
 		return nil
 	}
-	q := `INSERT INTO snapshot.mssql_table_structure_history (snapshot_time, server_name, instance_name, database_name, schema_name, table_name, has_clustered_index, has_primary_key)
+	q := `INSERT INTO snapshot.sqlserver_table_structure_history (snapshot_time, server_name, instance_name, database_name, schema_name, table_name, has_clustered_index, has_primary_key)
 	      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`
 	for _, r := range rows {
 		_, _ = tl.pool.Exec(ctx, q, r.SnapshotTime, r.ServerName, r.InstanceName, r.DatabaseName, r.SchemaName, r.TableName, r.HasClusteredIndex, r.HasPrimaryKey)
@@ -594,7 +594,7 @@ func (tl *TimescaleLogger) LogTableSizeHistory(ctx context.Context, rows []Table
 	if len(rows) == 0 {
 		return nil
 	}
-	q := `INSERT INTO snapshot.mssql_table_size_history (snapshot_time, server_name, instance_name, database_name, schema_name, table_name, row_count, total_mb, data_mb, index_mb)
+	q := `INSERT INTO snapshot.sqlserver_table_size_history (snapshot_time, server_name, instance_name, database_name, schema_name, table_name, row_count, total_mb, data_mb, index_mb)
 	      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`
 	for _, r := range rows {
 		_, _ = tl.pool.Exec(ctx, q, r.SnapshotTime, r.ServerName, r.InstanceName, r.DatabaseName, r.SchemaName, r.TableName, r.RowCount, r.TotalMB, r.DataMB, r.IndexMB)
@@ -606,7 +606,7 @@ func (tl *TimescaleLogger) LogDBStorageHistory(ctx context.Context, rows []DBSto
 	if len(rows) == 0 {
 		return nil
 	}
-	q := `INSERT INTO snapshot.mssql_db_storage_history (snapshot_time, server_name, instance_name, database_name, total_size_mb, data_size_mb, log_size_mb)
+	q := `INSERT INTO snapshot.sqlserver_db_storage_history (snapshot_time, server_name, instance_name, database_name, total_size_mb, data_size_mb, log_size_mb)
 	      VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`
 	for _, r := range rows {
 		_, _ = tl.pool.Exec(ctx, q, r.SnapshotTime, r.ServerName, r.InstanceName, r.DatabaseName, r.TotalSizeMB, r.DataSizeMB, r.LogSizeMB)
@@ -618,7 +618,7 @@ func (tl *TimescaleLogger) LogIndexUsageHistory(ctx context.Context, rows []mode
 	if len(rows) == 0 {
 		return nil
 	}
-	q := `INSERT INTO snapshot.mssql_index_usage_history (snapshot_time, server_name, instance_name, database_name, schema_name, table_name, index_name, index_size_mb, user_seeks, user_scans, user_lookups, user_updates)
+	q := `INSERT INTO snapshot.sqlserver_index_usage_history (snapshot_time, server_name, instance_name, database_name, schema_name, table_name, index_name, index_size_mb, user_seeks, user_scans, user_lookups, user_updates)
 	      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING`
 	for _, r := range rows {
 		_, _ = tl.pool.Exec(ctx, q, r.Time, r.ServerID, r.ServerID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.IndexSizeMB, r.Seeks, r.Scans, r.Lookups, r.Updates)
@@ -630,7 +630,7 @@ func (tl *TimescaleLogger) LogIndexFragmentationHistory(ctx context.Context, row
 	if len(rows) == 0 {
 		return nil
 	}
-	q := `INSERT INTO snapshot.mssql_index_fragmentation_history (snapshot_time, server_name, instance_name, database_name, schema_name, table_name, index_name, avg_fragmentation_pct, page_count)
+	q := `INSERT INTO snapshot.sqlserver_index_fragmentation_history (snapshot_time, server_name, instance_name, database_name, schema_name, table_name, index_name, avg_fragmentation_pct, page_count)
 	      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`
 	for _, r := range rows {
 		_, _ = tl.pool.Exec(ctx, q, r.SnapshotTime, r.ServerName, r.InstanceName, r.DatabaseName, r.SchemaName, r.TableName, r.IndexName, r.AvgFragmentationPct, r.PageCount)
@@ -688,9 +688,9 @@ func (tl *TimescaleLogger) GetTableSizeHistory(ctx context.Context, engine, inst
 			      WHERE engine = $1 AND server_id = $2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
 			args = []interface{}{engine, instanceName, from, to}
 		} else {
-			// MSSQL snapshot table uses instance_name and database_name
+			// SQLSERVER snapshot table uses instance_name and database_name
 			q = `SELECT snapshot_time, instance_name, database_name, schema_name, table_name, row_count, total_mb, index_mb
-			      FROM snapshot.mssql_table_size_history
+			      FROM snapshot.sqlserver_table_size_history
 			      WHERE instance_name = $1 AND snapshot_time >= $2::timestamptz AND snapshot_time <= $3::timestamptz`
 			args = []interface{}{instanceName, from, to}
 		}
@@ -779,10 +779,10 @@ func (tl *TimescaleLogger) GetIndexUsageHistory(ctx context.Context, engine, ins
 		out = append(out, r)
 	}
 
-	// Step 2: Fallback to engine-specific history if usage stats empty (MSSQL)
+	// Step 2: Fallback to engine-specific history if usage stats empty (SQLSERVER)
 	if len(out) == 0 && engine == "sqlserver" {
 		q = `SELECT snapshot_time, instance_name, database_name, schema_name, table_name, index_name, index_size_mb, user_seeks, user_scans, user_lookups, user_updates
-		      FROM snapshot.mssql_index_usage_history
+		      FROM snapshot.sqlserver_index_usage_history
 		      WHERE instance_name = $1 AND snapshot_time >= $2::timestamptz AND snapshot_time <= $3::timestamptz`
 		args = []interface{}{instanceName, from, to}
 		if db != "" && db != "all" {
@@ -820,7 +820,7 @@ func (tl *TimescaleLogger) GetIndexFragmentationHistory(ctx context.Context, eng
 		return []IndexFragHistoryRow{}, nil
 	}
 	q := `SELECT snapshot_time, server_name, instance_name, database_name, schema_name, table_name, index_name, avg_fragmentation_pct, page_count
-	      FROM snapshot.mssql_index_fragmentation_history
+	      FROM snapshot.sqlserver_index_fragmentation_history
 	      WHERE instance_name = $1 AND snapshot_time >= $2::timestamptz AND snapshot_time <= $3::timestamptz`
 	args := []interface{}{instanceName, from, to}
 	if db != "" && db != "all" {
@@ -854,7 +854,7 @@ func (tl *TimescaleLogger) GetIndexFragmentationHistory(ctx context.Context, eng
 
 func (tl *TimescaleLogger) GetDBStorageHistory(ctx context.Context, instanceName, from, to string) ([]DBStorageHistoryRow, error) {
 	q := `SELECT snapshot_time, server_name, instance_name, database_name, total_size_mb, data_size_mb, log_size_mb
-	      FROM snapshot.mssql_db_storage_history
+	      FROM snapshot.sqlserver_db_storage_history
 	      WHERE instance_name = $1 AND snapshot_time >= $2::timestamptz AND snapshot_time <= $3::timestamptz
 	      ORDER BY snapshot_time ASC`
 	rows, err := tl.pool.Query(ctx, q, instanceName, from, to)

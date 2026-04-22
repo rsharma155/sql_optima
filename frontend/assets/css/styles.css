@@ -1557,7 +1557,7 @@ th.sortable i { margin-left: 4px; font-size: 0.7em; }
     min-height: 0;
 }
 
-/* MSSQL instance dashboard: two full-width strips (6 cols each), 3+3 charts */
+/* SQLSERVER instance dashboard: two full-width strips (6 cols each), 3+3 charts */
 .dashboard-top-strips {
     display: grid;
     grid-template-columns: 1fr;

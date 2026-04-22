@@ -17,7 +17,7 @@ This document describes how the **Go backend**, **SPA frontend**, and **navigati
 
 ```
 Browser → SecurityHeadersMiddleware → CORS (if enabled) → mux routes
-    → Public /api/* handlers (dashboards, postgres, mssql, timescale, health, rules)
+    → Public /api/* handlers (dashboards, postgres, sqlserver, timescale, health, rules)
     → OR Protected /api/* (JWT) for admin, widgets, xevents, postgres POST actions
 ```
 
@@ -49,15 +49,15 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 | Route | View function | Notes |
 |--------|----------------|--------|
 | `global` | `GlobalEstateView` | Default after boot; no instance required |
-| `dashboard` | `DashboardView` | MSSQL instance dashboard; requires instance |
+| `dashboard` | `DashboardView` | SQLSERVER instance dashboard; requires instance |
 | `drilldown-cpu` | `CpuDrilldown` | |
-| `mssql-cpu-dashboard` | `MssqlCpuDashboardView` | |
+| `sqlserver-cpu-dashboard` | `SqlServerCpuDashboardView` | |
 | `instance-health` | `InstanceHealthDashboardView` | |
-| `drilldown-query` | `mssql_QueryDrilldown` | |
-| `drilldown-top-queries` | `mssql_TopQueriesDrilldown` | |
-| `drilldown-metric-detail` | `mssql_MetricDetailDrilldown` | |
-| `drilldown-deadlocks` | `mssql_DeadlockDashboard` | |
-| `drilldown-deadlock` | `mssql_DeadlockDashboard` | Alias for deadlock UI |
+| `drilldown-query` | `sqlserver_QueryDrilldown` | |
+| `drilldown-top-queries` | `sqlserver_TopQueriesDrilldown` | |
+| `drilldown-metric-detail` | `sqlserver_MetricDetailDrilldown` | |
+| `drilldown-deadlocks` | `sqlserver_DeadlockDashboard` | |
+| `drilldown-deadlock` | `sqlserver_DeadlockDashboard` | Alias for deadlock UI |
 | `drilldown-growth` | `GrowthDrilldown` | |
 | `drilldown-index` | `IndexDrilldown` | |
 | `drilldown-locks` | `LocksDrilldown` | |
@@ -65,14 +65,14 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 | `drilldown-ha` | `HADashboardView` | |
 | `drilldown-pg-enterprise` | `PgEnterpriseDashboardView` | |
 | `enterprise-metrics` | `EnterpriseMetricsView` | Requires instance |
-| `performance-debt` | `mssql_PerformanceDebtDashboard` | |
-| `storage-index-health` | `MssqlStorageIndexHealthView` / `PgStorageIndexHealthView` | Cross-engine Timescale-backed Storage & Index Health dashboard; the router dispatches based on current instance type |
+| `performance-debt` | `sqlserver_PerformanceDebtDashboard` | |
+| `storage-index-health` | `SqlServerStorageIndexHealthView` / `PgStorageIndexHealthView` | Cross-engine Timescale-backed Storage & Index Health dashboard; the router dispatches based on current instance type |
 | `jobs` | `JobsView` | |
 | `alerts` | `AlertsView` | |
 | `incidents` | `AlertsView` | **Alias** (e.g. from Reports actions) |
 | `login` | `LoginView` | Used after logout |
 | `settings` | `SettingsView` | |
-| `best-practices` | `RulesEngineView` | MSSQL-oriented rules dashboard |
+| `best-practices` | `RulesEngineView` | SQLSERVER-oriented rules dashboard |
 | `live-diagnostics` | `LiveDiagnosticsView` | |
 | `pg-dashboard` | `PgDashboardView` | Control Center |
 | `pg-sessions` | `PgSessionsView` | |
@@ -97,7 +97,7 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 
 ## Sidebar vs static HTML
 
-- **`index.html`** initially contains only **Global Estate** in `#sidebar-nav` so users are not offered MSSQL-only links before config and instance selection run.
+- **`index.html`** initially contains only **Global Estate** in `#sidebar-nav` so users are not offered SQLSERVER-only links before config and instance selection run.
 - After an instance is selected, `router.populateDatabaseDropdown()` injects the full **Postgres** or **SQL Server** menu (see `router.js`).
 
 ---
@@ -114,8 +114,8 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 
 ## Security notes (frontend + API)
 
-- **XSS**: User-facing and API error strings assigned to `innerHTML` should go through `window.escapeHtml`. Recent hardening includes router error surfaces, locks drilldown, jobs view, and MSSQL dashboard errors; navigation uses `data-route` equality instead of embedding the route in a CSS selector.
-- **Open dashboards**: Many `GET /api/mssql/*`, `GET /api/postgres/*`, and `GET /api/timescale/*` routes are **unauthenticated** by design. Treat network access as a trust boundary; place the UI/API behind SSO/VPN or enable auth at the reverse proxy if needed.
+- **XSS**: User-facing and API error strings assigned to `innerHTML` should go through `window.escapeHtml`. Recent hardening includes router error surfaces, locks drilldown, jobs view, and SQLSERVER dashboard errors; navigation uses `data-route` equality instead of embedding the route in a CSS selector.
+- **Open dashboards**: Many `GET /api/sqlserver/*`, `GET /api/postgres/*`, and `GET /api/timescale/*` routes are **unauthenticated** by design. Treat network access as a trust boundary; place the UI/API behind SSO/VPN or enable auth at the reverse proxy if needed.
 - **JWT**: Set a strong `JWT_SECRET` in production (`main.go` warns when unset).
 
 ---

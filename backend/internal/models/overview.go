@@ -7,7 +7,7 @@
 // SPDX-License-Identifier: MIT
 package models
 
-// InstanceOverview is a compact summary for /api/postgres/overview and /api/mssql/overview.
+// InstanceOverview is a compact summary for /api/postgres/overview and /api/sqlserver/overview.
 type InstanceOverview struct {
 	InstanceName string `json:"instance_name"`
 	Engine       string `json:"engine"` // "postgres" | "sqlserver"

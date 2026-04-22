@@ -99,18 +99,18 @@ func ensureCollectorConfigsTable(ctx context.Context, pool *pgxpool.Pool) {
     ('Postgres Storage I/O', 'Postgres', 60),
     ('Postgres Long Running Queries', 'Postgres', 60),
     ('Postgres Query Stats', 'Postgres', 60),
-    ('SQL Server Active Queries', 'MSSQL', 15),
-    ('SQL Server Blocking Locks', 'MSSQL', 15),
-    ('SQL Server CPU and Memory', 'MSSQL', 60),
-    ('SQL Server Wait Stats', 'MSSQL', 60),
-    ('SQL Server Storage I/O', 'MSSQL', 60),
-    ('SQL Server Long Running Queries', 'MSSQL', 60),
-    ('SQL Server Query Store', 'MSSQL', 900),
-    ('SQL Server Procedure Stats', 'MSSQL', 120),
-    ('SQL Server Memory Clerks', 'MSSQL', 300),
-    ('SQL Server Plan Cache', 'MSSQL', 300),
-    ('SQL Server Database Size', 'MSSQL', 3600),
-    ('SQL Server Configuration', 'MSSQL', 86400)
+    ('SQL Server Active Queries', 'SQLSERVER', 15),
+    ('SQL Server Blocking Locks', 'SQLSERVER', 15),
+    ('SQL Server CPU and Memory', 'SQLSERVER', 60),
+    ('SQL Server Wait Stats', 'SQLSERVER', 60),
+    ('SQL Server Storage I/O', 'SQLSERVER', 60),
+    ('SQL Server Long Running Queries', 'SQLSERVER', 60),
+    ('SQL Server Query Store', 'SQLSERVER', 900),
+    ('SQL Server Procedure Stats', 'SQLSERVER', 120),
+    ('SQL Server Memory Clerks', 'SQLSERVER', 300),
+    ('SQL Server Plan Cache', 'SQLSERVER', 300),
+    ('SQL Server Database Size', 'SQLSERVER', 3600),
+    ('SQL Server Configuration', 'SQLSERVER', 86400)
     ON CONFLICT (collector_name) DO NOTHING;
     `
 	if _, err := pool.Exec(ctx, query); err != nil {
@@ -211,7 +211,7 @@ func Main() {
 	log.Printf("Booting Environment: Loaded %d Instances...", len(cfg.Instances))
 
 	pgRepo := repository.NewPgRepository(cfg)
-	msRepo := repository.NewMssqlRepository(cfg)
+	msRepo := repository.NewSqlServerRepository(cfg)
 
 	metricsSvc := service.NewMetricsService(pgRepo, msRepo, cfg, tsHotStorage)
 	metricsSvc.ServerKMS = kms
@@ -255,16 +255,16 @@ func Main() {
 	go metricsSvc.StartPostgresEnterpriseCollector(ctx)
 	go metricsSvc.StartQueryAnalysisCollector(ctx)
 	go metricsSvc.StartWatchedQueryCollector(ctx)
-	go metricsSvc.StartMssqlStorageHistoryCollector(ctx)
+	go metricsSvc.StartSqlServerStorageHistoryCollector(ctx)
 
 	// ── Alert evaluation loop ──────────────────────────────────
 	if tsPool := metricsSvc.GetTimescaleDBPool(); tsPool != nil {
 		alertRepo := repository.NewAlertRepository(tsPool)
 		maintRepo := repository.NewAlertMaintenanceRepository(tsPool)
 		evaluators := []service.AlertEvaluator{
-			service.NewMssqlBlockingEvaluator(tsPool),
-			service.NewMssqlFailedJobsEvaluator(tsPool),
-			service.NewMssqlDiskSpaceEvaluator(tsPool),
+			service.NewSqlServerBlockingEvaluator(tsPool),
+			service.NewSqlServerFailedJobsEvaluator(tsPool),
+			service.NewSqlServerDiskSpaceEvaluator(tsPool),
 			service.NewPgReplicationLagEvaluator(tsPool),
 			service.NewPgBlockingEvaluator(tsPool),
 			service.NewPgBackupFreshnessEvaluator(tsPool),
@@ -305,7 +305,7 @@ func Main() {
 			loaded = []config.Instance{}
 		}
 		cfg.Instances = loaded
-		metricsSvc.ReplaceInstanceRepositories(repository.NewPgRepository(cfg), repository.NewMssqlRepository(cfg))
+		metricsSvc.ReplaceInstanceRepositories(repository.NewPgRepository(cfg), repository.NewSqlServerRepository(cfg))
 		log.Printf("[config] registry reload: %d instance(s)", len(cfg.Instances))
 	}
 	metricsSvc.RegistryReload = reloadFromRegistry

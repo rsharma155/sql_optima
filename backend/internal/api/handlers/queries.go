@@ -113,7 +113,7 @@ func (h *QueryHandlers) QueryStoreSQLText(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	txt, err := h.metricsSvc.GetMssqlQueryStoreSQLText(r.Context(), instance, database, queryHash)
+	txt, err := h.metricsSvc.GetSqlServerQueryStoreSQLText(r.Context(), instance, database, queryHash)
 	if err != nil {
 		log.Printf("[API] Query store sql-text error for %s: %s", instance, redact.String(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)

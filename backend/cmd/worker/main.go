@@ -76,7 +76,7 @@ func main() {
 	}
 
 	pgRepo := repository.NewPgRepository(cfg)
-	msRepo := repository.NewMssqlRepository(cfg)
+	msRepo := repository.NewSqlServerRepository(cfg)
 	metricsSvc := service.NewMetricsService(pgRepo, msRepo, cfg, tsHotStorage)
 	metricsSvc.ServerKMS = kms
 

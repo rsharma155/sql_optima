@@ -440,7 +440,7 @@ func buildPGCreateUserScript(username string) string {
 
 // ── SQL Server ────────────────────────────────────────────────────────────────
 
-type mssqlProbe struct {
+type sqlserverProbe struct {
 	name     string
 	query    string // SELECT HAS_PERMS_BY_NAME returns 1/0, or a query that succeeds/fails
 	isPerms  bool   // true: query returns an int (1=granted, 0=denied); false: test execution
@@ -448,7 +448,7 @@ type mssqlProbe struct {
 	optional bool
 }
 
-var mssqlProbes = []mssqlProbe{
+var sqlserverProbes = []sqlserverProbe{
 	{
 		name:    "VIEW SERVER STATE",
 		query:   `SELECT HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE')`,
@@ -530,7 +530,7 @@ func checkSQLServerPermissions(ctx context.Context, s servers.Server, cred serve
 	var missingGrants []string
 	allOK := true
 
-	for _, p := range mssqlProbes {
+	for _, p := range sqlserverProbes {
 		result := PermissionCheckResult{Name: p.name, Optional: p.optional}
 
 		if p.isPerms {
@@ -570,15 +570,15 @@ func checkSQLServerPermissions(ctx context.Context, s servers.Server, cred serve
 	resp := &permissionsCheckResponse{
 		PermissionsOK:    allOK,
 		Checks:           checks,
-		CreateUserScript: buildMSSQLCreateUserScript(s.Username),
+		CreateUserScript: buildSQLSERVERCreateUserScript(s.Username),
 	}
 	if len(missingGrants) > 0 {
-		resp.GrantScript = buildMSSQLGrantScript(s.Username, missingGrants)
+		resp.GrantScript = buildSQLSERVERGrantScript(s.Username, missingGrants)
 	}
 	return resp, nil
 }
 
-func buildMSSQLGrantScript(username string, missingGrants []string) string {
+func buildSQLSERVERGrantScript(username string, missingGrants []string) string {
 	bracketed := fmt.Sprintf("[%s]", escapeSQLBracket(username))
 	var b strings.Builder
 	b.WriteString("-- ============================================================\n")
@@ -624,7 +624,7 @@ func buildMSSQLGrantScript(username string, missingGrants []string) string {
 	return b.String()
 }
 
-func buildMSSQLCreateUserScript(username string) string {
+func buildSQLSERVERCreateUserScript(username string) string {
 	bracketed := fmt.Sprintf("[%s]", escapeSQLBracket(username))
 
 	var b strings.Builder

@@ -1,0 +1,139 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL Server wait statistics categorization and history.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
+package repository
+
+import (
+	"database/sql"
+	"log"
+	"strings"
+)
+
+// CollectWaitStats returns current waits for user-database sessions only (Real-Time Diagnostics).
+// If database is non-empty, scopes to that DB only.
+func (c *SqlServerRepository) CollectWaitStats(db *sql.DB, database string) ([]map[string]interface{}, error) {
+	query := `
+		SELECT /* SQL_OPTIMA */   TOP 50
+			w.wait_type,
+			COUNT(*) AS waiting_tasks_count,
+			CAST(SUM(w.wait_duration_ms) AS FLOAT) AS wait_time_ms
+		FROM sys.dm_os_waiting_tasks w
+		INNER JOIN sys.dm_exec_sessions s ON w.session_id = s.session_id
+		WHERE s.is_user_process = 1
+		  AND s.database_id > 4
+		  AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
+		  AND (@p1 = '' OR DB_NAME(s.database_id) = @p1)
+		  AND s.session_id > 50
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND w.wait_type NOT IN (N'CLR_SEMAPHORE', N'LAZYWRITER_SLEEP', N'RESOURCE_QUEUE', N'SLEEP_TASK', N'SLEEP_SYSTEMTASK', N'SQLTRACE_BUFFER_FLUSH', N'WAITFOR', N'XE_TIMER_EVENT', N'XE_DISPATCHER_WAIT')
+		GROUP BY w.wait_type
+		HAVING SUM(w.wait_duration_ms) > 0
+		ORDER BY SUM(w.wait_duration_ms) DESC
+	`
+
+	rows, err := db.Query(query, strings.TrimSpace(database))
+	if err != nil {
+		log.Printf("[SQLSERVER] Wait Stats (RTD) Query Error: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var waitType string
+		var taskCount int64
+		var waitMs float64
+		if err := rows.Scan(&waitType, &taskCount, &waitMs); err == nil {
+			results = append(results, map[string]interface{}{
+				"wait_type":           waitType,
+				"waiting_tasks_count": taskCount,
+				"wait_time_ms":        waitMs,
+			})
+		}
+	}
+	return results, nil
+}
+
+// CollectWaitingTasks fetches waiting tasks from sys.dm_os_waiting_tasks
+func (c *SqlServerRepository) CollectWaitingTasks(db *sql.DB) ([]map[string]interface{}, error) {
+	query := `
+		SELECT /* SQL_OPTIMA */   TOP 50
+			t.session_id,
+			t.wait_duration_ms,
+			t.wait_type,
+			t.resource_description
+		FROM sys.dm_os_waiting_tasks t
+		INNER JOIN sys.dm_exec_sessions s ON t.session_id = s.session_id
+		WHERE t.session_id > 50
+		  AND s.is_user_process = 1
+		  AND s.database_id > 4
+		  AND LOWER(ISNULL(DB_NAME(s.database_id), N'')) <> N'distribution'
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		ORDER BY t.wait_duration_ms DESC
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var sessionID int
+		var waitDuration int64
+		var waitType, resourceDesc string
+		if err := rows.Scan(&sessionID, &waitDuration, &waitType, &resourceDesc); err == nil {
+			results = append(results, map[string]interface{}{
+				"session_id":           sessionID,
+				"wait_duration_ms":     waitDuration,
+				"wait_type":            waitType,
+				"resource_description": resourceDesc,
+			})
+		}
+	}
+	return results, nil
+}
+
+// CollectLatchStats fetches latch statistics from sys.dm_os_latch_stats
+func (c *SqlServerRepository) CollectLatchStats(db *sql.DB) ([]map[string]interface{}, error) {
+	query := `
+		SELECT /* SQL_OPTIMA */   TOP 20 
+			latch_class, 
+			waiting_requests_count, 
+			wait_time_ms 
+		FROM sys.dm_os_latch_stats 
+		WHERE waiting_requests_count > 0 
+		ORDER BY wait_time_ms DESC
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var resultsMap = make(map[string]interface{})
+		columns, _ := rows.Columns()
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+		if err := rows.Scan(valuePtrs...); err == nil {
+			for i, col := range columns {
+				resultsMap[col] = values[i]
+			}
+			results = append(results, resultsMap)
+		}
+	}
+	return results, nil
+}

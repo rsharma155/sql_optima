@@ -42,7 +42,7 @@ func TestRunOnce_EvaluatesAllInstances(t *testing.T) {
 		engine: alerts.EngineSQLServer,
 		results: []AlertEvaluatorResult{
 			{
-				RuleName: "mssql_blocking",
+				RuleName: "sqlserver_blocking",
 				Category: "blocking",
 				Severity: alerts.SeverityCritical,
 				Title:    "Blocking detected",

@@ -16,7 +16,7 @@ var (
 	reKVSecret = regexp.MustCompile(`(?i)\b(password|pwd|secret|token|apikey|api_key|jwt_secret|access_token|refresh_token)\s*[:=]\s*([^\s;,"']+)`)
 
 	// Match SQL Server style "user id=...;password=...;" segments.
-	reMssqlPassword = regexp.MustCompile(`(?i)\b(password)\s*=\s*([^;]+)`)
+	reSqlServerPassword = regexp.MustCompile(`(?i)\b(password)\s*=\s*([^;]+)`)
 )
 
 // String redacts secrets from an arbitrary string (best-effort; not perfect).
@@ -26,6 +26,6 @@ func String(s string) string {
 	}
 	s = rePostgresURL.ReplaceAllString(s, "postgres://REDACTED")
 	s = reKVSecret.ReplaceAllString(s, "$1=REDACTED")
-	s = reMssqlPassword.ReplaceAllString(s, "$1=REDACTED")
+	s = reSqlServerPassword.ReplaceAllString(s, "$1=REDACTED")
 	return s
 }

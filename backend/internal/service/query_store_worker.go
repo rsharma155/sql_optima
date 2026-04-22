@@ -75,7 +75,7 @@ func (s *MetricsService) collectQueryStoreData() {
 func (s *MetricsService) collectQueryStoreForInstance(instanceName string) {
 	t0 := time.Now()
 
-	// Fetch Query Store data from MSSQL using the repository
+	// Fetch Query Store data from SQLSERVER using the repository
 	queryStats, err := s.MsRepo.FetchQueryStoreStats(instanceName)
 	if err != nil {
 		log.Printf("[QueryStoreCollector] ERROR: Failed to fetch Query Store data for %s: %v", instanceName, err)
@@ -342,7 +342,7 @@ func (s *MetricsService) collectEnterpriseMetrics() {
 func (s *MetricsService) collectAGHealthForInstance(instanceName string) {
 	t0 := time.Now()
 
-	// Fetch AG health from MSSQL
+	// Fetch AG health from SQLSERVER
 	agStats, err := s.MsRepo.FetchAGHealthStats(instanceName)
 	if err != nil {
 		log.Printf("[EnterpriseCollector] AG Health error for %s: %v", instanceName, err)
@@ -394,7 +394,7 @@ func (s *MetricsService) collectAGHealthForInstance(instanceName string) {
 func (s *MetricsService) collectDatabaseThroughputForInstance(instanceName string) {
 	t0 := time.Now()
 
-	// Fetch database throughput from MSSQL
+	// Fetch database throughput from SQLSERVER
 	dbStats, err := s.MsRepo.FetchDatabaseThroughput(instanceName)
 	if err != nil {
 		log.Printf("[EnterpriseCollector] DB Throughput error for %s: %v", instanceName, err)

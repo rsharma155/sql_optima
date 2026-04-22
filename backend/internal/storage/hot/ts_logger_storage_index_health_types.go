@@ -2,7 +2,7 @@
 //
 // Purpose: JSON/API models and filter structs for the storage index health dashboard.
 // Engine-specific Timescale query implementations live in pg_ts_logger_storage_index_health.go
-// and mssql_ts_logger_storage_index_health.go.
+// and sqlserver_ts_logger_storage_index_health.go.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma

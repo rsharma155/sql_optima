@@ -380,7 +380,7 @@ async function showSihTableDrilldown(instance, db, schema, table) {
     try {
         const fromIso = new Date(window.appState.sih.fromLocal).toISOString();
         const toIso = new Date(window.appState.sih.toLocal).toISOString();
-        const url = `/api/mssql/storage-index/table-drilldown?engine=${engine}&instance=${encodeURIComponent(instance)}&db=${encodeURIComponent(db)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}&from=${fromIso}&to=${toIso}`;
+        const url = `/api/sqlserver/storage-index/table-drilldown?engine=${engine}&instance=${encodeURIComponent(instance)}&db=${encodeURIComponent(db)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}&from=${fromIso}&to=${toIso}`;
         const data = await (await window.apiClient.authenticatedFetch(url)).json();
         const content = document.getElementById('sihDrillContent');
         const last = (data.growth_series || []).slice(-1)[0] || { table_size_mb: 0, index_size_mb: 0, row_count: 0 };

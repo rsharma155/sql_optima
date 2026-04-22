@@ -103,9 +103,9 @@ CREATE TABLE IF NOT EXISTS optima_alert_rules (
 
 -- Seed built-in alert rules
 INSERT INTO optima_alert_rules (name, engine, category, default_severity, description, config) VALUES
-    ('mssql_blocking',       'sqlserver', 'blocking',        'critical', 'Detects active blocking chains on SQL Server',                 '{"threshold_seconds": 30}'::jsonb),
-    ('mssql_failed_jobs',    'sqlserver', 'jobs',            'warning',  'Detects SQL Agent jobs that failed in the last 24 hours',       '{"lookback_hours": 24}'::jsonb),
-    ('mssql_disk_space',     'sqlserver', 'disk',            'warning',  'Detects low free disk space on SQL Server drives',              '{"warning_pct": 20, "critical_pct": 10}'::jsonb),
+    ('sqlserver_blocking',       'sqlserver', 'blocking',        'critical', 'Detects active blocking chains on SQL Server',                 '{"threshold_seconds": 30}'::jsonb),
+    ('sqlserver_failed_jobs',    'sqlserver', 'jobs',            'warning',  'Detects SQL Agent jobs that failed in the last 24 hours',       '{"lookback_hours": 24}'::jsonb),
+    ('sqlserver_disk_space',     'sqlserver', 'disk',            'warning',  'Detects low free disk space on SQL Server drives',              '{"warning_pct": 20, "critical_pct": 10}'::jsonb),
     ('pg_replication_lag',   'postgres',  'replication',     'warning',  'Detects replication lag exceeding threshold',                   '{"warning_bytes": 104857600, "critical_bytes": 524288000}'::jsonb),
     ('pg_blocking',          'postgres',  'blocking',        'critical', 'Detects active blocking chains on PostgreSQL',                  '{"threshold_seconds": 30}'::jsonb),
     ('pg_backup_freshness',  'postgres',  'backup',          'warning',  'Detects stale backups exceeding age threshold',                 '{"max_age_hours": 24}'::jsonb),

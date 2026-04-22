@@ -468,15 +468,15 @@ window.showAddServerForm = function() {
     const portEl = document.getElementById('srv-port');
     const syncType = () => {
         if (!typeSel) return;
-        const isMssql = typeSel.value === 'sqlserver';
-        if (trustWrap) trustWrap.style.display = isMssql ? 'block' : 'none';
-        if (sslWrap) sslWrap.style.display = isMssql ? 'none' : 'block';
-        if (encryptWrap) encryptWrap.style.display = isMssql ? 'block' : 'none';
+        const isSqlServer = typeSel.value === 'sqlserver';
+        if (trustWrap) trustWrap.style.display = isSqlServer ? 'block' : 'none';
+        if (sslWrap) sslWrap.style.display = isSqlServer ? 'none' : 'block';
+        if (encryptWrap) encryptWrap.style.display = isSqlServer ? 'block' : 'none';
         // Auto-fill default port when switching engine and port is blank or was the other default
         if (portEl) {
             const p = portEl.value.trim();
             if (p === '' || p === '5432' || p === '1433') {
-                portEl.value = isMssql ? '1433' : '5432';
+                portEl.value = isSqlServer ? '1433' : '5432';
             }
         }
     };
@@ -507,8 +507,8 @@ window.testServerAddDraft = async function() {
     const username = document.getElementById('srv-user')?.value?.trim() || '';
     const password = document.getElementById('srv-pass')?.value || '';
     // For SQL Server use the encrypt select; for Postgres use the ssl_mode select.
-    const isMssql = dbType === 'sqlserver';
-    const sslMode = isMssql
+    const isSqlServer = dbType === 'sqlserver';
+    const sslMode = isSqlServer
         ? (document.getElementById('srv-encrypt')?.value === 'false' ? 'disable' : 'require')
         : (document.getElementById('srv-ssl')?.value?.trim() || '');
     const database = document.getElementById('srv-database')?.value?.trim() || '';
@@ -562,8 +562,8 @@ window.submitAddServer = async function() {
     const portRaw = document.getElementById('srv-port')?.value?.trim() || '';
     const username = document.getElementById('srv-user')?.value?.trim() || '';
     const password = document.getElementById('srv-pass')?.value || '';
-    const isMssqlSave = dbType === 'sqlserver';
-    const sslMode = isMssqlSave
+    const isSqlServerSave = dbType === 'sqlserver';
+    const sslMode = isSqlServerSave
         ? (document.getElementById('srv-encrypt')?.value === 'false' ? 'disable' : 'require')
         : (document.getElementById('srv-ssl')?.value?.trim() || '');
     const database = document.getElementById('srv-database')?.value?.trim() || '';

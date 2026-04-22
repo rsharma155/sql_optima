@@ -34,7 +34,7 @@ import (
 
 type MetricsService struct {
 	PgRepo           *repository.PgRepository
-	MsRepo           *repository.MssqlRepository
+	MsRepo           *repository.SqlServerRepository
 	WidgetRepo       *repository.WidgetRepository
 	UserRepo         *repository.UserRepository
 	ServerRepo       servers.ServerStore
@@ -61,7 +61,7 @@ type MetricsService struct {
 	sihLastDefsDaily map[string]time.Time
 }
 
-func NewMetricsService(pg *repository.PgRepository, ms *repository.MssqlRepository, cfg *config.Config, tsStorage *hot.HotStorage) *MetricsService {
+func NewMetricsService(pg *repository.PgRepository, ms *repository.SqlServerRepository, cfg *config.Config, tsStorage *hot.HotStorage) *MetricsService {
 	var tsLogger *hot.TimescaleLogger
 	if tsStorage != nil {
 		tsLogger = hot.NewTimescaleLogger(tsStorage.Pool())
@@ -108,7 +108,7 @@ func NewMetricsService(pg *repository.PgRepository, ms *repository.MssqlReposito
 }
 
 // ReplaceInstanceRepositories swaps SQL connection pools after cfg.Instances changes (e.g. registry reload).
-func (s *MetricsService) ReplaceInstanceRepositories(pg *repository.PgRepository, ms *repository.MssqlRepository) {
+func (s *MetricsService) ReplaceInstanceRepositories(pg *repository.PgRepository, ms *repository.SqlServerRepository) {
 	if s == nil {
 		return
 	}
@@ -736,8 +736,8 @@ func (s *MetricsService) GetPostgresOverview(instanceName string) models.Instanc
 	return out
 }
 
-// GetMssqlOverview returns a compact summary from cached SQL Server dashboard metrics.
-func (s *MetricsService) GetMssqlOverview(instanceName string) models.InstanceOverview {
+// GetSqlServerOverview returns a compact summary from cached SQL Server dashboard metrics.
+func (s *MetricsService) GetSqlServerOverview(instanceName string) models.InstanceOverview {
 	d := s.GetCachedDashboard(instanceName)
 	out := models.InstanceOverview{
 		InstanceName: instanceName,
@@ -1559,7 +1559,7 @@ func (s *MetricsService) GetQueryBottlenecksWithRange(instanceName, timeRange st
 	return s.GetQueryStoreBottlenecks(context.Background(), instanceName, timeRange, limit, database)
 }
 
-func (s *MetricsService) GetMssqlQueryStoreSQLText(ctx context.Context, instanceName, databaseName, queryHash string) (string, error) {
+func (s *MetricsService) GetSqlServerQueryStoreSQLText(ctx context.Context, instanceName, databaseName, queryHash string) (string, error) {
 	if s.MsRepo == nil {
 		return "", fmt.Errorf("MsRepo not configured")
 	}

@@ -25,17 +25,17 @@ func (s *stubEvaluator) Evaluate(_ context.Context, _ string) ([]AlertEvaluatorR
 	return s.results, nil
 }
 
-func TestMssqlBlockingEvaluator_Interface(t *testing.T) {
+func TestSqlServerBlockingEvaluator_Interface(t *testing.T) {
 	// Ensure it satisfies the AlertEvaluator interface at compile time.
-	var _ AlertEvaluator = (*MssqlBlockingEvaluator)(nil)
+	var _ AlertEvaluator = (*SqlServerBlockingEvaluator)(nil)
 }
 
-func TestMssqlFailedJobsEvaluator_Interface(t *testing.T) {
-	var _ AlertEvaluator = (*MssqlFailedJobsEvaluator)(nil)
+func TestSqlServerFailedJobsEvaluator_Interface(t *testing.T) {
+	var _ AlertEvaluator = (*SqlServerFailedJobsEvaluator)(nil)
 }
 
-func TestMssqlDiskSpaceEvaluator_Interface(t *testing.T) {
-	var _ AlertEvaluator = (*MssqlDiskSpaceEvaluator)(nil)
+func TestSqlServerDiskSpaceEvaluator_Interface(t *testing.T) {
+	var _ AlertEvaluator = (*SqlServerDiskSpaceEvaluator)(nil)
 }
 
 func TestPgReplicationLagEvaluator_Interface(t *testing.T) {
@@ -77,7 +77,7 @@ func TestEvaluatorResults_SeverityEscalation(t *testing.T) {
 			ev := &stubEvaluator{
 				engine: alerts.EngineSQLServer,
 				results: []AlertEvaluatorResult{{
-					RuleName: "mssql_blocking",
+					RuleName: "sqlserver_blocking",
 					Severity: sev,
 				}},
 			}
