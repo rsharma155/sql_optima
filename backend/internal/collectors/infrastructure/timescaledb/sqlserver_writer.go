@@ -1,0 +1,199 @@
+package timescaledb
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/rsharma155/sql_optima/internal/collectors/domain"
+)
+
+func (w *TimescaleWriter) GetInstanceState(ctx context.Context, instanceID string) (lastPoll time.Time, startTime time.Time, err error) {
+	query := `
+		SELECT last_poll_time_utc, sqlserver_start_time
+		FROM sqlserver_collector_instance_state
+		WHERE instance_id = $1
+	`
+	err = w.pool.QueryRow(ctx, query, instanceID).Scan(&lastPoll, &startTime)
+	if err == pgx.ErrNoRows {
+		return time.Time{}, time.Time{}, nil
+	}
+	return lastPoll, startTime, err
+}
+
+func (w *TimescaleWriter) SaveMetrics(ctx context.Context, instanceID string, snapshots []domain.MSSQLQuerySnapshot, pollTime time.Time, sqlStartTime time.Time) error {
+	if len(snapshots) == 0 {
+		return nil
+	}
+
+	tx, err := w.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Bulk Insert into Staging
+	// We use COPY for high performance if possible, but for simplicity here we use a batch insert or multiple inserts.
+	// Given it's a small number of rows usually, batch is fine.
+	batch := &pgx.Batch{}
+	for _, s := range snapshots {
+		batch.Queue(`INSERT INTO sqlserver_query_stats_staging_v2 (
+			poll_time_utc, sqlserver_start_time, instance_id, db_id, database_name,
+			query_hash, plan_handle, query_text, statement_text,
+			total_worker_time, total_logical_reads, total_logical_writes,
+			execution_count, total_rows, total_grant_kb,
+			max_worker_time, max_logical_reads, max_dop, max_grant_kb, max_rows,
+			last_execution_time
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+			pollTime, sqlStartTime, instanceID, s.DBID, s.DatabaseName,
+			s.QueryHash, s.PlanHandle, s.QueryText, s.StatementText,
+			s.TotalCPUMs, s.TotalLogicalReads, s.TotalLogicalWrites,
+			s.TotalExecutions, s.TotalRows, s.TotalGrantKB,
+			s.MaxWorkerTime, s.MaxLogicalReads, s.MaxDOP, s.MaxGrantKB, s.MaxRows,
+			s.LastExecutionTime,
+		)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	if err := br.Close(); err != nil {
+		return fmt.Errorf("send batch to staging: %w", err)
+	}
+
+	// 2. Production Merge Statement
+	mergeSQL := `
+WITH previous AS (
+    SELECT *
+    FROM sqlserver_query_stats_snapshot_v2
+    WHERE instance_id = $1
+),
+joined AS (
+    SELECT
+        s.*,
+        p.last_total_worker_time,
+        p.last_total_logical_reads,
+        p.last_total_logical_writes,
+        p.last_total_execution_count,
+        p.last_total_rows
+    FROM sqlserver_query_stats_staging_v2 s
+    LEFT JOIN previous p
+      ON p.instance_id = s.instance_id
+     AND p.db_id = s.db_id
+     AND p.query_hash = s.query_hash
+     AND p.plan_handle = s.plan_handle
+    WHERE s.instance_id = $1
+),
+deltas AS (
+    SELECT
+        poll_time_utc AS ts,
+        instance_id,
+        db_id,
+        query_hash,
+        CASE 
+            WHEN last_total_worker_time IS NULL THEN 0
+            WHEN total_worker_time < last_total_worker_time THEN total_worker_time
+            ELSE total_worker_time - last_total_worker_time
+        END AS cpu_delta_ms,
+        CASE 
+            WHEN last_total_execution_count IS NULL THEN 0
+            WHEN execution_count < last_total_execution_count THEN execution_count
+            ELSE execution_count - last_total_execution_count
+        END AS exec_delta,
+        CASE 
+            WHEN last_total_logical_reads IS NULL THEN 0
+            WHEN total_logical_reads < last_total_logical_reads THEN total_logical_reads
+            ELSE total_logical_reads - last_total_logical_reads
+        END AS reads_delta,
+        CASE 
+            WHEN last_total_logical_writes IS NULL THEN 0
+            WHEN total_logical_writes < last_total_logical_writes THEN total_logical_writes
+            ELSE total_logical_writes - last_total_logical_writes
+        END AS writes_delta,
+        CASE 
+            WHEN last_total_rows IS NULL THEN 0
+            WHEN total_rows < last_total_rows THEN total_rows
+            ELSE total_rows - last_total_rows
+        END AS rows_delta,
+        max_worker_time AS period_max_cpu_ms,
+        max_logical_reads AS period_max_reads,
+        max_grant_kb AS period_max_grant_kb,
+        max_dop AS period_max_dop
+    FROM joined
+)
+INSERT INTO sqlserver_query_stats_history (
+    ts, instance_id, db_id, query_hash,
+    cpu_delta_ms, exec_delta, reads_delta, writes_delta, rows_delta,
+    period_max_cpu_ms, period_max_reads, period_max_grant_kb, period_max_dop
+)
+SELECT ts, instance_id, db_id, query_hash,
+       cpu_delta_ms, exec_delta, reads_delta, writes_delta, rows_delta,
+       period_max_cpu_ms, period_max_reads, period_max_grant_kb, period_max_dop
+FROM deltas
+WHERE exec_delta > 0 OR cpu_delta_ms > 0;
+`
+	if _, err := tx.Exec(ctx, mergeSQL, instanceID); err != nil {
+		return fmt.Errorf("merge deltas to history: %w", err)
+	}
+
+	// 3. Upsert Snapshot
+	upsertSQL := `
+INSERT INTO sqlserver_query_stats_snapshot_v2 (
+    instance_id, db_id, query_hash, plan_handle,
+    database_name, query_text, statement_text,
+    last_total_worker_time, last_total_logical_reads, last_total_logical_writes,
+    last_total_execution_count, last_total_rows, last_total_grant_kb,
+    max_worker_time, max_logical_reads, max_dop, max_grant_kb, max_rows,
+    last_execution_time, last_seen_poll_time
+)
+SELECT
+    instance_id, db_id, query_hash, plan_handle,
+    database_name, query_text, statement_text,
+    total_worker_time, total_logical_reads, total_logical_writes,
+    execution_count, total_rows, total_grant_kb,
+    max_worker_time, max_logical_reads, max_dop, max_grant_kb, max_rows,
+    last_execution_time, poll_time_utc
+FROM sqlserver_query_stats_staging_v2
+WHERE instance_id = $1
+ON CONFLICT (instance_id, db_id, query_hash, plan_handle)
+DO UPDATE SET
+    database_name = EXCLUDED.database_name,
+    query_text = EXCLUDED.query_text,
+    statement_text = EXCLUDED.statement_text,
+    last_total_worker_time = EXCLUDED.last_total_worker_time,
+    last_total_logical_reads = EXCLUDED.last_total_logical_reads,
+    last_total_logical_writes = EXCLUDED.last_total_logical_writes,
+    last_total_execution_count = EXCLUDED.last_total_execution_count,
+    last_total_rows = EXCLUDED.last_total_rows,
+    last_total_grant_kb = EXCLUDED.last_total_grant_kb,
+    last_execution_time = EXCLUDED.last_execution_time,
+    last_seen_poll_time = EXCLUDED.last_seen_poll_time,
+    max_worker_time = GREATEST(sqlserver_query_stats_snapshot_v2.max_worker_time, EXCLUDED.max_worker_time),
+    max_logical_reads = GREATEST(sqlserver_query_stats_snapshot_v2.max_logical_reads, EXCLUDED.max_logical_reads),
+    max_dop = GREATEST(sqlserver_query_stats_snapshot_v2.max_dop, EXCLUDED.max_dop),
+    max_grant_kb = GREATEST(sqlserver_query_stats_snapshot_v2.max_grant_kb, EXCLUDED.max_grant_kb),
+    max_rows = GREATEST(sqlserver_query_stats_snapshot_v2.max_rows, EXCLUDED.max_rows);
+`
+	if _, err := tx.Exec(ctx, upsertSQL, instanceID); err != nil {
+		return fmt.Errorf("upsert snapshot: %w", err)
+	}
+
+	// 4. Update Watermark
+	watermarkSQL := `
+INSERT INTO sqlserver_collector_instance_state (instance_id, last_poll_time_utc, sqlserver_start_time, last_successful_run)
+VALUES ($1, $2, $3, NOW())
+ON CONFLICT (instance_id) DO UPDATE SET
+    last_poll_time_utc = EXCLUDED.last_poll_time_utc,
+    sqlserver_start_time = EXCLUDED.sqlserver_start_time,
+    last_successful_run = EXCLUDED.last_successful_run;
+`
+	if _, err := tx.Exec(ctx, watermarkSQL, instanceID, pollTime, sqlStartTime); err != nil {
+		return fmt.Errorf("update watermark: %w", err)
+	}
+
+	// 5. Truncate Staging for this instance
+	if _, err := tx.Exec(ctx, "DELETE FROM sqlserver_query_stats_staging_v2 WHERE instance_id = $1", instanceID); err != nil {
+		return fmt.Errorf("truncate staging: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}

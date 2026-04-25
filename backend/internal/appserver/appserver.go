@@ -31,6 +31,12 @@ import (
 
 	"github.com/rsharma155/sql_optima/internal/api"
 	"github.com/rsharma155/sql_optima/internal/api/handlers"
+	"github.com/rsharma155/sql_optima/internal/collectors/application"
+	"github.com/rsharma155/sql_optima/internal/collectors/domain/ruleengine"
+	"github.com/rsharma155/sql_optima/internal/collectors/domain/scheduler"
+	"github.com/rsharma155/sql_optima/internal/collectors/infrastructure/postgres"
+	"github.com/rsharma155/sql_optima/internal/collectors/infrastructure/sqlserver"
+	"github.com/rsharma155/sql_optima/internal/collectors/infrastructure/timescaledb"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/domain/servers"
 	"github.com/rsharma155/sql_optima/internal/middleware"
@@ -90,28 +96,6 @@ func ensureCollectorConfigsTable(ctx context.Context, pool *pgxpool.Pool) {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_by VARCHAR(100)
     );
-    
-    INSERT INTO optima_collector_configs (collector_name, module, frequency_seconds) VALUES
-    ('Postgres Active Queries', 'Postgres', 15),
-    ('Postgres Blocking Locks', 'Postgres', 15),
-    ('Postgres CPU and Memory', 'Postgres', 60),
-    ('Postgres Wait Stats', 'Postgres', 60),
-    ('Postgres Storage I/O', 'Postgres', 60),
-    ('Postgres Long Running Queries', 'Postgres', 60),
-    ('Postgres Query Stats', 'Postgres', 60),
-    ('SQL Server Active Queries', 'SQLSERVER', 15),
-    ('SQL Server Blocking Locks', 'SQLSERVER', 15),
-    ('SQL Server CPU and Memory', 'SQLSERVER', 60),
-    ('SQL Server Wait Stats', 'SQLSERVER', 60),
-    ('SQL Server Storage I/O', 'SQLSERVER', 60),
-    ('SQL Server Long Running Queries', 'SQLSERVER', 60),
-    ('SQL Server Query Store', 'SQLSERVER', 900),
-    ('SQL Server Procedure Stats', 'SQLSERVER', 120),
-    ('SQL Server Memory Clerks', 'SQLSERVER', 300),
-    ('SQL Server Plan Cache', 'SQLSERVER', 300),
-    ('SQL Server Database Size', 'SQLSERVER', 3600),
-    ('SQL Server Configuration', 'SQLSERVER', 86400)
-    ON CONFLICT (collector_name) DO NOTHING;
     `
 	if _, err := pool.Exec(ctx, query); err != nil {
 		log.Printf("[init] Failed to ensure optima_collector_configs table: %v", err)
@@ -257,6 +241,10 @@ func Main() {
 	go metricsSvc.StartWatchedQueryCollector(ctx)
 	go metricsSvc.StartSqlServerStorageHistoryCollector(ctx)
 
+	if tsHotStorage != nil {
+		go startQueryV2Collector(ctx, tsHotStorage.Pool(), cfg)
+	}
+
 	// ── Alert evaluation loop ──────────────────────────────────
 	if tsPool := metricsSvc.GetTimescaleDBPool(); tsPool != nil {
 		alertRepo := repository.NewAlertRepository(tsPool)
@@ -271,7 +259,8 @@ func Main() {
 			service.NewPgDiskSpaceEvaluator(tsPool),
 		}
 		alertSvc := service.NewAlertService(alertRepo, maintRepo, evaluators)
-		go service.StartAlertEvaluationLoop(ctx, tsPool, cfg, alertSvc, 60*time.Second)
+		alertInterval := metricsSvc.FetchInterval(ctx, "Alert Evaluation Loop", 60*time.Second)
+		go service.StartAlertEvaluationLoop(ctx, tsPool, cfg, alertSvc, alertInterval)
 	}
 
 	r := mux.NewRouter()
@@ -430,4 +419,92 @@ func Main() {
 	}
 
 	log.Println("Server exited")
+}
+
+func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) {
+	if os.Getenv("ENABLE_QUERY_V2_PIPELINE") == "false" {
+		return
+	}
+
+	log.Println("[collector-v2] starting lightweight query metrics pipeline")
+
+	// Repositories
+	configRepo := repository.NewCollectorConfigRepository(pool)
+	ruleRepo := timescaledb.NewRuleRepository(pool)
+	writer := timescaledb.NewTimescaleWriter(pool)
+
+	// Fetch rules
+	mssqlRules, _ := ruleRepo.GetMSSQLIgnoreRules(ctx)
+	pgRules, _ := ruleRepo.GetPGIgnoreRules(ctx)
+	filter := ruleengine.NewFilterService(mssqlRules, pgRules)
+
+	// Scheduler Adapter
+	schedulerRepo := &schedulerRepoAdapter{repo: configRepo}
+	jobScheduler := scheduler.NewJobSchedulerService(schedulerRepo)
+
+	// One app per instance type (or one app that handles all? Let's use one app that coordinates)
+	// We need a way to get DB connections for each instance.
+	// For simplicity, we'll create the app and then in each cycle, iterate over instances.
+
+	// But wait, our CollectorApp currently takes single repos.
+	// Let's refactor CollectorApp to take a Factory or similar, or just handle multiple instances.
+
+	// Actually, let's keep it simple: Create a map of instanceID -> App
+	mssqlApps := make(map[string]*application.CollectorApp)
+	pgApps := make(map[string]*application.CollectorApp)
+
+	for _, inst := range cfg.Instances {
+		db, err := config.ConnectToInstance(inst)
+		if err != nil {
+			log.Printf("[collector-v2] failed to connect to instance %s: %v", inst.Name, err)
+			continue
+		}
+
+		if inst.Type == "sqlserver" {
+			repo := sqlserver.NewSQLServerSnapshotRepository(db)
+			app := application.NewCollectorApp(jobScheduler, repo, nil, writer, filter)
+			mssqlApps[inst.Name] = app
+		} else if inst.Type == "postgres" {
+			repo := postgres.NewPGSnapshotRepository(db)
+			app := application.NewCollectorApp(jobScheduler, nil, repo, writer, filter)
+			pgApps[inst.Name] = app
+		}
+	}
+
+	ticker := time.NewTicker(5 * time.Second)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Refresh configs? Maybe every N cycles.
+				for name, app := range mssqlApps {
+					app.RunCycle(ctx, name)
+				}
+				for name, app := range pgApps {
+					app.RunCycle(ctx, name)
+				}
+			}
+		}
+	}()
+}
+
+type schedulerRepoAdapter struct {
+	repo *repository.CollectorConfigRepository
+}
+
+func (a *schedulerRepoAdapter) GetActiveConfigs(ctx context.Context) ([]scheduler.Config, error) {
+	cfgs, err := a.repo.GetActiveConfigs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var res []scheduler.Config
+	for _, c := range cfgs {
+		res = append(res, scheduler.Config{
+			Name:             c.CollectorName,
+			FrequencySeconds: c.FrequencySeconds,
+		})
+	}
+	return res, nil
 }

@@ -9,19 +9,19 @@ func EvaluateIndexUsage(ctx evaluation.Context) evaluation.Result {
 	if scans == 0 && size > 100 {
 		return evaluation.Result{
 			RuleID:         "pg_unused_index",
-			Severity:      "HIGH",
-			Confidence:    0.9,
-			Message:       "Large index never used",
+			Severity:       "HIGH",
+			Confidence:     0.9,
+			Message:        "Large index never used",
 			Recommendation: "Consider dropping unused index",
 		}
 	}
 
 	if scans < 10 && size > 50 {
 		return evaluation.Result{
-			RuleID:       "pg_unused_index",
-			Severity:     "MEDIUM",
-			Confidence:  0.7,
-			Message:      "Index rarely used",
+			RuleID:     "pg_unused_index",
+			Severity:   "MEDIUM",
+			Confidence: 0.7,
+			Message:    "Index rarely used",
 		}
 	}
 

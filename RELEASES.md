@@ -5,12 +5,14 @@ Until 1.0, releases may include breaking changes. We still aim to keep changes d
 
 ## Unreleased
 
-## 0.3.0
-- **Push-based OS Collector**: Introduced a new lightweight Go collector (`os_collector`) for host-level telemetry. It gathers CPU (user/sys/iowait), detailed Memory (RSS, VSZ, Swap, Slab, Dirty), Load Averages, and Postgres process statistics, pushing them to the backend via a secure API.
-- **Enhanced Rule Engine (V2)**: Refactored the advisory system to be signal-aware. Rules can now evaluate against "signals" (historical snapshots stored in TimescaleDB) using the `expr` language for complex conditional logic, severity weighting, and confidence scoring.
-- **Storage & Index Health**: Fully integrated historical dashboard for both engines, surfacing index usage deltas, unused index candidates, table growth projections, and duplicate index detection based on snapshot history.
-- **API — OS Metrics Endpoint**: Added `POST /api/os/metrics` to receive and store telemetry from remote OS collectors.
-- **Tech Stack**: Updated to Go 1.25.7; added `github.com/expr-lang/expr` for dynamic rule evaluation and `github.com/shirou/gopsutil` for host metrics.
+## 0.3.0 (2026-04-22)
+
+- **SQL Server Micro-Architecture**: Massive refactor of the SQL Server repository. Split the monolithic `mssql_stats.go` into 14 domain-specific files (e.g., `sqlserver_query_store.go`, `sqlserver_ag_health.go`) following DDD principles.
+- **Engine Standardization**: Renamed all `mssql` references to `sqlserver` across the backend and frontend for consistency.
+- **Push-based OS Collector**: Introduced `os_collector`, a lightweight Go agent for host-level telemetry (CPU, Memory, Load, Postgres process stats) that pushes data to the backend via `POST /api/os/metrics`.
+- **Enhanced Rules Engine (V2)**: Refactored the advisory system to be "signal-aware," allowing rules to evaluate against historical snapshots in TimescaleDB using the `expr` language. Added 15+ new best-practice rules for both PG and SQL Server.
+- **Storage & Index Health**: Fully integrated historical dashboards surfacing index usage deltas, unused index candidates, and table growth projections.
+- **Tech Stack Updates**: Updated to Go 1.25.7; added `github.com/expr-lang/expr` for dynamic rule evaluation and `github.com/shirou/gopsutil` for host metrics.
 
 ## 0.2.1
 - **Bug fix — Alert Ack/Resolve 400 error**: `AcknowledgeAlert` and `ResolveAlert` handlers now treat the request body as optional; an empty POST body no longer returns `400 Bad Request`.

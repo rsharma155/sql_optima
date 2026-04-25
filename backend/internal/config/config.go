@@ -11,12 +11,73 @@
 package config
 
 import (
+	"database/sql"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+func ConnectToInstance(inst Instance) (*sql.DB, error) {
+	if inst.Type == "sqlserver" {
+		port := inst.Port
+		if port == 0 {
+			port = 1433
+		}
+		catalog := inst.Database
+		if catalog == "" {
+			catalog = "master"
+		}
+		encrypt := "true"
+		if inst.Encrypt != nil && !*inst.Encrypt {
+			encrypt = "false"
+		}
+
+		msURL := &url.URL{
+			Scheme: "sqlserver",
+			User:   url.UserPassword(inst.User, inst.Password),
+			Host:   net.JoinHostPort(inst.Host, fmt.Sprintf("%d", port)),
+		}
+		q := msURL.Query()
+		q.Set("database", catalog)
+		q.Set("encrypt", encrypt)
+		if inst.TrustServerCertificate {
+			q.Set("TrustServerCertificate", "true")
+		}
+		msURL.RawQuery = q.Encode()
+		return sql.Open("sqlserver", msURL.String())
+	} else if inst.Type == "postgres" {
+		port := inst.Port
+		if port == 0 {
+			port = 5432
+		}
+		dbname := inst.Database
+		if dbname == "" {
+			dbname = "postgres"
+		}
+		sslmode := inst.SSLMode
+		if sslmode == "" {
+			sslmode = "disable"
+		}
+
+		pgURL := &url.URL{
+			Scheme: "postgres",
+			User:   url.UserPassword(inst.User, inst.Password),
+			Host:   net.JoinHostPort(inst.Host, fmt.Sprintf("%d", port)),
+			Path:   dbname,
+		}
+		q := pgURL.Query()
+		q.Set("sslmode", sslmode)
+		pgURL.RawQuery = q.Encode()
+		return sql.Open("postgres", pgURL.String())
+	}
+	return nil, fmt.Errorf("unsupported instance type: %s", inst.Type)
+}
 
 type Config struct {
 	Instances []Instance `yaml:"instances" json:"instances"`

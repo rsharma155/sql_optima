@@ -10,6 +10,8 @@ package collectors
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/models"
@@ -31,54 +33,76 @@ type IndexDefinitionCatalogRow struct {
 }
 
 // CollectSQLServerIndexDefinitions snapshots index definitions (for duplicate/overlap analysis).
-// Should run daily (or on-demand) rather than every 60s.
-func CollectSQLServerIndexDefinitions(ctx context.Context, dbq Queryer) ([]IndexDefinitionCatalogRow, error) {
-	q := `
-		WITH keycols AS (
-			SELECT
-				i.object_id, i.index_id,
-				STUFF((
-					SELECT ',' + c.name
-					FROM sys.index_columns ic2
-					JOIN sys.columns c ON c.object_id = ic2.object_id AND c.column_id = ic2.column_id
-					WHERE ic2.object_id = i.object_id AND ic2.index_id = i.index_id
-					  AND ic2.is_included_column = 0
-					ORDER BY ic2.key_ordinal
-					FOR XML PATH(''), TYPE).value('.', 'nvarchar(max)'), 1, 1, '') AS key_columns
-			FROM sys.indexes i
-		),
-		inccols AS (
-			SELECT
-				i.object_id, i.index_id,
-				STUFF((
-					SELECT ',' + c.name
-					FROM sys.index_columns ic2
-					JOIN sys.columns c ON c.object_id = ic2.object_id AND c.column_id = ic2.column_id
-					WHERE ic2.object_id = i.object_id AND ic2.index_id = i.index_id
-					  AND ic2.is_included_column = 1
-					ORDER BY ic2.index_column_id
-					FOR XML PATH(''), TYPE).value('.', 'nvarchar(max)'), 1, 1, '') AS include_columns
-			FROM sys.indexes i
-		)
+// On the first initial run (since.IsZero()), it collects definitions for all user tables without filtering.
+// On subsequent runs, it only collects definitions for tables modified after the specified 'since' time.
+func CollectSQLServerIndexDefinitions(ctx context.Context, dbq Queryer, since time.Time) ([]IndexDefinitionCatalogRow, error) {
+	var tableFilter string
+	var args []interface{}
+
+	// If since is not zero, this is a subsequent run. We check for modified tables
+	// to avoid a full scan of the index catalog if nothing has changed.
+	if !since.IsZero() {
+		modifiedTables, err := GetModifiedTables(ctx, dbq, since)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check for modified tables: %w", err)
+		}
+
+		// If no tables were modified since the last run, we can skip the main collection.
+		if len(modifiedTables) == 0 {
+			return nil, nil
+		}
+
+		// Build a filter for the main query to only fetch definitions for the modified tables.
+		placeholders := make([]string, len(modifiedTables))
+		for i, t := range modifiedTables {
+			placeholders[i] = fmt.Sprintf("@p%d", i+1)
+			args = append(args, t)
+		}
+		tableFilter = fmt.Sprintf(" AND t.name IN (%s)", strings.Join(placeholders, ","))
+	}
+
+	// The main query collects detailed index metadata including key and included columns.
+	// If tableFilter is empty (e.g. on the first run), it collects for all non-system tables.
+	q := ` /* SQL_OPTIMA */ 
 		SELECT
 			DB_NAME() AS db_name,
 			OBJECT_SCHEMA_NAME(i.object_id) AS schema_name,
 			OBJECT_NAME(i.object_id) AS table_name,
 			i.name AS index_name,
-			COALESCE(k.key_columns, '') AS key_columns,
-			COALESCE(inc.include_columns, '') AS include_columns,
+			ISNULL(k.key_columns, '') AS key_columns,
+			ISNULL(inc.include_columns, '') AS include_columns,
 			i.filter_definition,
 			CAST(i.is_unique AS bit) AS is_unique,
-			CASE WHEN i.is_primary_key = 1 THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS is_pk,
+			i.is_primary_key AS is_pk, 
 			i.type_desc AS index_type
 		FROM sys.indexes i
-		JOIN sys.tables t ON t.object_id = i.object_id AND t.is_ms_shipped = 0
-		LEFT JOIN keycols k ON k.object_id=i.object_id AND k.index_id=i.index_id
-		LEFT JOIN inccols inc ON inc.object_id=i.object_id AND inc.index_id=i.index_id
-		WHERE i.name IS NOT NULL AND i.index_id > 0
-	`
+		INNER JOIN sys.tables t 
+			ON t.object_id = i.object_id 
+			AND t.is_ms_shipped = 0
+		OUTER APPLY (
+			SELECT STRING_AGG(c.name, ',') WITHIN GROUP (ORDER BY ic.key_ordinal) AS key_columns
+			FROM sys.index_columns ic
+			INNER JOIN sys.columns c 
+				ON c.object_id = ic.object_id 
+				AND c.column_id = ic.column_id
+			WHERE ic.object_id = i.object_id 
+			AND ic.index_id = i.index_id
+			AND ic.is_included_column = 0
+		) k
+		OUTER APPLY (
+			SELECT STRING_AGG(c.name, ',') WITHIN GROUP (ORDER BY ic.index_column_id) AS include_columns
+			FROM sys.index_columns ic
+			INNER JOIN sys.columns c 
+				ON c.object_id = ic.object_id 
+				AND c.column_id = ic.column_id
+			WHERE ic.object_id = i.object_id 
+			AND ic.index_id = i.index_id
+			AND ic.is_included_column = 1
+		) inc
+		WHERE i.name IS NOT NULL 
+		AND i.index_id > 0 ` + tableFilter + `;`
 
-	rows, err := dbq.QueryContext(ctx, q)
+	rows, err := dbq.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +117,32 @@ func CollectSQLServerIndexDefinitions(ctx context.Context, dbq Queryer) ([]Index
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// GetModifiedTables returns a list of user tables modified after the specified time.
+func GetModifiedTables(ctx context.Context, dbq Queryer, since time.Time) ([]string, error) {
+	q := ` /* SQL_OPTIMA */
+		SELECT name AS table_name
+		FROM sys.objects 
+		WHERE type = 'U' 
+		  AND is_ms_shipped = 0
+		  AND modify_date > @p1;`
+
+	rows, err := dbq.QueryContext(ctx, q, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			continue
+		}
+		tables = append(tables, name)
+	}
+	return tables, rows.Err()
 }
 
 func persistIndexDefinitions(ctx context.Context, tl *hot.TimescaleLogger, engine, serverID string, rows []IndexDefinitionCatalogRow, capture time.Time) (inserted int, err error) {

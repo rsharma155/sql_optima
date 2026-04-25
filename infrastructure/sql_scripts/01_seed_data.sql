@@ -150,6 +150,47 @@ SELECT * FROM (VALUES
 ) AS v(collector_name, enabled, frequency_minutes, max_duration_minutes, retention_days, description)
 ON CONFLICT (collector_name) DO NOTHING;
 
+-- ============================================================================
+-- SEED DATA: Collection Frequencies (Unified)
+-- ============================================================================
+INSERT INTO optima_collector_configs (collector_name, module, frequency_seconds) VALUES
+('Postgres Active Queries', 'Postgres', 60),
+('Postgres Blocking Locks', 'Postgres', 60),
+('Postgres CPU and Memory', 'Postgres', 60),
+('Postgres Wait Stats', 'Postgres', 60),
+('Postgres Storage I/O', 'Postgres', 300),
+('Postgres Long Running Queries', 'Postgres', 60),
+('Postgres Query Stats', 'Postgres', 60),
+('SQL Server Active Queries', 'SQLSERVER', 60),
+('SQL Server Blocking Locks', 'SQLSERVER', 30),
+('SQL Server CPU and Memory', 'SQLSERVER', 60),
+('SQL Server Storage', 'SQLSERVER', 120),
+('SQL Server Wait Stats', 'SQLSERVER', 60),
+('SQL Server Storage I/O', 'SQLSERVER', 120),
+('SQL Server Long Running Queries', 'SQLSERVER', 60),
+('SQL Server Query Store', 'SQLSERVER', 300),
+('SQL Server Procedure Stats', 'SQLSERVER', 300),
+('SQL Server Memory Clerks', 'SQLSERVER', 60),
+('SQL Server Plan Cache', 'SQLSERVER', 300),
+('SQL Server Database Size', 'SQLSERVER', 3600),
+('SQL Server Configuration', 'SQLSERVER', 86400),
+('SQL Server Index Usage', 'SQLSERVER', 900),
+('SQL Server Table Usage', 'SQLSERVER', 900),
+('SQL Server Query Analysis', 'SQLSERVER', 300),
+('SQL Server Watched Query Snapshot', 'SQLSERVER', 300),
+('SQL Server Instance Metrics', 'SQLSERVER', 60),
+('SQL Server CPU Metrics', 'SQLSERVER', 60),
+('SQL Server Memory Metrics', 'SQLSERVER', 60),
+('SQL Server AG Health', 'SQLSERVER', 60),
+('SQL Server Enterprise Metrics', 'SQLSERVER', 300),
+('SQL Server Agent Jobs', 'SQLSERVER', 60),
+('sqlserver_queries_v2', 'SQLSERVER', 15),
+('pg_queries_v2', 'Postgres', 15),
+('Performance Debt Collection', 'SQLSERVER', 900),
+('Alert Evaluation Loop', 'System', 60),
+('Base Collector Ticker', 'System', 300)
+ON CONFLICT (collector_name) DO UPDATE SET frequency_seconds = EXCLUDED.frequency_seconds;
+
 DO $$
 BEGIN
     RAISE NOTICE 'Seed data inserted successfully!';

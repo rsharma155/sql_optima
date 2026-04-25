@@ -230,7 +230,7 @@ func (c *SqlServerRepository) FetchWatchedQueryStats(ctx context.Context, instan
 		JOIN sys.query_store_plan p ON rs.plan_id = p.plan_id
 		JOIN sys.query_store_query q ON p.query_id = q.query_id
 		JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-		WHERE CONVERT(VARCHAR(40), q.query_hash, 1) = @p1
+		WHERE CONVERT(VARCHAR(40), q.query_hash, 1) COLLATE DATABASE_DEFAULT = @p1 COLLATE DATABASE_DEFAULT
 		  AND q.is_internal_query = 0
 		ORDER BY rs.last_execution_time DESC`, qb)
 
@@ -283,7 +283,7 @@ func (c *SqlServerRepository) FetchQueryPlans(ctx context.Context, instanceName,
 		FROM sys.query_store_plan p
 		JOIN sys.query_store_query q ON p.query_id = q.query_id
 		JOIN sys.query_store_runtime_stats rs ON rs.plan_id = p.plan_id
-		WHERE CONVERT(VARCHAR(40), q.query_hash, 1) = @p1
+		WHERE CONVERT(VARCHAR(40), q.query_hash, 1) COLLATE DATABASE_DEFAULT = @p1 COLLATE DATABASE_DEFAULT
 		GROUP BY p.plan_id, p.is_forced_plan, p.initial_compile_start_time, CAST(p.query_plan AS NVARCHAR(MAX))
 		ORDER BY avg_duration_ms DESC`, qb)
 
@@ -330,7 +330,7 @@ func (c *SqlServerRepository) FetchQueryWaitStats(ctx context.Context, instanceN
 		FROM sys.query_store_wait_stats ws
 		JOIN sys.query_store_plan p ON ws.plan_id = p.plan_id
 		JOIN sys.query_store_query q ON p.query_id = q.query_id
-		WHERE CONVERT(VARCHAR(40), q.query_hash, 1) = @p1
+		WHERE CONVERT(VARCHAR(40), q.query_hash, 1) COLLATE DATABASE_DEFAULT = @p1 COLLATE DATABASE_DEFAULT
 		GROUP BY ws.wait_category_desc
 		ORDER BY total_wait_ms DESC`, qb)
 

@@ -8,7 +8,7 @@ import (
 
 func TestVacuumHighDeadTuples(t *testing.T) {
 	ctx := evaluation.Context{
-		"dead_tuple_pct":   25,
+		"dead_tuple_pct":    25,
 		"last_vacuum_hours": 48,
 	}
 
@@ -21,7 +21,7 @@ func TestVacuumHighDeadTuples(t *testing.T) {
 
 func TestVacuumMedium(t *testing.T) {
 	ctx := evaluation.Context{
-		"dead_tuple_pct":   15,
+		"dead_tuple_pct":    15,
 		"last_vacuum_hours": 12,
 	}
 
@@ -34,7 +34,7 @@ func TestVacuumMedium(t *testing.T) {
 
 func TestVacuum_OK(t *testing.T) {
 	ctx := evaluation.Context{
-		"dead_tuple_pct":   5,
+		"dead_tuple_pct":    5,
 		"last_vacuum_hours": 2,
 	}
 

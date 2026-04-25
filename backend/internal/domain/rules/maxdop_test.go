@@ -9,7 +9,7 @@ import (
 func TestMaxDOP_HighWaits(t *testing.T) {
 	ctx := evaluation.Context{
 		"cpu_count":         32,
-		"maxdop":           16,
+		"maxdop":            16,
 		"parallel_wait_pct": 40,
 	}
 
@@ -27,7 +27,7 @@ func TestMaxDOP_HighWaits(t *testing.T) {
 func TestMaxDOP_Medium(t *testing.T) {
 	ctx := evaluation.Context{
 		"cpu_count":         16,
-		"maxdop":           10,
+		"maxdop":            10,
 		"parallel_wait_pct": 10,
 	}
 
@@ -41,7 +41,7 @@ func TestMaxDOP_Medium(t *testing.T) {
 func TestMaxDOP_OK(t *testing.T) {
 	ctx := evaluation.Context{
 		"cpu_count":         8,
-		"maxdop":           4,
+		"maxdop":            4,
 		"parallel_wait_pct": 5,
 	}
 

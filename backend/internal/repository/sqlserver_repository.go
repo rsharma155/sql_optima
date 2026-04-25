@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	_ "github.com/microsoft/go-mssqldb"
 	"github.com/rsharma155/sql_optima/internal/collectors"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/sqlserver"
@@ -26,8 +27,8 @@ import (
 
 type SqlServerRepository struct {
 	conns          map[string]*sql.DB
-	status        map[string]string
-	mutex         sync.RWMutex
+	status         map[string]string
+	mutex          sync.RWMutex
 	prevQueryCache map[string]map[string]QueryState
 }
 

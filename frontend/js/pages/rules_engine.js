@@ -35,8 +35,9 @@ window.RulesEngineView = async function() {
         if (!serverId || serverId === 0) {
             serverId = window.appState.currentInstanceIdx + 1;
         }
+        const dbType = inst.type || (inst.name.toLowerCase().includes('sql') ? 'sqlserver' : 'postgres');
         const response = await window.apiClient.authenticatedFetch(
-            `/api/rules/best-practices?server_id=${serverId}`
+            `/api/rules/best-practices?server_id=${serverId}&db_type=${dbType}`
         );
         if (!response.ok) {
             if (response.status === 400) {
@@ -201,6 +202,8 @@ function renderBestPracticesDashboard(inst, data) {
                 status: statusKey,
                 severity: check.severity || '',
                 impact: check.impact || check.description || '',
+                impact_detail: check.impact_detail || '',
+                why_this_matters: check.why_this_matters || '',
                 evidence: check.evidence || '',
                 remediation: check.remediation || rawFixScript || '',
                 history: Array.isArray(check.history) ? check.history : []
@@ -287,6 +290,8 @@ window.showRuleDrawerById = function(drawerId) {
         currentValue: data.currentValue,
         recommendedValue: data.recommendedValue,
         impact: data.impact,
+        impact_detail: data.impact_detail,
+        why_this_matters: data.why_this_matters,
         evidence: data.evidence,
         history: data.history
     });
@@ -326,12 +331,13 @@ window.showRuleDrawer = function(payloadOrRuleName, description, fixScript, stat
         drawer.style.cssText = `width:450px;max-width:90vw;background:#ffffff;height:100%;padding:1.5rem;overflow-y:auto;animation:slideIn 0.2s ease-out;box-shadow:-4px 0 20px rgba(0,0,0,0.3);border-left:4px solid ${style.color};`;
 
         const safeDesc = payload.description ? window.escapeHtml(payload.description) : 'No description available.';
-        const safeFix = payload.fixScript ? window.escapeHtml(payload.fixScript) : '';
+        const safeWhy = payload.why_this_matters ? window.escapeHtml(payload.why_this_matters) : 'The importance of this configuration is derived from standard best practices for high-performance database environments.';
         const safeRuleName = payload.ruleName ? window.escapeHtml(payload.ruleName) : 'Unknown Rule';
+        const safeFix = payload.fixScript ? window.escapeHtml(payload.fixScript) : '';
         const safeCurr = payload.currentValue ? window.escapeHtml(payload.currentValue) : '-';
         const safeRec = payload.recommendedValue ? window.escapeHtml(payload.recommendedValue) : '-';
         const safeSeverity = payload.severity ? window.escapeHtml(payload.severity) : 'Not set';
-        const safeImpact = payload.impact ? window.escapeHtml(payload.impact) : safeDesc;
+        const safeImpact = payload.impact_detail ? window.escapeHtml(payload.impact_detail) : (payload.impact ? window.escapeHtml(payload.impact) : 'Performance or stability may be sub-optimal if this recommendation is ignored.');
         const safeEvidence = payload.evidence ? window.escapeHtml(payload.evidence) : 'No evidence captured yet.';
         const safeRemediation = payload.remediation ? window.escapeHtml(payload.remediation) : '';
         const history = Array.isArray(payload.history) ? payload.history : [];
@@ -376,7 +382,7 @@ window.showRuleDrawer = function(payloadOrRuleName, description, fixScript, stat
                 </div>
                 <div style="margin-bottom:1.5rem; padding:1rem; background:#f9fafb; border-radius:8px;">
                     <h4 style="color:#6b7280;font-size:0.7rem;text-transform:uppercase;margin:0 0 0.5rem 0; font-weight:600;">Why This Matters</h4>
-                    <p style="color:#374151;margin:0;line-height:1.6;">${safeDesc}</p>
+                    <p style="color:#374151;margin:0;line-height:1.6;">${safeWhy}</p>
                 </div>
                 <div style="margin-bottom:1.5rem; padding:1rem; background:#f9fafb; border-radius:8px;">
                     <h4 style="color:#6b7280;font-size:0.7rem;text-transform:uppercase;margin:0 0 0.5rem 0; font-weight:600;">Impact</h4>

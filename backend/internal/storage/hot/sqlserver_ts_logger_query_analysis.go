@@ -537,25 +537,26 @@ func (tl *TimescaleLogger) GetSqlServerTopQueriesFromInterval(ctx context.Contex
 		hours = 24
 	}
 
-	orderClause := "SUM(delta_cpu_ms) DESC"
+	orderClause := "SUM(total_cpu_ms) DESC"
 	switch sortBy {
 	case "duration":
-		orderClause = "AVG(avg_duration_ms) DESC"
+		orderClause = "AVG(total_elapsed_ms / NULLIF(total_executions, 0)) DESC"
 	case "reads":
-		orderClause = "AVG(delta_logical_reads) DESC"
+		orderClause = "AVG(total_logical_reads / NULLIF(total_executions, 0)) DESC"
 	case "executions":
-		orderClause = "SUM(delta_executions) DESC"
+		orderClause = "SUM(total_executions) DESC"
 	case "cpu":
-		orderClause = "SUM(delta_cpu_ms) DESC"
+		orderClause = "SUM(total_cpu_ms) DESC"
 	}
 
 	q := fmt.Sprintf(`
-		SELECT query_hash, MAX(query_text), database_name,
-		       SUM(delta_executions), AVG(avg_cpu_ms), AVG(avg_duration_ms),
-		       AVG(delta_logical_reads), SUM(delta_cpu_ms)
-		FROM monitor.sqlserver_query_store_interval
-		WHERE UPPER(server_instance_name) = UPPER($1)
-		  AND bucket_end >= NOW() - ($3 * INTERVAL '1 hour')
+		SELECT query_hash, MAX(statement_text), database_name,
+		       MAX(login_name), MAX(application_name),
+		       SUM(total_executions), AVG(total_cpu_ms / NULLIF(total_executions, 0)), AVG(total_elapsed_ms / NULLIF(total_executions, 0)),
+		       AVG(total_logical_reads / NULLIF(total_executions, 0)), SUM(total_cpu_ms)
+		FROM sqlserver_query_metrics_v2
+		WHERE UPPER(instance_id) = UPPER($1)
+		  AND ts >= NOW() - ($3 * INTERVAL '1 hour')
 		GROUP BY query_hash, database_name
 		ORDER BY %s
 		LIMIT $2`, orderClause)
@@ -570,6 +571,7 @@ func (tl *TimescaleLogger) GetSqlServerTopQueriesFromInterval(ctx context.Contex
 	for rows.Next() {
 		var r SqlServerTopQueryIntervalRow
 		if err := rows.Scan(&r.QueryHash, &r.QueryText, &r.DatabaseName,
+			&r.LoginName, &r.ApplicationName,
 			&r.Executions, &r.AvgCpuMs, &r.AvgDurationMs, &r.AvgReads, &r.TotalCpuMs); err != nil {
 			log.Printf("[TSLogger] GetSqlServerTopQueriesFromInterval scan: %v", err)
 			continue
@@ -581,12 +583,14 @@ func (tl *TimescaleLogger) GetSqlServerTopQueriesFromInterval(ctx context.Contex
 
 // SqlServerTopQueryIntervalRow is the storage-layer DTO for top queries from the interval table.
 type SqlServerTopQueryIntervalRow struct {
-	QueryHash     string
-	QueryText     string
-	DatabaseName  string
-	Executions    int64
-	AvgCpuMs      float64
-	AvgDurationMs float64
-	AvgReads      float64
-	TotalCpuMs    float64
+	QueryHash       string
+	QueryText       string
+	DatabaseName    string
+	LoginName       string
+	ApplicationName string
+	Executions      int64
+	AvgCpuMs        float64
+	AvgDurationMs   float64
+	AvgReads        float64
+	TotalCpuMs      float64
 }

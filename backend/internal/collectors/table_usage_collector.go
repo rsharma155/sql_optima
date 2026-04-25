@@ -29,7 +29,7 @@ type SqlServerTableUsageRow struct {
 // CollectSQLServerTableSizeSnapshot returns table size + row_count. SQL Server doesn't expose seq_scan/idx_scan,
 // so those are stored as zeros (dashboard uses index_usage_stats for seek/scan patterns).
 func CollectSQLServerTableSizeSnapshot(ctx context.Context, dbq Queryer) ([]SqlServerTableUsageRow, error) {
-	q := `
+	q := ` /* SQL_OPTIMA */ 
 		SELECT
 			DB_NAME() AS db_name,
 			s.name AS schema_name,
@@ -72,9 +72,16 @@ func PersistSQLServerTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogg
 		}
 		if prev == nil {
 			// seed state to zeros
-			if err := tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, 0, 0, 0, 0); err != nil {
+			if err := tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, 0, 0, 0, 0, r.TableSizeMB, r.IndexSizeMB, r.RowCount); err != nil {
 				return inserted, fmt.Errorf("seed table usage state: %w", err)
 			}
+			continue
+		}
+
+		// Optimization: Skip insert if sizes and row count haven't changed.
+		if r.TableSizeMB == prev.TableSizeMB && r.IndexSizeMB == prev.IndexSizeMB && r.RowCount == prev.RowCount {
+			_ = tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, 0, 0, 0, 0, r.TableSizeMB, r.IndexSizeMB, r.RowCount)
+			continue
 		}
 
 		// Store a “delta” row with zeros for scan counters; sizes + row_count as snapshot values.
@@ -98,6 +105,7 @@ func PersistSQLServerTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogg
 			continue
 		}
 		inserted++
+		_ = tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, 0, 0, 0, 0, r.TableSizeMB, r.IndexSizeMB, r.RowCount)
 	}
 	return inserted, nil
 }

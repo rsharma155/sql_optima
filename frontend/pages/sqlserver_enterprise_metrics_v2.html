@@ -1,0 +1,144 @@
+<style>
+    /* Local overrides to align with other dashboards and reduce KPI size by 25% */
+    .enterprise-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.75rem;
+    }
+    .enterprise-kpi-card {
+        padding: 0.85rem 1rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        position: relative;
+        overflow: hidden;
+        min-height: 85px;
+    }
+    .enterprise-kpi-card .metric-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: var(--text-secondary);
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        margin-bottom: 0.35rem;
+        letter-spacing: 0.02em;
+    }
+    .enterprise-kpi-card .metric-value {
+        font-size: 1.65rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        line-height: 1.2;
+        margin-bottom: 0.15rem;
+    }
+    .enterprise-kpi-card .sub {
+        font-size: 0.6rem;
+        color: var(--text-muted);
+        opacity: 0.8;
+        line-height: 1.2;
+    }
+    .enterprise-kpi-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 3px;
+        height: 100%;
+        border-radius: 4px 0 0 4px;
+    }
+</style>
+
+<div class="page-view active dashboard-sky-theme">
+    <div class="page-title flex-between dashboard-page-title-compact">
+        <div class="dashboard-title-line">
+            <h1>Enterprise Metrics (V2)</h1>
+            <span class="subtitle">Instance: <span id="emInstanceName">--</span> | Standardized Time-Series Observability</span>
+        </div>
+        <div class="dashboard-page-title-actions" style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
+            <div class="time-picker glass-panel p-2 rounded" style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                <div style="display:flex; align-items:center; gap:0.25rem;">
+                    <label for="emFrom" class="text-muted" style="font-size:0.75rem;">From:</label>
+                    <input type="datetime-local" id="emFrom" class="form-input-sm" style="width:160px; font-size:0.75rem;">
+                </div>
+                <div style="display:flex; align-items:center; gap:0.25rem;">
+                    <label for="emTo" class="text-muted" style="font-size:0.75rem;">To:</label>
+                    <input type="datetime-local" id="emTo" class="form-input-sm" style="width:160px; font-size:0.75rem;">
+                </div>
+                <div class="flex-between" style="gap:0.5rem;">
+                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="emSetRange" data-arg="1" title="Last 1 Hour">1h</button>
+                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="emSetRange" data-arg="6" title="Last 6 Hours">6h</button>
+                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="emSetRange" data-arg="24" title="Last 24 Hours">24h</button>
+                </div>
+                <button class="btn btn-sm btn-outline text-accent" id="emApplyRange"><i class="fa-solid fa-sync"></i> Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 1: Real-time Health (Snapshot Cards) -->
+    <div class="enterprise-kpi-grid mt-2">
+        <div class="enterprise-kpi-card glass-panel status-healthy" id="card-runnable">
+            <div class="metric-header"><span class="metric-title">Runnable Tasks</span></div>
+            <div class="metric-value" id="val-runnable">--</div>
+            <div class="sub">sys.dm_os_schedulers</div>
+        </div>
+        <div class="enterprise-kpi-card glass-panel status-healthy" id="card-pending-grants">
+            <div class="metric-header"><span class="metric-title">Pending Memory Grants</span></div>
+            <div class="metric-value" id="val-pending-grants">--</div>
+            <div class="sub">dm_exec_query_memory_grants</div>
+        </div>
+        <div class="enterprise-kpi-card glass-panel status-healthy" id="card-latch-waits">
+            <div class="metric-header"><span class="metric-title">Latch Waits/sec</span></div>
+            <div class="metric-value" id="val-latch-waits">--</div>
+            <div class="sub">Perf Counter (Delta)</div>
+        </div>
+        <div class="enterprise-kpi-card glass-panel status-healthy" id="card-plan-waste">
+            <div class="metric-header"><span class="metric-title">Plan Cache Waste %</span></div>
+            <div class="metric-value" id="val-plan-waste">--</div>
+            <div class="sub">Single-use plans</div>
+        </div>
+    </div>
+
+    <!-- Row 2: Bottleneck Detection -->
+    <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-hourglass-half text-accent"></i> Wait Stats Trend (Wait Time per Sec)</h3></div>
+            <div class="chart-container" style="height:220px;"><canvas id="chart-wait-stats"></canvas></div>
+        </div>
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-bolt text-accent"></i> Throughput & Compilations</h3></div>
+            <div class="chart-container" style="height:220px;"><canvas id="chart-throughput"></canvas></div>
+        </div>
+    </div>
+
+    <!-- Row 3: Resource Subsystems -->
+    <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-hdd text-accent"></i> File I/O Latency Trend (ms)</h3></div>
+            <div class="chart-container" style="height:220px;"><canvas id="chart-file-io"></canvas></div>
+        </div>
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-layer-group text-accent"></i> Plan Cache Composition</h3></div>
+            <div class="chart-container" style="height:220px;"><canvas id="chart-plan-cache"></canvas></div>
+        </div>
+    </div>
+
+    <!-- Row 4: Memory + TempDB -->
+    <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-memory text-accent"></i> Memory Clerk Growth & Grant Pressure</h3></div>
+            <div class="chart-container" style="height:220px;"><canvas id="chart-memory"></canvas></div>
+        </div>
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-fire text-accent"></i> TempDB Top Consumers</h3></div>
+            <div class="table-responsive" style="height:220px; overflow-y:auto;">
+                <table class="data-table" style="font-size:0.75rem;">
+                    <thead><tr><th>SPID</th><th>Allocated</th><th>User</th><th>Internal</th><th>Query</th></tr></thead>
+                    <tbody id="tbody-tempdb-consumers">
+                        <tr><td colspan="5" class="text-center text-muted">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>

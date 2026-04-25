@@ -13,18 +13,18 @@ import (
 )
 
 type LogShippingHealth struct {
-	PrimaryServer         string
-	PrimaryDatabase       string
-	SecondaryServer       string
-	SecondaryDatabase    string
-	LastBackupDate       sql.NullTime
-	LastBackupFile      string
-	LastRestoreDate    sql.NullTime
-	LastCopiedDate    sql.NullTime
-	RestoreDelayMinutes   int
+	PrimaryServer           string
+	PrimaryDatabase         string
+	SecondaryServer         string
+	SecondaryDatabase       string
+	LastBackupDate          sql.NullTime
+	LastBackupFile          string
+	LastRestoreDate         sql.NullTime
+	LastCopiedDate          sql.NullTime
+	RestoreDelayMinutes     int
 	RestoreThresholdMinutes int
-	Status    int
-	IsPrimary bool
+	Status                  int
+	IsPrimary               bool
 }
 
 func (c *SqlServerRepository) FetchLogShippingHealth(instanceName string) ([]LogShippingHealth, error) {

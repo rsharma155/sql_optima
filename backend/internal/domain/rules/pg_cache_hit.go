@@ -7,20 +7,20 @@ func EvaluateCacheHit(ctx evaluation.Context) evaluation.Result {
 
 	if ratio < 0.90 {
 		return evaluation.Result{
-			RuleID:        "pg_cache_hit",
-			Severity:      "HIGH",
-			Confidence:    0.9,
-			Message:       "Low cache hit ratio → disk I/O pressure",
+			RuleID:         "pg_cache_hit",
+			Severity:       "HIGH",
+			Confidence:     0.9,
+			Message:        "Low cache hit ratio → disk I/O pressure",
 			Recommendation: "Increase shared_buffers or optimize queries",
 		}
 	}
 
 	if ratio < 0.95 {
 		return evaluation.Result{
-			RuleID:      "pg_cache_hit",
-			Severity:    "MEDIUM",
-			Confidence:  0.7,
-			Message:     "Cache hit ratio could be improved",
+			RuleID:     "pg_cache_hit",
+			Severity:   "MEDIUM",
+			Confidence: 0.7,
+			Message:    "Cache hit ratio could be improved",
 		}
 	}
 

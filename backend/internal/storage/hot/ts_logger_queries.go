@@ -1,10 +1,12 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Query statistics logger for TimescaleDB with delta computation.
+// Purpose: TimescaleDB storage-layer methods for SQL Server query performance metrics.
+//          Handles aggregation and retrieval from the sqlserver_query_metrics_v2 hypertable.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
 // SPDX-License-Identifier: MIT
+
 package hot
 
 import (
@@ -18,84 +20,21 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (tl *TimescaleLogger) LogSQLServerTopQueries(ctx context.Context, instanceName string, queries []map[string]interface{}) error {
-	if len(queries) == 0 {
-		return nil
-	}
-
-	tl.mu.Lock()
-	defer tl.mu.Unlock()
-
-	now := time.Now().UTC()
-
-	// Rows from FetchTopCPUQueries are already baseline-or-delta shaped; persist them using the
-	// actual Timescale schema (cpu_time_ms, exec_time_ms, logical_reads, execution_count, …).
-	const insertQuery = `INSERT INTO sqlserver_top_queries (
-			capture_timestamp, server_instance_name, login_name, program_name, database_name, query_text,
-			cpu_time_ms, exec_time_ms, logical_reads, execution_count, query_hash
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
-
-	for _, q := range queries {
-		queryHash := strings.TrimSpace(getStr(q, "Query_Hash"))
-		if queryHash == "" {
-			queryHash = strings.TrimSpace(fmt.Sprintf("%v", q["Query_Hash"]))
-		}
-		if queryHash == "" {
-			continue
-		}
-
-		execCount := getInt64(q, "Executions")
-		if execCount < 0 {
-			execCount = 0
-		}
-		cpuMs := getFloat64(q, "Total_CPU_ms")
-		logicalReads := getInt64(q, "Total_Logical_Reads")
-		elapsedMs := getFloat64(q, "Total_Elapsed_ms")
-
-		login := getStr(q, "Login_Name")
-		if login == "" {
-			login = getStr(q, "login_name")
-		}
-		prog := getStr(q, "Client_App")
-		if prog == "" {
-			prog = getStr(q, "program_name")
-		}
-		dbName := getStr(q, "Database_Name")
-		if dbName == "" {
-			dbName = getStr(q, "database_name")
-		}
-		qtext := getStr(q, "Query_Text")
-		if qtext == "" {
-			qtext = getStr(q, "query_text")
-		}
-
-		cpuMillis := int64(cpuMs + 0.5)
-		execMillis := int64(elapsedMs + 0.5)
-
-		if _, err := tl.pool.Exec(ctx, insertQuery,
-			now, instanceName, login, prog, dbName, qtext,
-			cpuMillis, execMillis, logicalReads, execCount, queryHash,
-		); err != nil {
-			log.Printf("[TSLogger] Failed to log top query: %v", err)
-		}
-	}
-
-	return nil
-}
-
 func (tl *TimescaleLogger) GetSQLServerTopQueries(ctx context.Context, instanceName string, limit int, database string) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
 	query := `
-		SELECT capture_timestamp, query_hash, query_text, execution_count,
-		       cpu_time_ms, exec_time_ms, logical_reads,
-		       database_name, login_name, program_name
-		FROM sqlserver_top_queries
-		WHERE server_instance_name = $1
+		SELECT MAX(ts) as capture_timestamp, query_hash, MAX(statement_text) as query_text, SUM(total_executions) as execution_count,
+		       SUM(total_cpu_ms) as cpu_time_ms, SUM(total_elapsed_ms) as exec_time_ms, SUM(total_logical_reads) as logical_reads,
+		       database_name, MAX(login_name) as login_name, MAX(application_name) as program_name
+		FROM sqlserver_query_metrics_v2
+		WHERE instance_id = $1
+		  AND ts >= NOW() - INTERVAL '1 hour'
 		  AND ($3 = '' OR database_name = $3)
-		ORDER BY capture_timestamp DESC, cpu_time_ms DESC
+		GROUP BY query_hash, database_name
+		ORDER BY SUM(total_cpu_ms) DESC
 		LIMIT $2
 	`
 
@@ -108,13 +47,14 @@ func (tl *TimescaleLogger) GetSQLServerTopQueries(ctx context.Context, instanceN
 	var results []map[string]interface{}
 	for rows.Next() {
 		var ts time.Time
-		var queryHash string
+		var queryHash int64
 		var queryText sql.NullString
 		var dbName, loginName, programName sql.NullString
 		var execCount, cpuTimeMs, execTimeMs, logicalReads int64
 
 		if err := rows.Scan(&ts, &queryHash, &queryText, &execCount, &cpuTimeMs, &execTimeMs, &logicalReads,
 			&dbName, &loginName, &programName); err != nil {
+			log.Printf("[TSLogger] GetSQLServerTopQueries scan: %v", err)
 			continue
 		}
 
@@ -127,7 +67,7 @@ func (tl *TimescaleLogger) GetSQLServerTopQueries(ctx context.Context, instanceN
 		results = append(results, map[string]interface{}{
 			"capture_timestamp":   ts,
 			"timestamp":           ts,
-			"query_hash":          queryHash,
+			"query_hash":          fmt.Sprintf("0x%X", queryHash),
 			"query_text":          queryText.String,
 			"execution_count":     execCount,
 			"avg_cpu_ms":          avgCpu,
@@ -167,32 +107,30 @@ func (tl *TimescaleLogger) GetSQLServerTopQueriesWithRange(ctx context.Context, 
 		limit = 500
 	}
 
-	// Roll up entire window per query_hash (no time_bucket — works on plain PostgreSQL).
 	query := `
 		SELECT query_hash,
-		       (array_agg(query_text ORDER BY capture_timestamp DESC)
-		          FILTER (WHERE query_text IS NOT NULL AND trim(query_text) <> ''))[1] AS query_text,
-		       SUM(execution_count)::bigint AS total_executions,
-		       SUM(cpu_time_ms)::bigint AS sum_cpu_ms,
-		       CASE WHEN SUM(execution_count) > 0
-		            THEN SUM(cpu_time_ms)::float8 / NULLIF(SUM(execution_count)::float8, 0)
+		       MAX(statement_text) AS query_text,
+		       SUM(total_executions)::bigint AS total_executions,
+		       SUM(total_cpu_ms)::bigint AS sum_cpu_ms,
+		       CASE WHEN SUM(total_executions) > 0
+		            THEN SUM(total_cpu_ms)::float8 / NULLIF(SUM(total_executions)::float8, 0)
 		            ELSE 0 END AS avg_cpu_ms,
-		       SUM(logical_reads)::bigint AS sum_logical_reads,
-		       CASE WHEN SUM(execution_count) > 0
-		            THEN SUM(logical_reads)::float8 / NULLIF(SUM(execution_count)::float8, 0)
+		       SUM(total_logical_reads)::bigint AS sum_logical_reads,
+		       CASE WHEN SUM(total_executions) > 0
+		            THEN SUM(total_logical_reads)::float8 / NULLIF(SUM(total_executions)::float8, 0)
 		            ELSE 0 END AS avg_logical_reads,
-		       SUM(COALESCE(exec_time_ms, 0))::bigint AS sum_exec_ms,
-		       MAX(database_name) AS database_name,
+		       SUM(total_elapsed_ms)::bigint AS sum_exec_ms,
+		       database_name,
 		       MAX(login_name) AS login_name,
-		       MAX(program_name) AS program_name,
-		       MAX(capture_timestamp) AS last_capture
-		FROM sqlserver_top_queries
-		WHERE server_instance_name = $1
-		  AND capture_timestamp >= $2
-		  AND capture_timestamp <= $3
+		       MAX(application_name) AS program_name,
+		       MAX(ts) AS last_capture
+		FROM sqlserver_query_metrics_v2
+		WHERE instance_id = $1
+		  AND ts >= $2
+		  AND ts <= $3
 		  AND ($5 = '' OR database_name = $5)
-		GROUP BY query_hash
-		ORDER BY SUM(cpu_time_ms) DESC
+		GROUP BY query_hash, database_name
+		ORDER BY SUM(total_cpu_ms) DESC
 		LIMIT $4
 	`
 
@@ -204,7 +142,7 @@ func (tl *TimescaleLogger) GetSQLServerTopQueriesWithRange(ctx context.Context, 
 
 	var results []map[string]interface{}
 	for rows.Next() {
-		var queryHash string
+		var queryHash int64
 		var queryText sql.NullString
 		var totalExecutions, sumCPU, sumReads, sumExec int64
 		var avgCpuMs, avgLogicalReads float64
@@ -213,6 +151,7 @@ func (tl *TimescaleLogger) GetSQLServerTopQueriesWithRange(ctx context.Context, 
 
 		if err := rows.Scan(&queryHash, &queryText, &totalExecutions, &sumCPU, &avgCpuMs, &sumReads, &avgLogicalReads, &sumExec,
 			&dbName, &loginName, &programName, &lastCap); err != nil {
+			log.Printf("[TSLogger] GetSQLServerTopQueriesWithRange scan: %v", err)
 			continue
 		}
 
@@ -223,7 +162,7 @@ func (tl *TimescaleLogger) GetSQLServerTopQueriesWithRange(ctx context.Context, 
 		results = append(results, map[string]interface{}{
 			"capture_timestamp":   lastCap,
 			"timestamp":           lastCap,
-			"query_hash":          queryHash,
+			"query_hash":          fmt.Sprintf("0x%X", queryHash),
 			"query_text":          queryText.String,
 			"execution_count":     totalExecutions,
 			"Executions":          totalExecutions,
@@ -255,17 +194,12 @@ func (tl *TimescaleLogger) LogSQLServerLongRunningQueries(ctx context.Context, i
 	queued := 0
 
 	for _, q := range queries {
-		// Delta-style de-dupe similar to Top CPU queries:
-		// Prefer stable query_hash so repeated samples of same query/SP group together.
-		// Fall back to session/request if hash is missing.
 		key := q.QueryHash
 		if key == "" {
 			key = fmt.Sprintf("%d-%d", q.SessionID, q.RequestID)
 		}
 
 		prevElapsed, exists := tl.prevLongRunningHash[key]
-		// Only log when elapsed meaningfully advances to avoid repeated inserts every tick.
-		// (SQL elapsed time is in ms)
 		if exists && int64(q.TotalElapsedTimeMs)-prevElapsed < 5000 {
 			continue
 		}
@@ -471,7 +405,7 @@ func (tl *TimescaleLogger) ProcessQueryStoreDelta(ctx context.Context, instanceN
 		INSERT INTO monitor.sqlserver_query_store_interval (
 			bucket_start, bucket_end, server_instance_name, database_name, query_hash, query_text,
 			plan_id, runtime_stats_interval_id, delta_executions, delta_cpu_ms,
-			delta_duration_ms, delta_logical_reads, avg_cpu_ms, avg_duration_ms, is_reset
+			delta_duration_ms, delta_logical_reads, avg_cpu_ms, avg_duration_ms, avg_reads, is_reset
 		)
 		SELECT
 			t.prev_time,
@@ -488,6 +422,7 @@ func (tl *TimescaleLogger) ProcessQueryStoreDelta(ctx context.Context, instanceN
 			t.reads_delta,
 			(t.cpu_delta / NULLIF(t.exec_delta, 0)),
 			(t.dur_delta / NULLIF(t.exec_delta, 0)),
+			(t.reads_delta / NULLIF(t.exec_delta, 0)),
 			t.reset
 		FROM (
 			SELECT
@@ -540,13 +475,15 @@ func (tl *TimescaleLogger) GetQueryStoreStats(ctx context.Context, instanceName 
 	}
 
 	query := fmt.Sprintf(`
-		SELECT bucket_end, server_instance_name, database_name,
-		       query_hash, query_text, delta_executions,
-		       avg_duration_ms, avg_cpu_ms, delta_logical_reads, delta_cpu_ms
-		FROM monitor.sqlserver_query_store_interval
-		WHERE UPPER(server_instance_name) = UPPER($1)
-		  AND bucket_end >= NOW() - INTERVAL '%s'
-		ORDER BY bucket_end DESC, delta_cpu_ms DESC
+		SELECT ts as bucket_end, instance_id as server_instance_name, database_name,
+		       query_hash, statement_text as query_text, total_executions as delta_executions,
+		       (total_elapsed_ms / NULLIF(total_executions, 0)) as avg_duration_ms, 
+		       (total_cpu_ms / NULLIF(total_executions, 0)) as avg_cpu_ms, 
+		       total_logical_reads as delta_logical_reads, total_cpu_ms as delta_cpu_ms
+		FROM sqlserver_query_metrics_v2
+		WHERE UPPER(instance_id) = UPPER($1)
+		  AND ts >= NOW() - INTERVAL '%s'
+		ORDER BY ts DESC, total_cpu_ms DESC
 		LIMIT $2
 	`, interval)
 
@@ -593,15 +530,15 @@ func (tl *TimescaleLogger) GetQueryStoreBottlenecks(ctx context.Context, instanc
 	// Querying from the true delta interval table
 	query := fmt.Sprintf(`
 		WITH recent AS (
-			SELECT query_hash, MAX(query_text) as query_text, database_name,
-			       SUM(delta_executions) as total_exec,
-			       AVG(avg_cpu_ms) as avg_cpu,
-			       SUM(delta_cpu_ms) as total_cpu,
-			       AVG(avg_duration_ms) as avg_dur,
-			       AVG(delta_logical_reads) as avg_reads
-			FROM monitor.sqlserver_query_store_interval
-			WHERE server_instance_name = $1
-			  AND bucket_end >= NOW() - INTERVAL '%s'
+			SELECT query_hash, MAX(statement_text) as query_text, database_name,
+			       SUM(total_executions) as total_exec,
+			       AVG(total_cpu_ms / NULLIF(total_executions, 0)) as avg_cpu,
+			       SUM(total_cpu_ms) as total_cpu,
+			       AVG(total_elapsed_ms / NULLIF(total_executions, 0)) as avg_dur,
+			       AVG(total_logical_reads / NULLIF(total_executions, 0)) as avg_reads
+			FROM sqlserver_query_metrics_v2
+			WHERE instance_id = $1
+			  AND ts >= NOW() - INTERVAL '%s'
 			  AND ($2::text IS NULL OR $2 = '' OR database_name = $2)
 			GROUP BY query_hash, database_name
 		)
@@ -649,20 +586,6 @@ func (tl *TimescaleLogger) GetQueryStoreBottlenecks(ctx context.Context, instanc
 		})
 	}
 	return results, rows.Err()
-}
-
-func getInt64(m map[string]interface{}, key string) int64 {
-	if v, ok := m[key]; ok {
-		switch val := v.(type) {
-		case int64:
-			return val
-		case int:
-			return int64(val)
-		case float64:
-			return int64(val)
-		}
-	}
-	return 0
 }
 
 // LogQueryStatsStaging inserts DMV snapshot rows for the change-only snapshot + delta pipeline.

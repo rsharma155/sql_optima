@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	pglocks "github.com/rsharma155/sql_optima/internal/collector/pg_locks_blocking"
+	pglocks "github.com/rsharma155/sql_optima/internal/collectors/pg_locks_blocking"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
@@ -46,10 +46,13 @@ func (s *MetricsService) StartPgLocksBlockingCollector(ctx context.Context) {
 
 func (s *MetricsService) runPgLocksBlockingForInstance(ctx context.Context, instanceName string) {
 	state := &pgBlockingAgentState{}
-	ticker := time.NewTicker(15 * time.Second)
+
+	// Fetch configurable interval
+	baseInterval := s.FetchInterval(ctx, "Postgres Blocking Locks", 15*time.Second)
+	ticker := time.NewTicker(baseInterval)
 	defer ticker.Stop()
 
-	log.Printf("[PG LocksBlocking] collector started for %s (15s base)", instanceName)
+	log.Printf("[PG LocksBlocking] collector started for %s (%v base)", instanceName, baseInterval)
 
 	for {
 		select {
@@ -62,6 +65,15 @@ func (s *MetricsService) runPgLocksBlockingForInstance(ctx context.Context, inst
 				continue
 			}
 			now := time.Now().UTC()
+
+			// Refresh interval from DB in case it changed
+			if !state.IsWartime {
+				newInterval := s.FetchInterval(ctx, "Postgres Blocking Locks", 15*time.Second)
+				if newInterval != baseInterval {
+					baseInterval = newInterval
+					ticker.Reset(baseInterval)
+				}
+			}
 
 			// 1) Snapshots
 			if err := s.collectPgSessionsSnapshot(ctx, db, instanceName, now); err != nil {
@@ -108,7 +120,7 @@ func (s *MetricsService) runPgLocksBlockingForInstance(ctx context.Context, inst
 
 			// no victims
 			if state.IsWartime {
-				ticker.Reset(15 * time.Second)
+				ticker.Reset(baseInterval)
 				state.IsWartime = false
 				if state.ActiveIncidentID != 0 {
 					if err := s.tsLogger.ClosePgBlockingIncident(ctx, state.ActiveIncidentID, now); err != nil {

@@ -548,7 +548,7 @@ async function showSihTableDrilldown(instance, db, schema, table) {
                 window.sihDrillCharts.growth = new Chart(document.getElementById('drillGrowthChart').getContext('2d'), { 
                     type: 'line', 
                     data: { labels: data.growth_series.map(p => new Date(p.time).toLocaleDateString()), datasets: [{ label: 'Total Space (MB)', data: data.growth_series.map(p => (Number(p.table_size_mb)||0) + (Number(p.index_size_mb)||0)), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#3b82f6' }] }, 
-                    options: { ...chartBase, plugins: { legend: { display: false } }, scales: { y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
+                    options: { ...chartBase, plugins: { legend: { display: false } }, scales: { y: { title: { display: true, text: 'Space (MB)', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { title: { display: true, text: 'Date', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
                 }); 
             }
 
@@ -576,7 +576,7 @@ async function showSihTableDrilldown(instance, db, schema, table) {
                             { label: 'Write Ops (Updates)', data: trendLabels.map(l => updatesMap[l] || 0), borderColor: '#f59e0b', tension: 0.4, fill: false }
                         ]
                     },
-                    options: { ...chartBase, plugins: { legend: { display: true, position: 'top', labels: { color: '#ccc', boxWidth: 12, font: { size: 10 } } } }, scales: { y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)', maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } } } }
+                    options: { ...chartBase, plugins: { legend: { display: true, position: 'top', labels: { color: '#ccc', boxWidth: 12, font: { size: 10 } } } }, scales: { y: { title: { display: true, text: 'Operations Count', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { title: { display: true, text: 'Time', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)', maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } } } }
                 });
             }
 
@@ -591,15 +591,16 @@ async function showSihTableDrilldown(instance, db, schema, table) {
                             { label: 'Total Tuples Modified', data: data.index_usage.map(p => p.updates), borderColor: '#f59e0b', tension: 0.4 }
                         ] 
                     }, 
-                    options: { ...chartBase, plugins: { legend: { display: true, labels: { color: '#ccc' } } }, scales: { y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
+                    options: { ...chartBase, plugins: { legend: { display: true, labels: { color: '#ccc' } } }, scales: { y: { title: { display: true, text: 'Tuples Count', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { title: { display: true, text: 'Time', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
                 });
             } else if (data.fragmentation?.length) { 
                 window.sihDrillCharts.frag = new Chart(document.getElementById('drillFragChart').getContext('2d'), { 
                     type: 'line', 
                     data: { labels: data.fragmentation.map(p => new Date(p.snapshot_time).toLocaleDateString()), datasets: [{ label: 'Avg Fragmentation %', data: data.fragmentation.map(p => p.avg_fragmentation_pct), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#ef4444' }] }, 
-                    options: { ...chartBase, plugins: { legend: { display: false } }, scales: { y: { min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)', callback: v => v + '%' } }, x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
+                    options: { ...chartBase, plugins: { legend: { display: false } }, scales: { y: { title: { display: true, text: 'Fragmentation %', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)', callback: v => v + '%' } }, x: { title: { display: true, text: 'Date', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
                 }); 
             }
+
         }, 100);
     } catch (e) { document.getElementById('sihDrillContent').innerHTML = `<div class="alert alert-danger">Fetch failed: ${e.message}</div>`; }
 }

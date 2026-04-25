@@ -17,15 +17,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rsharma155/sql_optima/internal/collector/pghostcpu"
 	"github.com/rsharma155/sql_optima/internal/collectors"
+	"github.com/rsharma155/sql_optima/internal/collectors/pghostcpu"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
-)
-
-const (
-	HistoricalInterval = 60 * time.Second
 )
 
 func (s *MetricsService) sihDue(m map[string]time.Time, instanceName string, now time.Time, interval time.Duration) bool {
@@ -39,7 +35,7 @@ func (s *MetricsService) sihDue(m map[string]time.Time, instanceName string, now
 	return false
 }
 
-func (s *MetricsService) getInterval(ctx context.Context, name string, defaultValue time.Duration) time.Duration {
+func (s *MetricsService) FetchInterval(ctx context.Context, name string, defaultVal time.Duration) time.Duration {
 	if pool := s.GetTimescaleDBPool(); pool != nil {
 		repo := repository.NewCollectorConfigRepository(pool)
 		cfg, err := repo.GetByName(ctx, name)
@@ -47,27 +43,40 @@ func (s *MetricsService) getInterval(ctx context.Context, name string, defaultVa
 			return time.Duration(cfg.FrequencySeconds) * time.Second
 		}
 	}
-	return defaultValue
+	return defaultVal
 }
 
 func (s *MetricsService) StartBackgroundCollector(ctx context.Context) {
-	histInterval := s.getInterval(ctx, "SQL Server CPU and Memory", HistoricalInterval)
+	msHistInterval := s.FetchInterval(ctx, "SQL Server CPU and Memory", 60*time.Second)
+	pgHistInterval := s.FetchInterval(ctx, "Postgres CPU and Memory", 60*time.Second)
+
 	log.Printf("[Collector] Split-Speed Background Daemon starting...")
-	log.Printf("[Collector]   - Historical Storage ticker: every %v", histInterval)
-	log.Printf("[Collector]   - Long Running Queries: every %v (within historical)", histInterval)
-	log.Printf("[Collector]   - Top CPU Queries: every %v (within historical)", histInterval)
+	log.Printf("[Collector]   - SQLServer Historical ticker: every %v", msHistInterval)
+	log.Printf("[Collector]   - Postgres Historical ticker: every %v", pgHistInterval)
 	log.Printf("[Collector]   - Live Diagnostics ticker: DISABLED (RTD is on-demand only)")
-	log.Printf("[Collector]   - PG Locks/Blocking incidents: adaptive 15s/5s")
+	log.Printf("[Collector]   - PG Locks/Blocking incidents: adaptive 15s/5s (configurable)")
 
 	s.dashboardCache = make(map[string]models.DashboardMetrics)
 	s.pgDashboardCache = make(map[string]models.PgCoreDashboardCache)
 
-	historyTicker := time.NewTicker(histInterval)
-	defer historyTicker.Stop()
+	// We use a dynamic base ticker for the loop, default 15s
+	tickerInterval := s.FetchInterval(ctx, "Base Collector Ticker", 15*time.Second)
+	loopTicker := time.NewTicker(tickerInterval)
+	defer loopTicker.Stop()
 
-	// Run one live scrape on startup only (warm cache), then rely on on-demand RTD endpoints.
+	msLiveInterval := s.FetchInterval(ctx, "SQL Server Active Queries", 15*time.Second)
+	pgLiveInterval := s.FetchInterval(ctx, "Postgres Active Queries", 60*time.Second)
+
+	var lastMsHist time.Time
+	var lastMsLive time.Time
+	var lastPgLive time.Time
+
+	// Run one live scrape on startup only (warm cache)
 	s.runLiveDiagnosticsWithContext(ctx)
-	// Start stateful incident monitoring in the background (if Timescale schema is ready).
+	lastMsLive = time.Now()
+	lastPgLive = time.Now()
+
+	// Start stateful incident monitoring in the background
 	go s.StartPgLocksBlockingCollector(ctx)
 
 	for {
@@ -76,9 +85,38 @@ func (s *MetricsService) StartBackgroundCollector(ctx context.Context) {
 			log.Printf("[Collector] Background daemon shutting down")
 			return
 
-		case <-historyTicker.C:
-			s.runHistoricalStorageWithContext(ctx)
+		case <-loopTicker.C:
+			now := time.Now()
 
+			// Check SQL Server Historical
+			if now.Sub(lastMsHist) >= msHistInterval {
+				s.runHistoricalStorageWithContext(ctx) // Note: this currently runs both MS and PG
+				lastMsHist = now
+			}
+
+			// Check SQL Server Live Diagnostics
+			if now.Sub(lastMsLive) >= msLiveInterval {
+				s.runLiveDiagnosticsWithContext(ctx)
+				lastMsLive = now
+			}
+
+			// Check Postgres Live Diagnostics
+			if now.Sub(lastPgLive) >= pgLiveInterval {
+				s.runLiveDiagnosticsWithContext(ctx)
+				lastPgLive = now
+			}
+
+			// Refresh all intervals for next iteration
+			msHistInterval = s.FetchInterval(ctx, "SQL Server CPU and Memory", 60*time.Second)
+			msLiveInterval = s.FetchInterval(ctx, "SQL Server Active Queries", 15*time.Second)
+			pgLiveInterval = s.FetchInterval(ctx, "Postgres Active Queries", 60*time.Second)
+
+			// Refresh base ticker if it changed
+			newTickerInterval := s.FetchInterval(ctx, "Base Collector Ticker", 15*time.Second)
+			if newTickerInterval != tickerInterval {
+				tickerInterval = newTickerInterval
+				loopTicker.Reset(tickerInterval)
+			}
 		}
 	}
 }
@@ -167,6 +205,26 @@ func (s *MetricsService) runLiveDiagnosticsForInstance(ctx context.Context, inst
 
 		currentMs := s.MsRepo.FetchLiveTelemetry(instanceName, prevMsTick)
 		currentMs.Timestamp = time.Now().Format("15:04:05")
+
+		// Populate Top Queries from TimescaleDB (sqlserver_query_metrics_v2) instead of direct DMV
+		if s.tsLogger != nil {
+			top, err := s.tsLogger.GetSqlServerTopQueriesFromInterval(ctx, instanceName, "cpu", 20, 1)
+			if err == nil {
+				for _, r := range top {
+					currentMs.TopQueries = append(currentMs.TopQueries, models.QueryStat{
+						LoginName:      r.LoginName,
+						ProgramName:    r.ApplicationName,
+						DatabaseName:   r.DatabaseName,
+						QueryText:      r.QueryText,
+						WaitType:       "HISTORICAL",
+						CPUTimeMs:      r.AvgCpuMs,
+						ExecTimeMs:     r.AvgDurationMs,
+						LogicalReads:   int64(r.AvgReads),
+						ExecutionCount: r.Executions,
+					})
+				}
+			}
+		}
 
 		s.cacheMutex.Lock()
 		s.dashboardCache[instanceName] = currentMs
@@ -381,51 +439,24 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 		log.Printf("[Collector] WARNING: LogSQLServerDiskHistory failed: %v", err)
 	}
 
-	topQueries, err := s.MsRepo.FetchTopCPUQueries(instanceName, 20, "")
-	if err != nil {
-		log.Printf("[Collector] WARNING: FetchTopCPUQueries failed: %v", err)
-	} else {
-		log.Printf("[Collector] FetchTopCPUQueries returned %d queries for %s", len(topQueries), instanceName)
-		if len(topQueries) > 0 {
-			log.Printf("[Collector] Sample query data: %+v", topQueries[0])
-			for i, q := range topQueries {
-				log.Printf("[Collector] Query[%d]: hash=%v, Executions=%v, Total_CPU_ms=%v, Total_Logical_Reads=%v",
-					i, q["Query_Hash"], q["Executions"], q["Total_CPU_ms"], q["Total_Logical_Reads"])
-			}
-		}
-		if err := s.tsLogger.LogSQLServerTopQueries(ctx, instanceName, topQueries); err != nil {
-			log.Printf("[Collector] WARNING: LogSQLServerTopQueries failed: %v", err)
-		} else {
-			log.Printf("[Collector] Successfully logged %d top queries for %s", len(topQueries), instanceName)
-		}
-	}
-
-	db, ok := s.MsRepo.GetConn(instanceName)
-	if ok && db != nil {
-		statsRows, err := s.MsRepo.CollectTopQueries(db, 200)
-		if err != nil {
-			log.Printf("[Collector] WARNING: CollectTopQueries (query stats pipeline) failed for %s: %v", instanceName, err)
-		} else if len(statsRows) > 0 {
-			if err := s.tsLogger.LogQueryStatsStaging(ctx, instanceName, statsRows); err != nil {
-				log.Printf("[Collector] WARNING: LogQueryStatsStaging failed: %v", err)
-			} else if err := s.tsLogger.ProcessQueryStatsSnapshot(ctx, instanceName); err != nil {
-				log.Printf("[Collector] WARNING: ProcessQueryStatsSnapshot failed: %v", err)
-			} else if err := s.tsLogger.ProcessQueryStatsDelta(ctx, instanceName); err != nil {
-				log.Printf("[Collector] WARNING: ProcessQueryStatsDelta failed: %v", err)
-			} else {
-				log.Printf("[Collector] Query stats pipeline OK for %s (%d staging rows → snapshot + delta)", instanceName, len(statsRows))
-			}
-		}
-	}
-
 	// Storage & Index Health (delta stats)
+	db, ok := s.MsRepo.GetConn(instanceName)
 	if ok && db != nil {
 		capture := time.Now().UTC()
 		now := capture
-		due15mIndex := s.sihDue(s.sihLastIndex15m, instanceName, now, 15*time.Minute)
-		due15mTable := s.sihDue(s.sihLastTable15m, instanceName, now, 15*time.Minute)
-		due6hGrowth := s.sihDue(s.sihLastGrowth6h, instanceName, now, 6*time.Hour)
-		dueDailyDefs := s.sihDue(s.sihLastDefsDaily, instanceName, now, 24*time.Hour)
+
+		idxInterval := s.FetchInterval(ctx, "SQL Server Index Usage", 15*time.Minute)
+		tblInterval := s.FetchInterval(ctx, "SQL Server Table Usage", 15*time.Minute)
+		growthInterval := s.FetchInterval(ctx, "SQL Server Storage", 6*time.Hour)     // Use 'SQL Server Storage' for growth
+		defInterval := s.FetchInterval(ctx, "SQL Server Configuration", 24*time.Hour) // Use 'SQL Server Configuration' for definitions
+
+		s.sihMu.Lock()
+		lastDefTime := s.sihLastDefsDaily[instanceName]
+		s.sihMu.Unlock()
+		due15mIndex := s.sihDue(s.sihLastIndex15m, instanceName, now, idxInterval)
+		due15mTable := s.sihDue(s.sihLastTable15m, instanceName, now, tblInterval)
+		due6hGrowth := s.sihDue(s.sihLastGrowth6h, instanceName, now, growthInterval)
+		dueDailyDefs := s.sihDue(s.sihLastDefsDaily, instanceName, now, defInterval)
 
 		// For each user DB configured, switch context and collect.
 		// We intentionally scope to configured DB list to avoid accidental access to system DBs.
@@ -502,7 +533,7 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 			// Index definitions snapshot (daily cadence).
 			if dueDailyDefs {
 				dayBucket := time.Date(capture.Year(), capture.Month(), capture.Day(), 0, 0, 0, 0, time.UTC)
-				defRows, err := collectors.CollectSQLServerIndexDefinitions(ctx, conn)
+				defRows, err := collectors.CollectSQLServerIndexDefinitions(ctx, conn, lastDefTime)
 				if err == nil && len(defRows) > 0 {
 					_, _ = collectors.PersistSQLServerIndexDefinitions(ctx, s.tsLogger, instanceName, defRows, dayBucket)
 				}

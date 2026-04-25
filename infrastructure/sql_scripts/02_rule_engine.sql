@@ -105,6 +105,38 @@ SELECT create_hypertable(
     if_not_exists => TRUE
 );
 
+-- 1.6: SQL Server Ignore Rules (NEW)
+CREATE TABLE IF NOT EXISTS ruleengine.sqlserver_ignore_rules(
+ rule_type text,
+ rule_value text,
+ PRIMARY KEY(rule_type,rule_value)
+);
+
+INSERT INTO ruleengine.sqlserver_ignore_rules VALUES
+('database','master'),
+('database','model'),
+('database','msdb'),
+('database','tempdb'),
+('program','SQLAgent%'),
+('program','MonitoringCollector%'),
+('login','NT AUTHORITY\SYSTEM'),
+('login','sa')
+ON CONFLICT DO NOTHING;
+
+-- 1.7: PostgreSQL Ignore Rules (NEW)
+CREATE TABLE IF NOT EXISTS ruleengine.pg_ignore_rules(
+ rule_type text,
+ rule_value text,
+ PRIMARY KEY(rule_type,rule_value)
+);
+
+INSERT INTO ruleengine.pg_ignore_rules VALUES
+('database','postgres'),
+('database','template0'),
+('database','template1'),
+('application','monitoring_collector')
+ON CONFLICT DO NOTHING;
+
 -- Add target_db_type column if not exists
 DO $$ 
 BEGIN
@@ -304,7 +336,7 @@ INSERT INTO ruleengine.rules (rule_id, rule_name, category, applies_to, severity
 
 ('PG_DEAD_TUPLES_001','Dead Tuple Ratio','Maintenance','Database','Critical','Main','High dead tuples indicate autovacuum issues.','SELECT n_dead_tup, n_live_tup, CASE WHEN n_live_tup > 0 THEN (n_dead_tup::float / n_live_tup) * 100 ELSE 0 END AS dead_pct FROM pg_stat_user_tables WHERE n_dead_tup > 1000 ORDER BY n_dead_tup DESC LIMIT 1;','SELECT n_dead_tup, n_live_tup, CASE WHEN n_live_tup > 0 THEN (n_dead_tup::float / n_live_tup) * 100 ELSE 0 END AS dead_pct FROM pg_stat_user_tables WHERE n_dead_tup > 1000 ORDER BY n_dead_tup DESC LIMIT 1;','dead_pct > 20 ? "Critical" : (dead_pct > 10 ? "Warning" : "OK")','10','< 10%','VACUUM ANALYZE;',NULL,'threshold','{"max":10}',9,'postgres',TRUE),
 
-('PG_REPL_LAG_001','Replication Lag','High Availability','Instance','Critical','Main','Standby falling behind risks data loss.','SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0) AS lag_bytes FROM pg_stat_replication LIMIT 1;','SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0) AS lag_bytes FROM pg_stat_replication LIMIT 1;','lag_bytes > 52428800 ? "Critical" : (lag_bytes > 10485760 ? "Warning" : "OK")','0','0 bytes','Check network/IO on standby',NULL,'threshold','{"max":0}',10,'postgres',TRUE),
+('PG_REPL_LAG_001','Replication Lag','High Availability','Instance','Critical','Main','Standby falling behind risks data loss.','SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0)::BIGINT AS lag_bytes FROM pg_stat_replication LIMIT 1;','SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0)::BIGINT AS lag_bytes FROM pg_stat_replication LIMIT 1;','lag_bytes > 52428800 ? "Critical" : (lag_bytes > 10485760 ? "Warning" : "OK")','0','0 bytes','Check network/IO on standby',NULL,'threshold','{"max":0}',10,'postgres',TRUE),
 
 ('PG_STAT_STMTS_001','pg_stat_statements','Monitoring','Instance','Critical','BestPractice','Extension needed for query analysis.','SELECT COUNT(*) AS cnt FROM pg_extension WHERE extname = ''pg_stat_statements'';','SELECT COUNT(*) AS cnt FROM pg_extension WHERE extname = ''pg_stat_statements'';','cnt > 0 ? "OK" : "Critical"','1','Installed','CREATE EXTENSION pg_stat_statements;',NULL,'exact','{"value":1}',11,'postgres',TRUE),
 
@@ -354,7 +386,7 @@ INSERT INTO ruleengine.rules (rule_id, rule_name, category, applies_to, severity
 
 ('PG_IDLE_TX_018','Idle in Transaction','Connection','Instance','Critical','Main','Idle transactions cause bloat and lock retention.','SELECT COUNT(*) AS idle_tx_count FROM pg_stat_activity WHERE state = ''idle in transaction'';','SELECT COUNT(*) AS idle_tx_count FROM pg_stat_activity WHERE state = ''idle in transaction'';','idle_tx_count == 0 ? "OK" : "Critical"','0','0 sessions','Set idle_in_transaction_session_timeout',NULL,'threshold','{"max":0}',14,'postgres',TRUE),
 
-('PG_REPLICATION_LAG_019','Replication Lag','High Availability','Instance','Critical','Main','Replica lag detected.','SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0) AS lag_bytes FROM pg_stat_replication LIMIT 1;','SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0) AS lag_bytes FROM pg_stat_replication LIMIT 1;','lag_bytes == 0 ? "OK" : (lag_bytes < 10485760 ? "Warning" : "Critical")','0','<30 seconds','Investigate replication',NULL,'threshold','{"max":0}',15,'postgres',TRUE),
+('PG_REPLICATION_LAG_019','Replication Lag','High Availability','Instance','Critical','Main','Replica lag detected.','SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0)::BIGINT AS lag_bytes FROM pg_stat_replication LIMIT 1;','SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0)::BIGINT AS lag_bytes FROM pg_stat_replication LIMIT 1;','lag_bytes == 0 ? "OK" : (lag_bytes < 10485760 ? "Warning" : "Critical")','0','<30 seconds','Investigate replication',NULL,'threshold','{"max":0}',15,'postgres',TRUE),
 
 ('PG_LONG_TX_020','Long Running Transactions','Performance','Instance','Warning','BestPractice','Long transactions cause bloat.','SELECT COUNT(*) AS long_tx_count FROM pg_stat_activity WHERE state != ''idle'' AND now() - xact_start > interval ''5 minutes'';','SELECT COUNT(*) AS long_tx_count FROM pg_stat_activity WHERE state != ''idle'' AND now() - xact_start > interval ''5 minutes'';','long_tx_count == 0 ? "OK" : "Warning"','0','No long transactions','Investigate long running transactions',NULL,'threshold','{"max":0}',16,'postgres',TRUE);
 

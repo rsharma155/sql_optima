@@ -24,6 +24,7 @@ import { AuthManager } from './modules/auth-manager.js';
 import { ViewLoader } from './modules/view-loader.js';
 import { GlobalEstate } from './modules/global-estate.js';
 import { PgOverview } from './modules/pg-overview.js';
+import { AdminManager } from './modules/admin-manager.js';
 
 window.appState = appState;
 window.apiClient = apiClient;
@@ -39,6 +40,8 @@ window.setDashboardRefresh = setDashboardRefresh;
 window.setJobsRefresh = setJobsRefresh;
 window.showQueryModal = showQueryModal;
 window.boot = boot;
+window.deleteAdminServer = AdminManager.deleteServer;
+window.patchServerActive = AdminManager.patchServerActive;
 
 // Wait for DOM and classic scripts (router.js, etc.) to be ready
 if (document.readyState === 'loading') {

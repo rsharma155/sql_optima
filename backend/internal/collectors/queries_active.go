@@ -20,7 +20,7 @@ import (
 // Parameters: ctx context.Context, db *sql.DB
 // Returns: []ActiveQuery, error
 func CollectActiveQueries(ctx context.Context, db *sql.DB) ([]models.ActiveQuery, error) {
-	query := `
+	query := ` /* SQL_OPTIMA */ 
 		SELECT TOP 50
 			r.session_id,
 			r.request_id,
@@ -107,7 +107,7 @@ func CollectActiveQueries(ctx context.Context, db *sql.DB) ([]models.ActiveQuery
 // Parameters: ctx context.Context, db *sql.DB
 // Returns: []LongRunningQuery, error
 func CollectLongRunningQueries(ctx context.Context, db *sql.DB) ([]models.LongRunningQuery, error) {
-	query := `
+	query := ` /* SQL_OPTIMA */ 
 		SELECT TOP 50
 			r.session_id,
 			r.request_id,

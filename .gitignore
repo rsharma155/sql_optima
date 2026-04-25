@@ -7,7 +7,6 @@
 !**/.env.example
 secrets/
 credentials/
-config.yaml
 
 # Local storage and archives
 data/
@@ -109,4 +108,3 @@ run/
 
 # Local planning docs
 project_backlog.md
-GEMINI.md

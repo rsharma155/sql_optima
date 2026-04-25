@@ -28,7 +28,7 @@ func CollectPostgresIndexDefinitions(ctx context.Context, db *sql.DB) ([]IndexDe
 		nKeyCol = "i.indnkeyattrs"
 	}
 
-	q := fmt.Sprintf(`
+	q := fmt.Sprintf(` /* SQL_OPTIMA */ 
 		WITH base AS (
 			SELECT
 				current_database()::text AS db_name,

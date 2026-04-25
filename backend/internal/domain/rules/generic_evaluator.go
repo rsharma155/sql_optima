@@ -13,7 +13,7 @@ func GenericThresholdEvaluator(ctx evaluation.Context, meta RuleMeta) evaluation
 				RuleID:     meta.RuleID,
 				Severity:   "HIGH",
 				Confidence: 0.85,
-				Message:  "Value exceeds threshold",
+				Message:    "Value exceeds threshold",
 			}
 		}
 	case "less_than":
@@ -22,7 +22,7 @@ func GenericThresholdEvaluator(ctx evaluation.Context, meta RuleMeta) evaluation
 				RuleID:     meta.RuleID,
 				Severity:   "HIGH",
 				Confidence: 0.85,
-				Message:  "Value below threshold",
+				Message:    "Value below threshold",
 			}
 		}
 	}

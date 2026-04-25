@@ -18,15 +18,15 @@ import (
 
 type QueryStoreStats struct {
 	DatabaseName      string
-	QueryHash       string
-	QueryText      string
-	PlanID         int64
-	IntervalID    int64
-	Executions    int64
-	AvgDurationMs float64
-	AvgCpuMs      float64
-	AvgLogicalReads float64
-	TotalCpuMs    float64
+	QueryHash         string
+	QueryText         string
+	PlanID            int64
+	IntervalID        int64
+	Executions        int64
+	AvgDurationMs     float64
+	AvgCpuMs          float64
+	AvgLogicalReads   float64
+	TotalCpuMs        float64
 	LastExecutionTime time.Time
 }
 

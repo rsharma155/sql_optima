@@ -18,123 +18,6 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ============================================================================
 
 -- --------------------------------------------------------------------------
--- 1.1: Generic System Metrics (Hot Storage)
--- --------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS system_metrics (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_name TEXT NOT NULL,
-    metric_name TEXT NOT NULL,
-    metric_value DOUBLE PRECISION NOT NULL,
-    tags JSONB DEFAULT '{}'
-);
-SELECT create_hypertable('system_metrics', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_system_metrics_server_name ON system_metrics (server_name);
-CREATE INDEX IF NOT EXISTS idx_system_metrics_metric_name ON system_metrics (metric_name);
-CREATE INDEX IF NOT EXISTS idx_system_metrics_server_time ON system_metrics (server_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_system_metrics_tags ON system_metrics USING GIN (tags);
-ALTER TABLE system_metrics SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_name,metric_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-DO $$
-BEGIN
-    CALL remove_compression_policy('system_metrics', if_exists => TRUE);
-EXCEPTION WHEN OTHERS THEN
-    NULL;
-END $$;
-SELECT add_compression_policy('system_metrics', INTERVAL '7 days', if_not_exists => TRUE);
-
--- Create materialized view for 1-minute aggregates
-CREATE MATERIALIZED VIEW IF NOT EXISTS system_metrics_1min
-WITH (timescaledb.continuous) AS
-SELECT
-    time_bucket('1 minute', capture_timestamp) AS bucket,
-    server_name,
-    metric_name,
-    AVG(metric_value) AS metric_value_avg,
-    MIN(metric_value) AS metric_value_min,
-    MAX(metric_value) AS metric_value_max,
-    COUNT(*) AS sample_count
-FROM system_metrics
-GROUP BY time_bucket('1 minute', capture_timestamp), server_name, metric_name
-WITH NO DATA;
--- NOTE:
--- Some clients (e.g., DBeaver + pgjdbc pipeline mode) execute scripts using a "pipeline",
--- where `CREATE MATERIALIZED VIEW ... WITH DATA` (or implicit population) may fail with:
---   "cannot be executed within a pipeline"
--- Continuous aggregates are created without an immediate refresh here; Timescale policies
--- will populate them after creation. If you need data immediately, run a manual refresh:
---   CALL refresh_continuous_aggregate('system_metrics_1min', NOW() - INTERVAL '1 hour', NOW());
-DO $$
-BEGIN
-    CALL add_continuous_aggregate_policy('system_metrics_1min',
-        start_offset => INTERVAL '1 hour',
-        end_offset => INTERVAL '1 minute',
-        schedule_interval => INTERVAL '1 minute',
-        if_not_exists => TRUE
-    );
-EXCEPTION WHEN OTHERS THEN
-    NULL;
-END $$;
-
--- System metrics hourly continuous aggregate on system_metrics_1min
-CREATE MATERIALIZED VIEW IF NOT EXISTS system_metrics_1h
-WITH (timescaledb.continuous) AS
-SELECT
-    time_bucket('1 hour', bucket) AS bucket,
-    server_name,
-    metric_name,
-    AVG(metric_value_avg)   AS metric_value_avg,
-    MIN(metric_value_min)   AS metric_value_min,
-    MAX(metric_value_max)   AS metric_value_max,
-    SUM(sample_count)       AS sample_count
-FROM system_metrics_1min
-GROUP BY time_bucket('1 hour', bucket), server_name, metric_name
-WITH NO DATA;
-DO $$
-BEGIN
-    CALL add_continuous_aggregate_policy('system_metrics_1h',
-        start_offset  => INTERVAL '2 hours',
-        end_offset    => INTERVAL '1 hour',
-        schedule_interval => INTERVAL '1 hour',
-        if_not_exists => TRUE
-    );
-EXCEPTION WHEN OTHERS THEN NULL;
-END $$;
-
--- System metrics daily continuous aggregate on system_metrics_1h
-CREATE MATERIALIZED VIEW IF NOT EXISTS system_metrics_1d
-WITH (timescaledb.continuous) AS
-SELECT
-    time_bucket('1 day', bucket) AS bucket,
-    server_name,
-    metric_name,
-    AVG(metric_value_avg)   AS metric_value_avg,
-    MIN(metric_value_min)   AS metric_value_min,
-    MAX(metric_value_max)   AS metric_value_max,
-    SUM(sample_count)       AS sample_count
-FROM system_metrics_1h
-GROUP BY time_bucket('1 day', bucket), server_name, metric_name
-WITH NO DATA;
-DO $$
-BEGIN
-    CALL add_continuous_aggregate_policy('system_metrics_1d',
-        start_offset  => INTERVAL '2 days',
-        end_offset    => INTERVAL '1 day',
-        schedule_interval => INTERVAL '1 day',
-        if_not_exists => TRUE
-    );
-EXCEPTION WHEN OTHERS THEN NULL;
-END $$;
-
--- Tiered retention: raw 14d, 1min 30d, 1h 90d, 1d 365d
-SELECT add_retention_policy('system_metrics', INTERVAL '14 days', if_not_exists => TRUE);
-SELECT add_retention_policy('system_metrics_1min', INTERVAL '30 days', if_not_exists => TRUE);
-SELECT add_retention_policy('system_metrics_1h', INTERVAL '90 days', if_not_exists => TRUE);
-SELECT add_retention_policy('system_metrics_1d', INTERVAL '365 days', if_not_exists => TRUE);
-
--- --------------------------------------------------------------------------
 -- 1.2: SQL SERVER - Core Metrics
 -- --------------------------------------------------------------------------
 
@@ -774,25 +657,6 @@ ALTER TABLE sqlserver_risk_health SET (
 );
 SELECT add_compression_policy('sqlserver_risk_health', INTERVAL '7 days', if_not_exists => TRUE);
 
--- Wait deltas by type/category (for wait-category donut)
-CREATE TABLE IF NOT EXISTS sqlserver_waits_delta (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    wait_type TEXT NOT NULL,
-    wait_category TEXT NOT NULL,
-    wait_time_ms_delta DOUBLE PRECISION DEFAULT 0,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('sqlserver_waits_delta', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_waits_delta_server_time ON sqlserver_waits_delta (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_waits_delta_category ON sqlserver_waits_delta (server_instance_name, wait_category, capture_timestamp DESC);
-ALTER TABLE sqlserver_waits_delta SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name,wait_category,wait_type',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('sqlserver_waits_delta', INTERVAL '7 days', if_not_exists => TRUE);
-
 -- SQL Server CPU Scheduler Stats (pressure signals)
 CREATE TABLE IF NOT EXISTS sqlserver_cpu_scheduler_stats (
     capture_timestamp TIMESTAMPTZ NOT NULL,
@@ -999,29 +863,6 @@ ALTER TABLE sqlserver_buffer_pool_db SET (
 SELECT add_compression_policy('sqlserver_buffer_pool_db', INTERVAL '14 days', if_not_exists => TRUE);
 COMMENT ON TABLE sqlserver_buffer_pool_db IS 'Memory Performance Analyzer: buffer pool usage by database (MB) per scrape';
 
--- Memory Clerks Detailed
-CREATE TABLE IF NOT EXISTS sqlserver_memory_clerks (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    clerk_type TEXT NOT NULL,
-    memory_node SMALLINT DEFAULT 0,
-    pages_mb DOUBLE PRECISION DEFAULT 0,
-    virtual_memory_reserved_mb DOUBLE PRECISION DEFAULT 0,
-    virtual_memory_committed_mb DOUBLE PRECISION DEFAULT 0,
-    awe_memory_mb DOUBLE PRECISION DEFAULT 0,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('sqlserver_memory_clerks', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_memory_clerks_server_time ON sqlserver_memory_clerks (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_memory_clerks_type ON sqlserver_memory_clerks (clerk_type, capture_timestamp DESC);
-ALTER TABLE sqlserver_memory_clerks SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name,clerk_type',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('sqlserver_memory_clerks', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE sqlserver_memory_clerks IS 'Tracks detailed memory clerk breakdown by type';
-
 -- Waiting Tasks
 CREATE TABLE IF NOT EXISTS sqlserver_waiting_tasks (
     capture_timestamp TIMESTAMPTZ NOT NULL,
@@ -1092,28 +933,6 @@ COMMENT ON TABLE sqlserver_spinlock_stats IS 'Tracks spinlock contention statist
 -- --------------------------------------------------------------------------
 -- SQL SERVER - Enterprise Metrics Additions (DBA-high value)
 -- --------------------------------------------------------------------------
-
--- Plan Cache Health (single-use plans / cache pressure)
-CREATE TABLE IF NOT EXISTS sqlserver_plan_cache_health (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    total_cache_mb DOUBLE PRECISION DEFAULT 0,
-    single_use_cache_mb DOUBLE PRECISION DEFAULT 0,
-    single_use_cache_pct DOUBLE PRECISION DEFAULT 0,
-    adhoc_cache_mb DOUBLE PRECISION DEFAULT 0,
-    prepared_cache_mb DOUBLE PRECISION DEFAULT 0,
-    proc_cache_mb DOUBLE PRECISION DEFAULT 0,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('sqlserver_plan_cache_health', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_plan_cache_health_server_time ON sqlserver_plan_cache_health (server_instance_name, capture_timestamp DESC);
-ALTER TABLE sqlserver_plan_cache_health SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('sqlserver_plan_cache_health', INTERVAL '14 days', if_not_exists => TRUE);
-COMMENT ON TABLE sqlserver_plan_cache_health IS 'Tracks plan cache size and single-use plan pressure (optimize for ad hoc workloads)';
 
 -- Memory Grant Waiters (RESOURCE_SEMAPHORE pressure)
 CREATE TABLE IF NOT EXISTS sqlserver_memory_grant_waiters (
@@ -1236,117 +1055,6 @@ ALTER TABLE sqlserver_database_size SET (
 SELECT add_compression_policy('sqlserver_database_size', INTERVAL '30 days', if_not_exists => TRUE);
 COMMENT ON TABLE sqlserver_database_size IS 'Tracks database size for growth trending';
 
--- Server Configuration
-CREATE TABLE IF NOT EXISTS sqlserver_server_config (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    config_name TEXT NOT NULL,
-    config_value TEXT,
-    is_default BOOLEAN DEFAULT FALSE,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('sqlserver_server_config', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_server_config_server_time ON sqlserver_server_config (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_server_config_name ON sqlserver_server_config (config_name, capture_timestamp DESC);
-ALTER TABLE sqlserver_server_config SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name,config_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('sqlserver_server_config', INTERVAL '30 days', if_not_exists => TRUE);
-COMMENT ON TABLE sqlserver_server_config IS 'Tracks server-level configuration settings';
-
--- Database Configuration
-CREATE TABLE IF NOT EXISTS sqlserver_database_config (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    database_name TEXT NOT NULL,
-    config_name TEXT NOT NULL,
-    config_value TEXT,
-    is_default BOOLEAN DEFAULT FALSE,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('sqlserver_database_config', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_db_config_server_time ON sqlserver_database_config (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_db_config_database ON sqlserver_database_config (database_name, capture_timestamp DESC);
-ALTER TABLE sqlserver_database_config SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name,database_name,config_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('sqlserver_database_config', INTERVAL '30 days', if_not_exists => TRUE);
-COMMENT ON TABLE sqlserver_database_config IS 'Tracks database-level configuration settings';
-
--- Session Memory Grants
-CREATE TABLE IF NOT EXISTS sqlserver_memory_grants (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    session_id SMALLINT NOT NULL,
-    database_name TEXT,
-    login_name TEXT,
-    granted_memory_kb BIGINT DEFAULT 0,
-    used_memory_kb BIGINT DEFAULT 0,
-    dop SMALLINT DEFAULT 0,
-    query_duration_sec DOUBLE PRECISION DEFAULT 0,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('sqlserver_memory_grants', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_memory_grants_server_time ON sqlserver_memory_grants (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_memory_grants_session ON sqlserver_memory_grants (session_id, capture_timestamp DESC);
-ALTER TABLE sqlserver_memory_grants SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name,session_id',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('sqlserver_memory_grants', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE sqlserver_memory_grants IS 'Tracks query memory grants detail';
-
--- Scheduler Workload Groups
-CREATE TABLE IF NOT EXISTS sqlserver_scheduler_wg (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    pool_name TEXT NOT NULL,
-    group_name TEXT NOT NULL,
-    active_requests BIGINT DEFAULT 0,
-    queued_requests BIGINT DEFAULT 0,
-    cpu_usage_percent DOUBLE PRECISION DEFAULT 0,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('sqlserver_scheduler_wg', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_scheduler_wg_server_time ON sqlserver_scheduler_wg (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_scheduler_wg_group ON sqlserver_scheduler_wg (group_name, capture_timestamp DESC);
-ALTER TABLE sqlserver_scheduler_wg SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name,pool_name,group_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('sqlserver_scheduler_wg', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE sqlserver_scheduler_wg IS 'Tracks CPU scheduler and workload group statistics';
-
--- File I/O Latency
-CREATE TABLE IF NOT EXISTS sqlserver_file_io_latency (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    database_name TEXT NOT NULL,
-    file_name TEXT,
-    file_type TEXT,
-    read_latency_ms DOUBLE PRECISION DEFAULT 0,
-    write_latency_ms DOUBLE PRECISION DEFAULT 0,
-    read_bytes_per_sec DOUBLE PRECISION DEFAULT 0,
-    write_bytes_per_sec DOUBLE PRECISION DEFAULT 0,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('sqlserver_file_io_latency', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_file_io_server_time ON sqlserver_file_io_latency (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_file_io_database ON sqlserver_file_io_latency (database_name, capture_timestamp DESC);
-ALTER TABLE sqlserver_file_io_latency SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name,database_name,file_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('sqlserver_file_io_latency', INTERVAL '7 days', if_not_exists => TRUE);
-COMMENT ON TABLE sqlserver_file_io_latency IS 'Tracks file I/O latency statistics';
-
 -- Query Store Runtime Stats
 CREATE TABLE IF NOT EXISTS sqlserver_qs_runtime (
     capture_timestamp TIMESTAMPTZ NOT NULL,
@@ -1459,121 +1167,6 @@ ALTER TABLE postgres_system_stats SET (
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
 SELECT add_compression_policy('postgres_system_stats', INTERVAL '7 days', if_not_exists => TRUE);
-
--- PostgreSQL Database Statistics
-CREATE TABLE IF NOT EXISTS postgres_database_stats (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    database_name TEXT,
-    xact_commit BIGINT DEFAULT 0,
-    xact_rollback BIGINT DEFAULT 0,
-    blks_read BIGINT DEFAULT 0,
-    blks_hit BIGINT DEFAULT 0,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('postgres_database_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_postgres_dbstat_server ON postgres_database_stats (server_instance_name, capture_timestamp DESC);
-ALTER TABLE postgres_database_stats SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name,database_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('postgres_database_stats', INTERVAL '7 days', if_not_exists => TRUE);
-
--- PostgreSQL Session Statistics
-CREATE TABLE IF NOT EXISTS postgres_session_stats (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    pid INTEGER,
-    username TEXT,
-    database_name TEXT,
-    client_addr TEXT,
-    client_port INTEGER,
-    backend_start TIMESTAMPTZ,
-    query_start TIMESTAMPTZ,
-    state_change TIMESTAMPTZ,
-    wait_event_type TEXT,
-    wait_event TEXT,
-    state TEXT,
-    query TEXT,
-    duration_seconds DOUBLE PRECISION,
-    blocked_by INTEGER[],
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('postgres_session_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_postgres_sess_server ON postgres_session_stats (server_instance_name, capture_timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_postgres_sess_state ON postgres_session_stats (state);
-ALTER TABLE postgres_session_stats SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('postgres_session_stats', INTERVAL '7 days', if_not_exists => TRUE);
-
--- PostgreSQL Lock Statistics
-CREATE TABLE IF NOT EXISTS postgres_lock_stats (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    pid INTEGER,
-    lock_type TEXT,
-    relation TEXT,
-    mode TEXT,
-    granted BOOLEAN,
-    waiting_seconds DOUBLE PRECISION,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('postgres_lock_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_postgres_lock_server ON postgres_lock_stats (server_instance_name, capture_timestamp DESC);
-ALTER TABLE postgres_lock_stats SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('postgres_lock_stats', INTERVAL '7 days', if_not_exists => TRUE);
-
--- PostgreSQL Table Statistics
-CREATE TABLE IF NOT EXISTS postgres_table_stats (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    schema_name TEXT,
-    table_name TEXT,
-    total_size TEXT,
-    dead_tuples BIGINT DEFAULT 0,
-    bloat_pct DOUBLE PRECISION DEFAULT 0,
-    seq_scans BIGINT DEFAULT 0,
-    idx_scans BIGINT DEFAULT 0,
-    last_vacuum TIMESTAMPTZ,
-    last_analyze TIMESTAMPTZ,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('postgres_table_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_postgres_tablestat_server ON postgres_table_stats (server_instance_name, capture_timestamp DESC);
-ALTER TABLE postgres_table_stats SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name,schema_name,table_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('postgres_table_stats', INTERVAL '7 days', if_not_exists => TRUE);
-
--- PostgreSQL Index Statistics
-CREATE TABLE IF NOT EXISTS postgres_index_stats (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    index_name TEXT,
-    table_name TEXT,
-    size TEXT,
-    scans BIGINT DEFAULT 0,
-    reason TEXT,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('postgres_index_stats', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_postgres_idxstat_server ON postgres_index_stats (server_instance_name, capture_timestamp DESC);
-ALTER TABLE postgres_index_stats SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name,index_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('postgres_index_stats', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- PostgreSQL Query Statistics
 CREATE TABLE IF NOT EXISTS postgres_query_stats (
@@ -1707,56 +1300,6 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 SELECT add_retention_policy('pgss_delta_1d', INTERVAL '365 days', if_not_exists => TRUE);
-
--- PostgreSQL Configuration Settings
-CREATE TABLE IF NOT EXISTS postgres_config_settings (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    config_name TEXT,
-    config_value TEXT,
-    config_unit TEXT,
-    config_category TEXT,
-    config_source TEXT,
-    boot_val TEXT,
-    reset_val TEXT,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('postgres_config_settings', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_postgres_cfg_server ON postgres_config_settings (server_instance_name, capture_timestamp DESC);
-ALTER TABLE postgres_config_settings SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name,config_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('postgres_config_settings', INTERVAL '30 days', if_not_exists => TRUE);
-
--- PostgreSQL Long Running Queries
-CREATE TABLE IF NOT EXISTS postgres_long_running_queries (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
-    pid INTEGER,
-    username TEXT,
-    database_name TEXT,
-    client_addr TEXT,
-    client_port INTEGER,
-    backend_start TIMESTAMPTZ,
-    query_start TIMESTAMPTZ,
-    state_change TIMESTAMPTZ,
-    wait_event_type TEXT,
-    wait_event TEXT,
-    state TEXT,
-    query TEXT,
-    duration_seconds DOUBLE PRECISION,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('postgres_long_running_queries', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_postgres_longrun_server ON postgres_long_running_queries (server_instance_name, capture_timestamp DESC);
-ALTER TABLE postgres_long_running_queries SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('postgres_long_running_queries', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- --------------------------------------------------------------------------
 -- 1.7: POSTGRESQL - Enterprise Metrics (BGWriter, Archiver, Query Dictionary)
@@ -2434,21 +1977,6 @@ CREATE TABLE IF NOT EXISTS sqlserver_collection_schedule (
     modified_date TIMESTAMPTZ DEFAULT NOW()
 );
 
--- --------------------------------------------------------------------------
--- 3.2: Collection Log
--- --------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS sqlserver_collection_log (
-    log_id BIGSERIAL PRIMARY KEY,
-    collection_time TIMESTAMPTZ DEFAULT NOW(),
-    collector_name TEXT NOT NULL,
-    collection_status TEXT NOT NULL,
-    rows_collected BIGINT DEFAULT 0,
-    duration_ms BIGINT DEFAULT 0,
-    error_message TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_collection_log_time ON sqlserver_collection_log (collection_time DESC);
-CREATE INDEX IF NOT EXISTS idx_collection_log_collector ON sqlserver_collection_log (collector_name, collection_time DESC);
-
 -- ============================================================================
 -- SECTION 3.3: STORAGE & INDEX HEALTH (Cross-engine, unified)
 -- ============================================================================
@@ -2761,6 +2289,7 @@ CREATE TABLE IF NOT EXISTS monitor.index_usage_state (
     scans_total BIGINT NOT NULL DEFAULT 0,
     lookups_total BIGINT NOT NULL DEFAULT 0,
     updates_total BIGINT NOT NULL DEFAULT 0,
+    index_size_mb NUMERIC,
     last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (engine, server_id, db_name, schema_name, table_name, index_name)
 );
@@ -2775,6 +2304,9 @@ CREATE TABLE IF NOT EXISTS monitor.table_usage_state (
     idx_scans_total BIGINT NOT NULL DEFAULT 0,
     rows_read_total BIGINT NOT NULL DEFAULT 0,
     rows_modified_total BIGINT NOT NULL DEFAULT 0,
+    table_size_mb NUMERIC,
+    index_size_mb NUMERIC,
+    row_count BIGINT,
     last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (engine, server_id, db_name, schema_name, table_name)
 );
@@ -3711,6 +3243,7 @@ CREATE TABLE IF NOT EXISTS monitor.sqlserver_query_store_interval (
     delta_logical_reads DOUBLE PRECISION NOT NULL,
     avg_cpu_ms DOUBLE PRECISION,
     avg_duration_ms DOUBLE PRECISION,
+    avg_reads DOUBLE PRECISION,
     is_reset BOOLEAN DEFAULT FALSE,
     PRIMARY KEY (bucket_end, server_instance_name, query_hash, plan_id, runtime_stats_interval_id)
 );
@@ -3728,24 +3261,195 @@ CREATE TABLE IF NOT EXISTS optima_collector_configs (
     updated_by VARCHAR(100)
 );
 
-INSERT INTO optima_collector_configs (collector_name, module, frequency_seconds) VALUES
-('Postgres Active Queries', 'Postgres', 15),
-('Postgres Blocking Locks', 'Postgres', 15),
-('Postgres CPU and Memory', 'Postgres', 60),
-('Postgres Wait Stats', 'Postgres', 60),
-('Postgres Storage I/O', 'Postgres', 60),
-('Postgres Long Running Queries', 'Postgres', 60),
-('Postgres Query Stats', 'Postgres', 60),
-('SQL Server Active Queries', 'SQLSERVER', 15),
-('SQL Server Blocking Locks', 'SQLSERVER', 15),
-('SQL Server CPU and Memory', 'SQLSERVER', 60),
-('SQL Server Wait Stats', 'SQLSERVER', 60),
-('SQL Server Storage I/O', 'SQLSERVER', 60),
-('SQL Server Long Running Queries', 'SQLSERVER', 60),
-('SQL Server Query Store', 'SQLSERVER', 900),
-('SQL Server Procedure Stats', 'SQLSERVER', 120),
-('SQL Server Memory Clerks', 'SQLSERVER', 300),
-('SQL Server Plan Cache', 'SQLSERVER', 300),
-('SQL Server Database Size', 'SQLSERVER', 3600),
-('SQL Server Configuration', 'SQLSERVER', 86400)
-ON CONFLICT (collector_name) DO NOTHING;
+-- ============================================================================
+-- SECTION 4: LEGACY COMPATIBILITY & CROSS-ENGINE VIEWS
+-- ============================================================================
+
+-- system_stats_detail view for PgDiskSpaceEvaluator
+-- Maps to sqlserver_metrics for SQL Server and returns zeros for Postgres
+CREATE OR REPLACE VIEW system_stats_detail AS
+SELECT 
+    capture_timestamp,
+    server_instance_name,
+    data_disk_mb / 1024.0 AS disk_total_gb,
+    (data_disk_mb - free_disk_mb) / 1024.0 AS disk_used_gb
+FROM sqlserver_metrics
+UNION ALL
+SELECT
+    now() as capture_timestamp,
+    name as server_instance_name,
+    0.0 as disk_total_gb,
+    0.0 as disk_used_gb
+FROM optima_servers
+WHERE db_type = 'postgres';
+
+-- postgres_lock_stats compatibility view
+-- Points to the modern monitor.pg_lock_snapshot
+CREATE OR REPLACE VIEW postgres_lock_stats AS
+SELECT 
+    collected_at AS capture_timestamp,
+    (SELECT name FROM optima_servers WHERE id::text = server_id LIMIT 1) AS server_instance_name,
+    pid,
+    locktype,
+    mode,
+    granted,
+    relation_name,
+    waiting_seconds
+FROM monitor.pg_lock_snapshot;
+
+-- --------------------------------------------------------------------------
+-- 1.5: LIGHTWEIGHT QUERY METRICS V2 (Enhanced)
+-- --------------------------------------------------------------------------
+
+-- Instance state for collector watermarks and restart detection
+CREATE TABLE IF NOT EXISTS sqlserver_collector_instance_state (
+    instance_id          TEXT PRIMARY KEY,
+    last_poll_time_utc   TIMESTAMPTZ,
+    sqlserver_start_time TIMESTAMPTZ,
+    last_successful_run  TIMESTAMPTZ
+);
+
+-- Staging table for bulk ingestion (UNLOGGED for performance)
+CREATE UNLOGGED TABLE IF NOT EXISTS sqlserver_query_stats_staging_v2 (
+    poll_time_utc        TIMESTAMPTZ NOT NULL,
+    sqlserver_start_time TIMESTAMPTZ NOT NULL,
+    instance_id          TEXT NOT NULL,
+    db_id                INT,
+    database_name        TEXT,
+    query_hash           BYTEA,
+    plan_handle          BYTEA,
+    query_text           TEXT,
+    statement_text       TEXT,
+    total_worker_time    BIGINT,
+    total_logical_reads  BIGINT,
+    total_logical_writes BIGINT,
+    execution_count      BIGINT,
+    total_rows           BIGINT,
+    total_grant_kb       BIGINT,
+    max_worker_time      BIGINT,
+    max_logical_reads    BIGINT,
+    max_dop              INT,
+    max_grant_kb         BIGINT,
+    max_rows             BIGINT,
+    last_execution_time  TIMESTAMPTZ
+);
+
+-- Snapshot state table for delta calculation
+CREATE TABLE IF NOT EXISTS sqlserver_query_stats_snapshot_v2 (
+    instance_id                TEXT NOT NULL,
+    db_id                      INT NOT NULL,
+    query_hash                 BYTEA NOT NULL,
+    plan_handle                BYTEA NOT NULL,
+    database_name              TEXT,
+    query_text                 TEXT,
+    statement_text             TEXT,
+    last_total_worker_time     BIGINT,
+    last_total_logical_reads   BIGINT,
+    last_total_logical_writes  BIGINT,
+    last_total_execution_count BIGINT,
+    last_total_rows            BIGINT,
+    last_total_grant_kb        BIGINT,
+    max_worker_time            BIGINT,
+    max_logical_reads          BIGINT,
+    max_dop                    INT,
+    max_grant_kb               BIGINT,
+    max_rows                   BIGINT,
+    last_execution_time        TIMESTAMPTZ,
+    last_seen_poll_time        TIMESTAMPTZ,
+    PRIMARY KEY (instance_id, db_id, query_hash, plan_handle)
+);
+
+-- History hypertable for persistent metrics
+CREATE TABLE IF NOT EXISTS sqlserver_query_stats_history (
+    ts                 TIMESTAMPTZ NOT NULL,
+    instance_id        TEXT NOT NULL,
+    db_id              INT,
+    query_hash         BYTEA,
+    cpu_delta_ms       BIGINT,
+    reads_delta        BIGINT,
+    writes_delta       BIGINT,
+    exec_delta         BIGINT,
+    rows_delta         BIGINT,
+    period_max_cpu_ms  BIGINT,
+    period_max_reads   BIGINT,
+    period_max_grant_kb BIGINT,
+    period_max_dop     INT
+);
+
+SELECT create_hypertable('sqlserver_query_stats_history', 'ts', if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_query_stats_history_instance_ts ON sqlserver_query_stats_history (instance_id, ts DESC);
+
+-- SQL Server Query Metrics V2
+CREATE TABLE IF NOT EXISTS sqlserver_query_metrics_v2(
+ ts timestamptz NOT NULL,
+ instance_id text,
+ database_name text,
+ login_name text,
+ application_name text,
+ query_hash bigint,
+ plan_hash bigint,
+ total_executions bigint,
+ total_cpu_ms bigint,
+ total_elapsed_ms bigint,
+ total_logical_reads bigint,
+ total_physical_reads bigint,
+ total_rows bigint,
+ statement_text text,
+ query_text_raw text,
+ last_execution_time timestamptz
+);
+SELECT create_hypertable('sqlserver_query_metrics_v2','ts',if_not_exists=>TRUE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_query_metrics_v2_instance_ts ON sqlserver_query_metrics_v2 (instance_id, ts DESC);
+
+-- PostgreSQL Query Metrics V2
+CREATE TABLE IF NOT EXISTS pg_query_metrics_v2(
+ ts timestamptz NOT NULL,
+ instance_id text,
+ datname text,
+ usename text,
+ application_name text,
+ queryid bigint,
+ query text,
+ calls bigint,
+ total_exec_time double precision,
+ rows bigint,
+ shared_blks_hit bigint,
+ shared_blks_read bigint,
+ temp_blks_written bigint
+);
+SELECT create_hypertable('pg_query_metrics_v2','ts',if_not_exists=>TRUE);
+CREATE INDEX IF NOT EXISTS idx_pg_query_metrics_v2_instance_ts ON pg_query_metrics_v2 (instance_id, ts DESC);
+
+-- --------------------------------------------------------------------------
+-- 4.0: COMPATIBILITY VIEWS (Legacy Support)
+-- --------------------------------------------------------------------------
+
+-- system_stats_detail view for PgDiskSpaceEvaluator
+CREATE OR REPLACE VIEW system_stats_detail AS
+SELECT 
+    capture_timestamp,
+    server_instance_name,
+    data_disk_mb / 1024.0 AS disk_total_gb,
+    (data_disk_mb - free_disk_mb) / 1024.0 AS disk_used_gb
+FROM sqlserver_metrics
+UNION ALL
+SELECT
+    now() as capture_timestamp,
+    name as server_instance_name,
+    0.0 as disk_total_gb,
+    0.0 as disk_used_gb
+FROM optima_servers
+WHERE db_type = 'postgres';
+
+-- postgres_lock_stats compatibility view
+CREATE OR REPLACE VIEW postgres_lock_stats AS
+SELECT 
+    collected_at AS capture_timestamp,
+    (SELECT name FROM optima_servers WHERE id::text = server_id LIMIT 1) AS server_instance_name,
+    pid,
+    locktype,
+    mode,
+    granted,
+    relation_name,
+    waiting_seconds
+FROM monitor.pg_lock_snapshot;

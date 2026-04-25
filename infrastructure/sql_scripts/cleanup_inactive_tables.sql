@@ -5,14 +5,14 @@
 -- ============================================================================
 
 -- 1. PostgreSQL Inactive Tables (Superseded by 'monitor.*' schema or newer implementations)
-DROP TABLE IF EXISTS postgres_database_stats CASCADE;    -- No active Go collector
-DROP TABLE IF EXISTS postgres_session_stats CASCADE;     -- Superseded by monitor.pg_session_snapshot
-DROP TABLE IF EXISTS postgres_lock_stats CASCADE;        -- Superseded by monitor.pg_lock_snapshot
-DROP TABLE IF EXISTS postgres_table_stats CASCADE;       -- Superseded by monitor.table_usage_stats
-DROP TABLE IF EXISTS postgres_index_stats CASCADE;       -- Superseded by monitor.index_usage_stats
+DROP TABLE IF EXISTS postgres_database_stats CASCADE;    -- Superseded by postgres_db_io_stats
+DROP TABLE IF EXISTS postgres_session_stats CASCADE;     -- Superseded by postgres_connection_stats or postgres_session_state_counts
+DROP TABLE IF EXISTS postgres_lock_stats CASCADE;        -- Superseded by postgres_wait_event_stats
+DROP TABLE IF EXISTS postgres_table_stats CASCADE;       -- Superseded by postgres_table_maintenance_stats
+DROP TABLE IF EXISTS postgres_index_stats CASCADE;       -- Superseded by postgres_table_maintenance_stats
 DROP TABLE IF EXISTS postgres_config_settings CASCADE;   -- Superseded by postgres_settings_snapshot
-DROP TABLE IF EXISTS postgres_long_running_queries CASCADE; -- Unused (Postgres)
-DROP TABLE IF EXISTS system_metrics CASCADE;             -- Superseded by postgres_system_stats
+DROP TABLE IF EXISTS postgres_long_running_queries CASCADE; -- Unused / Live fetch only
+DROP TABLE IF EXISTS system_metrics CASCADE;             -- Superseded by postgres_system_stats or monitor.*
 DROP MATERIALIZED VIEW IF EXISTS system_metrics_1min CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS system_metrics_1h CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS system_metrics_1d CASCADE;

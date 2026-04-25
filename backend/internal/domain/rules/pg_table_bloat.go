@@ -8,19 +8,19 @@ func EvaluateTableBloat(ctx evaluation.Context) evaluation.Result {
 	if ratio > 1.5 {
 		return evaluation.Result{
 			RuleID:         "pg_table_bloat",
-			Severity:      "HIGH",
-			Confidence:    0.85,
-			Message:       "Significant table bloat detected",
+			Severity:       "HIGH",
+			Confidence:     0.85,
+			Message:        "Significant table bloat detected",
 			Recommendation: "Consider VACUUM FULL or pg_repack",
 		}
 	}
 
 	if ratio > 1.2 {
 		return evaluation.Result{
-			RuleID:      "pg_table_bloat",
-			Severity:    "MEDIUM",
-			Confidence:  0.7,
-			Message:     "Moderate table bloat detected",
+			RuleID:     "pg_table_bloat",
+			Severity:   "MEDIUM",
+			Confidence: 0.7,
+			Message:    "Moderate table bloat detected",
 		}
 	}
 

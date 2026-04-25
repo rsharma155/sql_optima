@@ -25,11 +25,12 @@ import (
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/reliability"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
+	"github.com/rsharma155/sql_optima/pkg/dashboard"
 )
 
 // StartQueryStoreCollector starts a background worker that extracts Query Store data
 func (s *MetricsService) StartQueryStoreCollector(ctx context.Context) {
-	interval := s.getInterval(ctx, "SQL Server Query Store", config.QueryStoreCollectionInterval)
+	interval := s.FetchInterval(ctx, "SQL Server Query Store", config.QueryStoreCollectionInterval)
 	log.Printf("[QueryStoreCollector] Starting Query Store collector (interval: %v)...", interval)
 
 	ticker := time.NewTicker(interval)
@@ -45,6 +46,13 @@ func (s *MetricsService) StartQueryStoreCollector(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.collectQueryStoreData()
+
+			// Refresh interval from DB
+			newInterval := s.FetchInterval(ctx, "SQL Server Query Store", config.QueryStoreCollectionInterval)
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+			}
 		}
 	}
 }
@@ -133,9 +141,10 @@ func (s *MetricsService) GetQueryStoreBottlenecks(ctx context.Context, instanceN
 
 // StartEnterpriseCollector starts the AG Health and Database Throughput collector
 func (s *MetricsService) StartEnterpriseCollector(ctx context.Context) {
-	log.Printf("[EnterpriseCollector] Starting AG Health & DB Throughput collector (interval: %v)...", config.QueryStoreCollectionInterval)
+	interval := s.FetchInterval(ctx, "SQL Server Enterprise Metrics", config.QueryStoreCollectionInterval)
+	log.Printf("[EnterpriseCollector] Starting AG Health & DB Throughput collector (interval: %v)...", interval)
 
-	ticker := time.NewTicker(config.QueryStoreCollectionInterval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Run immediately on start
@@ -148,6 +157,12 @@ func (s *MetricsService) StartEnterpriseCollector(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.collectEnterpriseMetrics()
+			// Refresh interval
+			newInterval := s.FetchInterval(ctx, "SQL Server Enterprise Metrics", config.QueryStoreCollectionInterval)
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+			}
 		}
 	}
 }
@@ -159,15 +174,8 @@ func (s *MetricsService) StartEnterpriseMetricsCollector(ctx context.Context) {
 		return
 	}
 
-	// Default 120s: these DMV batches are wide (many rows per scrape); combine with snapshot dedup in TimescaleLogger.
-	intervalSec := 120
-	if v := strings.TrimSpace(os.Getenv("ENTERPRISE_METRICS_INTERVAL_SEC")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 30 && n <= 600 {
-			intervalSec = n
-		}
-	}
-	interval := time.Duration(intervalSec) * time.Second
-	log.Printf("[EnterpriseMetricsCollector] Starting advanced metrics collector (interval: %v, env ENTERPRISE_METRICS_INTERVAL_SEC)...", interval)
+	interval := s.FetchInterval(ctx, "SQL Server Enterprise Metrics", 120*time.Second)
+	log.Printf("[EnterpriseMetricsCollector] Starting advanced metrics collector (interval: %v)...", interval)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -182,6 +190,12 @@ func (s *MetricsService) StartEnterpriseMetricsCollector(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.collectAdvancedEnterpriseMetrics()
+			// Refresh interval
+			newInterval := s.FetchInterval(ctx, "SQL Server Enterprise Metrics", 120*time.Second)
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+			}
 		}
 	}
 }
@@ -310,7 +324,73 @@ func (s *MetricsService) collectAdvancedEnterpriseMetricsForInstance(instanceNam
 
 	// Wait deltas + categorization
 	if currWaits, err := s.MsRepo.FetchWaitStatsCumulative(ctx, instanceName); err == nil {
+		// Legacy v1 delta logging (categorized)
 		_ = s.tsLogger.ComputeAndLogWaitDeltas(ctx, instanceName, currWaits)
+
+		// New standardized v2 delta logging
+		prevWaits := s.tsLogger.GetPrevWaitHistory(instanceName)
+		deltas, _ := dashboard.ComputeWaitDeltas(prevWaits, currWaits)
+		v2Rows := make([]map[string]interface{}, 0, len(deltas))
+		for _, d := range deltas {
+			if d.DeltaMs > 0 {
+				v2Rows = append(v2Rows, map[string]interface{}{
+					"wait_category":             string(d.Category),
+					"wait_time_ms_delta":        d.DeltaMs,
+					"signal_wait_time_ms_delta": 0, // Need to update MsRepo to fetch signal delta
+					"waiting_tasks_delta":       0,
+				})
+			}
+		}
+		_ = s.tsLogger.LogSqlServerWaitStats(ctx, instanceName, v2Rows)
+	}
+
+	// Standardized V2 - Perf Counters
+	if perfMap, err := s.MsRepo.FetchPerfCounters(ctx, instanceName, []string{
+		"Batch Requests/sec", "SQL Compilations/sec", "SQL Re-Compilations/sec", "Latch Waits/sec",
+	}); err == nil {
+		v2Counters := make(map[string]float64)
+		for k, v := range perfMap {
+			v2Counters[k] = v.Value
+		}
+		_ = s.tsLogger.LogSqlServerPerfCounters(ctx, instanceName, v2Counters)
+	}
+
+	// Standardized V2 - File IO
+	if ioRows, err := s.MsRepo.FetchFileIOLatency(instanceName); err == nil {
+		_ = s.tsLogger.LogSqlServerFileIO(ctx, instanceName, ioRows)
+	}
+
+	// Standardized V2 - Plan Cache
+	if pcRows, err := s.MsRepo.FetchPlanCacheHealth(instanceName); err == nil {
+		// Map the single row into the standardized format
+		v2Cache := []map[string]interface{}{
+			{"cache_type": "Adhoc", "size_mb": pcRows["adhoc_cache_mb"]},
+			{"cache_type": "Prepared", "size_mb": pcRows["prepared_cache_mb"]},
+			{"cache_type": "Proc", "size_mb": pcRows["proc_cache_mb"]},
+		}
+		_ = s.tsLogger.LogSqlServerPlanCache(ctx, instanceName, v2Cache)
+	}
+
+	// Standardized V2 - Memory Clerks
+	if mcRows, err := s.MsRepo.FetchMemoryClerks(instanceName); err == nil {
+		v2Clerks := make([]map[string]interface{}, 0, len(mcRows))
+		for _, r := range mcRows {
+			v2Clerks = append(v2Clerks, map[string]interface{}{
+				"clerk_name": r["clerk_type"],
+				"pages_mb":   r["pages_mb"],
+			})
+		}
+		_ = s.tsLogger.LogSqlServerMemoryClerksV2(ctx, instanceName, v2Clerks)
+	}
+
+	// Standardized V2 - Memory Grants
+	if mgSum, err := s.MsRepo.FetchMemoryGrantsSummary(ctx, instanceName); err == nil {
+		_ = s.tsLogger.LogSqlServerMemoryGrantsV2(ctx, instanceName, mgSum)
+	}
+
+	// Standardized V2 - TempDB Consumers
+	if tdcRows, err := s.MsRepo.FetchTempdbTopConsumers(instanceName); err == nil {
+		_ = s.tsLogger.LogSqlServerTempdbConsumers(ctx, instanceName, tdcRows)
 	}
 }
 
@@ -483,14 +563,8 @@ func (s *MetricsService) GetDatabaseThroughputSummary(ctx context.Context, insta
 
 // StartPostgresEnterpriseCollector starts the PostgreSQL BGWriter, Archiver, and Query Dictionary collector
 func (s *MetricsService) StartPostgresEnterpriseCollector(ctx context.Context) {
-	intervalSec := 60
-	if v := strings.TrimSpace(os.Getenv("POSTGRES_ENTERPRISE_INTERVAL_SEC")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 30 && n <= 900 {
-			intervalSec = n
-		}
-	}
-	interval := time.Duration(intervalSec) * time.Second
-	log.Printf("[PostgresEnterpriseCollector] Starting PostgreSQL enterprise collector (interval: %v, env POSTGRES_ENTERPRISE_INTERVAL_SEC)...", interval)
+	interval := s.FetchInterval(ctx, "Postgres Query Stats", 60*time.Second)
+	log.Printf("[PostgresEnterpriseCollector] Starting PostgreSQL enterprise collector (interval: %v)...", interval)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -505,6 +579,12 @@ func (s *MetricsService) StartPostgresEnterpriseCollector(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.collectPostgresEnterpriseMetrics()
+			// Refresh interval
+			newInterval := s.FetchInterval(ctx, "Postgres Query Stats", 60*time.Second)
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+			}
 		}
 	}
 }

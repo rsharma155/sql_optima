@@ -80,12 +80,22 @@ func (h *RulesHandler) BestPractices(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		// Use instanceType as dbType to filter rules by target_db_type
-		if instanceType != "" {
+
+		// Fallback: If not in config but db_type was passed in query string, trust it.
+		// This happens if the in-memory config is slightly stale compared to the registry.
+		if instanceType == "" && dbType != "" {
+			instanceType = dbType
+		} else if instanceType != "" {
 			dbType = instanceType
 		}
 	} else if dbType != "" {
 		instanceType = dbType
+	}
+
+	if dbType == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "unable to determine target database type"})
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -357,7 +367,6 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 		if fixScript.Valid {
 			e.FixScript = fixScript.String
 		}
-		e.Impact = e.Description
 		e.Remediation = renderRuleRemediation(e.FixScript, e.RecommendedValue)
 		if lastCheck.Valid {
 			e.LastCheck = lastCheck.Time
@@ -462,11 +471,17 @@ func (h *RulesHandler) enrichDashboardEntries(ctx context.Context, serverID int,
 		if strings.TrimSpace(entries[i].Remediation) == "" {
 			entries[i].Remediation = renderRuleRemediation(entries[i].FixScript, entries[i].RecommendedValue)
 		}
-		if strings.TrimSpace(entries[i].Impact) == "" {
-			entries[i].Impact = entries[i].Description
-		}
 		entries[i].WhyThisMatters = rules.GenerateWhyThisMatters(entries[i].RuleID)
 		entries[i].ImpactDetail = rules.GenerateImpact(entries[i].RuleID)
+
+		if strings.TrimSpace(entries[i].Impact) == "" {
+			if entries[i].ImpactDetail != "" {
+				entries[i].Impact = entries[i].ImpactDetail
+			} else {
+				entries[i].Impact = entries[i].Description
+			}
+		}
+
 		entries[i].RiskLevel = rules.GetRiskLevel(entries[i].RuleID)
 		entries[i].ConfidenceNote = rules.GetConfidenceNote(entries[i].RuleID)
 	}

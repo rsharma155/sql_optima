@@ -20,7 +20,7 @@ import (
 // Parameters: ctx context.Context, db *sql.DB
 // Returns: []BlockingNode, error
 func CollectBlockingLocks(ctx context.Context, db *sql.DB) ([]models.BlockingNode, error) {
-	query := `
+	query := ` /* SQL_OPTIMA */ 
 		SELECT TOP 50
 			r.session_id,
 			r.blocking_session_id,

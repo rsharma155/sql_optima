@@ -22,13 +22,14 @@ import (
 
 // StartSqlServerStorageHistoryCollector starts the background task to collect storage snapshots.
 func (s *MetricsService) StartSqlServerStorageHistoryCollector(ctx context.Context) {
-	log.Println("[Collector][SQLSERVER-Storage] History collector started (daily cadence)")
+	interval := s.FetchInterval(ctx, "SQL Server Storage", 24*time.Hour)
+	log.Printf("[Collector][SQLSERVER-Storage] History collector started (interval: %v)", interval)
 
-	// Ticker for daily collection (every 24 hours)
-	ticker := time.NewTicker(24 * time.Hour)
+	// Ticker for storage collection
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Initial run after short delay to allow system warmup
+	// Initial run after short delay
 	time.AfterFunc(1*time.Minute, func() {
 		s.RunSqlServerStorageSnapshotCollection(ctx)
 	})
@@ -39,6 +40,13 @@ func (s *MetricsService) StartSqlServerStorageHistoryCollector(ctx context.Conte
 			return
 		case <-ticker.C:
 			s.RunSqlServerStorageSnapshotCollection(ctx)
+
+			// Refresh interval from DB
+			newInterval := s.FetchInterval(ctx, "SQL Server Storage", 24*time.Hour)
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+			}
 		}
 	}
 }
@@ -55,6 +63,10 @@ func (s *MetricsService) RunSqlServerStorageSnapshotCollection(ctx context.Conte
 		}
 
 		log.Printf("[Collector][SQLSERVER-Storage] Collecting snapshots for instance: %s", inst.Name)
+
+		s.sihMu.Lock()
+		lastDefTime := s.sihLastDefsDaily[inst.Name]
+		s.sihMu.Unlock()
 
 		// 1. Database Storage Metrics
 		dbMetrics, err := s.MsRepo.CollectSQLServerStorageMetrics(inst.Name)
@@ -126,7 +138,7 @@ func (s *MetricsService) RunSqlServerStorageSnapshotCollection(ctx context.Conte
 			}
 
 			// D: Index Definitions (Daily)
-			defRows, derr := collectors.CollectSQLServerIndexDefinitions(ctx, s.MsRepo.AsQueryer(inst.Name, db))
+			defRows, derr := collectors.CollectSQLServerIndexDefinitions(ctx, s.MsRepo.AsQueryer(inst.Name, db), lastDefTime)
 			if derr == nil {
 				_, _ = collectors.PersistSQLServerIndexDefinitions(ctx, s.tsLogger, inst.Name, defRows, capture)
 			}
@@ -151,6 +163,11 @@ func (s *MetricsService) RunSqlServerStorageSnapshotCollection(ctx context.Conte
 				_ = s.tsLogger.LogIndexFragmentationHistory(ctx, rows)
 			}
 		}
+
+		// Update last run time for index definitions to optimize next run
+		s.sihMu.Lock()
+		s.sihLastDefsDaily[inst.Name] = capture
+		s.sihMu.Unlock()
 
 		// 3. Global SIH Refreshes
 		_, _ = s.tsLogger.RefreshIndexUnusedCandidatesDaily(ctx, "sqlserver", inst.Name, capture, 100)

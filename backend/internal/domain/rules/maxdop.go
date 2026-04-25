@@ -16,15 +16,15 @@ func EvaluateMaxDOP(ctx evaluation.Context) evaluation.Result {
 	if maxdop > recommended {
 		if waits > 20 {
 			return evaluation.Result{
-				RuleID:      "maxdop",
-				Severity:    "HIGH",
+				RuleID:     "maxdop",
+				Severity:   "HIGH",
 				Confidence: 0.92,
-				Message:     "High parallel waits due to high MAXDOP",
+				Message:    "High parallel waits due to high MAXDOP",
 			}
 		}
 		return evaluation.Result{
-			RuleID:      "maxdop",
-			Severity:    "MEDIUM",
+			RuleID:     "maxdop",
+			Severity:   "MEDIUM",
 			Confidence: 0.75,
 		}
 	}

@@ -1,3 +1,12 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: TimescaleDB storage-layer methods for the Query Analysis dashboard.
+//          Provides aggregation and time-series data from the query metrics hypertables.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
+
 package hot
 
 import (
@@ -47,26 +56,26 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 	}
 
 	metricCol := map[string]string{
-		"cpu":        "delta_cpu_ms",
-		"duration":   "delta_duration_ms",
-		"reads":      "delta_logical_reads",
-		"executions": "delta_executions",
+		"cpu":        "total_cpu_ms",
+		"duration":   "total_elapsed_ms",
+		"reads":      "total_logical_reads",
+		"executions": "total_executions",
 	}[params.Metric]
 	if metricCol == "" {
-		metricCol = "delta_cpu_ms"
+		metricCol = "total_cpu_ms"
 	}
 
 	baseSelect := fmt.Sprintf(`
 		SELECT %s AS dimension_value,
-		       MAX(query_text) as query_text,
+		       MAX(statement_text) as query_text,
 		       MAX(database_name) AS database_name,
 		       SUM(%s) AS metric_value,
-		       SUM(delta_executions) AS total_executions,
-		       AVG(avg_cpu_ms) AS avg_cpu_ms,
-		       AVG(avg_duration_ms) AS avg_duration_ms,
-		       AVG(avg_reads) AS avg_reads
-		FROM monitor.sqlserver_query_store_interval
-		WHERE UPPER(server_instance_name) = UPPER($1)`,
+		       SUM(total_executions) AS total_executions,
+		       AVG(total_cpu_ms / NULLIF(total_executions, 0)) AS avg_cpu_ms,
+		       AVG(total_elapsed_ms / NULLIF(total_executions, 0)) AS avg_duration_ms,
+		       AVG(total_logical_reads / NULLIF(total_executions, 0)) AS avg_reads
+		FROM sqlserver_query_metrics_v2
+		WHERE UPPER(instance_id) = UPPER($1)`,
 		dimensionCol, metricCol)
 
 	var rows pgx.Rows
@@ -77,15 +86,15 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 			return nil, errParse
 		}
 		q := baseSelect + `
-		  AND bucket_end >= $2
-		  AND bucket_end <= $3
+		  AND ts >= $2
+		  AND ts <= $3
 		GROUP BY ` + dimensionCol + `
 		ORDER BY metric_value DESC
 		LIMIT $4`
 		rows, err = tl.pool.Query(ctx, q, params.InstanceName, start, end, params.Limit)
 	} else {
 		q := baseSelect + fmt.Sprintf(`
-		  AND bucket_end > now() - INTERVAL '%s'
+		  AND ts > now() - INTERVAL '%s'
 		GROUP BY %s
 		ORDER BY metric_value DESC
 		LIMIT $2`, tr, dimensionCol)
@@ -99,7 +108,8 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 	var results []map[string]interface{}
 	for rows.Next() {
 		var dimValue, queryText, dbName sql.NullString
-		var metricValue, totalExecutions, avgCPU, avgDuration, avgReads float64
+		var metricValue, totalExecutions float64
+		var avgCPU, avgDuration, avgReads sql.NullFloat64
 
 		if err := rows.Scan(&dimValue, &queryText, &dbName, &metricValue, &totalExecutions, &avgCPU, &avgDuration, &avgReads); err != nil {
 			log.Printf("[TSLogger] GetQueryStatsDashboard scan error: %v", err)
@@ -112,9 +122,9 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 			"database_name":    dbName.String,
 			"metric_value":     metricValue,
 			"total_executions": totalExecutions,
-			"avg_cpu_ms":       avgCPU,
-			"avg_duration_ms":  avgDuration,
-			"avg_reads":        avgReads,
+			"avg_cpu_ms":       avgCPU.Float64,
+			"avg_duration_ms":  avgDuration.Float64,
+			"avg_reads":        avgReads.Float64,
 		})
 	}
 	return results, rows.Err()
@@ -131,21 +141,21 @@ func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, instance
 	}
 
 	metricCol := map[string]string{
-		"cpu":        "delta_cpu_ms",
-		"duration":   "delta_duration_ms",
-		"reads":      "delta_logical_reads",
-		"executions": "delta_executions",
+		"cpu":        "total_cpu_ms",
+		"duration":   "total_elapsed_ms",
+		"reads":      "total_logical_reads",
+		"executions": "total_executions",
 	}[metric]
 	if metricCol == "" {
-		metricCol = "delta_cpu_ms"
+		metricCol = "total_cpu_ms"
 	}
 
 	query := fmt.Sprintf(`
-		SELECT time_bucket('5 min', bucket_end) AS time,
+		SELECT time_bucket('5 min', ts) AS time,
 		       SUM(%s) AS value
-		FROM monitor.sqlserver_query_store_interval
-		WHERE UPPER(server_instance_name) = UPPER($1)
-		  AND bucket_end > now() - INTERVAL '%s'
+		FROM sqlserver_query_metrics_v2
+		WHERE UPPER(instance_id) = UPPER($1)
+		  AND ts > now() - INTERVAL '%s'
 		GROUP BY time
 		ORDER BY time
 	`, metricCol, tr)

@@ -9,7 +9,7 @@ import (
 func TestSharedBuffersLow(t *testing.T) {
 	ctx := evaluation.Context{
 		"shared_buffers_mb": 128,
-		"total_memory_mb":    8192,
+		"total_memory_mb":   8192,
 	}
 
 	res := EvaluateSharedBuffers(ctx)
@@ -22,7 +22,7 @@ func TestSharedBuffersLow(t *testing.T) {
 func TestSharedBuffers_OK(t *testing.T) {
 	ctx := evaluation.Context{
 		"shared_buffers_mb": 2048,
-		"total_memory_mb":    8192,
+		"total_memory_mb":   8192,
 	}
 
 	res := EvaluateSharedBuffers(ctx)

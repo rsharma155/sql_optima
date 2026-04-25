@@ -20,7 +20,7 @@ import (
 // Parameters: ctx context.Context, db *sql.DB
 // Returns: []FileIOStat, *TempDBStats, error
 func CollectStorageIO(ctx context.Context, db *sql.DB) ([]models.FileIOStat, *models.TempDBStats, error) {
-	fileIOQuery := `
+	fileIOQuery := ` /* SQL_OPTIMA */ 
 		SELECT 
 			DB_NAME(mf.database_id) AS database_name,
 			mf.physical_name,
@@ -69,7 +69,7 @@ func CollectStorageIO(ctx context.Context, db *sql.DB) ([]models.FileIOStat, *mo
 		fileStats = append(fileStats, f)
 	}
 
-	tempDBQuery := `
+	tempDBQuery := ` /* SQL_OPTIMA */ 
 		SELECT 
 			DB_NAME(database_id) AS database_name,
 			COUNT(*) AS total_data_files,

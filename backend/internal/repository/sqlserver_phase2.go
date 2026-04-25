@@ -50,6 +50,35 @@ func (c *SqlServerRepository) FetchMemoryGrantsPending(ctx context.Context, inst
 	return n, err
 }
 
+// FetchMemoryGrantsSummary returns a summary of current memory grant activity.
+func (c *SqlServerRepository) FetchMemoryGrantsSummary(ctx context.Context, instanceName string) (map[string]interface{}, error) {
+	db := c.conns[instanceName]
+	if db == nil {
+		return nil, fmt.Errorf("no connection for instance %s", instanceName)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var pending, active int
+	var grantedMB float64
+	// sys.dm_exec_query_memory_grants can be empty, so use COALESCE/ISNULL for SUM.
+	err := db.QueryRowContext(ctx, `
+		SELECT /* SQL_OPTIMA */  
+			ISNULL(SUM(CASE WHEN grant_time IS NULL THEN 1 ELSE 0 END), 0) AS pending_grants,
+			ISNULL(SUM(CASE WHEN grant_time IS NOT NULL THEN 1 ELSE 0 END), 0) AS active_grants,
+			ISNULL(SUM(granted_memory_kb), 0) / 1024.0 AS granted_memory_mb
+		FROM sys.dm_exec_query_memory_grants;
+	`).Scan(&pending, &active, &grantedMB)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"pending_grants":    pending,
+		"active_grants":     active,
+		"granted_memory_mb": grantedMB,
+	}, nil
+}
+
 type PerfCounterSample struct {
 	CounterName  string
 	InstanceName sql.NullString

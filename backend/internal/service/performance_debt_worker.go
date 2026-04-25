@@ -22,19 +22,13 @@ import (
 )
 
 // StartPerformanceDebtCollector collects maintenance/risk findings periodically (default every 15 min).
-// Adjust interval by setting PERFDEBT_INTERVAL_MIN (min 5, max 1440).
 func (s *MetricsService) StartPerformanceDebtCollector(ctx context.Context) {
 	if s.tsLogger == nil {
 		log.Printf("[PerfDebtCollector] TimescaleDB not connected; collector disabled")
 		return
 	}
 
-	interval := 15 * time.Minute
-	if v := strings.TrimSpace(os.Getenv("PERFDEBT_INTERVAL_MIN")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 5 && n <= 1440 {
-			interval = time.Duration(n) * time.Minute
-		}
-	}
+	interval := s.FetchInterval(ctx, "Performance Debt Collection", 15*time.Minute)
 	log.Printf("[PerfDebtCollector] Starting Performance Debt collector (interval: %v)...", interval)
 
 	ticker := time.NewTicker(interval)
@@ -50,6 +44,12 @@ func (s *MetricsService) StartPerformanceDebtCollector(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.collectPerformanceDebtOnce()
+			// Refresh interval
+			newInterval := s.FetchInterval(ctx, "Performance Debt Collection", 15*time.Minute)
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+			}
 		}
 	}
 }

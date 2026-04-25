@@ -40,6 +40,7 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 
 	sr.HandleFunc("/sqlserver/dashboard", m.Dashboard).Methods("GET")
 	sr.HandleFunc("/sqlserver/dashboard/v2", m.DashboardV2).Methods("GET")
+	sr.HandleFunc("/sqlserver/enterprise-dashboard/v2", m.EnterpriseDashboardV2).Methods("GET")
 	sr.HandleFunc("/sqlserver/dashboard/timeseries", m.DashboardTimeSeries).Methods("GET")
 	sr.HandleFunc("/sqlserver/storage-index/table-drilldown", m.TableDrilldown).Methods("GET")
 	sr.HandleFunc("/sqlserver/performance-debt", m.PerformanceDebt).Methods("GET")

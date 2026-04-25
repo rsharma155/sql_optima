@@ -8,8 +8,8 @@ import (
 
 func TestMaxMemory_High(t *testing.T) {
 	ctx := evaluation.Context{
-		"total_memory_gb":         64,
-		"max_server_memory_gb":     60,
+		"total_memory_gb":      64,
+		"max_server_memory_gb": 60,
 	}
 
 	res := EvaluateMaxMemory(ctx)
@@ -21,8 +21,8 @@ func TestMaxMemory_High(t *testing.T) {
 
 func TestMaxMemory_OK(t *testing.T) {
 	ctx := evaluation.Context{
-		"total_memory_gb":         64,
-		"max_server_memory_gb":     50,
+		"total_memory_gb":      64,
+		"max_server_memory_gb": 50,
 	}
 
 	res := EvaluateMaxMemory(ctx)
@@ -34,8 +34,8 @@ func TestMaxMemory_OK(t *testing.T) {
 
 func TestMaxMemory_RecommendedValue(t *testing.T) {
 	ctx := evaluation.Context{
-		"total_memory_gb":         64,
-		"max_server_memory_gb":     60,
+		"total_memory_gb":      64,
+		"max_server_memory_gb": 60,
 	}
 
 	res := EvaluateMaxMemory(ctx)

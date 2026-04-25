@@ -48,9 +48,9 @@ func (c *SqlServerRepository) CollectConnectionStats(db *sql.DB, database string
 			continue
 		}
 		results = append(results, map[string]interface{}{
-			"login_name":          loginName,
-			"database_name":       databaseName,
-			"active_connections":  activeConns,
+			"login_name":         loginName,
+			"database_name":      databaseName,
+			"active_connections": activeConns,
 			"active_requests":    activeReqs,
 		})
 	}

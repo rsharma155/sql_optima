@@ -8,20 +8,20 @@ func EvaluateVacuumHealth(ctx evaluation.Context) evaluation.Result {
 
 	if dead > 20 && lastVacuumHours > 24 {
 		return evaluation.Result{
-			RuleID:        "pg_vacuum_health",
-			Severity:      "HIGH",
-			Confidence:  0.9,
-			Message:     "High dead tuples with stale vacuum → bloat risk",
+			RuleID:         "pg_vacuum_health",
+			Severity:       "HIGH",
+			Confidence:     0.9,
+			Message:        "High dead tuples with stale vacuum → bloat risk",
 			Recommendation: "Tune autovacuum or run manual VACUUM",
 		}
 	}
 
 	if dead > 10 {
 		return evaluation.Result{
-			RuleID:       "pg_vacuum_health",
-			Severity:     "MEDIUM",
-			Confidence:  0.7,
-			Message:      "Moderate dead tuples detected",
+			RuleID:     "pg_vacuum_health",
+			Severity:   "MEDIUM",
+			Confidence: 0.7,
+			Message:    "Moderate dead tuples detected",
 		}
 	}
 

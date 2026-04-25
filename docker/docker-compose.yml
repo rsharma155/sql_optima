@@ -134,17 +134,19 @@ services:
           echo "Waiting for TimescaleDB..."
           sleep 2
         done
-        echo "[1/6] Applying TimescaleDB schema..."
+        echo "[1/7] Applying TimescaleDB schema..."
         psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/00_timescale_schema.sql || true
-        echo "[2/6] Applying rule engine..."
+        echo "[2/7] Applying Enterprise Metrics V2..."
+        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/sqlserver_enterprise_metrics_v2.sql || true
+        echo "[3/7] Applying rule engine..."
         psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/02_rule_engine.sql || true
-        echo "[3/6] Applying additional PG rules..."
+        echo "[4/7] Applying additional PG rules..."
         psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/03_additional_pg_rules.sql || true
-        echo "[4/6] Applying alert engine schema..."
+        echo "[5/7] Applying alert engine schema..."
         psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/04_alert_engine.sql || true
-        echo "[5/6] Seeding initial data..."
+        echo "[6/7] Seeding initial data..."
         psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/01_seed_data.sql || true
-        echo "[6/6] Applying os metric collector..."
+        echo "[7/7] Applying os metric collector..."
         psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/05_os_metrics_collector.sql || true
         echo "Schema setup complete."
     depends_on:

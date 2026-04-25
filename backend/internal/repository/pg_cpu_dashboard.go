@@ -90,7 +90,7 @@ func (c *PgRepository) GetTopCpuQueries(instanceName string, limit int) ([]PgTop
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
-	q := fmt.Sprintf(`SELECT /* SQL_OPTIMA */   s.queryid,
+	q := `SELECT /* SQL_OPTIMA */   s.queryid,
 			now()::timestamptz AS captured_at,
 			COALESCE(r.rolname, '') AS user_name,
 			LEFT(s.query, 400) AS query,
@@ -99,11 +99,11 @@ func (c *PgRepository) GetTopCpuQueries(instanceName string, limit int) ([]PgTop
 			CASE WHEN s.calls > 0 THEN (s.total_exec_time / s.calls)::float8 ELSE 0 END AS avg_ms
 		FROM pg_stat_statements s
 		LEFT JOIN pg_roles r ON r.oid = s.userid
-		WHERE `+buildPgStatStatementsFilters()+`
+		WHERE ` + buildPgStatStatementsFilters() + `
 		ORDER BY s.total_exec_time DESC
-		LIMIT %d`, limit)
+		LIMIT $1`
 
-	rows, err := db.Query(q)
+	rows, err := db.Query(q, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -1,7 +1,8 @@
 /*
  * SQL Optima — https://github.com/rsharma155/sql_optima
  *
- * Purpose: PostgreSQL storage utilization and growth.
+ * Purpose: PostgreSQL Storage, Tuples & Vacuum Status.
+ * Merged from Storage Growth and Autovacuum/Bloat dashboards.
  *
  * Author: Ravi Sharma
  * Copyright (c) 2026 Ravi Sharma
@@ -9,249 +10,228 @@
  */
 
 window.PgStorageView = async function() {
-    const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...'};
-
-    let storageData = { tables: [], indexes: [] };
-    let ccHistory = null;
-    let vacProgress = [];
-    let latestMaint = [];
-    let maintHistory = null;
-    let storageError = '';
-    try {
-        const [storageResp, histResp, vacResp, maintLatestResp] = await Promise.all([
-            window.apiClient.authenticatedFetch(`/api/postgres/storage?instance=${encodeURIComponent(inst.name)}`),
-            window.apiClient.authenticatedFetch(`/api/postgres/control-center/history?instance=${encodeURIComponent(inst.name)}&limit=180`),
-            window.apiClient.authenticatedFetch(`/api/postgres/vacuum/progress?instance=${encodeURIComponent(inst.name)}`),
-            window.apiClient.authenticatedFetch(`/api/postgres/table-maintenance/latest?instance=${encodeURIComponent(inst.name)}&limit=50`),
-        ]);
-        if (storageResp.ok) {
-            const contentType = storageResp.headers.get('content-type') || '';
-            if (contentType.includes('application/json')) {
-                const payload = await storageResp.json();
-                storageError = payload.error || '';
-                storageData = payload;
-            }
-        } else console.error("Failed to load PG storage:", storageResp.status);
-
-        if (histResp.ok) {
-            const contentType = histResp.headers.get('content-type') || '';
-            if (contentType.includes('application/json')) {
-                const payload = await histResp.json();
-                ccHistory = payload && payload.history ? payload.history : null;
-            }
-        } else console.error("Failed to load PG CC history:", histResp.status);
-
-        if (vacResp.ok) {
-            const contentType = vacResp.headers.get('content-type') || '';
-            if (contentType.includes('application/json')) {
-                const payload = await vacResp.json();
-                vacProgress = payload && payload.progress ? payload.progress : [];
-            }
-        }
-        if (maintLatestResp.ok) {
-            const contentType = maintLatestResp.headers.get('content-type') || '';
-            if (contentType.includes('application/json')) {
-                const payload = await maintLatestResp.json();
-                latestMaint = payload && payload.latest ? payload.latest : [];
-            }
-        }
-    } catch (e) {
-        console.error("PG storage fetch failed:", e);
+    const inst = window.appState?.config?.instances?.[window.appState.currentInstanceIdx];
+    const instanceName = inst?.name;
+    if (!instanceName || inst?.type !== 'postgres') {
+        window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-warning">Please select a PostgreSQL instance first</h3></div>`;
+        return;
     }
 
-    const tables = storageData.tables || [];
-    const indexes = storageData.indexes || [];
-    const hasVac = Array.isArray(vacProgress) && vacProgress.length > 0;
+    // Initialize state
+    window.appState.pgStorage = window.appState.pgStorage || {};
+    const state = window.appState.pgStorage;
+    
+    const now = new Date();
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    const fmtLocal = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+    state.fromLocal = state.fromLocal || fmtLocal(oneHourAgo);
+    state.toLocal = state.toLocal || fmtLocal(now);
+    if (state.db === undefined) state.db = 'all';
+
+    // Helper functions
+    const esc = (v) => window.escapeHtml ? window.escapeHtml(String(v ?? '')) : String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const fmtBytes = (n) => {
-        const v = Number(n || 0);
-        if (!isFinite(v) || v <= 0) return '--';
-        const units = ['B','KB','MB','GB','TB'];
+        const v = Number(n ?? 0);
+        if (!isFinite(v) || v <= 0) return '-';
+        const u = ['B','KB','MB','GB','TB'];
         let x = v, i = 0;
-        while (x >= 1024 && i < units.length - 1) { x /= 1024; i++; }
-        return `${x.toFixed(i >= 2 ? 2 : 0)} ${units[i]}`;
+        while (x >= 1024 && i < u.length - 1) { x /= 1024; i++; }
+        return `${x.toFixed(i >= 2 ? 2 : 0)} ${u[i]}`;
     };
-    const fmtWhen = (ts) => {
-        if (!ts) return 'Never';
-        try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
+    const fmtTs = (s) => { try { return s ? new Date(s).toLocaleString() : '—'; } catch { return s || '—'; } };
+    const fmtDur = (secs) => {
+        const s = Number(secs ?? 0);
+        if (!isFinite(s) || s < 0) return '—';
+        if (s < 60) return `${s.toFixed(0)}s`;
+        if (s < 3600) return `${(s/60).toFixed(1)}m`;
+        return `${(s/3600).toFixed(2)}h`;
     };
-    const bloatCandidates = (Array.isArray(latestMaint) ? latestMaint : [])
-        .map(r => {
-            const totalBytes = Number(r.total_bytes || 0);
-            const deadPct = Number(r.dead_pct || 0);
-            const wastedBytes = Math.max(0, Math.floor(totalBytes * (deadPct / 100)));
-            return { ...r, totalBytes, deadPct, wastedBytes };
-        })
-        .filter(r => r.totalBytes > 0 && r.deadPct >= 10)
-        .sort((a,b) => (b.wastedBytes - a.wastedBytes) || (b.deadPct - a.deadPct))
-        .slice(0, 15);
-    const recommendation = (r) => {
-        if (r.deadPct >= 30) return 'High bloat risk: VACUUM (ANALYZE) first; if persistent, schedule REINDEX/pg_repack window. Consider per-table autovacuum tuning.';
-        if (r.deadPct >= 20) return 'Elevated bloat: tune autovacuum for this table (scale factors / cost limits) and monitor dead% trend.';
-        return 'Watchlist: monitor dead% trend; tune autovacuum if rising.';
+    const riskBadge = (level) => {
+        const map = { low: 'text-success', medium: 'text-warning', high: 'text-danger', critical: 'text-danger' };
+        const cls = map[level] || 'text-muted';
+        return `<span class="${cls}">${esc(level?.toUpperCase() ?? '—')}</span>`;
     };
-    const worstDeadPct = (tables || []).reduce((best, t) => {
-        const pct = Number(t?.bloat_pct || 0);
-        if (!best) return { t, pct };
-        return pct > best.pct ? { t, pct } : best;
-    }, null);
-    const mostDeadTuples = (tables || []).reduce((best, t) => {
-        const dead = Number(t?.dead_tuples || 0);
-        if (!best) return { t, dead };
-        return dead > best.dead ? { t, dead } : best;
-    }, null);
 
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">
-            <div class="page-title">
-                <h1><i class="fa-solid fa-hard-drive text-accent"></i> Storage, Tuples & Vacuum Status</h1>
-                <p class="subtitle">Monitor Table Bloat, Unused Indexes, and Autovacuum effectiveness.</p>
-            </div>
-            
-            <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 2fr; gap:0.75rem;">
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Database Bloat Estimation</h3></div>
-                    <div class="chart-container doughnut-container" style="height:140px;"><canvas id="pgBloatChart"></canvas></div>
+            <div class="page-title flex-between dashboard-page-title-compact">
+                <div class="dashboard-title-line" style="flex:1; min-width:0;">
+                    <h1><i class="fa-solid fa-hard-drive text-accent"></i> Storage, Tuples &amp; Vacuum Status</h1>
+                    <p class="subtitle">Monitor Table Bloat, Unused Indexes, and Autovacuum effectiveness for ${esc(instanceName)}</p>
                 </div>
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Autovacuum & Autoanalyze Runs</h3></div>
-                    <div class="chart-container" style="height:140px;"><canvas id="pgVacChart"></canvas></div>
-                </div>
-            </div>
-            <div class="charts-grid mt-3" id="pgDeadTrendRow" style="display:none; grid-template-columns:1fr; gap:0.75rem;">
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Dead Tuple % Trend (Selected Table)</h3></div>
-                    <div class="chart-container" style="height:140px;"><canvas id="pgDeadPctTrendChart"></canvas></div>
-                    <div class="text-muted" style="font-size:0.75rem; margin-top:0.35rem;" id="pgDeadPctTrendLabel"></div>
+                <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.6rem; flex-wrap:wrap; justify-content:flex-end;">
+                    <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; border: 1px solid var(--border-color);">
+                        <label class="text-muted" style="margin:0;">from:</label>
+                        <input type="datetime-local" id="pgStorageFrom" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; width:10.5rem;" value="${state.fromLocal}" />
+                        <label class="text-muted" style="margin:0;">to:</label>
+                        <input type="datetime-local" id="pgStorageTo" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; width:10.5rem;" value="${state.toLocal}" />
+                        <div style="border-left:1px solid var(--border-color); padding-left:0.5rem; display:flex; align-items:center; gap:0.4rem;">
+                            <label class="text-muted" style="margin:0;">db:</label>
+                            <select id="pgStorageDb" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; max-width:120px;"><option value="all">All</option></select>
+                        </div>
+                        <button type="button" class="btn btn-xs btn-accent" id="pgStorageApply" style="padding:1px 6px;"><i class="fa-solid fa-filter"></i> Apply</button>
+                    </div>
+                    <button id="pgStorageRefreshBtn" class="btn btn-sm btn-outline text-accent"><i class="fa-solid fa-rotate-right"></i> Refresh</button>
                 </div>
             </div>
 
-            <div class="tables-grid mt-3" style="display:grid; grid-template-columns:1fr; gap:0.75rem;">
-                ${storageError ? `
-                    <div class="alert alert-warning">
-                        <i class="fa-solid fa-triangle-exclamation"></i> Storage stats error: ${window.escapeHtml(storageError)}
-                    </div>
-                ` : ''}
-                <div class="glass-panel dashboard-strip-panel">
-                    <div class="dashboard-strip-header">
-                        <h4>
-                            <span class="dashboard-strip-header-icons" aria-hidden="true">
-                                <i class="fa-solid fa-chart-pie" title="Table health"></i>
-                                <i class="fa-solid fa-broom" title="Vacuum"></i>
-                            </span>
-                            Top Table Offenders (Quick View)
-                        </h4>
-                    </div>
-                    <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:0.75rem;">
-                        <div class="strip-metric-cell" style="${worstDeadPct?.t ? 'cursor:pointer;' : ''}" ${worstDeadPct?.t ? `data-action="pg-load-dead-trend" data-schema="${window.escapeHtml(worstDeadPct.t.schema)}" data-table="${window.escapeHtml(worstDeadPct.t.table)}"` : ''} title="Highest dead tuple ratio (bloat%) in the current table list. Click to load dead% trend.">
-                            <div class="strip-metric-label">Worst Dead %</div>
-                            <div class="strip-metric-value metric-value">${worstDeadPct?.t ? `${Number(worstDeadPct.pct || 0).toFixed(1)}%` : '--'}</div>
-                            <div class="text-muted sub">${worstDeadPct?.t ? `${window.escapeHtml(worstDeadPct.t.schema)}.${window.escapeHtml(worstDeadPct.t.table)}` : 'No data'}</div>
-                        </div>
-                        <div class="strip-metric-cell" style="${mostDeadTuples?.t ? 'cursor:pointer;' : ''}" ${mostDeadTuples?.t ? `data-action="pg-load-dead-trend" data-schema="${window.escapeHtml(mostDeadTuples.t.schema)}" data-table="${window.escapeHtml(mostDeadTuples.t.table)}"` : ''} title="Highest dead tuples count in the current table list. Click to load dead% trend.">
-                            <div class="strip-metric-label">Most Dead Tuples</div>
-                            <div class="strip-metric-value metric-value">${mostDeadTuples?.t ? Number(mostDeadTuples.dead || 0).toLocaleString() : '--'}</div>
-                            <div class="text-muted sub">${mostDeadTuples?.t ? `${window.escapeHtml(mostDeadTuples.t.schema)}.${window.escapeHtml(mostDeadTuples.t.table)}` : 'No data'}</div>
-                        </div>
-                        <div class="strip-metric-cell" title="How many tables are in the current Storage snapshot list.">
-                            <div class="strip-metric-label">Tables Tracked (snapshot)</div>
-                            <div class="strip-metric-value metric-value">${Number(tables.length || 0).toLocaleString()}</div>
-                            <div class="text-muted sub">from pg_stat_user_tables</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="table-card glass-panel" id="pgBloatCandidatesCard" style="${bloatCandidates.length ? '' : 'display:none;'}">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Bloat Candidates (Impact-based)</h3></div>
-                    <div class="text-muted" style="font-size:0.75rem; margin:0.25rem 0 0.5rem 0;">
-                        Ranked by estimated wasted bytes \(total_bytes × dead%\) from Timescale table maintenance snapshots.
-                    </div>
-                    <div class="table-responsive" style="max-height:260px; overflow-y:auto;">
-                        <table class="data-table" style="font-size:0.7rem;">
-                            <thead>
-                                <tr><th>Table</th><th>Size</th><th>Dead %</th><th>Est. Waste</th><th>Last Autovac</th><th>Recommendation</th></tr>
-                            </thead>
-                            <tbody>
-                                ${bloatCandidates.map(r => `
-                                    <tr>
-                                        <td style="cursor:pointer;" title="Click to load dead tuple trend" data-action="pg-load-dead-trend" data-schema="${window.escapeHtml(r.schema_name || '')}" data-table="${window.escapeHtml(r.table_name || '')}">
-                                            <strong>${window.escapeHtml(r.schema_name || '')}.${window.escapeHtml(r.table_name || '')}</strong>
-                                        </td>
-                                        <td>${window.escapeHtml(fmtBytes(r.totalBytes))}</td>
-                                        <td><span class="badge ${r.deadPct >= 30 ? 'badge-danger' : (r.deadPct >= 20 ? 'badge-warning' : 'badge-info')}">${r.deadPct.toFixed(1)}%</span></td>
-                                        <td>${window.escapeHtml(fmtBytes(r.wastedBytes))}</td>
-                                        <td class="text-muted">${window.escapeHtml(fmtWhen(r.last_autovacuum))}</td>
-                                        <td>${window.escapeHtml(recommendation(r))}</td>
-                                    </tr>
-                                `).join('') || '<tr><td colspan="6" class="text-center text-muted">No candidates yet</td></tr>'}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                <div class="table-card glass-panel" id="pgVacuumProgressCard" style="${hasVac ? '' : 'display:none;'}">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Autovacuum / Vacuum Progress (Live)</h3></div>
-                    <div class="table-responsive" style="max-height:220px; overflow-y:auto;">
-                        <table class="data-table" style="font-size:0.7rem;">
-                            <thead>
-                                <tr><th>PID</th><th>DB/User</th><th>Relation</th><th>Phase</th><th>Scanned</th><th>Vacuumed</th><th>Dead tuples</th></tr>
-                            </thead>
-                            <tbody>
-                                ${(hasVac ? vacProgress : []).map(v => `
-                                    <tr>
-                                        <td>${v.pid || '-'}</td>
-                                        <td><strong>${window.escapeHtml(v.database_name || '-')}</strong><br/><span class="text-muted">${window.escapeHtml(v.user_name || '-')}</span></td>
-                                        <td style="max-width:360px; overflow:hidden; text-overflow:ellipsis;" title="${window.escapeHtml(v.relation_name || '')}">
-                                            ${window.escapeHtml(v.relation_name || '-')}
-                                        </td>
-                                        <td>${window.escapeHtml(v.phase || '-')}</td>
-                                        <td>${Number(v.heap_blks_scanned || 0).toLocaleString()} / ${Number(v.heap_blks_total || 0).toLocaleString()} <span class="text-muted">(${Number(v.progress_pct || 0).toFixed(0)}%)</span></td>
-                                        <td>${Number(v.heap_blks_vacuumed || 0).toLocaleString()}</td>
-                                        <td>${Number(v.num_dead_tuples || 0).toLocaleString()} <span class="text-muted">/ ${Number(v.max_dead_tuples || 0).toLocaleString()}</span></td>
-                                    </tr>
-                                `).join('') || '<tr><td colspan="7" class="text-center text-muted">No vacuum progress currently running</td></tr>'}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+            <!-- Tab Nav -->
+            <div class="tabs-container">
+                <button class="tab-btn active" data-tab="overview"><i class="fa-solid fa-chart-line"></i> Overview &amp; Growth</button>
+                <button class="tab-btn" data-tab="bloat"><i class="fa-solid fa-broom"></i> Maintenance &amp; Bloat<span class="tab-badge" id="tabBadge-bloat" style="display:none;"></span></button>
+                <button class="tab-btn" data-tab="risks"><i class="fa-solid fa-triangle-exclamation"></i> Sessions &amp; Risks<span class="tab-badge" id="tabBadge-risks" style="display:none;"></span></button>
+                <button class="tab-btn" data-tab="indices"><i class="fa-solid fa-sitemap"></i> Index Efficiency</button>
+            </div>
 
-                <div class="table-card glass-panel">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Table Metrics & Vacuum State</h3></div>
-                    <div class="table-responsive" style="max-height:280px; overflow-y:auto;">
-                        <table class="data-table" style="font-size:0.7rem;">
-                            <thead>
-                                <tr><th>Table Name</th><th>Total Size</th><th>Dead Tuples</th><th>Bloat %</th><th>Scans (Seq vs Idx)</th><th>Last Vacuum</th><th>Last Analyze</th></tr>
-                            </thead>
-                            <tbody>
-                                ${tables.length > 0 ? tables.map(table => `
-                                    <tr>
-                                        <td style="cursor:pointer;" title="Click to load dead tuple trend" data-action="pg-load-dead-trend" data-schema="${window.escapeHtml(table.schema)}" data-table="${window.escapeHtml(table.table)}"><strong>${window.escapeHtml(table.schema)}.${window.escapeHtml(table.table)}</strong></td>
-                                        <td>${window.escapeHtml(table.total_size)}</td>
-                                        <td><span class="${table.dead_tuples > 1000 ? 'text-danger font-bold' : ''}">${table.dead_tuples.toLocaleString()}</span></td>
-                                        <td><span class="badge ${table.bloat_pct > 20 ? 'badge-danger' : 'badge-success'}">${table.bloat_pct.toFixed(1)}%</span></td>
-                                        <td>S: ${table.seq_scans} | I: ${table.idx_scans}</td>
-                                        <td>${table.last_vacuum || 'Never'}</td>
-                                        <td>${table.last_analyze || 'Never'}</td>
-                                    </tr>
-                                `).join('') : '<tr><td colspan="7" class="text-center text-muted">No table data available</td></tr>'}
-                            </tbody>
-                        </table>
+            <!-- OVERVIEW TAB -->
+            <div id="pgStorageTab-overview" class="tab-panel">
+                <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 2fr; gap:0.75rem;">
+                    <div class="chart-card glass-panel" style="padding:0.75rem;">
+                        <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Database Bloat Estimation</h3></div>
+                        <div class="chart-container doughnut-container" style="height:140px;"><canvas id="pgBloatChart"></canvas></div>
+                    </div>
+                    <div class="chart-card glass-panel" style="padding:0.75rem;">
+                        <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Autovacuum &amp; Autoanalyze Runs</h3></div>
+                        <div class="chart-container" style="height:140px;"><canvas id="pgVacChart"></canvas></div>
                     </div>
                 </div>
                 
-                <div class="table-card glass-panel">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Index Inefficiency (Zero Scans / Dupes)</h3></div>
-                    <div class="table-responsive" style="max-height:200px; overflow-y:auto;">
+                <div class="glass-panel dashboard-strip-panel mt-3">
+                    <div class="dashboard-strip-header">
+                        <h4>Storage &amp; Growth KPIs (Time-Series)</h4>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:0.75rem;">
+                        <div class="strip-metric-cell">
+                            <div class="strip-metric-label">Total DB Size</div>
+                            <div class="strip-metric-value metric-value" id="val-total-db-size">--</div>
+                            <div class="text-muted sub">Current Snapshot</div>
+                        </div>
+                        <div class="strip-metric-cell">
+                            <div class="strip-metric-label">Growth (7d)</div>
+                            <div class="strip-metric-value metric-value" id="val-growth-7d">--</div>
+                            <div class="text-muted sub">Weekly Trend</div>
+                        </div>
+                        <div class="strip-metric-cell" id="metric-worst-dead-pct">
+                            <div class="strip-metric-label">Worst Dead %</div>
+                            <div class="strip-metric-value metric-value" id="val-worst-dead-pct">--</div>
+                            <div class="text-muted sub" id="sub-worst-dead-pct">Loading…</div>
+                        </div>
+                        <div class="strip-metric-cell">
+                            <div class="strip-metric-label">Unused Indexes</div>
+                            <div class="strip-metric-value metric-value" id="val-unused-idx-count">--</div>
+                            <div class="text-muted sub" id="sub-unused-idx-size">Loading…</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-card glass-panel mt-3">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Database Growth Trend</h3></div>
+                    <div class="chart-container" style="height:200px; padding:0.5rem;"><canvas id="pgGrowthTrendChart"></canvas></div>
+                </div>
+
+                <div class="table-card glass-panel mt-3">
+                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Vacuum Progress (Live)</h3></div>
+                    <div class="table-responsive" style="max-height:220px; overflow-y:auto;">
                         <table class="data-table" style="font-size:0.7rem;">
                             <thead>
-                                <tr><th>Index Name</th><th>Table</th><th>Size</th><th>Reason</th></tr>
+                                <tr><th>PID</th><th>Relation</th><th>Phase</th><th>Progress</th><th>Vacuumed</th></tr>
                             </thead>
-                            <tbody>
-                                ${indexes.length > 0 ? indexes.map(index => `
-                                    <tr>
-                                        <td><strong>${window.escapeHtml(index.index_name)}</strong></td>
-                                        <td>${window.escapeHtml(index.table_name)}</td>
-                                        <td>${window.escapeHtml(index.size)}</td>
-                                        <td><span class="${index.reason === 'Unused' ? 'text-danger' : 'text-warning'}">${window.escapeHtml(index.reason)}</span></td>
-                                    </tr>
-                                `).join('') : '<tr><td colspan="4" class="text-center text-muted">No unused indexes found</td></tr>'}
+                            <tbody id="pgVacProgressTbody">
+                                <tr><td colspan="5" class="text-center text-muted">No vacuum progress currently running</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BLOAT & MAINTENANCE TAB -->
+            <div id="pgStorageTab-bloat" class="tab-panel" style="display:none;">
+                <div class="table-card glass-panel mt-3">
+                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                        <h3 style="font-size:0.85rem;margin:0;"><i class="fa-solid fa-database text-warning"></i> Table Bloat &amp; Vacuum History</h3>
+                        <span id="pgBloatMeta" class="text-muted small">Loading…</span>
+                    </div>
+                    <div class="table-responsive" style="overflow-x:auto; max-height:500px;">
+                        <table class="data-table" style="font-size:0.75rem;">
+                            <thead>
+                                <tr>
+                                    <th>Table</th><th>Total Size</th><th>Dead %</th>
+                                    <th>Dead Tuples</th><th>Est. Waste</th>
+                                    <th>Last Autovacuum</th><th>Vacuum Lag</th><th>Recommendation</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pgBloatTbody">
+                                <tr><td colspan="8" class="text-center text-muted">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RISKS & SESSIONS TAB -->
+            <div id="pgStorageTab-risks" class="tab-panel" style="display:none;">
+                <div id="pgRisksAlerts"></div>
+                
+                <div class="table-card glass-panel mt-3">
+                    <div class="card-header"><h3 style="font-size:0.85rem;margin:0;"><i class="fa-solid fa-hourglass-half text-danger"></i> Idle In Transaction Sessions</h3></div>
+                    <div class="table-responsive" style="overflow-x:auto;">
+                        <table class="data-table" style="font-size:0.75rem;">
+                            <thead>
+                                <tr><th>PID</th><th>User</th><th>Idle Dur</th><th>Wait Event</th><th>Query</th></tr>
+                            </thead>
+                            <tbody id="pgIdleTbody">
+                                <tr><td colspan="5" class="text-center text-muted">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="table-card glass-panel mt-3">
+                    <div class="card-header"><h3 style="font-size:0.85rem;margin:0;"><i class="fa-solid fa-clock text-warning"></i> Long-Running Active Transactions (>1 min)</h3></div>
+                    <div class="table-responsive" style="overflow-x:auto;">
+                        <table class="data-table" style="font-size:0.75rem;">
+                            <thead>
+                                <tr><th>PID</th><th>User</th><th>Txn Dur</th><th>Wait Event</th><th>Query</th></tr>
+                            </thead>
+                            <tbody id="pgLongTxnTbody">
+                                <tr><td colspan="5" class="text-center text-muted">No long transactions</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="table-card glass-panel mt-3">
+                    <div class="card-header"><h3 style="font-size:0.85rem;margin:0;"><i class="fa-solid fa-triangle-exclamation text-warning"></i> XID Wraparound Risk by Database</h3></div>
+                    <div id="pgXIDBody" style="padding:1rem;">
+                        <p class="text-muted text-center">Loading…</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- INDICES TAB -->
+            <div id="pgStorageTab-indices" class="tab-panel" style="display:none;">
+                <div class="chart-card glass-panel mt-3" style="padding:0.75rem;">
+                    <div class="card-header"><h3 style="font-size:0.85rem;margin:0;"><i class="fa-solid fa-chart-line text-info"></i> Index Usage &amp; Efficiency Trend</h3></div>
+                    <div class="chart-container" style="height:250px;"><canvas id="pgIndexEfficiencyTrendChart"></canvas></div>
+                </div>
+                <div class="table-card glass-panel mt-3">
+                    <div class="card-header"><h3 style="font-size:0.85rem;margin:0;"><i class="fa-solid fa-sitemap text-info"></i> Index Bloat &amp; Inefficiency (Top Candidates)</h3></div>
+                    <div class="table-responsive" style="overflow-x:auto;">
+                        <table class="data-table" style="font-size:0.75rem;">
+                            <thead>
+                                <tr>
+                                    <th class="sortable" data-col="database_name">Database</th>
+                                    <th class="sortable" data-col="table">Table</th>
+                                    <th class="sortable" data-col="index_name">Index</th>
+                                    <th class="sortable" data-col="index_bytes">Size</th>
+                                    <th class="sortable" data-col="idx_scans">Scans</th>
+                                    <th>Recommendation</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pgIdxBloatTbody">
+                                <tr><td colspan="6" class="text-center text-muted">Loading…</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -260,80 +240,355 @@ window.PgStorageView = async function() {
         </div>
     `;
 
-    setTimeout(() => {
-        window.currentCharts = window.currentCharts || {};
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+            btn.classList.add('active');
+            const panel = document.getElementById(`pgStorageTab-${btn.dataset.tab}`);
+            if (panel) panel.style.display = '';
+        });
+    });
+
+    const loadAllData = async () => {
+        const fromIso = new Date(document.getElementById('pgStorageFrom').value).toISOString();
+        const toIso = new Date(document.getElementById('pgStorageTo').value).toISOString();
+        const selectedDb = document.getElementById('pgStorageDb').value;
+        const dbParam = (selectedDb && selectedDb !== 'all') ? `&db=${encodeURIComponent(selectedDb)}` : '';
+
+        const [storageResp, histResp, vacResp, bloatResp, idleResp, xidResp, longTxnResp, idxBloatResp, sihResp, idxUsageResp] = await Promise.allSettled([
+            window.apiClient.authenticatedFetch(`/api/postgres/storage?instance=${encodeURIComponent(instanceName)}`),
+            window.apiClient.authenticatedFetch(`/api/postgres/control-center/history?instance=${encodeURIComponent(instanceName)}&limit=180`),
+            window.apiClient.authenticatedFetch(`/api/postgres/vacuum/progress?instance=${encodeURIComponent(instanceName)}`),
+            window.apiClient.authenticatedFetch(`/api/postgres/bloat?instance=${encodeURIComponent(instanceName)}&limit=200`),
+            window.apiClient.authenticatedFetch(`/api/postgres/idle-in-transaction?instance=${encodeURIComponent(instanceName)}`),
+            window.apiClient.authenticatedFetch(`/api/postgres/xid-wraparound?instance=${encodeURIComponent(instanceName)}`),
+            window.apiClient.authenticatedFetch(`/api/postgres/long-running-transactions?instance=${encodeURIComponent(instanceName)}`),
+            window.apiClient.authenticatedFetch(`/api/postgres/index-bloat?instance=${encodeURIComponent(instanceName)}&limit=200`),
+            window.apiClient.authenticatedFetch(`/api/timescale/storage-index-health/dashboard?engine=postgres&instance=${encodeURIComponent(instanceName)}&from=${fromIso}&to=${toIso}${dbParam}`),
+            window.apiClient.authenticatedFetch(`/api/timescale/storage-index-health/index-usage?engine=postgres&instance=${encodeURIComponent(instanceName)}&from=${fromIso}&to=${toIso}&limit=500${dbParam}`),
+        ]);
+
+        // --- 1. SIH DASHBOARD (TIME-SERIES) ---
+        if (sihResp.status === 'fulfilled' && sihResp.value.ok) {
+            const sih = await sihResp.value.json();
+            const k = sih.kpis || {};
+            document.getElementById('val-total-db-size').textContent = k.total_db_size_mb ? `${k.total_db_size_mb.toFixed(1)} MB` : '--';
+            document.getElementById('val-growth-7d').textContent = k.growth_7d_pct ? `${k.growth_7d_pct.toFixed(2)}%` : '0.0%';
+            document.getElementById('val-unused-idx-count').textContent = k.unused_index_count || '0';
+            document.getElementById('sub-unused-idx-size').textContent = k.unused_index_mb ? `${k.unused_index_mb.toFixed(1)} MB waste` : '0 MB';
+
+            // Growth Trend Chart
+            if (sih.growth && sih.growth.length > 0) {
+                setTimeout(() => {
+                    const ctx = document.getElementById('pgGrowthTrendChart');
+                    if (ctx) {
+                        if (window.currentCharts?.pgGrowth) window.currentCharts.pgGrowth.destroy();
+                        window.currentCharts = window.currentCharts || {};
+                        window.currentCharts.pgGrowth = new Chart(ctx.getContext('2d'), {
+                            type: 'line',
+                            data: {
+                                labels: sih.growth.map(p => new Date(p.bucket).toLocaleDateString()),
+                                datasets: [
+                                    { label: 'Table Size (MB)', data: sih.growth.map(p => p.table_size_mb), borderColor: window.getCSSVar('--accent'), backgroundColor: 'rgba(56,189,248,0.1)', fill: true, tension: 0.3, pointRadius: 2 },
+                                    { label: 'Index Size (MB)', data: sih.growth.map(p => p.index_size_mb), borderColor: window.getCSSVar('--info'), tension: 0.3, pointRadius: 0 }
+                                ]
+                            },
+                            options: { 
+                                responsive: true, maintainAspectRatio: false, 
+                                plugins: { legend: { position: 'top', labels: { color: '#94a3b8', font: { size: 10 } } } },
+                                scales: { 
+                                    x: { grid: { display: false }, ticks: { color: '#64748b', font: { size: 9 } } },
+                                    y: { title: { display: true, text: 'Size (MB)', color: '#64748b' }, ticks: { color: '#64748b', font: { size: 9 } } }
+                                }
+                            }
+                        });
+                    }
+                }, 100);
+            }
+        }
+
+        // --- 2. INDEX EFFICIENCY TREND ---
+        if (idxUsageResp.status === 'fulfilled' && idxUsageResp.value.ok) {
+            const data = await idxUsageResp.value.json();
+            const points = data.points || [];
+            if (points.length > 0) {
+                // Group by time to get total usage trend
+                const timeMap = {};
+                points.forEach(p => {
+                    const t = new Date(p.time).toISOString().slice(0, 16); // group by minute
+                    if (!timeMap[t]) timeMap[t] = { scans: 0, updates: 0, size: 0, count: 0 };
+                    timeMap[t].scans += (p.scans || 0);
+                    timeMap[t].updates += (p.updates || 0);
+                    timeMap[t].size += (p.index_size_mb || 0);
+                    timeMap[t].count++;
+                });
+                const sortedLabels = Object.keys(timeMap).sort();
+
+                setTimeout(() => {
+                    const ctx = document.getElementById('pgIndexEfficiencyTrendChart');
+                    if (ctx) {
+                        if (window.currentCharts?.pgIdxEff) window.currentCharts.pgIdxEff.destroy();
+                        window.currentCharts = window.currentCharts || {};
+                        window.currentCharts.pgIdxEff = new Chart(ctx.getContext('2d'), {
+                            type: 'line',
+                            data: {
+                                labels: sortedLabels.map(l => new Date(l).toLocaleString()),
+                                datasets: [
+                                    { label: 'Total Index Scans (Usage)', data: sortedLabels.map(l => timeMap[l].scans), borderColor: window.getCSSVar('--success'), tension: 0.3, yAxisID: 'y' },
+                                    { label: 'Total Index Size (MB)', data: sortedLabels.map(l => timeMap[l].size), borderColor: window.getCSSVar('--warning'), backgroundColor: 'rgba(245,158,11,0.1)', fill: true, tension: 0.3, yAxisID: 'y1' }
+                                ]
+                            },
+                            options: {
+                                responsive: true, maintainAspectRatio: false,
+                                plugins: { legend: { position: 'top', labels: { color: '#94a3b8' } } },
+                                scales: {
+                                    x: { grid: { display: false }, ticks: { color: '#64748b', maxRotation: 45, minRotation: 45 } },
+                                    y: { title: { display: true, text: 'Scans / Seeks', color: '#64748b' }, position: 'left', ticks: { color: '#64748b' } },
+                                    y1: { title: { display: true, text: 'Size (MB)', color: '#64748b' }, position: 'right', grid: { display: false }, ticks: { color: '#64748b' } }
+                                }
+                            }
+                        });
+                    }
+                }, 100);
+            }
+        }
+
+        // --- 3. OVERVIEW & CHARTS ---
+        if (storageResp.status === 'fulfilled' && storageResp.value.ok) {
+            const data = await storageResp.value.json();
+            const tables = data.tables || [];
+            
+            const worstDead = tables.reduce((best, t) => (!best || t.bloat_pct > best.bloat_pct) ? t : best, null);
+            if (worstDead) {
+                document.getElementById('val-worst-dead-pct').textContent = `${worstDead.bloat_pct.toFixed(1)}%`;
+                document.getElementById('sub-worst-dead-pct').textContent = `${worstDead.schema}.${worstDead.table}`;
+            }
+
+            // Charts
+            setTimeout(() => {
+                window.currentCharts = window.currentCharts || {};
+                const totalBloat = tables.length > 0 ? tables.reduce((sum, t) => sum + (t.bloat_pct || 0), 0) / tables.length : 0;
+                const bloatCtx = document.getElementById('pgBloatChart');
+                if (bloatCtx) {
+                    if (window.currentCharts.pgBloat) window.currentCharts.pgBloat.destroy();
+                    window.currentCharts.pgBloat = new Chart(bloatCtx.getContext('2d'), {
+                        type: 'doughnut', data: {
+                            labels: ['Bloat', 'Live'], 
+                            datasets: [{ data: [totalBloat, 100-totalBloat], backgroundColor: [window.getCSSVar('--danger'), window.getCSSVar('--success')], borderWidth: 0 }]
+                        }, options: {responsive:true, maintainAspectRatio:false, cutout:'75%', plugins:{legend:{position:'bottom'}}}
+                    });
+                }
+            }, 50);
+        }
+
+        if (histResp.status === 'fulfilled' && histResp.value.ok) {
+            const data = await histResp.value.json();
+            const history = data.history || {};
+            setTimeout(() => {
+                const vacCtx = document.getElementById('pgVacChart');
+                if (vacCtx) {
+                    if (window.currentCharts.pgVac) window.currentCharts.pgVac.destroy();
+                    window.currentCharts.pgVac = new Chart(vacCtx.getContext('2d'), {
+                        type: 'line', data: {
+                            labels: history.labels || [],
+                            datasets: [{ label:'Autovacuum workers', data: history.autovacuum_workers || [], borderColor: window.getCSSVar('--warning'), backgroundColor: 'rgba(245,158,11,0.15)', fill:true, tension:0.25, pointRadius:0 }]
+                        }, options: { responsive:true, maintainAspectRatio:false, scales:{ y:{ beginAtZero:true } } }
+                    });
+                }
+            }, 50);
+        }
+
+        if (vacResp.status === 'fulfilled' && vacResp.value.ok) {
+            const data = await vacResp.value.json();
+            const prog = data.progress || [];
+            const tbody = document.getElementById('pgVacProgressTbody');
+            const filteredProg = (selectedDb && selectedDb !== 'all') ? prog.filter(v => v.database_name === selectedDb) : prog;
+            
+            if (filteredProg.length > 0) {
+                tbody.innerHTML = filteredProg.map(v => `
+                    <tr>
+                        <td>${v.pid}</td>
+                        <td title="${esc(v.relation_name)}">${esc(v.relation_name)}</td>
+                        <td>${esc(v.phase)}</td>
+                        <td>${Number(v.progress_pct || 0).toFixed(1)}%</td>
+                        <td>${Number(v.heap_blks_vacuumed || 0).toLocaleString()} blks</td>
+                    </tr>
+                `).join('');
+            } else {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No vacuum progress currently running</td></tr>';
+            }
+        }
+
+        // --- 4. BLOAT TAB ---
+        if (bloatResp.status === 'fulfilled' && bloatResp.value.ok) {
+            const data = await bloatResp.value.json();
+            let rows = data.tables || [];
+            if (selectedDb && selectedDb !== 'all') {
+                rows = rows.filter(r => r.database_name === selectedDb);
+            }
+            const tbody = document.getElementById('pgBloatTbody');
+            document.getElementById('pgBloatMeta').textContent = `${rows.length} tables analyzed`;
+            document.getElementById('tabBadge-bloat').textContent = rows.filter(r => r.dead_pct > 20).length;
+            document.getElementById('tabBadge-bloat').style.display = rows.filter(r => r.dead_pct > 20).length > 0 ? '' : 'none';
+
+            tbody.innerHTML = rows.map(r => {
+                const vacLagSec = Number(r.vacuum_lag_seconds || 0);
+                const vacLagStr = vacLagSec < 0 ? 'Never' : vacLagSec < 86400 ? `${(vacLagSec/3600).toFixed(1)}h` : `${(vacLagSec/86400).toFixed(1)}d`;
+                return `<tr>
+                    <td><strong>${esc(r.schema)}.${esc(r.table)}</strong></td>
+                    <td>${esc(r.total_size || fmtBytes(r.total_bytes))}</td>
+                    <td><span class="badge ${r.dead_pct > 20 ? 'badge-danger' : 'badge-info'}">${r.dead_pct.toFixed(1)}%</span></td>
+                    <td>${Number(r.dead_tuples).toLocaleString()}</td>
+                    <td>${Number(r.estimated_waste_mb || 0).toFixed(1)} MB</td>
+                    <td class="text-muted">${fmtTs(r.last_autovacuum)}</td>
+                    <td class="${vacLagSec > 86400 ? 'text-warning' : ''}">${vacLagStr}</td>
+                    <td class="small">${esc(r.recommendation)}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        // --- 5. SESSIONS & RISKS ---
+        let riskCount = 0;
+        if (idleResp.status === 'fulfilled' && idleResp.value.ok) {
+            const data = await idleResp.value.json();
+            let s = data.sessions || [];
+            if (selectedDb && selectedDb !== 'all') {
+                s = s.filter(sess => sess.database_name === selectedDb);
+            }
+            riskCount += s.length;
+            document.getElementById('pgIdleTbody').innerHTML = s.map(sess => `
+                <tr>
+                    <td>${sess.pid}</td><td>${esc(sess.user_name)}</td>
+                    <td class="${sess.idle_seconds > 300 ? 'text-danger' : ''}">${fmtDur(sess.idle_seconds)}</td>
+                    <td>${esc(sess.wait_event)}</td>
+                    <td class="small" title="${esc(sess.query)}">${esc(sess.query.slice(0,60))}…</td>
+                </tr>
+            `).join('') || '<tr><td colspan="5" class="text-center text-muted">No idle sessions</td></tr>';
+        }
+
+        if (longTxnResp.status === 'fulfilled' && longTxnResp.value.ok) {
+            const data = await longTxnResp.value.json();
+            let t = data.transactions || [];
+            if (selectedDb && selectedDb !== 'all') {
+                t = t.filter(txn => txn.database_name === selectedDb);
+            }
+            riskCount += t.length;
+            document.getElementById('pgLongTxnTbody').innerHTML = t.map(txn => `
+                <tr>
+                    <td>${txn.pid}</td><td>${esc(txn.user_name)}</td>
+                    <td class="text-warning">${fmtDur(txn.txn_duration_seconds)}</td>
+                    <td>${esc(txn.wait_event)}</td>
+                    <td class="small" title="${esc(txn.query)}">${esc(txn.query.slice(0,60))}…</td>
+                </tr>
+            `).join('') || '<tr><td colspan="5" class="text-center text-muted">No long transactions</td></tr>';
+        }
         
-        const totalBloat = tables.length > 0 ? tables.reduce((sum, t) => sum + (t.bloat_pct || 0), 0) / tables.length : 0;
-        const livePct = 100 - totalBloat;
-        
-        const bloatCtx = document.getElementById('pgBloatChart');
-        if (bloatCtx) {
-            window.currentCharts.pgBloat = new Chart(bloatCtx.getContext('2d'), {
-                type: 'doughnut', data: {
-                    labels: ['Bloat (Dead)', 'Live Data'], 
-                    datasets: [{ 
-                        data: [totalBloat, livePct], 
-                        backgroundColor: [window.getCSSVar('--danger'), window.getCSSVar('--success')], 
-                        borderWidth: 0
-                    }]
-                }, options: {responsive:true, maintainAspectRatio:false, cutout:'75%', plugins:{legend:{position:'bottom'}}}
+        const risksBadge = document.getElementById('tabBadge-risks');
+        risksBadge.textContent = riskCount;
+        risksBadge.style.display = riskCount > 0 ? '' : 'none';
+
+        if (xidResp.status === 'fulfilled' && xidResp.value.ok) {
+            const data = await xidResp.value.json();
+            let dbs = data.databases || [];
+            if (selectedDb && selectedDb !== 'all') {
+                dbs = dbs.filter(d => d.database_name === selectedDb);
+            }
+            document.getElementById('pgXIDBody').innerHTML = dbs.map(d => `
+                <div class="mb-2">
+                    <div class="flex-between small mb-1">
+                        <strong>${esc(d.database_name)}</strong>
+                        <span>${riskBadge(d.risk_level)} — ${d.used_pct.toFixed(1)}% of 2.1B XIDs</span>
+                    </div>
+                    <div class="progress-bar-container" style="height:8px;"><div class="progress-bar" style="width:${d.used_pct}%; background:${d.risk_level==='critical'?'var(--danger)':'var(--warning)'}"></div></div>
+                </div>
+            `).join('');
+        }
+
+        // --- 6. INDICES ---
+        if (idxBloatResp.status === 'fulfilled' && idxBloatResp.value.ok) {
+            const data = await idxBloatResp.value.json();
+            state.allIndexes = data.indexes || [];
+            renderIndexTable();
+        }
+    };
+
+    const renderIndexTable = () => {
+        const selectedDb = document.getElementById('pgStorageDb').value;
+        let idxs = state.allIndexes || [];
+        if (selectedDb && selectedDb !== 'all') {
+            idxs = idxs.filter(ix => ix.database_name === selectedDb);
+        }
+
+        if (state.idxSortCol) {
+            idxs.sort((a, b) => {
+                const va = a[state.idxSortCol];
+                const vb = b[state.idxSortCol];
+                const dir = state.idxSortDir === 'asc' ? 1 : -1;
+                if (typeof va === 'string') return va.localeCompare(vb) * dir;
+                return (va - vb) * dir;
             });
         }
 
-        const vacCtx = document.getElementById('pgVacChart');
-        if (vacCtx) {
-            const labels = ccHistory?.labels || [];
-            const autovac = ccHistory?.autovacuum_workers || [];
-            window.currentCharts.pgVac = new Chart(vacCtx.getContext('2d'), {
-                type: 'line',
-                data: {
-                    labels,
-                    datasets: [
-                        { label:'Autovacuum workers', data: autovac, borderColor: window.getCSSVar('--warning'), backgroundColor: 'rgba(245,158,11,0.15)', fill:true, tension:0.25, pointRadius:0 }
-                    ]
-                },
-                options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'top'}}, scales:{ y:{ beginAtZero:true } } }
-            });
-        }
-    }, 50);
+        document.getElementById('pgIdxBloatTbody').innerHTML = idxs.map(ix => `
+            <tr>
+                <td>${esc(ix.database_name)}</td>
+                <td>${esc(ix.table)}</td>
+                <td><strong>${esc(ix.index_name)}</strong></td>
+                <td>${esc(ix.index_size)}</td>
+                <td>${Number(ix.idx_scans).toLocaleString()}</td>
+                <td class="small">${esc(ix.recommendation)}</td>
+            </tr>
+        `).join('') || '<tr><td colspan="6" class="text-center text-muted">No data</td></tr>';
+    };
+
+    // Load DB filters
+    const loadFilters = async () => {
+        try {
+            const resp = await window.apiClient.authenticatedFetch(`/api/timescale/storage-index-health/filters?engine=postgres&instance=${encodeURIComponent(instanceName)}`);
+            if (resp.ok) {
+                const filters = await resp.json();
+                const dbSelect = document.getElementById('pgStorageDb');
+                if (dbSelect) {
+                    dbSelect.innerHTML = '<option value="all">All</option>' + (filters.databases || []).map(d => `<option value="${d}" ${state.db === d ? 'selected' : ''}>${d}</option>`).join('');
+                }
+            }
+        } catch (e) { console.error('Failed to load filters', e); }
+    };
+
+    const syncState = () => {
+        state.fromLocal = document.getElementById('pgStorageFrom').value;
+        state.toLocal = document.getElementById('pgStorageTo').value;
+        state.db = document.getElementById('pgStorageDb').value;
+    };
+
+    const handleApply = async (e) => {
+        if (e) e.preventDefault();
+        syncState();
+        await loadAllData();
+    };
+
+    document.getElementById('pgStorageApply')?.addEventListener('click', handleApply);
+    document.getElementById('pgStorageRefreshBtn')?.addEventListener('click', handleApply);
+    document.getElementById('pgStorageDb')?.addEventListener('change', handleApply);
+
+    // Sorting event listeners
+    document.querySelectorAll('#pgStorageTab-indices th.sortable').forEach(th => {
+        th.style.cursor = 'pointer';
+        th.addEventListener('click', () => {
+            const col = th.dataset.col;
+            if (state.idxSortCol === col) {
+                state.idxSortDir = state.idxSortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                state.idxSortCol = col;
+                state.idxSortDir = 'desc';
+            }
+            renderIndexTable();
+        });
+    });
+
+    await loadFilters();
+    await loadAllData();
 }
 
-window.pgLoadTableDeadTrend = async function(schema, table) {
-    const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: ''};
-    try {
-        const resp = await window.apiClient.authenticatedFetch(`/api/postgres/table-maintenance/history?instance=${encodeURIComponent(inst.name)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}&limit=180`);
-        if (!resp.ok) return;
-        const ct = resp.headers.get('content-type') || '';
-        if (!ct.includes('application/json')) return;
-        const payload = await resp.json();
-        const rows = payload.history || [];
-        if (!rows.length) return;
-
-        const rowEl = document.getElementById('pgDeadTrendRow');
-        const labelEl = document.getElementById('pgDeadPctTrendLabel');
-        if (rowEl) rowEl.style.display = 'grid';
-        if (labelEl) labelEl.textContent = `${schema}.${table}`;
-
-        const ctx = document.getElementById('pgDeadPctTrendChart');
-        if (!ctx) return;
-
-        const asc = rows.slice().reverse();
-        const labels = asc.map(r => {
-            const ts = r.capture_timestamp ? new Date(r.capture_timestamp) : null;
-            return ts ? ts.toLocaleTimeString() : '';
-        });
-        const deadPct = asc.map(r => Number(r.dead_pct || 0));
-
-        window.currentCharts = window.currentCharts || {};
-        if (window.currentCharts.pgDeadPctTrend) {
-            window.currentCharts.pgDeadPctTrend.destroy();
-        }
-        window.currentCharts.pgDeadPctTrend = new Chart(ctx.getContext('2d'), {
-            type: 'line',
-            data: { labels, datasets: [{ label: 'Dead %', data: deadPct, borderColor: window.getCSSVar('--danger'), backgroundColor: 'rgba(239,68,68,0.12)', fill:true, tension:0.25, pointRadius:0 }]},
-            options: { responsive:true, maintainAspectRatio:false, scales:{ y:{ beginAtZero:true, max:100 } } }
-        });
-    } catch (e) {
-        // non-fatal
-    }
-};

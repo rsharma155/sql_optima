@@ -7,10 +7,10 @@ func EvaluateMissingIndex(ctx evaluation.Context) evaluation.Result {
 
 	if seqScan > 70 {
 		return evaluation.Result{
-			RuleID:        "pg_missing_index",
-			Severity:      "MEDIUM",
-			Confidence:    0.6,
-			Message:     "High sequential scan ratio → possible missing indexes",
+			RuleID:         "pg_missing_index",
+			Severity:       "MEDIUM",
+			Confidence:     0.6,
+			Message:        "High sequential scan ratio → possible missing indexes",
 			Recommendation: "Analyze queries for potential index candidates",
 		}
 	}

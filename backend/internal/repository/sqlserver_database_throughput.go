@@ -18,9 +18,9 @@ type DatabaseThroughputStats struct {
 	UserScans           int64
 	UserLookups         int64
 	UserWrites          int64
-	TotalReads         int64
-	TotalWrites        int64
-	TPS                float64
+	TotalReads          int64
+	TotalWrites         int64
+	TPS                 float64
 	BatchRequestsPerSec float64
 }
 

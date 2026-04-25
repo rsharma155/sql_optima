@@ -88,10 +88,10 @@ type DashboardEntry struct {
 	Remediation      string             `json:"remediation"`
 	History          []RuleHistoryPoint `json:"history,omitempty"`
 	LastCheck        time.Time          `json:"last_check"`
-	WhyThisMatters  string             `json:"why_this_matters,omitempty"`
-	ImpactDetail    string             `json:"impact_detail,omitempty"`
-	RiskLevel       string             `json:"risk_level,omitempty"`
-	ConfidenceNote string             `json:"confidence_note,omitempty"`
+	WhyThisMatters   string             `json:"why_this_matters,omitempty"`
+	ImpactDetail     string             `json:"impact_detail,omitempty"`
+	RiskLevel        string             `json:"risk_level,omitempty"`
+	ConfidenceNote   string             `json:"confidence_note,omitempty"`
 }
 
 type RuleHistoryPoint struct {

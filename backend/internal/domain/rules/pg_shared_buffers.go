@@ -10,10 +10,10 @@ func EvaluateSharedBuffers(ctx evaluation.Context) evaluation.Result {
 
 	if shared < recommended {
 		return evaluation.Result{
-			RuleID:        "pg_shared_buffers",
-			Severity:      "MEDIUM",
-			Confidence:  0.8,
-			Message:      "shared_buffers too low",
+			RuleID:         "pg_shared_buffers",
+			Severity:       "MEDIUM",
+			Confidence:     0.8,
+			Message:        "shared_buffers too low",
 			Recommendation: "Increase shared_buffers to 25% of RAM",
 			Context: map[string]float64{
 				"recommended": recommended,

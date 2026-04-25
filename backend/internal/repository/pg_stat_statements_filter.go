@@ -66,9 +66,6 @@ func buildPgStatStatementsFilters() string {
 		  AND s.query NOT ILIKE 'notify %'
 		  AND s.query NOT ILIKE 'show %'
 		  AND s.query NOT ILIKE 'set %'
-		  AND s.query NOT ILIKE 'begin%'
-		  AND s.query NOT ILIKE 'commit%'
-		  AND s.query NOT ILIKE 'rollback%'
 		  AND s.query NOT ILIKE 'savepoint%'
 		  AND s.query NOT ILIKE 'release savepoint%'
 		  AND s.query NOT ILIKE '%pg_catalog%'
@@ -98,7 +95,9 @@ func buildPgStatStatementsFilters() string {
 		  AND s.query NOT ILIKE '%BASE_BACKUP%'
 		  AND s.query NOT ILIKE '%TIMELINE_HISTORY%'`)
 
-	// Performance thresholds: Ignore very light/rare queries
+	// Performance thresholds: Ignore very light/rare queries.
+	// NOTE: To capture ALL queries (including low frequency and fast execution),
+	// these filters (calls > 10 and mean time > 5ms) can be reduced or removed.
 	b.WriteString(`
 		  AND s.calls > 10
 		  AND (s.total_exec_time / NULLIF(s.calls, 0)) > 5`)

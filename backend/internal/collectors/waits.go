@@ -20,7 +20,7 @@ import (
 // Parameters: ctx context.Context, db *sql.DB
 // Returns: []WaitStat, error
 func CollectWaitStats(ctx context.Context, db *sql.DB) ([]models.WaitStat, error) {
-	query := `
+	query := ` /* SQL_OPTIMA */ 
 		SELECT wait_type, CAST(wait_time_ms AS FLOAT), CAST(waiting_tasks_count AS BIGINT)
 		FROM sys.dm_os_wait_stats WITH (NOLOCK) 
 		WHERE wait_type NOT IN (

@@ -107,8 +107,8 @@ func (c *PgRepository) GetBloatEstimates(instanceName string, limit int) ([]PgBl
 					ELSE 0
 				END                                                                   AS dead_pct,
 				GREATEST(0,
-					ROUND((COALESCE(s.n_dead_tup,0)::numeric / NULLIF(c.reltuples, 0))
-						  * pg_relation_size(c.oid) / 1048576.0, 2)
+					ROUND(((COALESCE(s.n_dead_tup,0)::numeric / NULLIF(c.reltuples, 0))
+						  * pg_relation_size(c.oid) / 1048576.0)::numeric, 2)
 				)::float8                                                             AS estimated_waste_mb,
 				COALESCE(s.seq_scan, 0)                                              AS seq_scans,
 				s.last_autovacuum,
@@ -241,7 +241,7 @@ func (c *PgRepository) GetXIDWraparoundRisk(instanceName string) ([]PgXIDWraparo
 	}
 
 	// wraparound_limit is autovacuum_freeze_max_age (default 200M); we derive it from pg_settings.
-	q := `
+	q := ` /* SQL_OPTIMA */ 
 		WITH limit_val AS (
 			SELECT /* SQL_OPTIMA */   COALESCE(setting::bigint, 200000000) AS max_age
 			FROM pg_settings WHERE name = 'autovacuum_freeze_max_age'

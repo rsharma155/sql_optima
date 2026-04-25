@@ -8,17 +8,17 @@ func EvaluateCostThreshold(ctx evaluation.Context) evaluation.Result {
 
 	if cost < 20 && parallelUsage > 30 {
 		return evaluation.Result{
-			RuleID:      "cost_threshold",
-			Severity:    "HIGH",
+			RuleID:     "cost_threshold",
+			Severity:   "HIGH",
 			Confidence: 0.85,
-			Message:     "Low cost threshold causing excessive parallelism",
+			Message:    "Low cost threshold causing excessive parallelism",
 		}
 	}
 
 	if cost < 20 {
 		return evaluation.Result{
-			RuleID:      "cost_threshold",
-			Severity:    "MEDIUM",
+			RuleID:     "cost_threshold",
+			Severity:   "MEDIUM",
 			Confidence: 0.7,
 		}
 	}

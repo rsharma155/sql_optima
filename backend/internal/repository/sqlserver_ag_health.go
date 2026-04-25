@@ -23,14 +23,14 @@ type AGHealthStats struct {
 	SyncStateDesc        string
 	IsPrimaryReplica     bool
 	LogSendQueueKB       int64
-	RedoQueueKB         int64
-	LogSendRateKB       int64
-	RedoRateKB          int64
-	LastSentTime        sql.NullTime
-	LastReceivedTime    sql.NullTime
-	LastHardenedTime    sql.NullTime
-	LastRedoneTime      sql.NullTime
-	SecondaryLagSecs   int64
+	RedoQueueKB          int64
+	LogSendRateKB        int64
+	RedoRateKB           int64
+	LastSentTime         sql.NullTime
+	LastReceivedTime     sql.NullTime
+	LastHardenedTime     sql.NullTime
+	LastRedoneTime       sql.NullTime
+	SecondaryLagSecs     int64
 }
 
 func (c *SqlServerRepository) FetchAGHealthStats(instanceName string) ([]AGHealthStats, error) {
@@ -52,8 +52,12 @@ func (c *SqlServerRepository) FetchAGHealthStats(instanceName string) ([]AGHealt
 
 	hasDbStates := true
 	var dbStatesCheck int
-	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_hadr_availability_database_states`).Scan(&dbStatesCheck); err != nil {
-		log.Printf("[SQLSERVER] FetchAGHealthStats: dm_hadr_availability_database_states not available for %s: %v", instanceName, err)
+	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.all_objects WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_database_states')`).Scan(&dbStatesCheck); err != nil || dbStatesCheck == 0 {
+		if err != nil {
+			log.Printf("[SQLSERVER] FetchAGHealthStats: dm_hadr_availability_database_states check failed for %s: %v", instanceName, err)
+		} else {
+			log.Printf("[SQLSERVER] FetchAGHealthStats: dm_hadr_availability_database_states not available for %s", instanceName)
+		}
 		hasDbStates = false
 	}
 

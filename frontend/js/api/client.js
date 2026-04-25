@@ -60,8 +60,14 @@ window.apiClient = {
                 window._auth.user = null;
                 localStorage.removeItem('auth_user');
             }
-            this.showLoginModal();
-            throw new Error('Authentication required');
+            
+            // Redirect to login view if available
+            if (typeof window.LoginView === 'function') {
+                window.LoginView();
+            } else {
+                console.warn('Authentication required but LoginView is not defined');
+            }
+            return response; // Return the 401 response instead of throwing to avoid uncaught promise errors
         }
 
         return response;

@@ -18,15 +18,11 @@ import (
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
-const (
-	queryAnalysisInterval = 30 * time.Minute
-	watchedQueryInterval  = 5 * time.Minute
-)
-
-// StartQueryAnalysisCollector runs every 30 min, fetching regressions and plan instability
+// StartQueryAnalysisCollector runs periodically, fetching regressions and plan instability
 // from SQL Server Query Store for each configured instance and persisting to TimescaleDB.
 func (s *MetricsService) StartQueryAnalysisCollector(ctx context.Context) {
-	ticker := time.NewTicker(queryAnalysisInterval)
+	interval := s.FetchInterval(ctx, "SQL Server Query Analysis", 30*time.Minute)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Run immediately on startup.
@@ -38,6 +34,12 @@ func (s *MetricsService) StartQueryAnalysisCollector(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.collectQueryAnalysisData(ctx)
+			// Refresh interval
+			newInterval := s.FetchInterval(ctx, "SQL Server Query Analysis", 30*time.Minute)
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+			}
 		}
 	}
 }
@@ -93,10 +95,11 @@ func (s *MetricsService) collectQueryAnalysisData(ctx context.Context) {
 	}
 }
 
-// StartWatchedQueryCollector runs every 5 min, collecting current stats for all
+// StartWatchedQueryCollector runs periodically, collecting current stats for all
 // watched queries from SQL Server Query Store and persisting snapshot rows.
 func (s *MetricsService) StartWatchedQueryCollector(ctx context.Context) {
-	ticker := time.NewTicker(watchedQueryInterval)
+	interval := s.FetchInterval(ctx, "SQL Server Watched Query Snapshot", 5*time.Minute)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Run immediately on startup.
@@ -108,6 +111,12 @@ func (s *MetricsService) StartWatchedQueryCollector(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.collectWatchedQuerySnapshots(ctx)
+			// Refresh interval
+			newInterval := s.FetchInterval(ctx, "SQL Server Watched Query Snapshot", 5*time.Minute)
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+			}
 		}
 	}
 }
@@ -156,7 +165,11 @@ func (s *MetricsService) collectWatchedQuerySnapshots(ctx context.Context) {
 			// Also fetch wait stats for this query hash specifically
 			waitStats, _ := s.MsRepo.FetchQueryWaitStats(ctx, inst.Name, wq.DatabaseName, wq.QueryHash)
 
-			log.Printf("[WatchedQuery] Captured stats for %s: %d executions", wq.Name, snap.Executions)
+			displayName := wq.Name
+			if len(displayName) > 60 {
+				displayName = displayName[:57] + "..."
+			}
+			log.Printf("[WatchedQuery] Captured stats for %s: %d executions", displayName, snap.Executions)
 			snapRows = append(snapRows, hot.SqlServerWatchedSnapshotRow{
 				SnapshotTime:      now,
 				WatchedID:         wq.ID,

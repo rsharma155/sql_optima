@@ -40,7 +40,7 @@ func TestGenerateImpact(t *testing.T) {
 
 func TestGetRiskLevel(t *testing.T) {
 	tests := []struct {
-		ruleID    string
+		ruleID   string
 		expected string
 	}{
 		{"max_server_memory", "HIGH"},

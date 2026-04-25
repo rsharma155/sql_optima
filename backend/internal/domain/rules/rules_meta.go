@@ -6,7 +6,7 @@ type RuleHandler func(ctx evaluation.Context) evaluation.Result
 
 type RuleMeta struct {
 	RuleID         string
-	Threshold     map[string]float64
+	Threshold      map[string]float64
 	ComparisonType string
-	Recommended  string
+	Recommended    string
 }

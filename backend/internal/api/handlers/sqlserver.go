@@ -131,6 +131,63 @@ func (h *SqlServerHandlers) TableDrilldown(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+// EnterpriseDashboardV2 returns time-series standardized enterprise metrics for a specific window.
+func (h *SqlServerHandlers) EnterpriseDashboardV2(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	if instance == "" {
+		http.Error(w, "instance name required", http.StatusBadRequest)
+		return
+	}
+
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	if from == "" || to == "" {
+		now := time.Now().UTC()
+		to = now.Format(time.RFC3339)
+		from = now.Add(-1 * time.Hour).Format(time.RFC3339)
+	}
+
+	ctx := r.Context()
+	res := make(map[string]interface{})
+
+	// 1. Wait Stats
+	waits, _ := h.metricsSvc.GetSqlServerWaitStatsTimeSeries(ctx, instance, from, to)
+	res["wait_stats"] = waits
+
+	// 2. Perf Counters (Batch Requests, Compilations, etc.)
+	perf, _ := h.metricsSvc.GetSqlServerPerfCountersTimeSeries(ctx, instance, from, to, []string{
+		"Batch Requests/sec", "SQL Compilations/sec", "SQL Re-Compilations/sec", "Latch Waits/sec",
+	})
+	res["perf_counters"] = perf
+
+	// 3. File IO
+	io, _ := h.metricsSvc.GetSqlServerFileIOTimeSeries(ctx, instance, from, to)
+	res["file_io"] = io
+
+	// 4. Plan Cache
+	cache, _ := h.metricsSvc.GetSqlServerPlanCacheTimeSeries(ctx, instance, from, to)
+	res["plan_cache"] = cache
+
+	// 5. Memory Clerks
+	clerks, _ := h.metricsSvc.GetSqlServerMemoryClerksTimeSeries(ctx, instance, from, to)
+	res["memory_clerks"] = clerks
+
+	// 6. Memory Grants
+	grants, _ := h.metricsSvc.GetSqlServerMemoryGrantsTimeSeries(ctx, instance, from, to)
+	res["memory_grants"] = grants
+
+	// 7. TempDB Consumers
+	consumers, _ := h.metricsSvc.GetSqlServerTempdbConsumersTimeSeries(ctx, instance, from, to)
+	res["tempdb_consumers"] = consumers
+
+	// 8. Add Current Snapshot (Runnable tasks, etc.) from live cache
+	res["snapshot"] = h.metricsSvc.GetCachedDashboard(instance)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Data-Source", "timescale")
+	json.NewEncoder(w).Encode(res)
+}
+
 func (h *SqlServerHandlers) Overview(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
@@ -512,40 +569,44 @@ func (h *SqlServerHandlers) CPUDrilldown(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if !preferLive && h.metricsSvc.IsTimescaleConnected() && fromQ != "" && toQ != "" {
+	// If user specifically requests "live" data, we trigger one on-demand collector run
+	// to ensure the TimescaleDB hypertable has the latest deltas.
+	if preferLive {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		h.metricsSvc.RunLiveCollectorForInstance(ctx, instance)
+		cancel()
+	}
+
+	if h.metricsSvc.IsTimescaleConnected() && fromQ != "" && toQ != "" {
 		queries, err := h.metricsSvc.GetTimescaleSQLServerTopQueries(instance, limit, fromQ, toQ, dbFilter)
 		if err == nil {
 			normalizeTopQueryTimestamps(queries)
-			w.Header().Set("X-Data-Source", "timescale")
+			w.Header().Set("X-Data-Source", "timescale_range")
 			json.NewEncoder(w).Encode(map[string]interface{}{"queries": queries, "count": len(queries)})
 			return
 		}
-		log.Printf("[Router] Timescale top queries (range) failed for %s, falling back: %v", instance, err)
+		log.Printf("[Router] Timescale top queries (range) failed for %s: %v", instance, err)
 	}
 
-	if !preferLive && h.metricsSvc.IsTimescaleConnected() {
+	if h.metricsSvc.IsTimescaleConnected() {
 		queries, err := h.metricsSvc.GetTimescaleSQLServerTopQueriesLatest(instance, limit, dbFilter)
 		if err == nil {
 			normalizeTopQueryTimestamps(queries)
-			w.Header().Set("X-Data-Source", "timescale")
+			if preferLive {
+				w.Header().Set("X-Data-Source", "timescale_on_demand_live")
+			} else {
+				w.Header().Set("X-Data-Source", "timescale_latest")
+			}
 			json.NewEncoder(w).Encode(map[string]interface{}{"queries": queries, "count": len(queries)})
 			return
 		}
-		log.Printf("[Router] Timescale top queries failed for %s, using live DMV: %v", instance, err)
+		log.Printf("[Router] Timescale top queries failed for %s: %v", instance, err)
 	}
 
-	queries, err := h.metricsSvc.MsRepo.FetchTopCPUQueries(instance, limit, dbFilter)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if preferLive {
-		w.Header().Set("X-Data-Source", "live_dmv")
-	} else {
-		w.Header().Set("X-Data-Source", "live_dmv_fallback")
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"queries": queries, "count": len(queries)})
+	// If Timescale fails, we no longer fallback to direct DMV in this handler
+	// as per the mandate of having a single ingestion point (the Collector).
+	w.WriteHeader(http.StatusServiceUnavailable)
+	json.NewEncoder(w).Encode(map[string]string{"error": "Query metrics currently unavailable via TimescaleDB pipeline"})
 }
 
 func (h *SqlServerHandlers) AGHealth(w http.ResponseWriter, r *http.Request) {

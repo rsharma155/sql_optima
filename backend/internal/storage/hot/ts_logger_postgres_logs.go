@@ -105,7 +105,7 @@ func (tl *TimescaleLogger) GetPostgresLogSummary(ctx context.Context, instanceNa
 			SELECT *
 			FROM postgres_log_events
 			WHERE server_instance_name = $1
-			  AND capture_timestamp >= NOW() - ($2::text || ' minutes')::interval
+			  AND capture_timestamp >= NOW() - ($2 * INTERVAL '1 minute')
 		)
 		SELECT
 			COUNT(*) FILTER (WHERE severity = 'error') AS err_cnt,

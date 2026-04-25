@@ -11,10 +11,10 @@ func EvaluateMaxMemory(ctx evaluation.Context) evaluation.Result {
 
 	if maxMem > recommended {
 		return evaluation.Result{
-			RuleID:        "max_server_memory",
-			Severity:      "HIGH",
-			Confidence:   0.9,
-			Message:       "Max server memory exceeds safe limit",
+			RuleID:         "max_server_memory",
+			Severity:       "HIGH",
+			Confidence:     0.9,
+			Message:        "Max server memory exceeds safe limit",
 			Recommendation: "Reduce max_server_memory",
 			Context: map[string]float64{
 				"recommended": recommended,

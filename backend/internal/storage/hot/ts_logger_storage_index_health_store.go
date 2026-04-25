@@ -24,6 +24,7 @@ type indexUsageStateRow struct {
 	ScansTotal   int64
 	LookupsTotal int64
 	UpdatesTotal int64
+	IndexSizeMB  float64
 }
 
 type tableUsageStateRow struct {
@@ -31,6 +32,9 @@ type tableUsageStateRow struct {
 	IdxScansTotal     int64
 	RowsReadTotal     int64
 	RowsModifiedTotal int64
+	TableSizeMB       float64
+	IndexSizeMB       float64
+	RowCount          int64
 }
 
 // GetLastIndexUsageSnapshot fetches the most recent cumulative counters (not delta) for a single index identity.
@@ -71,13 +75,13 @@ func (tl *TimescaleLogger) GetLastIndexUsageSnapshot(ctx context.Context, engine
 
 func (tl *TimescaleLogger) GetIndexUsageState(ctx context.Context, engine, serverID, dbName, schemaName, tableName, indexName string) (*indexUsageStateRow, error) {
 	q := `
-		SELECT seeks_total, scans_total, lookups_total, updates_total
+		SELECT seeks_total, scans_total, lookups_total, updates_total, COALESCE(index_size_mb, 0)::float8
 		FROM monitor.index_usage_state
 		WHERE engine = $1 AND server_id = $2 AND db_name = $3 AND schema_name = $4 AND table_name = $5 AND index_name = $6
 	`
 	row := tl.pool.QueryRow(ctx, q, engine, serverID, dbName, schemaName, tableName, indexName)
 	var out indexUsageStateRow
-	if err := row.Scan(&out.SeeksTotal, &out.ScansTotal, &out.LookupsTotal, &out.UpdatesTotal); err != nil {
+	if err := row.Scan(&out.SeeksTotal, &out.ScansTotal, &out.LookupsTotal, &out.UpdatesTotal, &out.IndexSizeMB); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
@@ -86,21 +90,22 @@ func (tl *TimescaleLogger) GetIndexUsageState(ctx context.Context, engine, serve
 	return &out, nil
 }
 
-func (tl *TimescaleLogger) UpsertIndexUsageState(ctx context.Context, engine, serverID, dbName, schemaName, tableName, indexName string, seeks, scans, lookups, updates int64) error {
+func (tl *TimescaleLogger) UpsertIndexUsageState(ctx context.Context, engine, serverID, dbName, schemaName, tableName, indexName string, seeks, scans, lookups, updates int64, sizeMB float64) error {
 	q := `
 		INSERT INTO monitor.index_usage_state (
 			engine, server_id, db_name, schema_name, table_name, index_name,
-			seeks_total, scans_total, lookups_total, updates_total, last_seen
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+			seeks_total, scans_total, lookups_total, updates_total, index_size_mb, last_seen
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
 		ON CONFLICT (engine, server_id, db_name, schema_name, table_name, index_name)
 		DO UPDATE SET
 			seeks_total = EXCLUDED.seeks_total,
 			scans_total = EXCLUDED.scans_total,
 			lookups_total = EXCLUDED.lookups_total,
 			updates_total = EXCLUDED.updates_total,
+			index_size_mb = EXCLUDED.index_size_mb,
 			last_seen = NOW()
 	`
-	_, err := tl.pool.Exec(ctx, q, engine, serverID, dbName, schemaName, tableName, indexName, seeks, scans, lookups, updates)
+	_, err := tl.pool.Exec(ctx, q, engine, serverID, dbName, schemaName, tableName, indexName, seeks, scans, lookups, updates, sizeMB)
 	return err
 }
 
@@ -159,13 +164,14 @@ func (tl *TimescaleLogger) GetLastTableUsageSnapshot(ctx context.Context, engine
 
 func (tl *TimescaleLogger) GetTableUsageState(ctx context.Context, engine, serverID, dbName, schemaName, tableName string) (*tableUsageStateRow, error) {
 	q := `
-		SELECT seq_scans_total, idx_scans_total, rows_read_total, rows_modified_total
+		SELECT seq_scans_total, idx_scans_total, rows_read_total, rows_modified_total, 
+		       COALESCE(table_size_mb, 0)::float8, COALESCE(index_size_mb, 0)::float8, COALESCE(row_count, 0)
 		FROM monitor.table_usage_state
 		WHERE engine = $1 AND server_id = $2 AND db_name = $3 AND schema_name = $4 AND table_name = $5
 	`
 	row := tl.pool.QueryRow(ctx, q, engine, serverID, dbName, schemaName, tableName)
 	var out tableUsageStateRow
-	if err := row.Scan(&out.SeqScansTotal, &out.IdxScansTotal, &out.RowsReadTotal, &out.RowsModifiedTotal); err != nil {
+	if err := row.Scan(&out.SeqScansTotal, &out.IdxScansTotal, &out.RowsReadTotal, &out.RowsModifiedTotal, &out.TableSizeMB, &out.IndexSizeMB, &out.RowCount); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
@@ -174,21 +180,24 @@ func (tl *TimescaleLogger) GetTableUsageState(ctx context.Context, engine, serve
 	return &out, nil
 }
 
-func (tl *TimescaleLogger) UpsertTableUsageState(ctx context.Context, engine, serverID, dbName, schemaName, tableName string, seqScans, idxScans, rowsRead, rowsModified int64) error {
+func (tl *TimescaleLogger) UpsertTableUsageState(ctx context.Context, engine, serverID, dbName, schemaName, tableName string, seqScans, idxScans, rowsRead, rowsModified int64, tableSizeMB, indexSizeMB float64, rowCount int64) error {
 	q := `
 		INSERT INTO monitor.table_usage_state (
 			engine, server_id, db_name, schema_name, table_name,
-			seq_scans_total, idx_scans_total, rows_read_total, rows_modified_total, last_seen
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+			seq_scans_total, idx_scans_total, rows_read_total, rows_modified_total, table_size_mb, index_size_mb, row_count, last_seen
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
 		ON CONFLICT (engine, server_id, db_name, schema_name, table_name)
 		DO UPDATE SET
 			seq_scans_total = EXCLUDED.seq_scans_total,
 			idx_scans_total = EXCLUDED.idx_scans_total,
 			rows_read_total = EXCLUDED.rows_read_total,
 			rows_modified_total = EXCLUDED.rows_modified_total,
+			table_size_mb = EXCLUDED.table_size_mb,
+			index_size_mb = EXCLUDED.index_size_mb,
+			row_count = EXCLUDED.row_count,
 			last_seen = NOW()
 	`
-	_, err := tl.pool.Exec(ctx, q, engine, serverID, dbName, schemaName, tableName, seqScans, idxScans, rowsRead, rowsModified)
+	_, err := tl.pool.Exec(ctx, q, engine, serverID, dbName, schemaName, tableName, seqScans, idxScans, rowsRead, rowsModified, tableSizeMB, indexSizeMB, rowCount)
 	return err
 }
 

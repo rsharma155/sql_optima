@@ -110,10 +110,10 @@ func (c *SqlServerRepository) FetchSchedulerWG(instanceName string) ([]map[strin
 			continue
 		}
 		results = append(results, map[string]interface{}{
-			"pool_name":          poolName,
-			"group_name":         groupName,
-			"active_requests":    active,
-			"queued_requests":  queued,
+			"pool_name":         poolName,
+			"group_name":        groupName,
+			"active_requests":   active,
+			"queued_requests":   queued,
 			"cpu_usage_percent": cpuPct,
 		})
 	}

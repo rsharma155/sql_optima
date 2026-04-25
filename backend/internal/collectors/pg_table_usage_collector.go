@@ -75,7 +75,7 @@ func CollectPostgresIndexUsage(ctx context.Context, db *sql.DB) ([]PgIndexUsageR
 
 // CollectPostgresTableUsageAndSize reads pg_stat_user_tables with size estimates.
 func CollectPostgresTableUsageAndSize(ctx context.Context, db *sql.DB) ([]PgTableUsageRow, error) {
-	q := `
+	q := `/* SQL_OPTIMA */ 
 		SELECT
 			current_database() AS db_name,
 			schemaname,
@@ -140,7 +140,7 @@ func PersistPostgresIndexUsageDeltas(ctx context.Context, tl *hot.TimescaleLogge
 					inserted++
 				}
 			}
-			if err := tl.UpsertIndexUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.IdxTupFetchTotal, r.IdxScanTotal, r.IdxTupReadTotal, 0); err != nil {
+			if err := tl.UpsertIndexUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.IdxTupFetchTotal, r.IdxScanTotal, r.IdxTupReadTotal, 0, r.IndexSizeMB); err != nil {
 				return inserted, err
 			}
 			continue
@@ -150,7 +150,13 @@ func PersistPostgresIndexUsageDeltas(ctx context.Context, tl *hot.TimescaleLogge
 		dScans, ok2 := storageindex.Delta(r.IdxScanTotal, prev.ScansTotal)
 		dLookups, ok3 := storageindex.Delta(r.IdxTupReadTotal, prev.LookupsTotal)
 		if !(ok1 && ok2 && ok3) {
-			_ = tl.UpsertIndexUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.IdxTupFetchTotal, r.IdxScanTotal, r.IdxTupReadTotal, 0)
+			_ = tl.UpsertIndexUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.IdxTupFetchTotal, r.IdxScanTotal, r.IdxTupReadTotal, 0, r.IndexSizeMB)
+			continue
+		}
+
+		// Optimization: Skip insert if no activity and size hasn't changed.
+		if dSeeks == 0 && dScans == 0 && dLookups == 0 && r.IndexSizeMB == prev.IndexSizeMB {
+			_ = tl.UpsertIndexUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.IdxTupFetchTotal, r.IdxScanTotal, r.IdxTupReadTotal, 0, r.IndexSizeMB)
 			continue
 		}
 
@@ -175,7 +181,7 @@ func PersistPostgresIndexUsageDeltas(ctx context.Context, tl *hot.TimescaleLogge
 			continue
 		}
 		inserted++
-		_ = tl.UpsertIndexUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.IdxTupFetchTotal, r.IdxScanTotal, r.IdxTupReadTotal, 0)
+		_ = tl.UpsertIndexUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.IdxTupFetchTotal, r.IdxScanTotal, r.IdxTupReadTotal, 0, r.IndexSizeMB)
 	}
 	return inserted, nil
 }
@@ -189,7 +195,7 @@ func PersistPostgresTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogge
 			return inserted, err
 		}
 		if prev == nil {
-			if err := tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.SeqScanTotal, r.IdxScanTotal, 0, r.RowsModifiedTotal); err != nil {
+			if err := tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.SeqScanTotal, r.IdxScanTotal, 0, r.RowsModifiedTotal, r.TableSizeMB, r.IndexSizeMB, r.RowCount); err != nil {
 				return inserted, err
 			}
 			continue
@@ -199,7 +205,13 @@ func PersistPostgresTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogge
 		dIdx, ok2 := storageindex.Delta(r.IdxScanTotal, prev.IdxScansTotal)
 		dMod, ok3 := storageindex.Delta(r.RowsModifiedTotal, prev.RowsModifiedTotal)
 		if !(ok1 && ok2 && ok3) {
-			_ = tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.SeqScanTotal, r.IdxScanTotal, 0, r.RowsModifiedTotal)
+			_ = tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.SeqScanTotal, r.IdxScanTotal, 0, r.RowsModifiedTotal, r.TableSizeMB, r.IndexSizeMB, r.RowCount)
+			continue
+		}
+
+		// Optimization: Skip insert if no activity and sizes haven't changed.
+		if dSeq == 0 && dIdx == 0 && dMod == 0 && r.TableSizeMB == prev.TableSizeMB && r.IndexSizeMB == prev.IndexSizeMB {
+			_ = tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.SeqScanTotal, r.IdxScanTotal, 0, r.RowsModifiedTotal, r.TableSizeMB, r.IndexSizeMB, r.RowCount)
 			continue
 		}
 
@@ -223,7 +235,7 @@ func PersistPostgresTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogge
 			continue
 		}
 		inserted++
-		_ = tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.SeqScanTotal, r.IdxScanTotal, 0, r.RowsModifiedTotal)
+		_ = tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.SeqScanTotal, r.IdxScanTotal, 0, r.RowsModifiedTotal, r.TableSizeMB, r.IndexSizeMB, r.RowCount)
 	}
 	return inserted, nil
 }

@@ -71,6 +71,12 @@ func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
 	}
 }
 
+func (tl *TimescaleLogger) GetPrevWaitHistory(instanceName string) map[string]float64 {
+	tl.mu.RLock()
+	defer tl.mu.RUnlock()
+	return tl.prevWaitHistory[instanceName]
+}
+
 func (tl *TimescaleLogger) Ping(ctx context.Context) error {
 	return tl.pool.Ping(ctx)
 }

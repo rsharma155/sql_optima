@@ -29,10 +29,11 @@ func (e *PgBlockingEvaluator) Engine() alerts.Engine { return alerts.EnginePostg
 
 func (e *PgBlockingEvaluator) Evaluate(ctx context.Context, instanceName string) ([]AlertEvaluatorResult, error) {
 	const q = `
-		SELECT count(DISTINCT blocked_pid) AS blocked_count
-		FROM monitor.pg_blocking_pairs
-		WHERE server_instance_name = $1
-		  AND collected_at >= now() - INTERVAL '5 minutes'`
+		SELECT count(DISTINCT p.blocked_pid) AS blocked_count
+		FROM monitor.pg_blocking_pairs p
+		JOIN optima_servers s ON p.server_id = s.id::text
+		WHERE s.name = $1
+		  AND p.collected_at >= now() - INTERVAL '5 minutes'`
 
 	var blockedCount int
 	if err := e.tsPool.QueryRow(ctx, q, instanceName).Scan(&blockedCount); err != nil {

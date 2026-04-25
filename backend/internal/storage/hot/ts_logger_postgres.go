@@ -568,14 +568,14 @@ func (tl *TimescaleLogger) LogPostgresQueryStatsSnapshot(ctx context.Context, in
 
 func (tl *TimescaleLogger) loadPostgresQueryStatsSnapshot(ctx context.Context, instanceName string, ts time.Time) (map[int64]PostgresQueryStatsSnapRow, error) {
 	const q = `
-		SELECT query_id, query_text, calls, total_time_ms, mean_time_ms, rows,
-		       temp_blks_read, temp_blks_written, blk_read_time_ms, blk_write_time_ms,
+		SELECT queryid, query, calls, total_exec_time, (total_exec_time / NULLIF(calls, 0)), rows,
+		       0 as temp_blks_read, temp_blks_written, 0 as blk_read_time_ms, 0 as blk_write_time_ms,
 		       COALESCE(shared_blks_hit,0), COALESCE(shared_blks_read,0),
-		       COALESCE(shared_blks_dirtied,0), COALESCE(shared_blks_written,0),
-		       COALESCE(wal_bytes,0), COALESCE(wal_records,0), COALESCE(wal_fpi,0),
-		       COALESCE(total_plan_time,0), COALESCE(mean_plan_time,0), COALESCE(plans,0)
-		FROM postgres_query_stats
-		WHERE server_instance_name = $1 AND capture_timestamp = $2`
+		       0 as shared_blks_dirtied, 0 as shared_blks_written,
+		       0 as wal_bytes, 0 as wal_records, 0 as wal_fpi,
+		       0 as total_plan_time, 0 as mean_plan_time, 0 as plans
+		FROM pg_query_metrics_v2
+		WHERE instance_id = $1 AND ts = $2`
 	rows, err := tl.pool.Query(ctx, q, instanceName, ts)
 	if err != nil {
 		return nil, err
@@ -689,16 +689,16 @@ func (tl *TimescaleLogger) GetPostgresQueryStatsWindowDelta(ctx context.Context,
 
 	var endTS sql.NullTime
 	err := tl.pool.QueryRow(ctx,
-		`SELECT MAX(capture_timestamp) FROM postgres_query_stats WHERE server_instance_name = $1 AND capture_timestamp <= $2`,
+		`SELECT MAX(ts) FROM pg_query_metrics_v2 WHERE instance_id = $1 AND ts <= $2`,
 		instanceName, to,
 	).Scan(&endTS)
 	if err != nil || !endTS.Valid {
-		return nil, time.Time{}, time.Time{}, "", fmt.Errorf("no postgres_query_stats snapshots for instance (need Timescale + enterprise collector)")
+		return nil, time.Time{}, time.Time{}, "", fmt.Errorf("no pg_query_metrics_v2 snapshots for instance (need Timescale + enterprise collector)")
 	}
 
 	var startTS sql.NullTime
 	_ = tl.pool.QueryRow(ctx,
-		`SELECT MAX(capture_timestamp) FROM postgres_query_stats WHERE server_instance_name = $1 AND capture_timestamp <= $2`,
+		`SELECT MAX(ts) FROM pg_query_metrics_v2 WHERE instance_id = $1 AND ts <= $2`,
 		instanceName, from,
 	).Scan(&startTS)
 
@@ -708,7 +708,7 @@ func (tl *TimescaleLogger) GetPostgresQueryStatsWindowDelta(ctx context.Context,
 		startT = startTS.Time
 	} else {
 		_ = tl.pool.QueryRow(ctx,
-			`SELECT MIN(capture_timestamp) FROM postgres_query_stats WHERE server_instance_name = $1 AND capture_timestamp >= $2 AND capture_timestamp <= $3`,
+			`SELECT MIN(ts) FROM pg_query_metrics_v2 WHERE instance_id = $1 AND ts >= $2 AND ts <= $3`,
 			instanceName, from, endTS.Time,
 		).Scan(&startTS)
 		if startTS.Valid && startTS.Time.Before(endTS.Time) {
@@ -717,14 +717,14 @@ func (tl *TimescaleLogger) GetPostgresQueryStatsWindowDelta(ctx context.Context,
 		} else {
 			var prev sql.NullTime
 			_ = tl.pool.QueryRow(ctx,
-				`SELECT MAX(capture_timestamp) FROM postgres_query_stats WHERE server_instance_name = $1 AND capture_timestamp < $2`,
+				`SELECT MAX(ts) FROM pg_query_metrics_v2 WHERE instance_id = $1 AND ts < $2`,
 				instanceName, endTS.Time,
 			).Scan(&prev)
 			if prev.Valid && prev.Time.Before(endTS.Time) {
 				startT = prev.Time
 				note = "using_consecutive_snapshots"
 			} else {
-				return nil, time.Time{}, endTS.Time, "", fmt.Errorf("insufficient postgres_query_stats history")
+				return nil, time.Time{}, endTS.Time, "", fmt.Errorf("insufficient pg_query_metrics_v2 history")
 			}
 		}
 	}

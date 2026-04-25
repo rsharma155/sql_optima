@@ -202,19 +202,27 @@ func (h *AdminServerHandlers) TestServerDraft(w http.ResponseWriter, r *http.Req
 		return
 	}
 	port := 0
-	switch v := req.Port.(type) {
-	case float64:
-		port = int(v)
-	case string:
-		if p, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-			port = p
+	if req.Port != nil {
+		switch v := req.Port.(type) {
+		case float64:
+			port = int(v)
+		case string:
+			if p, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				port = p
+			}
+		case int:
+			port = v
 		}
-	case int:
-		port = v
 	}
+
+	dbType := strings.ToLower(strings.TrimSpace(req.DBType))
+	if dbType == "mssql" {
+		dbType = "sqlserver"
+	}
+
 	in := servers.CreateServerInput{
 		Name:                   req.Name,
-		DBType:                 servers.DBType(strings.TrimSpace(req.DBType)),
+		DBType:                 servers.DBType(dbType),
 		Host:                   req.Host,
 		Port:                   port,
 		Username:               req.Username,
@@ -230,9 +238,9 @@ func (h *AdminServerHandlers) TestServerDraft(w http.ResponseWriter, r *http.Req
 		in.Name = "_test"
 	}
 	if err := in.Validate(); err != nil {
-		log.Printf("[TestServerDraft] Validation error: %v", err)
+		log.Printf("[TestServerDraft] Validation error: %v (payload: name=%s, type=%s, host=%s, port=%d, user=%s)", err, in.Name, in.DBType, in.Host, in.Port, in.Username)
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
 	now := time.Now().UTC()
@@ -300,12 +308,17 @@ func (h *AdminServerHandlers) AddServer(w http.ResponseWriter, r *http.Request) 
 		actor = claims.Username
 	}
 
+	dbType := strings.ToLower(strings.TrimSpace(req.DBType))
+	if dbType == "mssql" {
+		dbType = "sqlserver"
+	}
+
 	in := servers.CreateServerInput{
-		Name:                   req.Name,
-		DBType:                 servers.DBType(strings.TrimSpace(req.DBType)),
-		Host:                   req.Host,
+		Name:                   strings.TrimSpace(req.Name),
+		DBType:                 servers.DBType(dbType),
+		Host:                   strings.TrimSpace(req.Host),
 		Port:                   req.Port,
-		Username:               req.Username,
+		Username:               strings.TrimSpace(req.Username),
 		Password:               req.Password,
 		SSLMode:                req.SSLMode,
 		Database:               strings.TrimSpace(req.Database),
@@ -313,8 +326,37 @@ func (h *AdminServerHandlers) AddServer(w http.ResponseWriter, r *http.Request) 
 		Actor:                  actor,
 	}
 	if err := in.Validate(); err != nil {
+		log.Printf("[AddServer] Validation error: %v (payload: name=%s, type=%s, host=%s, port=%d, user=%s)", err, in.Name, in.DBType, in.Host, in.Port, in.Username)
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// MANDATORY connection test before saving
+	s_test := servers.Server{
+		Name:     in.Name,
+		DBType:   in.DBType,
+		Host:     in.Host,
+		Port:     in.Port,
+		Username: in.Username,
+	}
+	cred_test := servers.CredentialPayload{
+		Password:               in.Password,
+		SSLMode:                in.SSLMode,
+		Database:               in.Database,
+		TrustServerCertificate: in.TrustServerCertificate,
+	}
+	tester := h.tester
+	if tester == nil {
+		tester = defaultServerConnectionTester{}
+	}
+	if err := tester.Test(r.Context(), s_test, cred_test); err != nil {
+		log.Printf("[AddServer] Connection test failed before save: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Connection test failed: " + err.Error(),
+		})
 		return
 	}
 

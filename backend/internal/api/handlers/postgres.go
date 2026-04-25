@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/repository"
@@ -747,7 +748,9 @@ func (h *PostgresHandlers) BackupLatest(w http.ResponseWriter, r *http.Request) 
 	}
 	row, err := h.metricsSvc.GetLatestPostgresBackupRun(r.Context(), instance)
 	if err != nil {
-		log.Printf("[API] PG backup latest error for %s: %v", instance, err)
+		if err != pgx.ErrNoRows {
+			log.Printf("[API] PG backup latest error for %s: %v", instance, err)
+		}
 		row = nil
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{

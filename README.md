@@ -1,6 +1,6 @@
 # SQL Optima
 
-A production-grade, dual-engine (PostgreSQL & SQL Server) database monitoring platform with a single-page application UI. Built with Go and vanilla JavaScript, architected around Domain-Driven Design for cross-platform support (Windows, macOS, Linux).
+A dual-engine (PostgreSQL & SQL Server) database monitoring platform with a single-page application UI. Built with Go and vanilla JavaScript, architected around Domain-Driven Design for cross-platform support (Windows, macOS, Linux).
 
 Features include PostgreSQL EXPLAIN plan analysis with optimization and index advisor workflows, live SQL Server diagnostics, TimescaleDB-backed historical dashboards, an **enhanced rules engine** for context-aware best-practice checks, **push-based OS metrics** for host-level telemetry, and a **cross-engine alert engine** with fingerprint-based deduplication, maintenance windows, and audit history.
 
@@ -90,16 +90,10 @@ Requires [Go 1.25+](https://go.dev/dl/).
 ```bash
 cd backend
 go mod tidy
-
-# Point at the Docker-managed TimescaleDB
-export DB_HOST=localhost DB_PORT=5432 DB_USER=dbmonitor \
-       DB_PASSWORD=change_me_in_production_use_strong_password \
-       DB_NAME=dbmonitor_metrics
-
 go run cmd/server/main.go
 ```
 
-Open **http://localhost:8080**.
+Open **http://localhost:8080** — If this is the first run, the **Setup Wizard** will appear to help you connect to the TimescaleDB instance and bootstrap the schema automatically.
 
 ### Phase 3 — Stop TimescaleDB
 
@@ -114,25 +108,18 @@ docker compose down
 
 > Your PostgreSQL server **must** have the [TimescaleDB extension](https://docs.timescale.com/install/latest/) installed.
 
-### Initialize schema
-
-```bash
-psql -h <host> -U dbmonitor -d dbmonitor_metrics -f infrastructure/sql_scripts/00_timescale_schema.sql
-psql -h <host> -U dbmonitor -d dbmonitor_metrics -f infrastructure/sql_scripts/02_rule_engine.sql
-psql -h <host> -U dbmonitor -d dbmonitor_metrics -f infrastructure/sql_scripts/03_additional_pg_rules.sql
-psql -h <host> -U dbmonitor -d dbmonitor_metrics -f infrastructure/sql_scripts/04_alert_engine.sql
-psql -h <host> -U dbmonitor -d dbmonitor_metrics -f infrastructure/sql_scripts/01_seed_data.sql
-```
-
 ### Run the backend
 
 ```bash
 cd backend
-export DB_HOST=<host> DB_PORT=5432 DB_USER=dbmonitor \
-       DB_PASSWORD=<password> DB_NAME=dbmonitor_metrics
-
+go mod tidy
 go run cmd/server/main.go
 ```
+
+Open **http://localhost:8080** and follow the **Setup Wizard**. The UI will:
+1. Test your connection to the dedicated TimescaleDB.
+2. **Initialize the schema** (tables, rules, alerts, and seed data) automatically.
+3. Create your initial admin user.
 
 ---
 
@@ -148,11 +135,9 @@ cd ../os_collector
 go build -o ../dist/os-collector .
 ```
 
-Run the API from anywhere (keep `frontend/` next to the binary or set `SQL_OPTIMA_FRONTEND_DIR`):
+Run the API from anywhere:
 
 ```bash
-export DB_HOST=localhost DB_PORT=5432 DB_USER=dbmonitor \
-       DB_PASSWORD=<password> DB_NAME=dbmonitor_metrics
 ./dist/sql-optima
 ```
 
@@ -162,33 +147,9 @@ export DB_HOST=localhost DB_PORT=5432 DB_USER=dbmonitor \
 
 ### Adding monitored targets
 
-**Recommended (Docker & production):** Use the Admin panel in the web UI or the `POST /api/admin/servers` endpoint. Credentials are encrypted with Vault Transit and stored in TimescaleDB.
+**Recommended:** Use the **Admin** panel in the web UI. Credentials are encrypted with Vault Transit (or a local KMS) and stored in the TimescaleDB server registry. This is the primary way to manage monitoring targets.
 
-**Alternative (bare-metal / config-file):** Edit `config.yaml` at the repo root and supply credentials via environment variables:
-
-```yaml
-# config.yaml
-instances:
-  - name: "SQL-Prod-01"
-    type: "sqlserver"
-    host: "10.0.1.15"
-    port: 1433
-
-  - name: "PG-Cluster-01"
-    type: "postgres"
-    host: "10.0.5.21"
-    port: 5432
-```
-
-```bash
-# Credentials (never store in config.yaml)
-export DB_SQL_PROD_01_USER="monitor" DB_SQL_PROD_01_PASSWORD="secret"
-export DB_PG_CLUSTER_01_USER="monitor" DB_PG_CLUSTER_01_PASSWORD="secret"
-```
-
-The naming convention is `DB_<INSTANCE_NAME>_USER` / `DB_<INSTANCE_NAME>_PASSWORD` (hyphens become underscores, letters are uppercased).
-
-> `config.yaml` is **optional** in Docker mode — if missing, the backend starts with an empty instance list and expects targets to be registered via the UI/API.
+> Targets added via the UI are persisted in the metrics database and automatically reloaded when the server restarts.
 
 ---
 
@@ -235,11 +196,11 @@ psql -U postgres -d <target_db> -c "SELECT grant_db_permissions();"
 | `Dockerfile.worker` | Multi-stage build for the background worker |
 | `infrastructure/docker/` | Standalone TimescaleDB compose for local dev (Option 2) |
 | `infrastructure/sql_scripts/` | Schema, seed data, rule engine, alert engine, and target DB setup scripts |
-| `config.yaml` | Optional instance definitions (not needed when using server registry) |
 | `backend/` | Go API, collector, service layer, repository, middleware |
 | `os_collector/` | Lightweight agent for push-based host telemetry |
 | `frontend/` | Static SPA (HTML/CSS/JS) served by the Go backend |
 | `docs/` | API reference, threat model, architecture docs |
+| `config.yaml` | (Optional) Legacy instance definitions (not needed when using server registry) |
 
 ---
 
@@ -322,8 +283,8 @@ All endpoints are **Timescale reads** and require `engine` and `instance` query 
 
 1. **JWT**: Set `JWT_SECRET` to a long random value in any shared or production environment. The server logs a warning if it falls back to the development default.
 2. **API exposure**: Many read-only monitoring endpoints are public. Restrict access with network policy, VPN, or an authenticating reverse proxy if the API is Internet-facing.
-3. **Secrets**: Keep database passwords in environment variables, not in `config.yaml`.
-4. **Auth**: Set `AUTH_REQUIRED=1` in production. `POST /api/login` and `POST /api/auth/login` are the same rate-limited handler.
+3. **Secrets**: Use the Admin UI to register monitored servers. Credentials added via the UI are encrypted at rest (using Vault Transit or a local KMS) and never stored in plain text.
+4. **Auth**: Set `AUTH_REQUIRED=1` in production.
 5. **Vault**: For production, use external Vault with AppRole/policies — do not use dev-mode root tokens.
 
 ---

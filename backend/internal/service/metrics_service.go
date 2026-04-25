@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/rsharma155/sql_optima/internal/collector/pghostcpu"
+	"github.com/rsharma155/sql_optima/internal/collectors/pghostcpu"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/domain/servers"
 	"github.com/rsharma155/sql_optima/internal/models"
@@ -331,6 +331,59 @@ func (s *MetricsService) TimescaleStorageIndexDefinition(ctx context.Context, en
 		return nil, fmt.Errorf("timescale not configured")
 	}
 	return s.tsLogger.QueryIndexDefinition(ctx, engine, instance, dbName, schemaName, indexName)
+}
+
+// =============================================================================
+// Timescale-backed standardized “enterprise metrics v2” reads
+// =============================================================================
+
+func (s *MetricsService) GetSqlServerWaitStatsTimeSeries(ctx context.Context, instanceName string, from, to string) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not connected")
+	}
+	return s.tsLogger.GetSqlServerWaitStats(ctx, instanceName, from, to)
+}
+
+func (s *MetricsService) GetSqlServerPerfCountersTimeSeries(ctx context.Context, instanceName string, from, to string, counters []string) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not connected")
+	}
+	return s.tsLogger.GetSqlServerPerfCounters(ctx, instanceName, from, to, counters)
+}
+
+func (s *MetricsService) GetSqlServerFileIOTimeSeries(ctx context.Context, instanceName string, from, to string) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not connected")
+	}
+	return s.tsLogger.GetSqlServerFileIO(ctx, instanceName, from, to)
+}
+
+func (s *MetricsService) GetSqlServerPlanCacheTimeSeries(ctx context.Context, instanceName string, from, to string) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not connected")
+	}
+	return s.tsLogger.GetSqlServerPlanCache(ctx, instanceName, from, to)
+}
+
+func (s *MetricsService) GetSqlServerMemoryClerksTimeSeries(ctx context.Context, instanceName string, from, to string) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not connected")
+	}
+	return s.tsLogger.GetSqlServerMemoryClerksV2(ctx, instanceName, from, to)
+}
+
+func (s *MetricsService) GetSqlServerMemoryGrantsTimeSeries(ctx context.Context, instanceName string, from, to string) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not connected")
+	}
+	return s.tsLogger.GetSqlServerMemoryGrantsV2(ctx, instanceName, from, to)
+}
+
+func (s *MetricsService) GetSqlServerTempdbConsumersTimeSeries(ctx context.Context, instanceName string, from, to string) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("timescale not connected")
+	}
+	return s.tsLogger.GetSqlServerTempdbConsumers(ctx, instanceName, from, to)
 }
 
 func (s *MetricsService) GetAllInstanceStatuses() map[string]string {

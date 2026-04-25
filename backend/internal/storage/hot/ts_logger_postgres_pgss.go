@@ -53,8 +53,8 @@ func (tl *TimescaleLogger) ComputeAndStorePgssDelta1m(ctx context.Context, insta
 	// Find the previous snapshot timestamp
 	var prevTS *time.Time
 	err := tl.pool.QueryRow(ctx,
-		`SELECT MAX(capture_timestamp) FROM postgres_query_stats
-		 WHERE server_instance_name = $1 AND capture_timestamp < $2`,
+		`SELECT MAX(ts) FROM pg_query_metrics_v2
+		 WHERE instance_id = $1 AND ts < $2`,
 		instanceName, currentTS,
 	).Scan(&prevTS)
 	if err != nil || prevTS == nil {

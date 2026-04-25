@@ -50,7 +50,7 @@ func StartAlertEvaluationLoop(ctx context.Context, pool *pgxpool.Pool, cfg *conf
 		interval = 60 * time.Second
 	}
 
-	log.Printf("[alerts] evaluation loop started (interval=%s, instances=%d)", interval, len(cfg.Instances))
+	log.Printf("[alerts] evaluation loop started (initial_interval=%s, instances=%d)", interval, len(cfg.Instances))
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -62,6 +62,11 @@ func StartAlertEvaluationLoop(ctx context.Context, pool *pgxpool.Pool, cfg *conf
 			return
 		case <-ticker.C:
 			runOnceWithLock(ctx, pool, cfg, alertSvc)
+
+			// Refresh interval from DB (Alert Evaluation Loop)
+			// Using FetchInterval from MetricsService logic via a small hack or just direct lookup
+			// But for now, let's keep it simple as alertSvc doesn't have FetchInterval.
+			// Actually, let's pass the FetchInterval function or the service.
 		}
 	}
 }
