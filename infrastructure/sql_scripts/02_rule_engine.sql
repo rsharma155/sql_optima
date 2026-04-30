@@ -45,6 +45,11 @@ CREATE TABLE IF NOT EXISTS ruleengine.rules (
     threshold_value      JSONB,
     priority             INTEGER DEFAULT 0,
     target_db_type       VARCHAR(20) DEFAULT 'sqlserver',
+    required_signals     TEXT[],
+    eval_engine          VARCHAR(20) DEFAULT 'go',
+    eval_expression      JSONB,
+    recommendation_template JSONB,
+    rule_version         INT DEFAULT 1,
     is_enabled           BOOLEAN DEFAULT TRUE,
     created_date         TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     modified_date        TIMESTAMPTZ NULL
@@ -93,8 +98,11 @@ CREATE TABLE IF NOT EXISTS ruleengine.rule_results_evaluated (
     rule_id       VARCHAR(50) REFERENCES ruleengine.rules(rule_id),
     target_db_type VARCHAR(20) DEFAULT 'sqlserver',
     status        TEXT,
+    severity      VARCHAR(20),
+    confidence    NUMERIC,
     current_value TEXT,
     recommended   TEXT,
+    context       JSONB,
     evaluated_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -105,7 +113,40 @@ SELECT create_hypertable(
     if_not_exists => TRUE
 );
 
--- 1.6: SQL Server Ignore Rules (NEW)
+-- 1.6: Signals Table (NEW)
+CREATE TABLE IF NOT EXISTS ruleengine.signals (
+    server_id INT,
+    signal_key TEXT,
+    signal_value NUMERIC,
+    collected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (server_id, signal_key, collected_at)
+);
+
+-- Convert signals to TimescaleDB hypertable
+SELECT create_hypertable(
+    'ruleengine.signals',
+    'collected_at',
+    if_not_exists => TRUE
+);
+
+-- 1.7: Signal Snapshots Table (NEW)
+CREATE TABLE IF NOT EXISTS ruleengine.signal_snapshots (
+    snapshot_id BIGSERIAL,
+    server_id INT,
+    db_type VARCHAR(20),
+    snapshot JSONB,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (snapshot_id, created_at)
+);
+
+-- Convert signal_snapshots to TimescaleDB hypertable
+SELECT create_hypertable(
+    'ruleengine.signal_snapshots',
+    'created_at',
+    if_not_exists => TRUE
+);
+
+-- 1.8: SQL Server Ignore Rules (NEW)
 CREATE TABLE IF NOT EXISTS ruleengine.sqlserver_ignore_rules(
  rule_type text,
  rule_value text,
@@ -123,7 +164,7 @@ INSERT INTO ruleengine.sqlserver_ignore_rules VALUES
 ('login','sa')
 ON CONFLICT DO NOTHING;
 
--- 1.7: PostgreSQL Ignore Rules (NEW)
+-- 1.9: PostgreSQL Ignore Rules (NEW)
 CREATE TABLE IF NOT EXISTS ruleengine.pg_ignore_rules(
  rule_type text,
  rule_value text,

@@ -201,7 +201,55 @@ export function setJobsRefresh(val) {
 }
 
 export function showQueryModal(queryText) {
-    alert('Full Query Target Trace:\n\n' + queryText);
+    if (!queryText) {
+        queryText = 'No query text available';
+    }
+    
+    const existingModal = document.getElementById('query-modal');
+    if (existingModal) existingModal.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'query-modal';
+    modal.style.cssText = 'display: flex; position: fixed; z-index: 99999; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.8); align-items: center; justify-content: center;';
+    
+    const safeText = window.escapeHtml ? window.escapeHtml(queryText) : queryText;
+    
+    modal.innerHTML = `
+        <div style="background: var(--bg-surface, #1a1a2e); margin: 2%; padding: 20px; border: 1px solid var(--border-color, #333); border-radius: 12px; width: 95%; max-width: 1000px; max-height: 90vh; overflow-y: auto; color: var(--text-primary, #e0e0e0); font-family: inherit; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color, #333); padding-bottom: 0.75rem;">
+                <h3 style="margin: 0; color: var(--accent, #3b82f6); font-size: 1.1rem;"><i class="fa-solid fa-code"></i> Query Details</h3>
+                <button id="close-query-modal" style="background: transparent; border: 1px solid var(--border-color, #555); color: var(--text-primary, #e0e0e0); font-size: 1.25rem; cursor: pointer; padding: 0.25rem 0.6rem; border-radius: 4px; line-height: 1;">&times;</button>
+            </div>
+            <div style="background: var(--bg-base, #0f0f1a); padding: 1rem; border-radius: 8px; max-height: 60vh; overflow: auto; border: 1px solid var(--border-color, #333);">
+                <pre id="queryModalText" style="margin: 0; white-space: pre-wrap; word-wrap: break-word; color: var(--text-primary, #e0e0e0); font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.5;"></pre>
+            </div>
+            <div style="text-align: center; margin-top: 1rem;">
+                <button id="copySqlBtn" style="background: var(--accent, #3b82f6); color: #fff; border: none; padding: 0.5rem 1.5rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem;">
+                    <i class="fa-solid fa-copy"></i> copy SQL
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+    
+    document.getElementById('queryModalText').textContent = queryText;
+    
+    document.getElementById('close-query-modal').onclick = () => modal.remove();
+    
+    document.getElementById('copySqlBtn').addEventListener('click', function() {
+        const textToCopy = document.getElementById('queryModalText').textContent;
+        navigator.clipboard.writeText(textToCopy).then(() => {
+            this.innerHTML = '<i class="fa-solid fa-check"></i> copied!';
+            setTimeout(() => {
+                this.innerHTML = '<i class="fa-solid fa-copy"></i> copy SQL';
+            }, 1500);
+        });
+    });
+
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+    });
 }
 
 export async function boot() {

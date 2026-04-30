@@ -1,5 +1,5 @@
 -- Metric: pg_locks
--- Source: backend/internal/repository/pg_stats.go:774
+-- Source: backend/internal/repository/pg_blocking_metrics.go
 -- Target Table: N/A (lock monitoring)
 -- Description: Returns all current locks with waiting time from pg_locks joined with pg_class and pg_stat_activity
 

@@ -78,7 +78,8 @@ function toLocalISOString(date) {
         '-' + pad(date.getMonth() + 1) +
         '-' + pad(date.getDate()) +
         'T' + pad(date.getHours()) +
-        ':' + pad(date.getMinutes());
+        ':' + pad(date.getMinutes()) +
+        ':' + pad(date.getSeconds());
 }
 
 function getTimeRange() {

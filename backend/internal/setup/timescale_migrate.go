@@ -23,6 +23,11 @@ var migrationScriptFiles = []string{
 	"00_timescale_schema.sql",
 	"01_seed_data.sql",
 	"02_rule_engine.sql",
+	"03_additional_pg_rules.sql",
+	"04_alert_engine.sql",
+	"05_os_metrics_collector.sql",
+	"06_sqlserver_enterprise_metrics_v2.sql",
+	"07_pg_instance_snapshot.sql",
 }
 
 func MigrationScriptName(step int) (string, error) {

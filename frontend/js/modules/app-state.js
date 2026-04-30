@@ -11,7 +11,7 @@
 /** Shared application state (ES module). Legacy views still access `window.appState` from entry.js. */
 export const appState = {
     config: null,
-    currentInstanceIdx: 0,
+    currentInstanceIdx: -1,
     currentDatabase: 'all',
     activeViewId: 'global',
     isAuthenticated: false,
@@ -20,5 +20,7 @@ export const appState = {
     authMode: 'local',
     /** "docker" | "dedicated" — from API (SQL_OPTIMA_DEPLOYMENT). */
     deployment: 'dedicated',
-    navigationHistory: []
+    navigationHistory: [],
+    fromTs: null,
+    toTs: null
 };

@@ -1,0 +1,21 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Theme variables for light
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+:root[data-theme="light"] {
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --bg-base: #f0f2f5; --bg-surface: rgba(255, 255, 255, 0.8); --bg-surface-hover: rgba(255, 255, 255, 1);
+    /* Solid panel layers (used by newer UI surfaces) */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f8fafc;
+    --bg-tertiary: #f1f5f9;
+    --sidebar-bg: #ffffff; --text-primary: #111827; --text-secondary: #4b5563; --text-muted: #9ca3af;
+    --border-color: rgba(0, 0, 0, 0.08); --border-highlight: rgba(0, 0, 0, 0.15);
+    --accent-blue: #2563eb; --accent-glow: rgba(37, 99, 235, 0.3); --success: #059669; --warning: #d97706; --danger: #dc2626;
+    --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1); --chart-grid: rgba(0, 0, 0, 0.05); --chart-text: #6b7280;
+}

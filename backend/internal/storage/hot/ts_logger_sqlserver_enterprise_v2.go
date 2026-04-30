@@ -27,12 +27,12 @@ func (tl *TimescaleLogger) LogSqlServerWaitStats(ctx context.Context, instanceID
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_wait_stats (
-				metric_time, server_instance_name, wait_category, wait_time_ms, signal_wait_time_ms, waiting_tasks
+				capture_timestamp, server_instance_name, wait_category, wait_time_ms, signal_wait_time_ms, waiting_tasks
 			) VALUES ($1, $2, $3, $4, $5, $6)
 		`, now, instanceID,
 			getStr(r, "wait_category"),
-			getInt64FromMap(r, "wait_time_ms_delta"),
-			getInt64FromMap(r, "signal_wait_time_ms_delta"),
+			getInt64FromMap(r, "wait_time_ms"),
+			getInt64FromMap(r, "signal_wait_time_ms"),
 			getInt64FromMap(r, "waiting_tasks_delta"),
 		)
 	}
@@ -53,12 +53,12 @@ func (tl *TimescaleLogger) GetSqlServerWaitStats(ctx context.Context, instanceID
 	}
 
 	q := `
-		SELECT metric_time, wait_category, wait_time_ms, signal_wait_time_ms, waiting_tasks
+		SELECT capture_timestamp, wait_category, wait_time_ms, signal_wait_time_ms, waiting_tasks
 		FROM sqlserver_wait_stats
 		WHERE server_instance_name = $1
-		  AND metric_time >= $2
-		  AND metric_time <= $3
-		ORDER BY metric_time ASC
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		ORDER BY capture_timestamp ASC
 	`
 	rows, err := tl.pool.Query(ctx, q, instanceID, start, end)
 	if err != nil {
@@ -95,7 +95,7 @@ func (tl *TimescaleLogger) LogSqlServerPerfCounters(ctx context.Context, instanc
 	for name, val := range counters {
 		batch.Queue(`
 			INSERT INTO sqlserver_perf_counters (
-				metric_time, server_instance_name, counter_name, value_per_sec
+				capture_timestamp, server_instance_name, counter_name, value_per_sec
 			) VALUES ($1, $2, $3, $4)
 		`, now, instanceID, name, val)
 	}
@@ -116,11 +116,11 @@ func (tl *TimescaleLogger) GetSqlServerPerfCounters(ctx context.Context, instanc
 	}
 
 	q := `
-		SELECT metric_time, counter_name, value_per_sec
+		SELECT capture_timestamp, counter_name, value_per_sec
 		FROM sqlserver_perf_counters
 		WHERE server_instance_name = $1
-		  AND metric_time >= $2
-		  AND metric_time <= $3
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
 	`
 	var args []interface{}
 	args = append(args, instanceID, start, end)
@@ -128,7 +128,7 @@ func (tl *TimescaleLogger) GetSqlServerPerfCounters(ctx context.Context, instanc
 		q += " AND counter_name = ANY($4)"
 		args = append(args, counterNames)
 	}
-	q += " ORDER BY metric_time ASC"
+	q += " ORDER BY capture_timestamp ASC"
 
 	rows, err := tl.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -163,7 +163,7 @@ func (tl *TimescaleLogger) LogSqlServerFileIO(ctx context.Context, instanceID st
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_file_io (
-				metric_time, server_instance_name, database_name, file_type, read_latency_ms, write_latency_ms
+				capture_timestamp, server_instance_name, database_name, file_type, read_latency_ms, write_latency_ms
 			) VALUES ($1, $2, $3, $4, $5, $6)
 		`, now, instanceID,
 			getStr(r, "database_name"),
@@ -189,12 +189,12 @@ func (tl *TimescaleLogger) GetSqlServerFileIO(ctx context.Context, instanceID st
 	}
 
 	q := `
-		SELECT metric_time, database_name, file_type, read_latency_ms, write_latency_ms
+		SELECT capture_timestamp, database_name, file_type, read_latency_ms, write_latency_ms
 		FROM sqlserver_file_io
 		WHERE server_instance_name = $1
-		  AND metric_time >= $2
-		  AND metric_time <= $3
-		ORDER BY metric_time ASC
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		ORDER BY capture_timestamp ASC
 	`
 	rows, err := tl.pool.Query(ctx, q, instanceID, start, end)
 	if err != nil {
@@ -228,7 +228,7 @@ func (tl *TimescaleLogger) LogSqlServerPlanCache(ctx context.Context, instanceID
 	}
 	// Dedup using fingerprint
 	sig := fingerprintMapRows(instanceID, "plan_cache_v2", rows, []string{"cache_type"}, []string{"size_mb"})
-	if tl.enterpriseSnapshotUnchanged(instanceID, "plan_cache_v2", sig) {
+	if tl.EnterpriseSnapshotUnchanged(instanceID, "plan_cache_v2", sig) {
 		return nil
 	}
 
@@ -237,7 +237,7 @@ func (tl *TimescaleLogger) LogSqlServerPlanCache(ctx context.Context, instanceID
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_plan_cache (
-				metric_time, server_instance_name, cache_type, size_mb
+				capture_timestamp, server_instance_name, cache_type, size_mb
 			) VALUES ($1, $2, $3, $4)
 		`, now, instanceID, getStr(r, "cache_type"), getFloat64(r, "size_mb"))
 	}
@@ -248,7 +248,7 @@ func (tl *TimescaleLogger) LogSqlServerPlanCache(ctx context.Context, instanceID
 			return fmt.Errorf("plan cache v2 insert failed: %w", err)
 		}
 	}
-	tl.rememberEnterpriseSnapshot(instanceID, "plan_cache_v2", sig)
+	tl.RememberEnterpriseSnapshot(instanceID, "plan_cache_v2", sig)
 	return nil
 }
 
@@ -258,12 +258,12 @@ func (tl *TimescaleLogger) GetSqlServerPlanCache(ctx context.Context, instanceID
 		return nil, err
 	}
 	q := `
-		SELECT metric_time, cache_type, size_mb
+		SELECT capture_timestamp, cache_type, size_mb
 		FROM sqlserver_plan_cache
 		WHERE server_instance_name = $1
-		  AND metric_time >= $2
-		  AND metric_time <= $3
-		ORDER BY metric_time ASC
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		ORDER BY capture_timestamp ASC
 	`
 	rows, err := tl.pool.Query(ctx, q, instanceID, start, end)
 	if err != nil {
@@ -294,7 +294,7 @@ func (tl *TimescaleLogger) LogSqlServerMemoryClerksV2(ctx context.Context, insta
 		return nil
 	}
 	sig := fingerprintMapRows(instanceID, "memory_clerks_v2", rows, []string{"clerk_name"}, []string{"pages_mb"})
-	if tl.enterpriseSnapshotUnchanged(instanceID, "memory_clerks_v2", sig) {
+	if tl.EnterpriseSnapshotUnchanged(instanceID, "memory_clerks_v2", sig) {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -302,7 +302,7 @@ func (tl *TimescaleLogger) LogSqlServerMemoryClerksV2(ctx context.Context, insta
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_memory_clerks (
-				metric_time, server_instance_name, clerk_name, pages_mb
+				capture_timestamp, server_instance_name, clerk_name, pages_mb
 			) VALUES ($1, $2, $3, $4)
 		`, now, instanceID, getStr(r, "clerk_name"), getFloat64(r, "pages_mb"))
 	}
@@ -313,7 +313,7 @@ func (tl *TimescaleLogger) LogSqlServerMemoryClerksV2(ctx context.Context, insta
 			return fmt.Errorf("memory clerks v2 insert failed: %w", err)
 		}
 	}
-	tl.rememberEnterpriseSnapshot(instanceID, "memory_clerks_v2", sig)
+	tl.RememberEnterpriseSnapshot(instanceID, "memory_clerks_v2", sig)
 	return nil
 }
 
@@ -323,12 +323,12 @@ func (tl *TimescaleLogger) GetSqlServerMemoryClerksV2(ctx context.Context, insta
 		return nil, err
 	}
 	q := `
-		SELECT metric_time, clerk_name, pages_mb
+		SELECT capture_timestamp, clerk_name, pages_mb
 		FROM sqlserver_memory_clerks
 		WHERE server_instance_name = $1
-		  AND metric_time >= $2
-		  AND metric_time <= $3
-		ORDER BY metric_time ASC
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		ORDER BY capture_timestamp ASC
 	`
 	rows, err := tl.pool.Query(ctx, q, instanceID, start, end)
 	if err != nil {
@@ -358,7 +358,7 @@ func (tl *TimescaleLogger) LogSqlServerMemoryGrantsV2(ctx context.Context, insta
 	now := time.Now().UTC()
 	q := `
 		INSERT INTO sqlserver_memory_grants (
-			metric_time, server_instance_name, pending_grants, active_grants, granted_memory_mb
+			capture_timestamp, server_instance_name, pending_grants, active_grants, granted_memory_mb
 		) VALUES ($1, $2, $3, $4, $5)
 	`
 	_, err := tl.pool.Exec(ctx, q, now, instanceID,
@@ -375,12 +375,12 @@ func (tl *TimescaleLogger) GetSqlServerMemoryGrantsV2(ctx context.Context, insta
 		return nil, err
 	}
 	q := `
-		SELECT metric_time, pending_grants, active_grants, granted_memory_mb
+		SELECT capture_timestamp, pending_grants, active_grants, granted_memory_mb
 		FROM sqlserver_memory_grants
 		WHERE server_instance_name = $1
-		  AND metric_time >= $2
-		  AND metric_time <= $3
-		ORDER BY metric_time ASC
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		ORDER BY capture_timestamp ASC
 	`
 	rows, err := tl.pool.Query(ctx, q, instanceID, start, end)
 	if err != nil {
@@ -416,7 +416,7 @@ func (tl *TimescaleLogger) LogSqlServerTempdbConsumers(ctx context.Context, inst
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_tempdb_consumers (
-				metric_time, server_instance_name, session_id, request_id, allocated_mb, user_object_mb, internal_object_mb, query_text
+				capture_timestamp, server_instance_name, session_id, request_id, allocated_mb, user_object_mb, internal_object_mb, query_text
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		`, now, instanceID,
 			getInt(r, "session_id"),
@@ -443,12 +443,13 @@ func (tl *TimescaleLogger) GetSqlServerTempdbConsumers(ctx context.Context, inst
 		return nil, err
 	}
 	q := `
-		SELECT metric_time, session_id, request_id, allocated_mb, user_object_mb, internal_object_mb, query_text
+		SELECT capture_timestamp, session_id, request_id, allocated_mb, user_object_mb, internal_object_mb, query_text
 		FROM sqlserver_tempdb_consumers
 		WHERE server_instance_name = $1
-		  AND metric_time >= $2
-		  AND metric_time <= $3
-		ORDER BY metric_time ASC
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		  AND query_text NOT LIKE '%/* SQL_OPTIMA */%'
+		ORDER BY capture_timestamp ASC
 	`
 	rows, err := tl.pool.Query(ctx, q, instanceID, start, end)
 	if err != nil {

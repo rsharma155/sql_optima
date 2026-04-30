@@ -1,10 +1,24 @@
+<!--
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Comprehensive query performance statistics derived from the pg_stat_statements extension.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+-->
 <!-- pg_stat_statements Dashboard — Enhanced Query Performance Analytics -->
 <div class="page-view active dashboard-sky-theme">
   <div class="page-title flex-between dashboard-page-title-compact">
-    <div>
-      <h4><i class="fa-solid fa-chart-line"></i> pg_stat_statements Dashboard
-        <span class="text-sm text-muted ml-2" id="pgss-instance-label"></span>
-      </h4>
+    <div style="display:flex; align-items:center; gap:1rem;">
+      <button class="btn btn-secondary btn-sm" data-action="navigate-back" title="Back to Control Center">
+          <i class="fa-solid fa-arrow-left"></i> Back
+      </button>
+      <div>
+        <h4><i class="fa-solid fa-chart-line"></i> pg_stat_statements Dashboard
+          <span class="text-sm text-muted ml-2" id="pgss-instance-label"></span>
+        </h4>
+      </div>
     </div>
     <div class="flex-row gap-2">
       <button class="btn btn-sm btn-outline" data-action="call" data-fn="PgStatStatementsView">

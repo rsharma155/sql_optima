@@ -1,5 +1,5 @@
 -- Metric: pg_list_databases
--- Source: backend/internal/repository/pg_stats.go:527
+-- Source: backend/internal/repository/pg_db_ops.go
 -- Target Table: N/A (database listing)
 -- Description: Lists user databases ordered by name, excluding templates and postgres
 

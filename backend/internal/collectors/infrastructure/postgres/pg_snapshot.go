@@ -16,6 +16,7 @@ func NewPGSnapshotRepository(db *sql.DB) *PGSnapshotRepository {
 }
 
 const pgStatStatementsSQL = `
+/* SQL_OPTIMA */
 SELECT
  now() AS capture_time,
  userid,
@@ -36,6 +37,7 @@ WHERE dbid NOT IN (
 `
 
 const pgStatActivitySQL = `
+/* SQL_OPTIMA */
 SELECT
   now() AS capture_time,
   pid,

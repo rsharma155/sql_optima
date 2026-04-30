@@ -1,5 +1,5 @@
 -- Metric: pg_long_running_queries
--- Source: backend/internal/repository/pg_stats.go:557
+-- Source: backend/internal/repository/pg_session_metrics.go
 -- Target Table: N/A (session monitoring)
 -- Description: Returns queries running longer than specified duration from pg_stat_activity
 

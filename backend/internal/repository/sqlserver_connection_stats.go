@@ -20,7 +20,7 @@ func (c *SqlServerRepository) CollectConnectionStats(db *sql.DB, database string
 	}
 
 	query := fmt.Sprintf(`
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ SELECT 
 			s.login_name,
 			DB_NAME(r.database_id) AS database_name,
 			COUNT(*) AS active_connections,

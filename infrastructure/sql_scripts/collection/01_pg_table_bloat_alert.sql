@@ -1,5 +1,5 @@
 -- Metric: pg_table_bloat_alert
--- Source: backend/internal/repository/pg_stats.go:1307
+-- Source: backend/internal/repository/pg_system_metrics.go
 -- Target Table: N/A (alerting)
 -- Description: Checks for tables with high dead tuple counts from pg_stat_user_tables
 

@@ -13,163 +13,91 @@
 --          Grant usage on specific schemas as needed for your databases.
 -- ============================================================================
 
--- Create monitoring role if it doesn't exist
+-- ============================================================================
+-- PostgreSQL Monitoring User Initialization Script (Final Resilient Version)
+-- ============================================================================
+
 DO $$
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_roles WHERE rolname = 'dbmonitor_user'
-    ) THEN
+    -- 1. Create role if it doesn't exist
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dbmonitor_user') THEN
         CREATE ROLE dbmonitor_user WITH
             LOGIN
             NOSUPERUSER
             NOCREATEDB
             NOCREATEROLE
             NOREPLICATION
-            CONNECTION LIMIT 100;
-        
-        RAISE NOTICE 'Role [dbmonitor_user] created — set password with ALTER ROLE dbmonitor_user PASSWORD ''...''';
+            CONNECTION LIMIT 100
+            PASSWORD 'ChangeMe_123!'; --Change the password after creation, or set via automation
+        RAISE NOTICE 'Role [dbmonitor_user] created.';
     ELSE
         RAISE NOTICE 'Role [dbmonitor_user] already exists.';
     END IF;
+
+    -- 2. Grant pg_monitor (Standard for PG 10+)
+    -- Covers pg_read_all_settings and pg_read_all_stats
+    GRANT pg_monitor TO dbmonitor_user;
+
+    -- 3. Grant Connect to the current database
+    EXECUTE format('GRANT CONNECT ON DATABASE %I TO dbmonitor_user', current_database());
 END
 $$;
 
+-- 4. Global System Catalog Access
+GRANT SELECT ON ALL TABLES IN SCHEMA pg_catalog TO dbmonitor_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA information_schema TO dbmonitor_user;
 
--- Grant required PostgreSQL system catalog permissions
-GRANT pg_read_all_settings TO dbmonitor_user;
-GRANT pg_read_all_stats TO dbmonitor_user;
-GRANT pg_stat_scan_tables TO dbmonitor_user;
-GRANT pg_monitor TO dbmonitor_user;
-
--- Grant execution on PostgreSQL Statistics Views
-GRANT SELECT ON pg_stat_activity TO dbmonitor_user;
-GRANT SELECT ON pg_stat_bgwriter TO dbmonitor_user;
-GRANT SELECT ON pg_stat_database TO dbmonitor_user;
-GRANT SELECT ON pg_stat_user_indexes TO dbmonitor_user;
-GRANT SELECT ON pg_stat_replication TO dbmonitor_user;
-GRANT SELECT ON pg_replication_slots TO dbmonitor_user;
-GRANT SELECT ON pg_locks TO dbmonitor_user;
-
--- Grant execution on PostgreSQL Monitoring Functions
-GRANT EXECUTE ON FUNCTION pg_stat_get_activity(integer) TO dbmonitor_user;
---GRANT EXECUTE ON FUNCTION pg_stat_get_bgwriter() TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_show_all_settings() TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_lock_status() TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_control_checkpoint() TO dbmonitor_user;
-GRANT EXECUTE ON FUNCTION pg_control_system() TO dbmonitor_user;
---GRANT EXECUTE ON FUNCTION pg_control_database() TO dbmonitor_user;
-
--- Grant access to system catalogs for monitoring
-GRANT SELECT ON pg_catalog.pg_stat_activity TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_stat_bgwriter TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_stat_database TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_stat_user_tables TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_stat_user_indexes TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_stat_sys_tables TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_statio_user_tables TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_statio_sys_tables TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_locks TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_stat_replication TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_replication_origin_status TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_replication_slots TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_settings TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_roles TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_database TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_namespace TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_class TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_attribute TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_proc TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_type TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_index TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_inherits TO dbmonitor_user;
-GRANT SELECT ON pg_catalog.pg_tablespace TO dbmonitor_user;
-
--- Grant access to information schema
-GRANT SELECT ON information_schema.tables TO dbmonitor_user;
-GRANT SELECT ON information_schema.columns TO dbmonitor_user;
-GRANT SELECT ON information_schema.views TO dbmonitor_user;
-GRANT SELECT ON information_schema.routines TO dbmonitor_user;
-GRANT SELECT ON information_schema.table_privileges TO dbmonitor_user;
-GRANT SELECT ON information_schema.column_privileges TO dbmonitor_user;
-
--- This role was created specifically to solve the problem of 
--- granting permissions to dozens of tiny internal functions.
-GRANT pg_read_all_stats TO dbmonitor_user;
-
--- For pg_stat_statements extension (if installed)
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements') THEN
-        GRANT EXECUTE ON FUNCTION pg_stat_statements_reset() TO dbmonitor_user;
-        GRANT SELECT ON pg_stat_statements TO dbmonitor_user;
-        RAISE NOTICE 'Granted permissions for pg_stat_statements extension.';
-    ELSE
-        RAISE NOTICE 'pg_stat_statements extension not installed (optional).';
-    END IF;
-END
-$$;
-
--- For pg_stat_kcache extension (if installed)
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_kcache') THEN
-        GRANT SELECT ON pg_stat_kcache TO dbmonitor_user;
-        RAISE NOTICE 'Granted permissions for pg_stat_kcache extension.';
-    ELSE
-        RAISE NOTICE 'pg_stat_kcache extension not installed (optional).';
-    END IF;
-END
-$$;
-
--- For TimescaleDB (if installed) - check hypertable access
+-- 5. Extension-specific Logic with Dynamic Signature Resolution
 DO $$
 DECLARE
-    is_timescaledb boolean;
+    func_record RECORD;
 BEGIN
-    SELECT EXISTS(
-        SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'
-    ) INTO is_timescaledb;
-    
-    IF is_timescaledb THEN
-        GRANT SELECT ON timescaledb_information.hypertables TO dbmonitor_user;
-        GRANT SELECT ON timescaledb_information.chunks TO dbmonitor_user;
-        GRANT SELECT ON timescaledb_information.dimensions TO dbmonitor_user;
-        GRANT SELECT ON timescaledb_information.compression_settings TO dbmonitor_user;
-        GRANT SELECT ON timescaledb_information.job_stats TO dbmonitor_user;
-        RAISE NOTICE 'Granted permissions for TimescaleDB information views.';
-    ELSE
-        RAISE NOTICE 'TimescaleDB extension not installed (optional).';
+    -- Handle pg_stat_statements
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements') THEN
+        GRANT SELECT ON pg_stat_statements TO dbmonitor_user;
+        
+        -- Dynamically find and grant EXECUTE on the reset function(s)
+        -- This fixes the [42883] error by resolving the exact signature
+        FOR func_record IN 
+            SELECT n.nspname, p.proname, pg_get_function_identity_arguments(p.oid) as args
+            FROM pg_proc p
+            JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE p.proname = 'pg_stat_statements_reset'
+        LOOP
+            EXECUTE format('GRANT EXECUTE ON FUNCTION %I.%I(%s) TO dbmonitor_user', 
+                           func_record.nspname, func_record.proname, func_record.args);
+        END LOOP;
+        RAISE NOTICE 'pg_stat_statements permissions updated.';
+    END IF;
+
+    -- Handle pg_stat_kcache
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_kcache') THEN
+        GRANT SELECT ON pg_stat_kcache TO dbmonitor_user;
+        RAISE NOTICE 'pg_stat_kcache permissions updated.';
+    END IF;
+
+    -- Handle TimescaleDB
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
+        IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'timescaledb_information') THEN
+            GRANT USAGE ON SCHEMA timescaledb_information TO dbmonitor_user;
+            GRANT SELECT ON ALL TABLES IN SCHEMA timescaledb_information TO dbmonitor_user;
+            RAISE NOTICE 'TimescaleDB permissions updated.';
+        END IF;
     END IF;
 END
 $$;
 
--- ============================================================================
--- Per-Database Configuration
--- ============================================================================
--- Run the following for each database you want to monitor:
---
--- CREATE USER dbmonitor_user FOR LOGIN dbmonitor_user;  -- For Azure DB / RDS
--- GRANT CONNECT ON DATABASE your_database TO dbmonitor_user;
--- GRANT USAGE ON SCHEMA public TO dbmonitor_user;
--- GRANT SELECT ON ALL TABLES IN SCHEMA public TO dbmonitor_user;
--- GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO dbmonitor_user;
--- ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO dbmonitor_user;
---
--- For Cloud-native PostgreSQL (CNPG) clusters, additional monitoring views
--- are typically available. Grant access to them if needed.
--- ============================================================================
+-- 6. Application Schema Access
+GRANT USAGE ON SCHEMA public TO dbmonitor_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO dbmonitor_user;
+-- Ensure future tables are also readable
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO dbmonitor_user;
 
-\echo ''
-\echo '========================================'
-\echo 'PostgreSQL monitoring user setup complete.'
-\echo '========================================'
-\echo 'Role: dbmonitor_user'
-\echo 'Password: MonitorPass123! (change this!)'
-\echo ''
-\echo 'Permissions granted:'
-\echo '  - pg_monitor, pg_read_all_settings'
-\echo '  - pg_read_all_stats, pg_stat_scan_tables'
-\echo '  - System catalogs and information_schema'
-\echo '  - pg_stat_statements (if available)'
-\echo '  - TimescaleDB views (if available)'
-\echo '========================================'
+DO $$
+BEGIN
+    RAISE NOTICE '========================================';
+    RAISE NOTICE 'PostgreSQL monitoring user setup complete.';
+    RAISE NOTICE 'Role: dbmonitor_user';
+    RAISE NOTICE '========================================';
+END
+$$;

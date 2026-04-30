@@ -82,28 +82,6 @@ func parseEnvInt(key string, defaultVal int) int {
 	return n
 }
 
-func ensureCollectorConfigsTable(ctx context.Context, pool *pgxpool.Pool) {
-	if pool == nil {
-		return
-	}
-	query := `
-    CREATE TABLE IF NOT EXISTS optima_collector_configs (
-        id SERIAL PRIMARY KEY,
-        collector_name VARCHAR(100) UNIQUE NOT NULL,
-        module VARCHAR(100) NOT NULL,
-        frequency_seconds INTEGER NOT NULL,
-        is_active BOOLEAN DEFAULT TRUE,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_by VARCHAR(100)
-    );
-    `
-	if _, err := pool.Exec(ctx, query); err != nil {
-		log.Printf("[init] Failed to ensure optima_collector_configs table: %v", err)
-	} else {
-		log.Printf("[init] optima_collector_configs table ensured and seeded")
-	}
-}
-
 // Main starts the SQL Optima API and static UI.
 func Main() {
 	initErrorLogger()
@@ -157,6 +135,8 @@ func Main() {
 
 	var tsHotStorage *hot.HotStorage
 	var usingEnvTimescale bool
+	var kms servers.KeyManagementService
+	var usingLocalKMS bool
 	tsHotStorage, usingEnvTimescale, err = config.ConnectMetricsTimescale(configPath, jwtSecret)
 	if err != nil {
 		errMsg := fmt.Sprintf("TimescaleDB (env fallback): %v", err)
@@ -167,13 +147,8 @@ func Main() {
 	}
 
 	if tsHotStorage != nil {
-		ensureCollectorConfigsTable(context.Background(), tsHotStorage.Pool())
-	}
-
-	var kms servers.KeyManagementService
-	usingLocalKMS := false
-	if tsHotStorage != nil {
 		kms, usingLocalKMS = config.InitServerRegistryKMS(jwtSecret)
+
 		if usingLocalKMS {
 			log.Printf("[kms] using local envelope key derived from JWT_SECRET (set VAULT_ADDR for Vault Transit in production)")
 		}
@@ -240,6 +215,7 @@ func Main() {
 	go metricsSvc.StartQueryAnalysisCollector(ctx)
 	go metricsSvc.StartWatchedQueryCollector(ctx)
 	go metricsSvc.StartSqlServerStorageHistoryCollector(ctx)
+	go metricsSvc.StartPostgresNewDashboardsCollectors(ctx)
 
 	if tsHotStorage != nil {
 		go startQueryV2Collector(ctx, tsHotStorage.Pool(), cfg)

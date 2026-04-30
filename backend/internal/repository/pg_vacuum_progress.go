@@ -60,7 +60,8 @@ func (c *PgRepository) GetVacuumProgress(instanceName string) ([]PgVacuumProgres
 
 	// pg_stat_progress_vacuum requires privileges; use left joins for names.
 	q := `
-		SELECT /* SQL_OPTIMA */  
+		/* SQL_OPTIMA */ 
+		SELECT  
 			now() AT TIME ZONE 'UTC' AS capture_timestamp,
 			p.pid,
 			COALESCE(a.datname,'') AS database_name,

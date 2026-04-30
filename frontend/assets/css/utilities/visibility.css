@@ -1,0 +1,11 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Utility helper classes for visibility
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+.hidden { display: none !important; }
+.text-center { text-align: center; }

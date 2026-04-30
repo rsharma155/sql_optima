@@ -1,5 +1,5 @@
 -- Metric: pg_config_settings
--- Source: backend/internal/repository/pg_stats.go:1197
+-- Source: backend/internal/repository/pg_system_metrics.go
 -- Target Table: N/A (configuration audit)
 -- Description: Returns PostgreSQL configuration settings for key categories from pg_settings
 

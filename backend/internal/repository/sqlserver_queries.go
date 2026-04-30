@@ -22,6 +22,7 @@ func (c *SqlServerRepository) CollectLongRunningQueries(ctx context.Context, db 
 	}
 
 	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 	
 		SELECT /* SQL_OPTIMA */   TOP 50
 			r.session_id,
 			r.request_id,
@@ -105,7 +106,7 @@ func (c *SqlServerRepository) CollectLongRunningQueries(ctx context.Context, db 
 // If database is non-empty, scopes to that DB only.
 func (c *SqlServerRepository) CollectLiveRunningQueries(ctx context.Context, db *sql.DB, database string) ([]map[string]interface{}, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   TOP 50
+		/* SQL_OPTIMA */ SELECT   TOP 50
 			r.session_id, 
 			s.login_name, 
 			s.program_name, 
@@ -164,7 +165,7 @@ func (c *SqlServerRepository) CollectLiveRunningQueries(ctx context.Context, db 
 
 func (c *SqlServerRepository) CollectProcedureStats(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   TOP 20 
+		/* SQL_OPTIMA */ SELECT   TOP 20 
 			DB_NAME(ps.database_id) AS database_name,
 			OBJECT_SCHEMA_NAME(ps.object_id, ps.database_id) AS schema_name,
 			OBJECT_NAME(ps.object_id, ps.database_id) AS object_name,

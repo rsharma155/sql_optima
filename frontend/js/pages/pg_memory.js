@@ -14,53 +14,151 @@ window.PgMemoryView = async function() {
         window.routerOutlet.innerHTML = '<div class="p-4 text-warning">Please select a PostgreSQL instance first.</div>';
         return;
     }
+    const dbName = window.appState.currentDatabase || 'all';
 
-    // Default time window (last 6 hours)
-    if (!window.appState.pgMemFrom) {
-        const now = new Date();
-        const past = new Date(now.getTime() - (6 * 3600000));
-        window.appState.pgMemFrom = toLocalISOString(past);
-        window.appState.pgMemTo = toLocalISOString(now);
-    }
+    window.appState.activeViewId = 'pg-memory';
 
-    window.routerOutlet.innerHTML = await window.loadTemplate('pages/pg_memory.html');
-    
-    // Set initial values
-    const fromEl = document.getElementById('pg-mem-from');
-    const toEl = document.getElementById('pg-mem-to');
-    const labelEl = document.getElementById('pgss-instance-label');
+    window.routerOutlet.innerHTML = `
+        <div class="page-view active dashboard-sky-theme pg-memory-page">
+            <div class="page-title flex-between dashboard-page-title-compact">
+                <div class="dashboard-title-line">
+                    <h1><i class="fa-solid fa-memory"></i> Memory Usage</h1>
+                    <span class="subtitle">Mission control for PostgreSQL memory intelligence</span>
+                </div>
+                <div class="flex-center">
+                    <div id="time-picker-insertion-point"></div>
+                </div>
+            </div>
 
-    if (fromEl) fromEl.value = window.appState.pgMemFrom;
-    if (toEl) toEl.value = window.appState.pgMemTo;
-    if (labelEl) labelEl.textContent = inst.name;
+            <!-- ROW 1: Compact Metric Strip -->
+            <div class="metrics-row-compact">
+                <div class="glass-panel metric-card-compact">
+                    <div class="metric-label">OS Used %</div>
+                    <div class="metric-value" id="os-memory-pct">--</div>
+                </div>
+                <div class="glass-panel metric-card-compact">
+                    <div class="metric-label">PG RSS</div>
+                    <div class="metric-value text-accent" id="pg-rss-mb">--</div>
+                </div>
+                <div class="glass-panel metric-card-compact">
+                    <div class="metric-label">Cache Hit</div>
+                    <div class="metric-value text-success" id="cache-hit-pct">--</div>
+                </div>
+                <div class="glass-panel metric-card-compact">
+                    <div class="metric-label">Swap Used</div>
+                    <div class="metric-value" id="swap-used-mb">--</div>
+                </div>
+                <div class="glass-panel metric-card-compact">
+                    <div class="metric-label">Pressure</div>
+                    <div class="metric-value" id="pressure-level">--</div>
+                </div>
+                <div class="glass-panel metric-card-compact">
+                    <div class="metric-label">Temp Spill</div>
+                    <div class="metric-value" id="temp-spill-rate">--</div>
+                </div>
+                <div class="glass-panel metric-card-compact">
+                    <div class="metric-label">Health</div>
+                    <div class="metric-value" id="health-score-value">--</div>
+                </div>
+                <div class="glass-panel metric-card-compact">
+                    <div class="metric-label">Status</div>
+                    <div class="metric-value" id="health-status-label" style="font-size:0.7rem;">--</div>
+                </div>
+            </div>
 
-    // Bind Controls
-    document.getElementById('pg-mem-apply')?.addEventListener('click', () => {
-        window.appState.pgMemFrom = document.getElementById('pg-mem-from')?.value || '';
-        window.appState.pgMemTo = document.getElementById('pg-mem-to')?.value || '';
-        initPgMemoryCockpit(inst.name);
-    });
+            <!-- ROW 2: Charts -->
+            <div class="chart-row-compact">
+                <div class="card glass-panel">
+                    <div class="card-header"><h3 style="font-size:0.75rem; margin:0;" id="main-memory-trend-title">Memory Trend</h3></div>
+                    <div class="chart-container chart-container-compact">
+                        <canvas id="hostPgTrendChart"></canvas>
+                    </div>
+                </div>
+                <div class="card glass-panel">
+                    <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Cache Efficiency</h3></div>
+                    <div class="chart-container chart-container-compact">
+                        <canvas id="cacheEfficiencyChart"></canvas>
+                    </div>
+                </div>
+            </div>
 
-    // Bind Tabs
-    document.querySelectorAll('.cockpit-tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.cockpit-tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-pane').forEach(p => p.style.display = 'none');
-            btn.classList.add('active');
-            const target = document.getElementById(`cockpit-tab-${btn.dataset.tab}`);
-            if (target) {
-                target.style.display = (btn.dataset.tab === 'forecast' || btn.dataset.tab === 'raw') ? 'block' : 'grid';
-            }
-        });
-    });
+            <!-- ROW 3: Components & Advisor -->
+            <div class="chart-row-compact" style="grid-template-columns: 1fr 2.5fr;">
+                <div class="card glass-panel">
+                    <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Components</h3></div>
+                    <div class="chart-container" style="height:150px !important;">
+                        <canvas id="pgComponentsChart"></canvas>
+                    </div>
+                </div>
+                <div class="card glass-panel">
+                    <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Memory Advisor</h3></div>
+                    <div class="p-2" style="font-size:0.7rem; overflow-y:auto; height:150px;">
+                        <div id="mem-advisor-content" class="mb-2"></div>
+                        <div id="workmem-advisor-content"></div>
+                    </div>
+                </div>
+            </div>
 
+            <!-- ROW 4: Raw Data -->
+            <div class="card glass-panel">
+                <div class="card-header flex-between">
+                    <h3 style="font-size:0.75rem; margin:0;">Raw Memory Metrics</h3>
+                    <button class="btn btn-xs btn-outline" onclick="window.exportPgMemoryCSV()">Export CSV</button>
+                </div>
+                <div class="table-container-compact" style="height:120px !important;">
+                    <table class="modern-table modern-table-compact">
+                        <thead>
+                            <tr><th>Time</th><th>OS %</th><th>PG RSS</th><th>Swap</th><th>Temp</th><th>Cache</th></tr>
+                        </thead>
+                        <tbody id="pg-memory-raw-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+
+    window.initPageTimePicker();
     initPgMemoryCockpit(inst.name);
+}
+
+async function updatePgMemoryHeader(instName) {
+    try {
+        const snapshotResp = await window.apiClient.authenticatedFetch(`/api/postgres/server-info?instance=${encodeURIComponent(instName)}`);
+        if (snapshotResp.ok) {
+            const s = await snapshotResp.json();
+            if (document.getElementById('pg-uptime')) document.getElementById('pg-uptime').textContent = 'Uptime: ' + (s.uptime || 'N/A');
+            if (document.getElementById('pg-version')) document.getElementById('pg-version').textContent = (s.version || '').split(',')[0];
+            if (document.getElementById('pgLastRefreshTime')) document.getElementById('pgLastRefreshTime').textContent = new Date().toLocaleTimeString();
+            
+            const hs = s.health_score || 0;
+            const healthColor = hs > 80 ? 'success' : hs > 60 ? 'warning' : 'danger';
+            const hBadge = document.getElementById('pgHealthScoreBadge');
+            if (hBadge) {
+                hBadge.textContent = hs;
+                hBadge.className = `badge badge-${healthColor}`;
+            }
+        }
+    } catch (e) { console.error("PG Memory header fetch failed:", e); }
 }
 
 async function initPgMemoryCockpit(instanceName) {
     window.currentCharts = window.currentCharts || {};
-    const from = new Date(window.appState.pgMemFrom).toISOString();
-    const to = new Date(window.appState.pgMemTo).toISOString();
+    
+    // Use appState.fromTs/toTs if available, fallback to 1h range
+    let fromTs = window.appState.fromTs;
+    let toTs = window.appState.toTs;
+    
+    if (!fromTs || !toTs) {
+        const now = new Date();
+        const oneHourAgo = new Date(now.getTime() - (60 * 60 * 1000));
+        fromTs = oneHourAgo.toISOString();
+        toTs = now.toISOString();
+    }
+
+    const from = new Date(fromTs).toISOString();
+    const to = new Date(toTs).toISOString();
+
+    updatePgMemoryHeader(instanceName);
 
     try {
         const url = `/api/postgres/memory/intelligence?instance=${encodeURIComponent(instanceName)}&from=${from}&to=${to}`;
@@ -81,13 +179,29 @@ function renderPgMemoryCockpit(data) {
     const components = data.components || {};
     const osConfigured = data.os_collector_configured;
     
-    // Add OS Collector Status Note below Date Picker
-    const statusContainer = document.getElementById('os-collector-status-container');
-    if (statusContainer) {
-        if (!osConfigured) {
-            statusContainer.innerHTML = '<div style="font-size: 0.7rem; color: var(--warning); margin-bottom: 0.2rem;"><i class="fa-solid fa-circle-exclamation"></i> OS Collector not configured. OS level metrics unavailable.</div>';
+    // Add OS Collector Status Note
+    const titleLine = document.querySelector('.pg-memory-page .dashboard-title-line');
+    if (titleLine) {
+        let statusNote = document.getElementById('os-collector-status-note');
+        if (!statusNote) {
+            statusNote = document.createElement('div');
+            statusNote.id = 'os-collector-status-note';
+            statusNote.style.fontSize = '0.65rem';
+            statusNote.style.padding = '2px 8px';
+            statusNote.style.borderRadius = '4px';
+            statusNote.style.marginTop = '0.2rem';
+            statusNote.style.display = 'inline-block';
+            titleLine.appendChild(statusNote);
+        }
+        
+        if (osConfigured) {
+            statusNote.innerHTML = '<i class="fa-solid fa-circle-check text-success"></i> OS Collector Active';
+            statusNote.style.background = 'rgba(34, 197, 94, 0.1)';
+            statusNote.style.color = 'var(--success)';
         } else {
-            statusContainer.innerHTML = '<div style="font-size: 0.7rem; color: var(--success); margin-bottom: 0.2rem;"><i class="fa-solid fa-circle-check"></i> OS Collector Active</div>';
+            statusNote.innerHTML = '<i class="fa-solid fa-circle-exclamation text-warning"></i> OS Collector Inactive';
+            statusNote.style.background = 'rgba(245, 158, 11, 0.1)';
+            statusNote.style.color = 'var(--warning)';
         }
     }
 
@@ -546,7 +660,7 @@ function updatePgMemoryTable(series) {
 // Helpers
 function toLocalISOString(date) {
     const tzo = -date.getTimezoneOffset(), pad = (num) => (num < 10 ? '0' : '') + num;
-    return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + 'T' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+    return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + 'T' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
 }
 
 window.exportPgMemoryCSV = function() {

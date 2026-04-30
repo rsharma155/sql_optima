@@ -39,7 +39,7 @@ func (c *SqlServerRepository) FetchLogShippingHealth(instanceName string) ([]Log
 	_ = db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM msdb.dbo.log_shipping_primary_databases WITH (NOLOCK)`).Scan(&primaryCount)
 	if primaryCount > 0 {
 		rows, err := db.Query(`
-			SELECT /* SQL_OPTIMA */  
+			/* SQL_OPTIMA */ SELECT  
 				ISNULL(CAST(SERVERPROPERTY('ServerName') AS NVARCHAR(128)), '') AS primary_server,
 				lp.primary_database,
 				'' AS secondary_server,
@@ -73,7 +73,7 @@ func (c *SqlServerRepository) FetchLogShippingHealth(instanceName string) ([]Log
 	_ = db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM msdb.dbo.log_shipping_secondary_databases WITH (NOLOCK)`).Scan(&secondaryCount)
 	if secondaryCount > 0 {
 		rows, err := db.Query(`
-			SELECT /* SQL_OPTIMA */  
+			/* SQL_OPTIMA */ SELECT  
 				ISNULL(lss.primary_server,    '')     AS primary_server,
 				ISNULL(lss.primary_database,  '')     AS primary_database,
 				ISNULL(CAST(SERVERPROPERTY('ServerName') AS NVARCHAR(128)), '') AS secondary_server,

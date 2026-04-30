@@ -783,6 +783,52 @@ func (h *AdminServerHandlers) RotateServer(w http.ResponseWriter, r *http.Reques
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
+func (h *AdminServerHandlers) GetServer(w http.ResponseWriter, r *http.Request) {
+	if h == nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	store, _, _, _ := h.reg()
+	if store == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server registry not configured"})
+		return
+	}
+	id := strings.TrimSpace(mux.Vars(r)["id"])
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "id is required"})
+		return
+	}
+
+	s, _, _, err := store.GetEncrypted(r.Context(), id)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server not found"})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":        s.ID,
+		"name":      s.Name,
+		"db_type":   s.DBType,
+		"host":      s.Host,
+		"port":      s.Port,
+		"username":  s.Username,
+		"ssl_mode":  s.SSLMode,
+		"is_active": s.IsActive,
+		"last_tested": func() any {
+			if s.LastTestAt == nil || s.LastTestAt.IsZero() {
+				return nil
+			}
+			return s.LastTestAt.UTC().Format(time.RFC3339)
+		}(),
+		"created_at": s.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at": s.UpdatedAt.UTC().Format(time.RFC3339),
+	})
+}
+
 func (h *AdminServerHandlers) UpdateServer(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	store, kms, box, audit := h.reg()

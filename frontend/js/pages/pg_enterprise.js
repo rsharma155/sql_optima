@@ -18,114 +18,74 @@
  * Data is collected every 15 minutes by the background collector and stored
  * in TimescaleDB for historical analysis.
  */
-window.PgEnterpriseDashboardView = function() {
-    const instance = window.appState.config.instances[window.appState.currentInstanceIdx];
-    if (!instance) { alert('Select an instance first.'); return; }
-    if (instance.type !== 'postgres') { alert('Enterprise monitoring is for PostgreSQL only.'); return; }
+window.PgEnterpriseDashboardView = async function() {
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+    if (!inst) { alert('Select an instance first.'); return; }
+    if (inst.type !== 'postgres') { alert('Enterprise monitoring is for PostgreSQL only.'); return; }
+    const dbName = window.appState.currentDatabase || 'all';
 
-    window.routerOutlet.innerHTML = `
-        <div class="page-view active dashboard-sky-theme">
-        <div class="page-title flex-between dashboard-page-title-compact">
-            <div class="dashboard-title-line" style="flex:1; min-width:0;">
-                <h1>Advanced Enterprise Monitor</h1>
-                <span class="subtitle">Raw/enterprise Timescale-backed metrics (drilldown)</span>
-            </div>
-            <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
-                <button class="btn btn-sm btn-outline" data-action="navigate" data-route="pg-dashboard"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgEnterpriseDashboardView"><i class="fa-solid fa-refresh"></i> Refresh</button>
-            </div>
-        </div>
+    // 1. Initial Shell
+    window.routerOutlet.innerHTML = await window.loadTemplate('/pages/pg_enterprise.html', { inst, dbName });
+    window.initPageTimePicker();
 
-        <div class="dashboard-grid" style="display: grid; gap: var(--spacing-md); margin-top:0.75rem;">
-            <!-- BGWriter/Checkpoint Statistics Card -->
-            <div class="card">
-                <div class="card-header">
-                    <h3 title="Background writer and checkpoint statistics from pg_stat_bgwriter. Shows how PostgreSQL flushes dirty buffers to disk. Rising 'req' checkpoints may indicate max_wal_size is too low."><i class="fa-solid fa-database"></i> BGWriter / Checkpoint Statistics</h3>
-                </div>
-                <div class="card-body">
-                    <div id="bgwriter-section">
-                        <div class="loading-spinner"><i class="fa-solid fa-spinner fa-spin"></i> Loading BGWriter data...</div>
-                    </div>
-                </div>
-            </div>
+    // 2. Load data from TimescaleDB API endpoints
+    const from = window.appState.fromTs;
+    const to = window.appState.toTs;
+    loadBGWriterData(inst.name, from, to);
+    loadArchiverData(inst.name, from, to);
+    loadWaitEvents(inst.name, from, to);
+    loadDbIO(inst.name, from, to);
+    loadConfigDrift(inst.name);
+    loadQueryInternals(inst.name, from, to);
 
-            <!-- WAL Archiver Statistics Card -->
-            <div class="card">
-                <div class="card-header">
-                    <h3 title="WAL archiver statistics from pg_stat_archiver. Monitors continuous archiving health — failures mean WAL files are not being shipped to the backup destination."><i class="fa-solid fa-archive"></i> WAL Archiver Statistics</h3>
-                </div>
-                <div class="card-body">
-                    <div id="archiver-section">
-                        <div class="loading-spinner"><i class="fa-solid fa-spinner fa-spin"></i> Loading Archiver data...</div>
-                    </div>
-                </div>
-            </div>
+    // 3. Update Header Info
+    updateEnterpriseHeader(inst.name);
 
-            <!-- Contention: Wait Events -->
-            <div class="card">
-                <div class="card-header">
-                    <h3 title="Wait event type distribution over time from pg_stat_activity snapshots. Helps identify contention bottlenecks (Lock, IO, LWLock, BufferPin, etc.)."><i class="fa-solid fa-road-barrier"></i> Contention: Wait Events (history)</h3>
-                </div>
-                <div class="card-body">
-                    <div id="waits-section">
-                        <div class="loading-spinner"><i class="fa-solid fa-spinner fa-spin"></i> Loading wait events...</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- IO: per DB IO/temp -->
-            <div class="card">
-                <div class="card-header">
-                    <h3 title="Per-database I/O and temp file usage from pg_stat_database. blks_read shows physical reads (not served from cache). temp_bytes shows sorts/hashes spilling to disk."><i class="fa-solid fa-hard-drive"></i> IO: Per-DB Reads / Temp Spill (history)</h3>
-                </div>
-                <div class="card-body">
-                    <div id="io-section">
-                        <div class="loading-spinner"><i class="fa-solid fa-spinner fa-spin"></i> Loading IO stats...</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Config drift -->
-            <div class="card">
-                <div class="card-header">
-                    <h3 title="Detects postgresql.conf / ALTER SYSTEM parameter changes between consecutive collector snapshots. Useful for auditing configuration drift."><i class="fa-solid fa-sliders"></i> Config Drift (latest vs previous snapshot)</h3>
-                </div>
-                <div class="card-body">
-                    <div id="drift-section">
-                        <div class="loading-spinner"><i class="fa-solid fa-spinner fa-spin"></i> Loading drift...</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Query internals (pg_stat_statements) -->
-            <div class="card">
-                <div class="card-header">
-                    <h3 title="Top queries from pg_stat_statements sorted by temp block writes. Identifies queries spilling to disk — raising work_mem for these queries can improve performance."><i class="fa-solid fa-magnifying-glass-chart"></i> Query Internals (pg_stat_statements)</h3>
-                </div>
-                <div class="card-body">
-                    <div id="qint-section">
-                        <div class="loading-spinner"><i class="fa-solid fa-spinner fa-spin"></i> Loading query internals...</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        </div>
-    `;
-
-    // Load data from TimescaleDB API endpoints
-    loadBGWriterData(instance.name);
-    loadArchiverData(instance.name);
-    loadWaitEvents(instance.name);
-    loadDbIO(instance.name);
-    loadConfigDrift(instance.name);
-    loadQueryInternals(instance.name);
+    // 4. Set Refresh Interval
+    if (window.pgEnterpriseInterval) clearInterval(window.pgEnterpriseInterval);
+    window.pgEnterpriseInterval = setInterval(() => {
+        if (window.appState.activeViewId === 'drilldown-pg-enterprise') {
+            window.PgEnterpriseDashboardView();
+        } else {
+            clearInterval(window.pgEnterpriseInterval);
+        }
+    }, 60000); // 60s refresh for enterprise metrics
 };
 
-function loadWaitEvents(instanceName) {
+async function updateEnterpriseHeader(instName) {
+    try {
+        const snapshotResp = await window.apiClient.authenticatedFetch(`/api/postgres/server-info?instance=${encodeURIComponent(instName)}`);
+        if (snapshotResp.ok) {
+            const s = await snapshotResp.json();
+            if (document.getElementById('pg-uptime')) document.getElementById('pg-uptime').textContent = 'Uptime: ' + (s.uptime || 'N/A');
+            if (document.getElementById('pg-version')) document.getElementById('pg-version').textContent = (s.version || '').split(',')[0];
+            if (document.getElementById('pgLastRefreshTime')) document.getElementById('pgLastRefreshTime').textContent = new Date().toLocaleTimeString();
+            
+            // Health Score
+            const hs = s.health_score || 0;
+            const healthColor = hs > 80 ? 'success' : hs > 60 ? 'warning' : 'danger';
+            const hBadge = document.getElementById('pgHealthScoreBadge');
+            if (hBadge) {
+                hBadge.textContent = hs;
+                hBadge.className = `badge badge-${healthColor}`;
+            }
+        }
+    } catch (e) { console.error("PG enterprise header fetch failed:", e); }
+}
+
+
+function loadWaitEvents(instanceName, from, to) {
     const section = document.getElementById('waits-section');
     if (!section) return;
 
-    window.apiClient.authenticatedFetch(`/api/postgres/waits/history?instance=${encodeURIComponent(instanceName)}&limit=1200`)
+    let url = `/api/postgres/waits/history?instance=${encodeURIComponent(instanceName)}`;
+    if (from && to) {
+        url += `&from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
+    } else {
+        url += `&limit=1200`;
+    }
+
+    window.apiClient.authenticatedFetch(url)
         .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
         .then(data => {
             const rows = data.rows || [];
@@ -180,11 +140,18 @@ function loadWaitEvents(instanceName) {
         });
 }
 
-function loadDbIO(instanceName) {
+function loadDbIO(instanceName, from, to) {
     const section = document.getElementById('io-section');
     if (!section) return;
 
-    window.apiClient.authenticatedFetch(`/api/postgres/io/history?instance=${encodeURIComponent(instanceName)}&limit=2000`)
+    let url = `/api/postgres/io/history?instance=${encodeURIComponent(instanceName)}`;
+    if (from && to) {
+        url += `&from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
+    } else {
+        url += `&limit=2000`;
+    }
+
+    window.apiClient.authenticatedFetch(url)
         .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
         .then(data => {
             const rows = data.rows || [];
@@ -292,12 +259,18 @@ function loadConfigDrift(instanceName) {
         });
 }
 
-function loadQueryInternals(instanceName) {
+function loadQueryInternals(instanceName, from, to) {
     const section = document.getElementById('qint-section');
     if (!section) return;
-    const to = new Date();
-    const from = new Date(to.getTime() - 60 * 60 * 1000);
-    const qurl = `/api/postgres/queries?instance=${encodeURIComponent(instanceName)}&from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`;
+    
+    let qurl = `/api/postgres/queries?instance=${encodeURIComponent(instanceName)}`;
+    if (from && to) {
+        qurl += `&from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
+    } else {
+        const d_to = new Date();
+        const d_from = new Date(d_to.getTime() - 60 * 60 * 1000);
+        qurl += `&from=${encodeURIComponent(d_from.toISOString())}&to=${encodeURIComponent(d_to.toISOString())}`;
+    }
     window.apiClient.authenticatedFetch(qurl)
         .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
         .then(data => {
@@ -402,6 +375,16 @@ function loadBGWriterData(instanceName) {
                 return;
             }
 
+            // Update KPIs with latest data
+            const latest = data.stats[0];
+            if (document.getElementById('stat-ckpt-timed')) document.getElementById('stat-ckpt-timed').textContent = formatNumber(latest.checkpoints_timed || 0);
+            if (document.getElementById('stat-ckpt-req')) {
+                const req = latest.checkpoints_req || 0;
+                document.getElementById('stat-ckpt-req').textContent = formatNumber(req);
+                const card = document.getElementById('card-ckpt-req');
+                if (card && req > 10) card.classList.add('border-warning');
+            }
+
             // Delta/dedupe on client as a safety net: keep only the first row for each timestamp.
             const seenTs = new Set();
             const stats = (data.stats || []).filter(s => {
@@ -422,19 +405,19 @@ function loadBGWriterData(instanceName) {
 
             let html = `
                 <div style="display:grid; grid-template-columns: 1.1fr 0.9fr; gap:0.75rem; align-items:start;">
-                    <div class="glass-panel" style="padding:0.6rem;">
+                    <div class="glass-panel" style="padding:0.6rem; border:none; background:rgba(0,0,0,0.1);">
                         <div class="text-muted" style="font-size:0.75rem; margin-bottom:0.25rem;">Checkpoint trend</div>
                         <div style="height:170px;"><canvas id="pgBgwriterChart"></canvas></div>
                     </div>
                     <div class="table-responsive" style="max-height:220px; overflow:auto;">
-                        <table class="data-table" style="font-size:0.78rem;">
+                        <table class="data-table" style="font-size:0.75rem;">
                             <thead>
                                 <tr>
                                     <th title="Capture timestamp from the collector snapshot">Time</th>
-                                    <th class="text-right" title="Number of scheduled (timed) checkpoints triggered by checkpoint_timeout. High counts are normal; rising rapidly may indicate heavy WAL generation.">Timed</th>
-                                    <th class="text-right" title="Number of requested (forced) checkpoints triggered by checkpoint_segments/max_wal_size. If this is high relative to Timed, consider raising max_wal_size.">Req</th>
-                                    <th class="text-right" title="Total time (ms) spent writing buffers to disk during checkpoints. High values indicate disk I/O pressure during checkpoints.">Write ms</th>
-                                    <th class="text-right" title="Number of buffers written during checkpoints. Spikes indicate large data modifications flushed to disk.">Bufs ckpt</th>
+                                    <th class="text-right">Timed</th>
+                                    <th class="text-right">Req</th>
+                                    <th class="text-right">Write ms</th>
+                                    <th class="text-right">Bufs ckpt</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -538,8 +521,19 @@ function loadArchiverData(instanceName) {
                 return;
             }
 
+            // Update KPIs with latest data
+            const latest = data.stats[0];
+            if (document.getElementById('stat-archived-count')) document.getElementById('stat-archived-count').textContent = formatNumber(latest.total_archived || 0);
+            if (document.getElementById('stat-archiver-failed')) {
+                const failed = latest.total_failed || 0;
+                document.getElementById('stat-archiver-failed').textContent = formatNumber(failed);
+                const card = document.getElementById('card-archiver-failed');
+                if (card && failed > 0) card.classList.add('border-danger', 'animate-pulse');
+                else if (card) card.classList.add('border-success');
+            }
+
             let html = `
-                <table class="data-table">
+                <table class="data-table" style="font-size:0.75rem;">
                     <thead>
                         <tr>
                             <th title="Time bucket for the aggregated archiver statistics">Time</th>

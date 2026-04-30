@@ -363,9 +363,9 @@ func (h *SetupHandlers) PostTimescaleMigrateStep(w http.ResponseWriter, r *http.
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
 		return
 	}
-	if req.Step < 0 || req.Step > 2 {
+	if _, err := setupsql.MigrationScriptName(req.Step); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "step must be 0, 1, or 2"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 

@@ -1,0 +1,14 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Utility helper classes for spacing
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+.ml-2 { margin-left: 0.5rem; } .mt-4 { margin-top: 1.5rem; } .p-3 { padding: 1rem; } .rounded { border-radius: 8px; }
+.mt-3 { margin-top: 1rem; }
+.mt-2 { margin-top: 0.5rem; }
+.mt-1 { margin-top: 0.25rem; }
+.mb-2 { margin-bottom: 0.5rem; }

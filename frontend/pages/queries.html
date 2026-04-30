@@ -1,284 +1,192 @@
-        <div class="page-view active dashboard-sky-theme">
-            <div class="page-title flex-between dashboard-page-title-compact">
-                <div class="dashboard-title-line" style="flex:1; min-width:0;">
-                    <h1>PostgreSQL Query Performance</h1>
-                    <span class="subtitle">Instance: <span id="pgQueriesInstance">--</span> | Database: <span class="text-accent" id="pgQueriesDatabase">all</span></span>
-                </div>
-                <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
-                    <div id="pgQueriesStatusStrip"></div>
-                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="resetPgQueries"><i class="fa-solid fa-rotate-right"></i> Reset Stats</button>
-                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgQueriesView"><i class="fa-solid fa-refresh"></i> Refresh</button>
-                    <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="pg-explain" title="Paste EXPLAIN output for findings and optimization hints"><i class="fa-solid fa-diagram-project"></i> EXPLAIN Analyzer</button>
-                </div>
+<!--
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Real-time monitoring of currently executing queries and their performance characteristics.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+-->
+<div class="page-view active dashboard-sky-theme pg-queries-page">
+    <!-- Header -->
+    <div class="page-title flex-between dashboard-page-title-compact">
+        <div class="dashboard-title-line" style="flex:1; min-width:0; display:flex; align-items:center; gap:1rem;">
+            <button class="btn btn-secondary btn-sm" data-action="navigate-back" title="Back to Control Center">
+                <i class="fa-solid fa-arrow-left"></i>
+            </button>
+            <div>
+                <h1>Query Performance</h1>
+                <span class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></span>
             </div>
-
-            <div class="glass-panel mt-2" style="padding:0.65rem 0.75rem; border-bottom: 1px solid var(--border-color); background: rgba(0,0,0,0.05);">
-                <div style="display:flex; flex-wrap:wrap; gap:1rem; align-items:flex-end;">
-                    <div style="display:flex; gap:0.75rem; align-items:flex-end;">
-                        <div>
-                            <label class="text-muted" for="pgQueriesFrom" style="font-size:0.7rem;display:block;margin-bottom:2px;">From</label>
-                            <input type="datetime-local" id="pgQueriesFrom" class="form-control" style="font-size:0.75rem; min-width:11rem; height:32px;" />
-                        </div>
-                        <div>
-                            <label class="text-muted" for="pgQueriesTo" style="font-size:0.7rem;display:block;margin-bottom:2px;">To</label>
-                            <input type="datetime-local" id="pgQueriesTo" class="form-control" style="font-size:0.75rem; min-width:11rem; height:32px;" />
-                        </div>
-                        <button type="button" class="btn btn-sm btn-outline text-accent" id="pgQueriesApplyRange" style="height:32px;"><i class="fa-solid fa-filter"></i> Apply range</button>
-                    </div>
-                    <div id="pgQueriesRangeHint" class="text-danger" style="font-size:0.7rem; display:none; margin-bottom:8px;" role="alert"></div>
-                    <div id="pgQueriesStatsNote" class="text-muted" style="font-size:0.7rem; line-height:32px; margin-left:auto;"></div>
-                </div>
-            </div>
-
-            <div id="pg-statements-warning" class="alert alert-warning mt-3" style="display:none;">
-                <i class="fa-solid fa-exclamation-triangle"></i> <strong>pg_stat_statements extension is not enabled.</strong>
-                <p class="mt-1" style="margin-bottom:0;">To enable query performance tracking, run: <code style="background:var(--bg-tertiary); padding:2px 6px; border-radius:4px;">CREATE EXTENSION IF NOT EXISTS pg_stat_statements;</code> in your PostgreSQL database, and add <code style="background:var(--bg-tertiary); padding:2px 6px; border-radius:4px;">pg_stat_statements</code> to <code style="background:var(--bg-tertiary); padding:2px 6px; border-radius:4px;">shared_preload_libraries</code> in postgresql.conf, then restart PostgreSQL.</p>
-            </div>
-
-            <!-- Status banner for pgss extension -->
-            <div id="pgss-status-banner" class="alert alert-warning mt-2" style="display:none;">
-                <i class="fa-solid fa-exclamation-triangle"></i>
-                <span id="pgss-status-msg"></span>
-            </div>
-
-            <!-- ROW 0: KPI Summary Strip -->
-            <div class="glass-panel dashboard-strip-panel mt-3" style="padding: 0.75rem 1.25rem;">
-                <div class="dashboard-strip-metrics-row--6" style="gap: 1.5rem; justify-content: space-between;">
-                    <div class="strip-metric-cell" id="pgss-kpi-load-cell" style="padding: 0; min-width: auto; border: none; align-items: flex-start;">
-                        <span class="strip-metric-label" style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.15rem;">Query Load</span>
-                        <div style="display:flex; align-items:baseline; gap:0.25rem;">
-                            <span class="strip-metric-value" id="pgss-kpi-load" style="font-size: 1.15rem; font-weight: 700; color: var(--text);">--</span>
-                            <span class="text-muted" style="font-size: 0.65rem;">ms/s</span>
-                        </div>
-                    </div>
-                    <div class="strip-metric-cell" id="pgss-kpi-qps-cell" style="padding: 0; min-width: auto; border: none; align-items: flex-start;">
-                        <span class="strip-metric-label" style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.15rem;">Queries/sec</span>
-                        <span class="strip-metric-value" id="pgss-kpi-qps" style="font-size: 1.15rem; font-weight: 700; color: var(--text);">--</span>
-                    </div>
-                    <div class="strip-metric-cell" id="pgss-kpi-p99-cell" style="padding: 0; min-width: auto; border: none; align-items: flex-start;">
-                        <span class="strip-metric-label" style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.15rem;">P99 Latency</span>
-                        <div style="display:flex; align-items:baseline; gap:0.25rem;">
-                            <span class="strip-metric-value" id="pgss-kpi-p99" style="font-size: 1.15rem; font-weight: 700; color: var(--text);">--</span>
-                            <span class="text-muted" style="font-size: 0.65rem;">ms</span>
-                        </div>
-                    </div>
-                    <div class="strip-metric-cell" id="pgss-kpi-cache-cell" style="padding: 0; min-width: auto; border: none; align-items: flex-start;">
-                        <span class="strip-metric-label" style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.15rem;">Cache Hit %</span>
-                        <span class="strip-metric-value" id="pgss-kpi-cache" style="font-size: 1.15rem; font-weight: 700; color: var(--text);">--</span>
-                    </div>
-                    <div class="strip-metric-cell" id="pgss-kpi-temp-cell" style="padding: 0; min-width: auto; border: none; align-items: flex-start;">
-                        <span class="strip-metric-label" style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.15rem;">Temp Spill</span>
-                        <div style="display:flex; align-items:baseline; gap:0.25rem;">
-                            <span class="strip-metric-value" id="pgss-kpi-temp" style="font-size: 1.15rem; font-weight: 700; color: var(--text);">--</span>
-                            <span class="text-muted" style="font-size: 0.65rem;">MB/s</span>
-                        </div>
-                    </div>
-                    <div class="strip-metric-cell" id="pgss-kpi-wal-cell" style="padding: 0; min-width: auto; border: none; align-items: flex-start;">
-                        <span class="strip-metric-label" style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.15rem;">WAL</span>
-                        <div style="display:flex; align-items:baseline; gap:0.25rem;">
-                            <span class="strip-metric-value" id="pgss-kpi-wal" style="font-size: 1.15rem; font-weight: 700; color: var(--text);">--</span>
-                            <span class="text-muted" style="font-size: 0.65rem;">MB/s</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ROW 1: Load vs Latency (2/3 + 1/3) -->
-            <div class="charts-grid mt-3" style="grid-template-columns:2fr 1fr;">
-                <div class="chart-card glass-panel pgss-chart-card" style="padding:0.75rem;">
-                    <h6 style="margin:0 0 0.25rem 0;" title="Total query execution time per second (ms/s). The dashed line shows CPU saturation threshold. Spikes above it indicate CPU-bound workload.">Query Load (ms/sec) <i class="fa-solid fa-circle-info text-muted" style="font-size:0.6rem;"></i></h6>
-                    <div class="chart-container" style="height:160px;"><canvas id="pgss-chart-load"></canvas></div>
-                </div>
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <h6 style="margin:0 0 0.25rem 0;" title="Estimated latency percentiles (p50, p95, p99). Note: true percentiles require PG17+ histogram support.">Latency Percentiles <i class="fa-solid fa-circle-info text-muted" style="font-size:0.6rem;"></i></h6>
-                    <div class="chart-container" style="height:160px;"><canvas id="pgss-chart-latency"></canvas></div>
-                </div>
-            </div>
-
-            <!-- ROW 2: Throughput (1/2 + 1/2) -->
-            <div class="charts-grid mt-3" style="grid-template-columns:1fr 1fr;">
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <h6 style="margin:0 0 0.25rem 0;" title="Queries per second (QPS) and rows returned per second. Tooltip shows rows per query.">Queries/sec &amp; Rows/sec <i class="fa-solid fa-circle-info text-muted" style="font-size:0.6rem;"></i></h6>
-                    <div class="chart-container" style="height:140px;"><canvas id="pgss-chart-qps"></canvas></div>
-                </div>
-                <div class="chart-card glass-panel" style="padding:0.75rem; position:relative;">
-                    <h6 style="margin:0 0 0.25rem 0;" title="Split of total time between execution and planning. High planning percentage may indicate complex queries or missing statistics.">Planning vs Execution % <i class="fa-solid fa-circle-info text-muted" style="font-size:0.6rem;"></i></h6>
-                    <div id="pgss-planning-warning" class="pgss-planning-warning" style="display:none;">
-                        <i class="fa-solid fa-triangle-exclamation"></i> Planning &gt;10% of execution time
-                    </div>
-                    <div class="chart-container" style="height:140px;"><canvas id="pgss-chart-execplan"></canvas></div>
-                </div>
-            </div>
-
-            <!-- ROW 3: Resource Attribution (1/3 + 1/3 + 1/3) -->
-            <div class="charts-grid mt-3" style="grid-template-columns:1fr 1fr 1fr;">
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <h6 style="margin:0 0 0.25rem 0;" title="Buffer cache hit ratio with color bands: green >99%, yellow 95-99%, red <95%. Low values indicate excessive disk I/O.">Cache Hit Ratio % <i class="fa-solid fa-circle-info text-muted" style="font-size:0.6rem;"></i></h6>
-                    <div class="chart-container" style="height:140px;"><canvas id="pgss-chart-cache"></canvas></div>
-                </div>
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <h6 style="margin:0 0 0.25rem 0;" title="Shared blocks read per second and temp blocks written per second, stacked. High values indicate disk I/O pressure.">I/O Pressure <i class="fa-solid fa-circle-info text-muted" style="font-size:0.6rem;"></i></h6>
-                    <div class="chart-container" style="height:140px;"><canvas id="pgss-chart-io-pressure"></canvas></div>
-                </div>
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <h6 style="margin:0 0 0.25rem 0;" title="Write-ahead log generation rate. Spike markers appear when WAL rate exceeds 2× the 30-min average.">WAL Bytes/sec <i class="fa-solid fa-circle-info text-muted" style="font-size:0.6rem;"></i></h6>
-                    <div class="chart-container" style="height:140px;"><canvas id="pgss-chart-wal"></canvas></div>
-                </div>
-            </div>
-
-            <!-- ROW 4: Top Queries (Refactored to Grid) -->
-            <div class="table-card glass-panel mt-3">
-                <div class="flex-between mb-2">
-                    <h6><i class="fa-solid fa-ranking-star"></i> Top Queries</h6>
-                    <span class="text-muted" style="font-size:0.7rem;">Data range: <span id="pgss-top-time-range">--</span></span>
-                </div>
-                
-                <style>
-                    .pgss-grid-wrapper {
-                        width: 100%;
-                        overflow-x: auto;
-                        max-height: 500px;
-                        overflow-y: auto;
-                        border-radius: 8px;
-                        border: 1px solid var(--border-color);
-                        background: rgba(0,0,0,0.1);
-                    }
-                    .pgss-grid {
-                        display: grid;
-                        /* Query column reduced. Stats distributed evenly. Total min-width ensured. */
-                        grid-template-columns: 40px 80px minmax(160px, 1.1fr) repeat(10, minmax(85px, 1fr));
-                        min-width: 1150px;
-                        font-size: 0.7rem;
-                    }
-                    .pgss-grid-header {
-                        display: contents;
-                    }
-                    .pgss-grid-header > div {
-                        position: sticky;
-                        top: 0;
-                        background: var(--bg-surface);
-                        color: var(--text-muted);
-                        padding: 0.75rem 0.5rem;
-                        font-weight: 700;
-                        text-transform: uppercase;
-                        letter-spacing: 0.04em;
-                        border-bottom: 2px solid var(--border-color);
-                        z-index: 10;
-                        white-space: nowrap;
-                        display: flex;
-                        align-items: center;
-                    }
-                    .pgss-grid-header > div:nth-child(n+4) {
-                        justify-content: flex-end;
-                        text-align: right;
-                    }
-                    .pgss-grid-header > div.sortable {
-                        cursor: pointer;
-                        transition: color 0.2s, background 0.2s;
-                    }
-                    .pgss-grid-header > div.sortable:hover {
-                        color: var(--text-primary);
-                        background: var(--bg-tertiary);
-                    }
-                    .pgss-grid-row {
-                        display: contents;
-                    }
-                    .pgss-grid-row > div {
-                        padding: 0.6rem 0.5rem;
-                        border-bottom: 1px solid rgba(255,255,255,0.05);
-                        display: flex;
-                        align-items: center;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                        white-space: nowrap;
-                    }
-                    .pgss-grid-row:hover > div {
-                        background: rgba(255,255,255,0.03);
-                    }
-                    .pgss-grid-cell-stat {
-                        justify-content: flex-end;
-                        font-variant-numeric: tabular-nums;
-                        font-family: var(--font-mono, monospace);
-                    }
-                    .pgss-grid-cell-query {
-                        font-family: var(--font-mono, monospace);
-                        color: var(--accent);
-                        cursor: pointer;
-                        font-weight: 500;
-                    }
-                    .pgss-grid-cell-query:hover {
-                        text-decoration: underline;
-                    }
-                    .pgss-badge {
-                        font-size: 0.6rem;
-                        padding: 1px 4px;
-                        border-radius: 3px;
-                        margin-right: 2px;
-                    }
-                </style>
-
-                <div class="pgss-grid-wrapper" id="pgss-grid-wrapper">
-                    <div class="pgss-grid" id="pgss-top-grid">
-                        <div class="pgss-grid-header">
-                            <div>#</div>
-                            <div>Flags</div>
-                            <div>Query</div>
-                            <div class="sortable pgss-sortable-th" data-sort-key="total_time">Total Time <i class="fa-solid fa-sort-down"></i></div>
-                            <div class="sortable pgss-sortable-th" data-sort-key="pct_db">% DB <i class="fa-solid fa-sort"></i></div>
-                            <div class="sortable pgss-sortable-th" data-sort-key="calls">Calls <i class="fa-solid fa-sort"></i></div>
-                            <div class="sortable pgss-sortable-th" data-sort-key="avg_ms">Avg ms <i class="fa-solid fa-sort"></i></div>
-                            <div class="sortable pgss-sortable-th" data-sort-key="rows_per_call">Rows/Call <i class="fa-solid fa-sort"></i></div>
-                            <div class="sortable pgss-sortable-th" data-sort-key="plan_ratio">Plan % <i class="fa-solid fa-sort"></i></div>
-                            <div class="sortable pgss-sortable-th" data-sort-key="reads_per_call">Reads/Call <i class="fa-solid fa-sort"></i></div>
-                            <div class="sortable pgss-sortable-th" data-sort-key="hit_pct">Cache Hit% <i class="fa-solid fa-sort"></i></div>
-                            <div class="sortable pgss-sortable-th" data-sort-key="temp_mb">Temp MB <i class="fa-solid fa-sort"></i></div>
-                            <div class="sortable pgss-sortable-th" data-sort-key="wal_mb">WAL MB <i class="fa-solid fa-sort"></i></div>
-                        </div>
-                        <!-- Rows injected here -->
-                    </div>
-                </div>
-            </div>
-
-            <!-- ROW 5: Query Regressions -->
-            <div class="table-card glass-panel mt-3">
-                <h6><i class="fa-solid fa-arrow-trend-up text-danger"></i> Query Regressions (last 30 min vs previous 30 min)</h6>
-                <div class="table-responsive">
-                    <table class="data-table pgss-regression-table" id="pgss-regression-table" style="font-size:0.7rem;">
-                        <thead>
-                            <tr>
-                                <th>Query</th>
-                                <th title="Mean execution time in the previous 30-minute window">Prev Avg Ms</th>
-                                <th title="Mean execution time in the most recent 30-minute window">Curr Avg Ms</th>
-                                <th title="Percentage increase in mean execution time between the two windows">Change %</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody id="pgss-regression-tbody"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- ROW 6: Advanced Diagnostics (collapsible) -->
-            <details class="pgss-diagnostics-panel mt-3">
-                <summary class="pgss-diagnostics-summary glass-panel">
-                    <i class="fa-solid fa-microscope"></i> Deep Diagnostics
-                    <span class="text-muted text-sm ml-2">(click to expand)</span>
-                </summary>
-                <div class="pgss-diagnostics-content mt-2">
-                    <div class="charts-grid" style="display:grid; grid-template-columns:1fr 2fr; gap:0.75rem;">
-                        <div class="chart-card glass-panel" style="padding:0.75rem;">
-                            <div class="card-header">
-                                <h3 style="font-size:0.85rem; margin:0;" title="Distribution of queries across latency buckets from the current snapshot.">Query Latency Distribution <i class="fa-solid fa-circle-info text-muted" style="font-size:0.65rem;"></i></h3>
-                            </div>
-                            <div class="chart-container" style="height:140px;"><canvas id="pgQryDistChart"></canvas></div>
-                        </div>
-                        <div class="chart-card glass-panel" style="padding:0.75rem;">
-                            <div class="card-header">
-                                <h3 style="font-size:0.85rem; margin:0;" title="Top 5 slowest queries by mean execution time, showing estimated p95 and p99 latency.">Slow Queries Trace (p95, p99 Latency) <i class="fa-solid fa-circle-info text-muted" style="font-size:0.65rem;"></i></h3>
-                            </div>
-                            <div class="chart-container" style="height:140px;"><canvas id="pgQrySlowChart"></canvas></div>
-                        </div>
-                    </div>
-                </div>
-            </details>
         </div>
+        
+        <div class="dashboard-page-title-actions dashboard-pg-header-actions" style="gap: 1rem;">
+            <!-- Range Picker -->
+            <div class="glass-panel p-2 rounded" style="display:flex; flex-wrap:wrap; align-items:center; gap:0.5rem;">
+                <div style="display:flex; align-items:center; gap:0.3rem;">
+                    <label class="text-muted" for="pgQueriesFrom" style="font-size:0.65rem;">From</label>
+                    <input type="datetime-local" id="pgQueriesFrom" class="form-control" style="font-size:0.7rem; padding:2px 5px; width:130px;" step="1" />
+                </div>
+                <div style="display:flex; align-items:center; gap:0.3rem;">
+                    <label class="text-muted" for="pgQueriesTo" style="font-size:0.65rem;">To</label>
+                    <input type="datetime-local" id="pgQueriesTo" class="form-control" style="font-size:0.7rem; padding:2px 5px; width:130px;" step="1" />
+                </div>
+                <button type="button" class="btn btn-xs btn-outline text-accent" id="pgQueriesApplyRange" style="padding: 2px 8px;">Apply</button>
+            </div>
+
+            <div class="dashboard-pg-header-primary">
+                <div class="time-picker glass-panel p-2 rounded" style="display:flex; flex-wrap:wrap; align-items:center; gap:0.35rem 0.85rem; justify-content:flex-end;">
+                    <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="pgLastRefreshTime">--:--:--</span></span>
+                    <span class="text-muted" style="font-size:0.75rem;" id="pg-uptime">Loading...</span>
+                    <span class="text-muted" style="font-size:0.75rem;" id="pg-version">Loading...</span>
+                </div>
+                <div class="glass-panel p-2 rounded" style="display:flex; align-items:center; gap:0.5rem; cursor:help;" id="pgHealthTooltipContainer">
+                    <span class="text-muted" style="font-size:0.75rem;">Health</span>
+                    <span id="pgHealthScoreBadge" class="badge badge-success" style="min-width:3.5rem; text-align:center;">--</span>
+                </div>
+                <div style="display:flex; gap:0.3rem;">
+                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="resetPgQueries" title="Reset statistics (pg_stat_statements_reset)"><i class="fa-solid fa-rotate-right"></i> Reset</button>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgQueriesView" title="Force refresh the dashboard data."><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="pg-explain" title="EXPLAIN Analyzer"><i class="fa-solid fa-diagram-project"></i> EXPLAIN</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="pgQueriesRangeHint" class="alert alert-danger mt-1" style="display:none; padding:0.25rem 0.5rem; font-size:0.7rem;" role="alert"></div>
+
+    <div id="pg-statements-warning" class="alert alert-warning mt-2" style="display:none;">
+        <i class="fa-solid fa-exclamation-triangle"></i> <strong>pg_stat_statements extension is not enabled.</strong>
+    </div>
+
+    <div id="pgss-status-banner" class="alert alert-warning mt-2" style="display:none;">
+        <i class="fa-solid fa-exclamation-triangle"></i>
+        <span id="pgss-status-msg"></span>
+    </div>
+
+    <!-- ROW 1: Query KPIs -->
+    <div class="glass-panel dashboard-strip-panel mt-2">
+        <div class="dashboard-strip-header">
+            <h4><i class="fa-solid fa-bolt text-accent"></i> Workload & Execution Performance</h4>
+        </div>
+        <div class="dashboard-strip-metrics-row--6">
+            <div class="strip-metric-cell" title="Total query execution time per second (ms/s).">
+                <div class="strip-metric-label">Query Load</div>
+                <div class="strip-metric-value" id="pgss-kpi-load">--</div>
+                <div class="text-muted sub">ms/s</div>
+            </div>
+            <div class="strip-metric-cell" title="Queries per second.">
+                <div class="strip-metric-label">Queries/sec</div>
+                <div class="strip-metric-value" id="pgss-kpi-qps">--</div>
+            </div>
+            <div class="strip-metric-cell" title="P99 Latency.">
+                <div class="strip-metric-label">P99 Latency</div>
+                <div class="strip-metric-value" id="pgss-kpi-p99">--</div>
+                <div class="text-muted sub">ms</div>
+            </div>
+            <div class="strip-metric-cell" title="Cache hit ratio.">
+                <div class="strip-metric-label">Cache Hit %</div>
+                <div class="strip-metric-value" id="pgss-kpi-cache">--</div>
+            </div>
+            <div class="strip-metric-cell" title="Temp file spill rate.">
+                <div class="strip-metric-label">Temp Spill</div>
+                <div class="strip-metric-value" id="pgss-kpi-temp">--</div>
+                <div class="text-muted sub">MB/s</div>
+            </div>
+            <div class="strip-metric-cell" title="WAL generation rate from queries.">
+                <div class="strip-metric-label">WAL Rate</div>
+                <div class="strip-metric-value" id="pgss-kpi-wal">--</div>
+                <div class="text-muted sub">MB/s</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROW 2: Load vs Latency -->
+    <div class="grid-row mt-2" style="display:grid; grid-template-columns: 8fr 4fr; gap:0.5rem;">
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Query Load (ms/sec)</h3></div>
+            <div class="chart-container" style="height:180px;"><canvas id="pgss-chart-load"></canvas></div>
+        </div>
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Latency Percentiles</h3></div>
+            <div class="chart-container" style="height:180px;"><canvas id="pgss-chart-latency"></canvas></div>
+        </div>
+    </div>
+
+    <!-- ROW 3: Throughput & Planning -->
+    <div class="grid-row mt-2" style="display:grid; grid-template-columns: 1fr 1fr; gap:0.5rem;">
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Queries & Rows/sec</h3></div>
+            <div class="chart-container" style="height:150px;"><canvas id="pgss-chart-qps"></canvas></div>
+        </div>
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header flex-between">
+                <h3 style="font-size:0.85rem; margin:0;">Planning vs Execution %</h3>
+                <div id="pgss-planning-warning" class="text-danger" style="display:none; font-size:0.65rem;"><i class="fa-solid fa-triangle-exclamation"></i> Planning >10%</div>
+            </div>
+            <div class="chart-container" style="height:150px;"><canvas id="pgss-chart-execplan"></canvas></div>
+        </div>
+    </div>
+
+    <!-- ROW 4: Resource Attribution -->
+    <div class="grid-row mt-2" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:0.5rem;">
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Cache Hit Ratio %</h3></div>
+            <div class="chart-container" style="height:140px;"><canvas id="pgss-chart-cache"></canvas></div>
+        </div>
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">I/O Pressure</h3></div>
+            <div class="chart-container" style="height:140px;"><canvas id="pgss-chart-io-pressure"></canvas></div>
+        </div>
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">WAL Bytes/sec</h3></div>
+            <div class="chart-container" style="height:140px;"><canvas id="pgss-chart-wal"></canvas></div>
+        </div>
+    </div>
+
+    <!-- ROW 5: Top Queries -->
+    <div class="table-card glass-panel mt-2" style="padding:0.75rem;">
+        <div class="card-header flex-between">
+            <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-ranking-star"></i> Top Queries</h3>
+            <span class="text-muted" style="font-size:0.7rem;">Data range: <span id="pgss-top-time-range">--</span></span>
+        </div>
+        <div class="pgss-grid-wrapper mt-2" id="pgss-grid-wrapper" style="width: 100%; overflow-x: auto; max-height: 400px; border-radius: 8px; background: rgba(0,0,0,0.1);">
+            <div class="pgss-grid" id="pgss-top-grid" style="display: grid; grid-template-columns: 40px 80px minmax(160px, 1.1fr) repeat(10, minmax(85px, 1fr)); min-width: 1150px; font-size: 0.7rem;">
+                <div class="pgss-grid-header" style="display: contents;">
+                    <div style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10;">#</div>
+                    <div style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10;">Flags</div>
+                    <div style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10;">Query</div>
+                    <div class="sortable pgss-sortable-th" data-sort-key="total_time" style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10; cursor:pointer; text-align:right; justify-content:flex-end; display:flex; align-items:center;">Total Time <i class="fa-solid fa-sort-down ml-1"></i></div>
+                    <div class="sortable pgss-sortable-th" data-sort-key="pct_db" style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10; cursor:pointer; text-align:right; justify-content:flex-end; display:flex; align-items:center;">% DB <i class="fa-solid fa-sort ml-1"></i></div>
+                    <div class="sortable pgss-sortable-th" data-sort-key="calls" style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10; cursor:pointer; text-align:right; justify-content:flex-end; display:flex; align-items:center;">Calls <i class="fa-solid fa-sort ml-1"></i></div>
+                    <div class="sortable pgss-sortable-th" data-sort-key="avg_ms" style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10; cursor:pointer; text-align:right; justify-content:flex-end; display:flex; align-items:center;">Avg ms <i class="fa-solid fa-sort ml-1"></i></div>
+                    <div class="sortable pgss-sortable-th" data-sort-key="rows_per_call" style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10; cursor:pointer; text-align:right; justify-content:flex-end; display:flex; align-items:center;">Rows/Call <i class="fa-solid fa-sort ml-1"></i></div>
+                    <div class="sortable pgss-sortable-th" data-sort-key="plan_ratio" style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10; cursor:pointer; text-align:right; justify-content:flex-end; display:flex; align-items:center;">Plan % <i class="fa-solid fa-sort ml-1"></i></div>
+                    <div class="sortable pgss-sortable-th" data-sort-key="reads_per_call" style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10; cursor:pointer; text-align:right; justify-content:flex-end; display:flex; align-items:center;">Reads/Call <i class="fa-solid fa-sort ml-1"></i></div>
+                    <div class="sortable pgss-sortable-th" data-sort-key="hit_pct" style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10; cursor:pointer; text-align:right; justify-content:flex-end; display:flex; align-items:center;">Cache Hit% <i class="fa-solid fa-sort ml-1"></i></div>
+                    <div class="sortable pgss-sortable-th" data-sort-key="temp_mb" style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10; cursor:pointer; text-align:right; justify-content:flex-end; display:flex; align-items:center;">Temp MB <i class="fa-solid fa-sort ml-1"></i></div>
+                    <div class="sortable pgss-sortable-th" data-sort-key="wal_mb" style="position: sticky; top: 0; background: var(--bg-surface); padding: 0.5rem; font-weight: 700; border-bottom: 2px solid var(--border-color); z-index: 10; cursor:pointer; text-align:right; justify-content:flex-end; display:flex; align-items:center;">WAL MB <i class="fa-solid fa-sort ml-1"></i></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROW 6: Query Regressions -->
+    <div class="table-card glass-panel mt-2" style="padding:0.75rem;">
+        <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-arrow-trend-up text-danger"></i> Query Regressions</h3></div>
+        <div class="table-responsive mt-2">
+            <table class="data-table" id="pgss-regression-table" style="font-size:0.7rem;">
+                <thead>
+                    <tr>
+                        <th>Query</th>
+                        <th class="text-right">Prev Avg Ms</th>
+                        <th class="text-right">Curr Avg Ms</th>
+                        <th class="text-right">Change %</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="pgss-regression-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>

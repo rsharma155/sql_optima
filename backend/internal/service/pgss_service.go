@@ -17,7 +17,7 @@ import (
 	"github.com/rsharma155/sql_optima/internal/models"
 )
 
-// GetPgssStatus checks whether pg_stat_statements is active on a target instance.
+// GetPgssStatus checks whether query monitoring extensions (pgss or pgsm) are active.
 func (s *MetricsService) GetPgssStatus(ctx context.Context, instanceName string) models.PgssStatusResponse {
 	resp := models.PgssStatusResponse{Instance: instanceName}
 
@@ -35,25 +35,33 @@ func (s *MetricsService) GetPgssStatus(ctx context.Context, instanceName string)
 	// Check shared_preload_libraries
 	var libs string
 	if err := db.QueryRowContext(ctx, "SHOW shared_preload_libraries").Scan(&libs); err == nil {
-		resp.SharedPreloadActive = strings.Contains(libs, "pg_stat_statements")
+		resp.SharedPreloadActive = strings.Contains(libs, "pg_stat_statements") || strings.Contains(libs, "pg_stat_monitor")
 	}
 
-	// Check extension installed
-	var extExists bool
-	if err := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&extExists); err == nil {
-		resp.ExtensionInstalled = extExists
+	// Check extension installed (statements or monitor)
+	var extName string
+	err := db.QueryRowContext(ctx, "SELECT extname FROM pg_extension WHERE extname IN ('pg_stat_monitor', 'pg_stat_statements') ORDER BY CASE WHEN extname = 'pg_stat_monitor' THEN 1 ELSE 2 END LIMIT 1").Scan(&extName)
+	if err == nil {
+		resp.ExtensionInstalled = true
+		if extName == "pg_stat_monitor" {
+			resp.Message = "Enhanced monitoring active (pg_stat_monitor)."
+		} else {
+			resp.Message = "Standard monitoring active (pg_stat_statements). pg_stat_monitor is optional but recommended."
+		}
+	} else {
+		resp.ExtensionInstalled = false
 	}
 
 	resp.Ready = resp.SharedPreloadActive && resp.ExtensionInstalled
 	if !resp.Ready {
 		if !resp.SharedPreloadActive {
-			resp.Message = "pg_stat_statements not in shared_preload_libraries (requires restart)"
+			resp.Message = "Neither pg_stat_statements nor pg_stat_monitor found in shared_preload_libraries (requires restart)."
 		} else {
-			resp.Message = "pg_stat_statements extension not created (run: CREATE EXTENSION pg_stat_statements)"
+			resp.Message = "Query stats extension not created. Run 'CREATE EXTENSION pg_stat_statements' (minimum) or 'CREATE EXTENSION pg_stat_monitor' (optional/enhanced)."
 		}
 	} else if s.tsLogger == nil {
-		resp.Ready = false // Technically not ready for the ENHANCED dashboard without Timescale
-		resp.Message = "TimescaleDB not connected. Enhanced diagnostics (charts/deltas) require the metrics repository."
+		resp.Ready = false 
+		resp.Message = "TimescaleDB not connected. Query performance charts require the metrics repository."
 	}
 	return resp
 }

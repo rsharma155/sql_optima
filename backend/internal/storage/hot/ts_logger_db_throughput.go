@@ -27,11 +27,15 @@ func (tl *TimescaleLogger) LogDatabaseThroughput(ctx context.Context, instanceNa
 			INSERT INTO sqlserver_database_throughput (
 				capture_timestamp, server_instance_name, database_name,
 				user_seeks, user_scans, user_lookups, user_writes,
-				total_reads, total_writes, tps, batch_requests_per_sec
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+				total_reads, total_writes, tps, batch_requests_per_sec,
+				reads, writes, bytes_read, bytes_written,
+				read_latency_ms, write_latency_ms
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 			r.CaptureTimestamp, r.ServerInstanceName, r.DatabaseName,
 			r.UserSeeks, r.UserScans, r.UserLookups, r.UserWrites,
 			r.TotalReads, r.TotalWrites, r.TPS, r.BatchRequestsPerSec,
+			r.Reads, r.Writes, r.BytesRead, r.BytesWritten,
+			r.ReadLatencyMs, r.WriteLatencyMs,
 		)
 	}
 
@@ -59,8 +63,10 @@ func (tl *TimescaleLogger) LogDatabaseThroughputFromMap(ctx context.Context, ins
 			INSERT INTO sqlserver_database_throughput (
 				capture_timestamp, server_instance_name, database_name,
 				user_seeks, user_scans, user_lookups, user_writes,
-				total_reads, total_writes, tps, batch_requests_per_sec
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+				total_reads, total_writes, tps, batch_requests_per_sec,
+				reads, writes, bytes_read, bytes_written,
+				read_latency_ms, write_latency_ms
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 			now, instanceName,
 			getStr(r, "database_name"),
 			getInt64FromMap(r, "user_seeks"),
@@ -71,6 +77,12 @@ func (tl *TimescaleLogger) LogDatabaseThroughputFromMap(ctx context.Context, ins
 			getInt64FromMap(r, "total_writes"),
 			getFloat64(r, "tps"),
 			getFloat64(r, "batch_requests_per_sec"),
+			getInt64FromMap(r, "reads"),
+			getInt64FromMap(r, "writes"),
+			getInt64FromMap(r, "bytes_read"),
+			getInt64FromMap(r, "bytes_written"),
+			getInt64FromMap(r, "read_latency_ms"),
+			getInt64FromMap(r, "write_latency_ms"),
 		)
 	}
 

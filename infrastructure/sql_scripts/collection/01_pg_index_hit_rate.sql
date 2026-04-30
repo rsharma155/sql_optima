@@ -1,5 +1,5 @@
 -- Metric: pg_index_hit_rate
--- Source: backend/internal/repository/pg_stats.go:1566
+-- Source: backend/internal/repository/pg_dba_metrics.go
 -- Target Table: N/A (DBA health observation)
 -- Description: Calculates index lookup vs sequential scan ratio from pg_stat_user_tables
 

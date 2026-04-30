@@ -385,29 +385,29 @@ func (h *SqlServerHandlers) Jobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	preferLive := sqlserverPreferLiveSource(r)
 	ctx := r.Context()
 
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
 
-	// Timescale-first: reconstruct job view from hot storage.
-	if !preferLive && h.metricsSvc.IsTimescaleConnected() {
-		jobData, err := h.metricsSvc.GetJobsFromTimescale(ctx, instance, from, to)
-		if err == nil && jobData != nil {
-			w.Header().Set("X-Data-Source", "timescale")
-			json.NewEncoder(w).Encode(jobData)
-			return
-		}
-		log.Printf("[Router] Timescale jobs failed for %s, falling back to live: %v", instance, err)
+	// Dashboard is now purely time-series driven from TimescaleDB.
+	// Live polling is disabled for this view to ensure consistency and performance.
+	if !h.metricsSvc.IsTimescaleConnected() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "TimescaleDB connection required for job history"})
+		return
 	}
 
-	if preferLive {
-		w.Header().Set("X-Data-Source", "live_dmv")
-	} else {
-		w.Header().Set("X-Data-Source", "live_dmv_fallback")
+	jobData, err := h.metricsSvc.GetJobsFromTimescale(ctx, instance, from, to)
+	if err != nil {
+		log.Printf("[Router] Timescale jobs failed for %s: %v", instance, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to retrieve job data from historical storage"})
+		return
 	}
-	json.NewEncoder(w).Encode(h.metricsSvc.MsRepo.FetchAgentJobs(instance))
+
+	w.Header().Set("X-Data-Source", "timescale")
+	json.NewEncoder(w).Encode(jobData)
 }
 
 // LogShipping returns log shipping health — Timescale-first with live MSDB fallback.

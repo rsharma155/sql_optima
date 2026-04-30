@@ -1,0 +1,39 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Reusable UI component styles for charts
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+/* Charts */
+.charts-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+.col-span-2 { grid-column: span 2; }
+.chart-card { padding: 0.75rem; display: flex; flex-direction: column; position: relative;}
+.clickable-chart { cursor: pointer; transition: all 0.2s; } .clickable-chart:hover { border-color: var(--accent-blue); transform: translateY(-2px); box-shadow: 0 0 15px var(--accent-glow);}
+.chart-overlay-hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); color: white; padding: 0.5rem 1rem; border-radius: 8px; opacity: 0; transition: opacity 0.2s; pointer-events: none; font-weight:500;}
+.clickable-chart:hover .chart-overlay-hint { opacity: 1; z-index: 10; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+.chart-container { position: relative; flex: 1; height: 180px; width: 100%; }
+.doughnut-container { height: 200px; }
+
+/* =========================================
+   Chart Card Consistency
+========================================= */
+.chart-card .card-header h3 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.chart-card {
+    min-height: 0;
+    overflow: hidden;
+}
+.chart-container {
+    min-height: 0;
+}
+

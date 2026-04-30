@@ -19,7 +19,7 @@ func (c *SqlServerRepository) CollectSQLServerStorageMetrics(instanceName string
 	}
 
 	query := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ SELECT   
 			DB_NAME(database_id) AS database_name,
 			SUM(CASE WHEN type_desc = 'ROWS' THEN size * 8 / 1024.0 ELSE 0 END) AS data_size_mb,
 			SUM(CASE WHEN type_desc = 'LOG' THEN size * 8 / 1024.0 ELSE 0 END) AS log_size_mb,
@@ -60,6 +60,7 @@ func (c *SqlServerRepository) CollectSQLServerTableSizeMetrics(instanceName, dat
 	}
 
 	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 
 		USE [%s];
 		SELECT /* SQL_OPTIMA */   
 			DB_NAME() AS database_name,

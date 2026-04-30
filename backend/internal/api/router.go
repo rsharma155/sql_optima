@@ -16,6 +16,9 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/api/handlers"
+	pg_backup_api "github.com/rsharma155/sql_optima/internal/domain/postgres_backup_dr/api"
+	pg_obs_api "github.com/rsharma155/sql_optima/internal/domain/postgres_observability/api"
+	pg_security_api "github.com/rsharma155/sql_optima/internal/domain/postgres_security/api"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/middleware"
 	"github.com/rsharma155/sql_optima/internal/repository"
@@ -68,12 +71,22 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	queryH := handlers.NewQueryHandlers(metricsSvc, cfg)
 	sqlserverQAH := handlers.NewSqlServerQueryAnalysisHandlers(metricsSvc, cfg)
 	sqlserverWQH := handlers.NewSqlServerWatchedQueryHandlers(metricsSvc, cfg)
+	sqlserverWLH := handlers.NewSqlServerWorkloadHandlers(metricsSvc, cfg)
 	osMetricsH := handlers.NewOSMetricsHandler(metricsSvc)
+
+	// New Postgres Domain Handlers
+	pgObsH := pg_obs_api.NewPostgresObservabilityHandler(metricsSvc)
+	pgBackupH := pg_backup_api.NewPostgresBackupHandler(metricsSvc)
+	pgSecurityH := pg_security_api.NewPostgresSecurityHandler(metricsSvc)
 
 	mon := &monitoringHandlers{
 		SqlServer: sqlserverH, Postgres: postgresH, Live: liveH, Timescale: timescaleH,
 		Health: healthH, Dashboard: dashboardH, Query: queryH, SIH: sihH,
 		SqlServerQueryAnalysis: sqlserverQAH, SqlServerWatchedQuery: sqlserverWQH,
+		SqlServerWorkload: sqlserverWLH,
+		PgObservability:   pgObsH,
+		PgBackup:          pgBackupH,
+		PgSecurity:        pgSecurityH,
 	}
 
 	// ── Alert engine wiring ────────────────────────────────────
@@ -133,10 +146,10 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	} else {
 		registerMonitoringReadRoutes(openAPI, mon, rulesBP)
 		registerMonitoringElevatedRoutes(openAPI, sqlserverH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
-		if alertH != nil {
-			registerAlertReadRoutes(openAPI, alertH)
-			registerAlertMutationRoutes(openAPI, alertH)
-		}
+		
+		// Always register alert routes to prevent 404s; handlers will check if engine is available.
+		registerAlertReadRoutes(openAPI, alertH)
+		registerAlertMutationRoutes(openAPI, alertH)
 		// Legacy: explain was public when auth is not required.
 	}
 
@@ -175,9 +188,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		readAPI.Use(middleware.RequireAuth(""))
 		readAPI.Use(middleware.RequireAnyRole("viewer", "dba", "admin"))
 		registerMonitoringReadRoutes(readAPI, mon, rulesBP)
-		if alertH != nil {
-			registerAlertReadRoutes(readAPI, alertH)
-		}
+		registerAlertReadRoutes(readAPI, alertH)
 
 		dbaAPI := r.PathPrefix("/api").Subrouter()
 		dbaAPI.Use(middleware.RequireAuth(""))
@@ -186,9 +197,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		registerMonitoringElevatedRoutes(dbaAPI, sqlserverH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
 		registerPostgresDBAMutations(dbaAPI, postgresH)
 		registerDashboardWidgetRoutes(dbaAPI, dashboardH)
-		if alertH != nil {
-			registerAlertMutationRoutes(dbaAPI, alertH)
-		}
+		registerAlertMutationRoutes(dbaAPI, alertH)
 	}
 
 	if !sec.AuthRequired {
@@ -215,6 +224,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	adminAPI.HandleFunc("/servers/{id}/test", adminServersH.TestServer).Methods("POST")
 	adminAPI.HandleFunc("/servers/{id}/check-permissions", adminServersH.CheckPermissions).Methods("POST")
 	adminAPI.HandleFunc("/servers/{id}/rotate", adminServersH.RotateServer).Methods("POST")
+	adminAPI.HandleFunc("/servers/{id}", adminServersH.GetServer).Methods("GET")
 	adminAPI.HandleFunc("/servers/{id}", adminServersH.UpdateServer).Methods("PUT")
 	adminAPI.HandleFunc("/servers/{id}", adminServersH.PatchServer).Methods("PATCH")
 	adminAPI.HandleFunc("/servers/{id}", adminServersH.DeleteServer).Methods("DELETE")

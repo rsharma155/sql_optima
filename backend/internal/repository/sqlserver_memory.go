@@ -15,21 +15,21 @@ import (
 // CollectMemoryMetrics fetches memory statistics from sys.dm_os_performance_counters and sys.dm_os_sys_memory
 func (c *SqlServerRepository) CollectMemoryMetrics(db *sql.DB) (float64, error) {
 	// Page Life Expectancy (PLE)
-	pleQuery := `SELECT /* SQL_OPTIMA */   cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Page life expectancy'`
+	pleQuery := `/* SQL_OPTIMA */ SELECT   cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Page life expectancy'`
 	var ple float64
 	if err := db.QueryRow(pleQuery).Scan(&ple); err != nil {
 		log.Printf("[SQLSERVER] PLE Query Error: %v", err)
 	}
 
 	// Buffer Pool Size
-	bufQuery := `SELECT /* SQL_OPTIMA */   cntr_value / 1024 FROM sys.dm_os_performance_counters WHERE counter_name = 'Buffer Pool Size (KB)'`
+	bufQuery := `/* SQL_OPTIMA */ SELECT   cntr_value / 1024 FROM sys.dm_os_performance_counters WHERE counter_name = 'Buffer Pool Size (KB)'`
 	var bufPoolSize float64
 	if err := db.QueryRow(bufQuery).Scan(&bufPoolSize); err != nil {
 		log.Printf("[SQLSERVER] Buffer Pool Query Error: %v", err)
 	}
 
 	// Memory Clerk Count
-	clerkQuery := `SELECT /* SQL_OPTIMA */   COUNT(DISTINCT memory_clerk_address) FROM sys.dm_os_memory_clerks`
+	clerkQuery := `/* SQL_OPTIMA */ SELECT   COUNT(DISTINCT memory_clerk_address) FROM sys.dm_os_memory_clerks`
 	var clerkCount int
 	if err := db.QueryRow(clerkQuery).Scan(&clerkCount); err != nil {
 		log.Printf("[SQLSERVER] Memory Clerk Query Error: %v", err)
@@ -38,7 +38,7 @@ func (c *SqlServerRepository) CollectMemoryMetrics(db *sql.DB) (float64, error) 
 	// Calculate memory usage percentage
 	var memUsage float64 = 0
 	memQuery := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ SELECT   
 			(CAST(total_physical_memory_kb AS FLOAT) - CAST(available_physical_memory_kb AS FLOAT)) / 
 			CAST(total_physical_memory_kb AS FLOAT) * 100
 		FROM sys.dm_os_sys_memory
@@ -53,8 +53,8 @@ func (c *SqlServerRepository) CollectMemoryMetrics(db *sql.DB) (float64, error) 
 // CollectMemoryClerks fetches memory clerk information
 func (c *SqlServerRepository) CollectMemoryClerks(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   
-			type AS clerk_type,
+		/* SQL_OPTIMA */ SELECT   
+			type AS clerk_name,
 			memory_node_id AS memory_node,
 			CAST(SUM(pages_kb) / 1024.0 AS FLOAT) AS pages_mb,
 			CAST(SUM(virtual_memory_reserved_kb) / 1024.0 AS FLOAT) AS virtual_memory_reserved_mb,
@@ -79,7 +79,7 @@ func (c *SqlServerRepository) CollectMemoryClerks(db *sql.DB) ([]map[string]inte
 		var pagesMB, rsvMB, comMB, aweMB float64
 		if err := rows.Scan(&clerkType, &node, &pagesMB, &rsvMB, &comMB, &aweMB); err == nil {
 			results = append(results, map[string]interface{}{
-				"clerk_type":                  clerkType,
+				"clerk_name":                  clerkType,
 				"memory_node":                 node,
 				"pages_mb":                    pagesMB,
 				"virtual_memory_reserved_mb":  rsvMB,
@@ -95,7 +95,7 @@ func (c *SqlServerRepository) CollectMemoryClerks(db *sql.DB) ([]map[string]inte
 func (c *SqlServerRepository) CollectMemoryGrants(db *sql.DB) ([]map[string]interface{}, error) {
 	// Shape matches Timescale LogMemoryGrants: user DBs only (database_id > 4), user sessions.
 	query := `
-		SELECT /* SQL_OPTIMA */   TOP 20
+		/* SQL_OPTIMA */ SELECT   TOP 20
 			mg.session_id,
 			mg.request_id,
 			DB_NAME(ISNULL(r.database_id, s.database_id)) AS database_name,

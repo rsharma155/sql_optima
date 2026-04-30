@@ -1,0 +1,19 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Layout structural styles for containers
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+/* Layout Shell */
+.app-container { display: flex; height: 100vh; width: 100vw; }
+.views-container { flex: 1; overflow-y: auto; position: relative; padding: 2rem; min-height: 0; }
+
+/* Dashboard UI Layout */
+.page-title { margin-bottom: 0.5rem; }
+.page-title h1 { font-size: 1.75rem; margin-bottom: 0.25rem; display:flex; align-items:center; gap:0.5rem;}
+.subtitle { color: var(--text-muted); font-size: 0.95rem; }
+.flex-between { display: flex; justify-content: space-between; align-items: center; }
+

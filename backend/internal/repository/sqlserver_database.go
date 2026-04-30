@@ -18,12 +18,14 @@ func (c *SqlServerRepository) ListSQLServerUserDatabases(instanceName string) ([
 		return nil, fmt.Errorf("connection not found")
 	}
 	const q = `
-		SELECT /* SQL_OPTIMA */   d.name
-		FROM sys.databases d
+		/* SQL_OPTIMA */ SELECT d.name
+		FROM sys.databases AS d
 		WHERE d.database_id > 4
-		  AND d.state = 0
-		  AND LOWER(d.name) <> N'distribution'
-		ORDER BY d.name
+		AND d.state_desc = N'ONLINE'
+		AND d.name <> N'distribution'
+		AND d.source_database_id IS NULL
+		AND HAS_DBACCESS(d.name) = 1
+		ORDER BY d.name;
 	`
 	rows, err := db.Query(q)
 	if err != nil {

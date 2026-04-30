@@ -9,8 +9,42 @@
  */
 
 window.PgSessionsView = async function() {
-    window.routerOutlet.innerHTML = await window.loadTemplate('/pages/sessions.html');
-    setTimeout(initPgSessions, 50);
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || { name: 'Loading...', type: 'postgres' };
+    const dbName = window.appState.currentDatabase || 'all';
+
+    window.routerOutlet.innerHTML = await window.loadTemplate('/pages/sessions.html', { inst, dbName });
+    
+    await initPgSessions();
+
+    // Set Refresh Interval
+    if (window.pgSessionsInterval) clearInterval(window.pgSessionsInterval);
+    window.pgSessionsInterval = setInterval(() => {
+        if (window.appState.activeViewId === 'pg-sessions') {
+            initPgSessions();
+        } else {
+            clearInterval(window.pgSessionsInterval);
+        }
+    }, 30000); // 30s refresh for sessions
+}
+
+async function updatePgSessionsHeader(instName) {
+    try {
+        const snapshotResp = await window.apiClient.authenticatedFetch(`/api/postgres/server-info?instance=${encodeURIComponent(instName)}`);
+        if (snapshotResp.ok) {
+            const s = await snapshotResp.json();
+            if (document.getElementById('pg-uptime')) document.getElementById('pg-uptime').textContent = 'Uptime: ' + (s.uptime || 'N/A');
+            if (document.getElementById('pg-version')) document.getElementById('pg-version').textContent = (s.version || '').split(',')[0];
+            if (document.getElementById('pgLastRefreshTime')) document.getElementById('pgLastRefreshTime').textContent = new Date().toLocaleTimeString();
+            
+            const hs = s.health_score || 0;
+            const healthColor = hs > 80 ? 'success' : hs > 60 ? 'warning' : 'danger';
+            const hBadge = document.getElementById('pgHealthScoreBadge');
+            if (hBadge) {
+                hBadge.textContent = hs;
+                hBadge.className = `badge badge-${healthColor}`;
+            }
+        }
+    } catch (e) { console.error("PG Sessions header fetch failed:", e); }
 }
 
 async function initPgSessions() {
@@ -19,28 +53,7 @@ async function initPgSessions() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: ''};
     const database = window.appState.currentDatabase || 'all';
 
-    // SQL Server-style header widgets (status strip + instance/database labels)
-    try {
-        const instEl = document.getElementById('pgSessionsInstance');
-        const dbEl = document.getElementById('pgSessionsDatabase');
-        if (instEl) instEl.textContent = inst.name || '--';
-        if (dbEl) dbEl.textContent = database;
-
-        const strip = document.getElementById('pgSessionsStatusStrip');
-        if (strip && typeof window.renderStatusStrip === 'function') {
-            strip.innerHTML = window.renderStatusStrip({
-                lastUpdateId: 'pgSessionsLastRefreshTime',
-                sourceBadgeId: 'pgSessionsSourceBadge',
-                includeHealth: false,
-                includeFreshness: false,
-                autoRefreshText: ''
-            });
-        }
-        const t = document.getElementById('pgSessionsLastRefreshTime');
-        if (t) t.textContent = new Date().toLocaleTimeString();
-    } catch (e) {
-        // non-fatal
-    }
+    updatePgSessionsHeader(inst.name);
 
     let sessions = [];
     let stateHist = null;

@@ -16,6 +16,7 @@ import (
 
 	"github.com/rsharma155/sql_optima/internal/domain/storageindex"
 	"github.com/rsharma155/sql_optima/internal/models"
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
@@ -37,7 +38,7 @@ type SqlServerIndexUsageRow struct {
 	LastUserLookup sql.NullTime
 }
 
-func CollectSQLServerIndexUsage(ctx context.Context, dbq Queryer) ([]SqlServerIndexUsageRow, error) {
+func CollectSQLServerIndexUsage(ctx context.Context, dbq repository.Queryer) ([]SqlServerIndexUsageRow, error) {
 	// NOTE: counters are cumulative; deltas are computed against monitor.index_usage_state.
 	// Aggregate pages per (object_id, index_id) in a subquery so we do not need a GROUP BY
 	// that would make s.last_user_* invalid in the SELECT list (SQL Server rejects that).

@@ -35,12 +35,16 @@ window.PgAlertsView = async function() {
     // Fetch alerts and open count in parallel
     let alerts = [];
     let openCount = 0;
+    let disconnected = false;
     try {
         const qs = `instance=${encodeURIComponent(instName)}&engine=${encodeURIComponent(engine)}&status=open`;
         const [alertsResp, countResp] = await Promise.all([
             window.apiClient.authenticatedFetch(`/api/alerts?${qs}`),
             window.apiClient.authenticatedFetch(`/api/alerts/count?instance=${encodeURIComponent(instName)}&engine=${encodeURIComponent(engine)}`)
         ]);
+        if (alertsResp.status === 503 || countResp.status === 503) {
+            disconnected = true;
+        }
         if (alertsResp.ok) {
             const body = await alertsResp.json();
             alerts = (body.data && body.data.alerts) || body.alerts || [];
@@ -51,6 +55,31 @@ window.PgAlertsView = async function() {
         }
     } catch (e) {
         console.error("Alert engine fetch failed:", e);
+    }
+
+    if (disconnected) {
+        window.routerOutlet.innerHTML = `
+            <div class="page-view active dashboard-sky-theme">
+                <div class="page-title flex-between">
+                    <div>
+                        <h1><i class="fa-solid fa-bell text-muted"></i> Alerts &amp; Event Timeline</h1>
+                        <p class="subtitle">Instance: ${window.escapeHtml(instName)}</p>
+                    </div>
+                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgAlertsView">
+                        <i class="fa-solid fa-refresh"></i> Retry
+                    </button>
+                </div>
+                <div class="glass-panel" style="margin-top:2rem; padding:3rem; text-align:center;">
+                    <i class="fa-solid fa-plug-circle-xmark" style="font-size:3rem; color:var(--text-muted); margin-bottom:1.5rem; display:block;"></i>
+                    <h2 style="margin-bottom:0.5rem;">Alert Engine Disconnected</h2>
+                    <p class="text-muted" style="max-width:500px; margin:0 auto 2rem auto;">The alert engine requires a connection to TimescaleDB, which is currently unavailable. Historical alerts and event tracking are disabled.</p>
+                    <button class="btn btn-primary" data-action="navigate" data-route="admin" data-also-call="showAdminSetup">
+                        <i class="fa-solid fa-gears"></i> Configure TimescaleDB
+                    </button>
+                </div>
+            </div>
+        `;
+        return;
     }
 
     const severityBadge = (s) => {

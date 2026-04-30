@@ -127,6 +127,7 @@ func (tl *TimescaleLogger) GetSqlServerQueryRegressions(ctx context.Context, ins
 		regression_type, previous_avg, current_avg, percent_change, plan_changed
 		FROM sqlserver_query_regressions
 		WHERE server_instance_name = $1
+		  AND query_text NOT LIKE '%/* SQL_OPTIMA */%'
 		ORDER BY capture_time DESC
 		LIMIT $2`
 
@@ -194,6 +195,7 @@ func (tl *TimescaleLogger) GetSqlServerPlanInstability(ctx context.Context, inst
 	const q = `SELECT capture_time, server_instance_name, database_name, query_hash, query_text, plan_count, last_execution_time
 		FROM sqlserver_plan_instability
 		WHERE server_instance_name = $1
+		  AND query_text NOT LIKE '%/* SQL_OPTIMA */%'
 		ORDER BY capture_time DESC
 		LIMIT $2`
 
@@ -550,14 +552,23 @@ func (tl *TimescaleLogger) GetSqlServerTopQueriesFromInterval(ctx context.Contex
 	}
 
 	q := fmt.Sprintf(`
-		SELECT query_hash, MAX(statement_text), database_name,
-		       MAX(login_name), MAX(application_name),
-		       SUM(total_executions), AVG(total_cpu_ms / NULLIF(total_executions, 0)), AVG(total_elapsed_ms / NULLIF(total_executions, 0)),
-		       AVG(total_logical_reads / NULLIF(total_executions, 0)), SUM(total_cpu_ms)
-		FROM sqlserver_query_metrics_v2
-		WHERE UPPER(instance_id) = UPPER($1)
-		  AND ts >= NOW() - ($3 * INTERVAL '1 hour')
-		GROUP BY query_hash, database_name
+		SELECT to_hex(q.query_hash), MAX(q.statement_text), q.database_name,
+		       MAX(q.login_name), MAX(q.application_name),
+		       SUM(q.total_executions)::bigint, 
+		       COALESCE(AVG(q.total_cpu_ms::float8 / NULLIF(q.total_executions, 0)), 0), 
+		       COALESCE(AVG(q.total_elapsed_ms::float8 / NULLIF(q.total_executions, 0)), 0),
+		       COALESCE(AVG(q.total_logical_reads::float8 / NULLIF(q.total_executions, 0)), 0), 
+		       COALESCE(SUM(q.total_cpu_ms)::float8, 0)
+		FROM sqlserver_query_metrics_v2 q
+		LEFT JOIN sqlserver_query_classification_dim class
+		  ON class.instance_id = q.instance_id
+		 AND class.query_hash = decode(lpad(to_hex(q.query_hash), 16, '0'), 'hex')
+		 WHERE UPPER(q.instance_id) = UPPER($1)
+		  AND q.ts >= NOW() - ($3 * INTERVAL '1 hour')
+		  AND q.statement_text NOT LIKE '%%/* SQL_OPTIMA */%%'
+		  AND (q.login_name IS NULL OR q.login_name <> 'dbmonitor_user')
+		  AND COALESCE(class.classification, 'UNKNOWN') = 'USER'
+		GROUP BY q.query_hash, q.database_name
 		ORDER BY %s
 		LIMIT $2`, orderClause)
 

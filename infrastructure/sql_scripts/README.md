@@ -109,6 +109,55 @@ Change these in production.
 
 Hypertables typically use compression for chunks older than 7 days. See `00_timescale_schema.sql` for policies.
 
+## PostgreSQL Recommended Configuration
+
+For optimal monitoring of PostgreSQL instances, it is highly recommended to enable and configure the `pg_stat_statements` and `pg_stat_monitor` extensions.
+
+### Step 1: Enable Extensions
+Search for `shared_preload_libraries` in your `postgresql.conf` and add the extensions:
+```conf
+shared_preload_libraries = 'pg_stat_statements,pg_stat_monitor'
+```
+
+### Step 2: Configure pg_stat_statements
+Add the following baseline configuration to the end of `postgresql.conf`:
+```conf
+pg_stat_statements.max = 10000
+pg_stat_statements.track = all
+pg_stat_statements.save = on
+pg_stat_statements.track_utility = on
+```
+
+### Step 3: Configure pg_stat_monitor
+Add the following recommended starting configuration to `postgresql.conf`:
+```conf
+pg_stat_monitor.pgsm_max = 10000
+pg_stat_monitor.pgsm_bucket_time = 60     -- 1 min buckets (perfect for dashboards)
+pg_stat_monitor.pgsm_max_buckets = 1440   -- 24 hours of buckets
+pg_stat_monitor.pgsm_track = all
+pg_stat_monitor.pgsm_track_utility = on
+pg_stat_monitor.pgsm_normalized_query = on
+pg_stat_monitor.pgsm_enable_query_plan = on
+pg_stat_monitor.pgsm_track_application_names = on
+```
+
+### Step 4: Create Extensions
+Connect to your monitored PostgreSQL instance and run the following SQL:
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+CREATE EXTENSION IF NOT EXISTS pg_stat_monitor;
+```
+**Important:** A restart of the PostgreSQL service is required after modifying `shared_preload_libraries` in `postgresql.conf` for the changes to take effect.
+
+### Benefits
+- **1-minute granularity**
+- **24 hours rolling history** inside Postgres
+- **Rich metadata** for dashboards
+- **Efficient collection**: The collector can safely poll every 30–60 seconds.
+
+### Architecture
+Postgres (`pg_stat_monitor` → primary, `pg_stat_statements` → fallback) → Collector → TimescaleDB → Dashboards
+
 ## Troubleshooting
 
 1. TimescaleDB extension: `SELECT * FROM pg_extension WHERE extname = 'timescaledb';`

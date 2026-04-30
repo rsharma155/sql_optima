@@ -1,5 +1,5 @@
 -- Metric: pg_stat_statements_check
--- Source: backend/internal/repository/pg_stats.go:931
+-- Source: backend/internal/repository/pg_statement_metrics.go
 -- Target Table: N/A (extension check)
 -- Description: Checks if pg_stat_statements extension is installed
 

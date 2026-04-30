@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/models"
+	"github.com/rsharma155/sql_optima/internal/repository"
 )
 
 const (
@@ -24,15 +25,16 @@ const (
 )
 
 type CollectorResult struct {
-	CPU           *models.CPUTick
-	Memory        *models.MemoryStats
-	WaitStats     []models.WaitStat
-	FileStats     []models.FileIOStat
-	TempDBStats   *models.TempDBStats
-	ActiveQueries []models.ActiveQuery
-	LongRunning   []models.LongRunningQuery
-	Blocking      []models.BlockingNode
-	Errors        []error
+	CPU              *models.CPUTick
+	Memory           *models.MemoryStats
+	WaitStats        []models.WaitStat
+	FileStats        []models.FileIOStat
+	TempDBStats      *models.TempDBStats
+	ActiveQueries    []models.ActiveQuery
+	LongRunning      []models.LongRunningQuery
+	Blocking         []models.BlockingNode
+	SessionSnapshots []models.SQLServerSessionSnapshot
+	Errors           []error
 }
 
 type SQLSERVERCollector struct {
@@ -109,7 +111,7 @@ func (c *SQLSERVERCollector) runLiveCollectors() {
 		go func(instanceName string, db *sql.DB) {
 			defer wg.Done()
 
-			queries, err := CollectActiveQueries(c.ctx, db)
+			queries, err := repository.CollectActiveQueries(c.ctx, db)
 			if err != nil {
 				log.Printf("[Collector] ERROR CollectActiveQueries for %s: %v", instanceName, err)
 				errors = append(errors, fmt.Errorf("active queries: %w", err))
@@ -119,13 +121,27 @@ func (c *SQLSERVERCollector) runLiveCollectors() {
 				c.mu.Unlock()
 			}
 
-			blocking, err := CollectBlockingLocks(c.ctx, db)
+			blocking, err := repository.CollectBlockingLocks(c.ctx, db)
 			if err != nil {
 				log.Printf("[Collector] ERROR CollectBlockingLocks for %s: %v", instanceName, err)
 				errors = append(errors, fmt.Errorf("blocking locks: %w", err))
 			} else {
 				c.mu.Lock()
 				c.result.Blocking = blocking
+				c.mu.Unlock()
+			}
+
+			snapshots, err := repository.CollectSessionSnapshot(c.ctx, db)
+			if err != nil {
+				log.Printf("[Collector] ERROR CollectSessionSnapshot for %s: %v", instanceName, err)
+				errors = append(errors, fmt.Errorf("session snapshot: %w", err))
+			} else {
+				c.mu.Lock()
+				// Add instance ID to snapshots
+				for i := range snapshots {
+					snapshots[i].InstanceID = instanceName
+				}
+				c.result.SessionSnapshots = append(c.result.SessionSnapshots, snapshots...)
 				c.mu.Unlock()
 			}
 		}(name, db)
@@ -137,8 +153,8 @@ func (c *SQLSERVERCollector) runLiveCollectors() {
 	c.result.Errors = errors
 	c.mu.Unlock()
 
-	log.Printf("[Collector] Live tick complete - ActiveQueries: %d, Blocking: %d, Errors: %d",
-		len(c.result.ActiveQueries), len(c.result.Blocking), len(errors))
+	log.Printf("[Collector] Live tick complete - ActiveQueries: %d, Blocking: %d, SessionSnapshots: %d, Errors: %d",
+		len(c.result.ActiveQueries), len(c.result.Blocking), len(c.result.SessionSnapshots), len(errors))
 }
 
 func (c *SQLSERVERCollector) runHistoricalCollectors() {
@@ -154,7 +170,7 @@ func (c *SQLSERVERCollector) runHistoricalCollectors() {
 		go func(instanceName string, db *sql.DB) {
 			defer wg.Done()
 
-			cpu, mem, err := CollectCPUMemory(c.ctx, db)
+			cpu, mem, err := repository.CollectCPUMemory(c.ctx, db)
 			if err != nil {
 				log.Printf("[Collector] ERROR CollectCPUMemory for %s: %v", instanceName, err)
 				errors = append(errors, fmt.Errorf("cpu/memory: %w", err))
@@ -165,7 +181,7 @@ func (c *SQLSERVERCollector) runHistoricalCollectors() {
 				c.mu.Unlock()
 			}
 
-			waits, err := CollectWaitStats(c.ctx, db)
+			waits, err := repository.CollectWaitStats(c.ctx, db)
 			if err != nil {
 				log.Printf("[Collector] ERROR CollectWaitStats for %s: %v", instanceName, err)
 				errors = append(errors, fmt.Errorf("wait stats: %w", err))
@@ -175,7 +191,7 @@ func (c *SQLSERVERCollector) runHistoricalCollectors() {
 				c.mu.Unlock()
 			}
 
-			storage, tempdb, err := CollectStorageIO(c.ctx, db)
+			storage, tempdb, err := repository.CollectStorageIO(c.ctx, db)
 			if err != nil {
 				log.Printf("[Collector] ERROR CollectStorageIO for %s: %v", instanceName, err)
 				errors = append(errors, fmt.Errorf("storage I/O: %w", err))
@@ -186,7 +202,7 @@ func (c *SQLSERVERCollector) runHistoricalCollectors() {
 				c.mu.Unlock()
 			}
 
-			longRunning, err := CollectLongRunningQueries(c.ctx, db)
+			longRunning, err := repository.CollectLongRunningQueries(c.ctx, db)
 			if err != nil {
 				log.Printf("[Collector] ERROR CollectLongRunningQueries for %s: %v", instanceName, err)
 				errors = append(errors, fmt.Errorf("long running: %w", err))

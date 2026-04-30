@@ -1,0 +1,27 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Page-specific override styles for global-overview
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+/* Global Estate Overview Styles */
+.estate-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
+.estate-card { padding: 10px; border-radius: 6px; cursor: pointer; border: 1px solid rgba(255,255,255,0.05); transition: 0.2s; }
+.estate-card:hover { transform: translateY(-3px); box-shadow: 0 4px 15px rgba(0,0,0,0.5); border-color: var(--accent-blue) !important; }
+.estate-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.estate-header h4 { margin: 0; font-size: 0.85rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.estate-body { font-size: 0.75rem; }
+.status-indicator { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.status-healthy { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.status-warning { background: var(--warning); box-shadow: 0 0 6px var(--warning); }
+.status-danger { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+.progress-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.1); overflow: hidden; }
+.progress-fill { height: 100%; transition: width 0.3s; }
+.bg-success { background: var(--success); }
+.bg-warning { background: var(--warning); }
+.bg-danger { background: var(--danger); }
+.bg-accent { background: var(--accent-blue); }
+

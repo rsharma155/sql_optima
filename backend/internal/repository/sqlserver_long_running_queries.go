@@ -41,7 +41,7 @@ func (c *SqlServerRepository) FetchLongRunningQueries(instanceName string, minDu
 	}
 
 	query := `
-		SELECT /* SQL_OPTIMA */   TOP 50
+		/* SQL_OPTIMA */ SELECT   TOP 50
 			r.session_id,
 			r.request_id,
 			DB_NAME(r.database_id) AS database_name,

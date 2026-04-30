@@ -34,7 +34,7 @@ func (c *PgRepository) CollectPgMemoryStats(ctx context.Context, instanceName st
 
 	// 1. Connections
 	connQuery := `
-		SELECT /* SQL_OPTIMA */  
+			/* SQL_OPTIMA */ SELECT 
 			COUNT(*) FILTER (WHERE state = 'active') AS active_connections,
 			COUNT(*) FILTER (WHERE state = 'idle')   AS idle_connections,
 			COUNT(*) AS total_connections
@@ -45,7 +45,7 @@ func (c *PgRepository) CollectPgMemoryStats(ctx context.Context, instanceName st
 
 	// 2. Cache Stats & Temp Spill Stats
 	dbQuery := `
-		SELECT /* SQL_OPTIMA */  
+		/* SQL_OPTIMA */ SELECT  
 			SUM(blks_hit)  AS blks_hit,
 			SUM(blks_read) AS blks_read,
 			SUM(temp_files) AS temp_files,
@@ -57,7 +57,7 @@ func (c *PgRepository) CollectPgMemoryStats(ctx context.Context, instanceName st
 
 	// 3. BGWriter
 	bgQuery := `
-		SELECT /* SQL_OPTIMA */  
+		/* SQL_OPTIMA */ SELECT  
 			buffers_checkpoint,
 			buffers_clean,
 			buffers_backend
@@ -101,13 +101,13 @@ func (c *PgRepository) CollectPgMemoryComponents(ctx context.Context, instanceNa
 	}
 
 	query := `
-		SELECT /* SQL_OPTIMA */  
-			(SELECT /* SQL_OPTIMA */   setting::bigint * 8 / 1024 FROM pg_settings WHERE name = 'shared_buffers') AS shared_buffers_mb,
-			(SELECT /* SQL_OPTIMA */   setting::bigint / 1024 FROM pg_settings WHERE name = 'work_mem') AS work_mem_mb,
-			(SELECT /* SQL_OPTIMA */   setting::bigint / 1024 FROM pg_settings WHERE name = 'maintenance_work_mem') AS maintenance_work_mem_mb,
-			(SELECT /* SQL_OPTIMA */   setting::bigint * 8 / 1024 FROM pg_settings WHERE name = 'wal_buffers') AS wal_buffers_mb,
-			(SELECT /* SQL_OPTIMA */   setting::bigint * 8 / 1024 FROM pg_settings WHERE name = 'temp_buffers') AS temp_buffers_mb,
-			(SELECT /* SQL_OPTIMA */   setting::int FROM pg_settings WHERE name = 'max_connections') AS max_connections`
+		SELECT  
+			(SELECT    setting::bigint * 8 / 1024 FROM pg_settings WHERE name = 'shared_buffers') AS shared_buffers_mb,
+			(SELECT    setting::bigint / 1024 FROM pg_settings WHERE name = 'work_mem') AS work_mem_mb,
+			(SELECT    setting::bigint / 1024 FROM pg_settings WHERE name = 'maintenance_work_mem') AS maintenance_work_mem_mb,
+			(SELECT    setting::bigint * 8 / 1024 FROM pg_settings WHERE name = 'wal_buffers') AS wal_buffers_mb,
+			(SELECT    setting::bigint * 8 / 1024 FROM pg_settings WHERE name = 'temp_buffers') AS temp_buffers_mb,
+			(SELECT    setting::int FROM pg_settings WHERE name = 'max_connections') AS max_connections`
 
 	err := db.QueryRowContext(ctx, query).Scan(
 		&snap.SharedBuffersMB, &snap.WorkMemMB, &snap.MaintenanceWorkMemMB, &snap.WalBuffersMB, &snap.TempBuffersMB, &snap.MaxConnections,

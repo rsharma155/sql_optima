@@ -65,18 +65,27 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 		metricCol = "total_cpu_ms"
 	}
 
+	dimExpr := "q." + dimensionCol
+	if dimensionCol == "query_hash" {
+		dimExpr = "to_hex(q.query_hash)"
+	}
+
 	baseSelect := fmt.Sprintf(`
 		SELECT %s AS dimension_value,
-		       MAX(statement_text) as query_text,
-		       MAX(database_name) AS database_name,
-		       SUM(%s) AS metric_value,
-		       SUM(total_executions) AS total_executions,
-		       AVG(total_cpu_ms / NULLIF(total_executions, 0)) AS avg_cpu_ms,
-		       AVG(total_elapsed_ms / NULLIF(total_executions, 0)) AS avg_duration_ms,
-		       AVG(total_logical_reads / NULLIF(total_executions, 0)) AS avg_reads
-		FROM sqlserver_query_metrics_v2
-		WHERE UPPER(instance_id) = UPPER($1)`,
-		dimensionCol, metricCol)
+		       MAX(q.statement_text) as query_text,
+		       MAX(q.database_name) AS database_name,
+		       SUM(q.%s)::float8 AS metric_value,
+		       SUM(q.total_executions)::float8 AS total_executions,
+		       AVG(q.total_cpu_ms::float8 / NULLIF(q.total_executions, 0)) AS avg_cpu_ms,
+		       AVG(q.total_elapsed_ms::float8 / NULLIF(q.total_executions, 0)) AS avg_duration_ms,
+		       AVG(q.total_logical_reads::float8 / NULLIF(q.total_executions, 0)) AS avg_reads
+		FROM sqlserver_query_metrics_v2 q
+		LEFT JOIN sqlserver_query_classification_dim class
+		  ON class.instance_id = q.instance_id
+		 AND class.query_hash = decode(lpad(to_hex(q.query_hash), 16, '0'), 'hex')
+		WHERE UPPER(q.instance_id) = UPPER($1)
+		  AND COALESCE(class.classification, 'UNKNOWN') = 'USER'`,
+		dimExpr, metricCol)
 
 	var rows pgx.Rows
 	var err error
@@ -86,16 +95,16 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 			return nil, errParse
 		}
 		q := baseSelect + `
-		  AND ts >= $2
-		  AND ts <= $3
-		GROUP BY ` + dimensionCol + `
+		  AND q.ts >= $2
+		  AND q.ts <= $3
+		GROUP BY q.` + dimensionCol + `
 		ORDER BY metric_value DESC
 		LIMIT $4`
 		rows, err = tl.pool.Query(ctx, q, params.InstanceName, start, end, params.Limit)
 	} else {
 		q := baseSelect + fmt.Sprintf(`
-		  AND ts > now() - INTERVAL '%s'
-		GROUP BY %s
+		  AND q.ts > now() - INTERVAL '%s'
+		GROUP BY q.%s
 		ORDER BY metric_value DESC
 		LIMIT $2`, tr, dimensionCol)
 		rows, err = tl.pool.Query(ctx, q, params.InstanceName, params.Limit)
@@ -151,11 +160,15 @@ func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, instance
 	}
 
 	query := fmt.Sprintf(`
-		SELECT time_bucket('5 min', ts) AS time,
-		       SUM(%s) AS value
-		FROM sqlserver_query_metrics_v2
-		WHERE UPPER(instance_id) = UPPER($1)
-		  AND ts > now() - INTERVAL '%s'
+		SELECT time_bucket('5 min', q.ts) AS time,
+		       SUM(q.%s)::float8 AS value
+		FROM sqlserver_query_metrics_v2 q
+		LEFT JOIN sqlserver_query_classification_dim class
+		  ON class.instance_id = q.instance_id
+		 AND class.query_hash = decode(lpad(to_hex(q.query_hash), 16, '0'), 'hex')
+		WHERE UPPER(q.instance_id) = UPPER($1)
+		  AND q.ts > now() - INTERVAL '%s'
+		  AND COALESCE(class.classification, 'UNKNOWN') = 'USER'
 		GROUP BY time
 		ORDER BY time
 	`, metricCol, tr)

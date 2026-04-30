@@ -79,18 +79,36 @@ func (tl *TimescaleLogger) LogPostgresWaitEvents(ctx context.Context, instanceNa
 	return nil
 }
 
-func (tl *TimescaleLogger) GetPostgresWaitEventsHistory(ctx context.Context, instanceName string, limit int) ([]PostgresWaitEventRow, error) {
+func (tl *TimescaleLogger) GetPostgresWaitEventsHistory(ctx context.Context, instanceName string, from, to time.Time, limit int) ([]PostgresWaitEventRow, error) {
 	if limit <= 0 {
 		limit = 180
 	}
-	q := `
-		SELECT capture_timestamp, server_instance_name, COALESCE(wait_event_type,''), COALESCE(wait_event,''), sessions_count
-		FROM postgres_wait_event_stats
-		WHERE server_instance_name = $1
-		ORDER BY capture_timestamp DESC
-		LIMIT $2
-	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	var q string
+	var args []interface{}
+	args = append(args, instanceName)
+
+	if !from.IsZero() && !to.IsZero() {
+		q = `
+			SELECT capture_timestamp, server_instance_name, COALESCE(wait_event_type,''), COALESCE(wait_event,''), sessions_count
+			FROM postgres_wait_event_stats
+			WHERE server_instance_name = $1
+			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
+			ORDER BY capture_timestamp DESC
+			LIMIT 2000
+		`
+		args = append(args, from, to)
+	} else {
+		q = `
+			SELECT capture_timestamp, server_instance_name, COALESCE(wait_event_type,''), COALESCE(wait_event,''), sessions_count
+			FROM postgres_wait_event_stats
+			WHERE server_instance_name = $1
+			ORDER BY capture_timestamp DESC
+			LIMIT $2
+		`
+		args = append(args, limit)
+	}
+
+	rows, err := tl.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -173,18 +191,36 @@ func (tl *TimescaleLogger) LogPostgresDbIOStats(ctx context.Context, instanceNam
 	return nil
 }
 
-func (tl *TimescaleLogger) GetPostgresDbIOHistory(ctx context.Context, instanceName string, limit int) ([]PostgresDbIORow, error) {
+func (tl *TimescaleLogger) GetPostgresDbIOHistory(ctx context.Context, instanceName string, from, to time.Time, limit int) ([]PostgresDbIORow, error) {
 	if limit <= 0 {
 		limit = 500
 	}
-	q := `
-		SELECT capture_timestamp, server_instance_name, database_name, blks_read, blks_hit, temp_files, temp_bytes
-		FROM postgres_db_io_stats
-		WHERE server_instance_name = $1
-		ORDER BY capture_timestamp DESC
-		LIMIT $2
-	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	var q string
+	var args []interface{}
+	args = append(args, instanceName)
+
+	if !from.IsZero() && !to.IsZero() {
+		q = `
+			SELECT capture_timestamp, server_instance_name, database_name, blks_read, blks_hit, temp_files, temp_bytes
+			FROM postgres_db_io_stats
+			WHERE server_instance_name = $1
+			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
+			ORDER BY capture_timestamp DESC
+			LIMIT 2000
+		`
+		args = append(args, from, to)
+	} else {
+		q = `
+			SELECT capture_timestamp, server_instance_name, database_name, blks_read, blks_hit, temp_files, temp_bytes
+			FROM postgres_db_io_stats
+			WHERE server_instance_name = $1
+			ORDER BY capture_timestamp DESC
+			LIMIT $2
+		`
+		args = append(args, limit)
+	}
+
+	rows, err := tl.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

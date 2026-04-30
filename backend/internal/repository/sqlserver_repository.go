@@ -20,7 +20,6 @@ import (
 	"time"
 
 	_ "github.com/microsoft/go-mssqldb"
-	"github.com/rsharma155/sql_optima/internal/collectors"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/sqlserver"
 )
@@ -126,7 +125,7 @@ func NewSqlServerRepository(cfg *config.Config) *SqlServerRepository {
 			c.conns[inst.Name] = db
 
 			if len(inst.Databases) == 0 {
-				query := "SELECT /* SQL_OPTIMA */   name FROM sys.databases WHERE database_id > 4 AND state_desc = 'ONLINE'"
+				query := "/* SQL_OPTIMA */ SELECT   name FROM sys.databases WHERE database_id > 4 AND state_desc = 'ONLINE'"
 				rows, err := db.Query(query)
 				if err == nil {
 					var discoverDbs []string
@@ -160,7 +159,7 @@ func (c *SqlServerRepository) HasConnection(instanceName string) bool {
 	return ok
 }
 
-func (c *SqlServerRepository) AsQueryer(instanceName, dbName string) collectors.Queryer {
+func (c *SqlServerRepository) AsQueryer(instanceName, dbName string) Queryer {
 	db, ok := c.GetConn(instanceName)
 	if !ok {
 		return nil

@@ -1,5 +1,5 @@
 -- Metric: pg_xid_wraparound
--- Source: backend/internal/repository/pg_stats.go:1554
+-- Source: backend/internal/repository/pg_dba_metrics.go
 -- Target Table: N/A (DBA health observation)
 -- Description: Calculates XID wraparound percentage toward forced read-only mode
 

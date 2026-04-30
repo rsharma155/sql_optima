@@ -330,15 +330,40 @@ window.EnterpriseMetricsView = async function() {
             .sort((a, b) => (b.allocated_mb || 0) - (a.allocated_mb || 0))
             .slice(0, 15);
 
-        tbody.innerHTML = latest.map(c => `
-            <tr>
-                <td>${c.session_id}</td>
-                <td>${(c.allocated_mb || 0).toFixed(1)} MB</td>
-                <td>${(c.user_objects_mb || 0).toFixed(1)} MB</td>
-                <td>${(c.internal_objects_mb || 0).toFixed(1)} MB</td>
-                <td title="${window.escapeHtml(c.query_text || '')}">${(c.query_text || '').substring(0, 50)}...</td>
-            </tr>
-        `).join('');
+        tbody.innerHTML = latest.map((c, idx) => {
+            const cacheKey = `tempdb_q_${idx}`;
+            if (!window.appState.queryCache) window.appState.queryCache = {};
+            window.appState.queryCache[cacheKey] = c.query_text || '';
+
+            return `
+                <tr>
+                    <td>${c.session_id}</td>
+                    <td>${(c.allocated_mb || 0).toFixed(1)} MB</td>
+                    <td>${(c.user_objects_mb || 0).toFixed(1)} MB</td>
+                    <td>${(c.internal_objects_mb || 0).toFixed(1)} MB</td>
+                    <td style="max-width: 300px;">
+                        <span class="code-snippet clickable-query" style="cursor: pointer; display: inline-block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;" 
+                              title="Click to view full query"
+                              data-action="show-query-modal-direct" data-key="${cacheKey}">
+                            ${window.escapeHtml((c.query_text || '').substring(0, 100))}${c.query_text && c.query_text.length > 100 ? '...' : ''}
+                        </span>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        // Add event listeners for the clickable queries
+        tbody.querySelectorAll('.clickable-query').forEach(el => {
+            el.onclick = (e) => {
+                const key = el.getAttribute('data-key');
+                const query = window.appState.queryCache[key];
+                if (window.showQueryModal) {
+                    window.showQueryModal(query);
+                } else {
+                    alert(query);
+                }
+            };
+        });
     }
 
     function getPaletteColor(idx, alpha) {

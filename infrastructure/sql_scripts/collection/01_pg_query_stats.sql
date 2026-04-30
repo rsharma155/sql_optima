@@ -1,5 +1,5 @@
 -- Metric: pg_query_stats
--- Source: backend/internal/repository/pg_stats.go:936
+-- Source: backend/internal/repository/pg_statement_metrics.go
 -- Target Table: N/A (query performance from pg_stat_statements)
 -- Description: Returns top queries by total execution time from pg_stat_statements
 

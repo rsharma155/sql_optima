@@ -1,0 +1,11 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Reusable UI component styles for forms
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+.filter-group select, .filter-group input { background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-primary); padding: 0.5rem; border-radius: 4px; font-family: inherit; font-size: 0.85rem;}
+

@@ -52,7 +52,7 @@ func (c *SqlServerRepository) FetchAGHealthStats(instanceName string) ([]AGHealt
 
 	hasDbStates := true
 	var dbStatesCheck int
-	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.all_objects WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_database_states')`).Scan(&dbStatesCheck); err != nil || dbStatesCheck == 0 {
+	if err := db.QueryRow(`/* SQL_OPTIMA */ SELECT    COUNT(*) FROM sys.all_objects WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_database_states')`).Scan(&dbStatesCheck); err != nil || dbStatesCheck == 0 {
 		if err != nil {
 			log.Printf("[SQLSERVER] FetchAGHealthStats: dm_hadr_availability_database_states check failed for %s: %v", instanceName, err)
 		} else {
@@ -63,42 +63,42 @@ func (c *SqlServerRepository) FetchAGHealthStats(instanceName string) ([]AGHealt
 
 	hasSecondaryLag := true
 	var lagCheck int
-	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'secondary_lag_seconds'`).Scan(&lagCheck); err != nil || lagCheck == 0 {
+	if err := db.QueryRow(`/* SQL_OPTIMA */ SELECT   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'secondary_lag_seconds'`).Scan(&lagCheck); err != nil || lagCheck == 0 {
 		log.Printf("[SQLSERVER] FetchAGHealthStats: secondary_lag_seconds not available for %s (pre-2016 SP1)", instanceName)
 		hasSecondaryLag = false
 	}
 
 	hasLastRedoneTime := true
 	var redoCheck int
-	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'last_redone_time'`).Scan(&redoCheck); err != nil || redoCheck == 0 {
+	if err := db.QueryRow(`/* SQL_OPTIMA */ SELECT   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'last_redone_time'`).Scan(&redoCheck); err != nil || redoCheck == 0 {
 		log.Printf("[SQLSERVER] FetchAGHealthStats: last_redone_time not available for %s (pre-2016)", instanceName)
 		hasLastRedoneTime = false
 	}
 
 	hasLastHardenedTime := true
 	var hardenedCheck int
-	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'last_hardened_time'`).Scan(&hardenedCheck); err != nil || hardenedCheck == 0 {
+	if err := db.QueryRow(`/* SQL_OPTIMA */ SELECT   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'last_hardened_time'`).Scan(&hardenedCheck); err != nil || hardenedCheck == 0 {
 		log.Printf("[SQLSERVER] FetchAGHealthStats: last_hardened_time not available for %s (pre-2016 SP1 CU6)", instanceName)
 		hasLastHardenedTime = false
 	}
 
 	hasLogSendRate := true
 	var logRateCheck int
-	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'log_send_rate'`).Scan(&logRateCheck); err != nil || logRateCheck == 0 {
+	if err := db.QueryRow(`/* SQL_OPTIMA */ SELECT   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'log_send_rate'`).Scan(&logRateCheck); err != nil || logRateCheck == 0 {
 		log.Printf("[SQLSERVER] FetchAGHealthStats: log_send_rate not available for %s (pre-2016)", instanceName)
 		hasLogSendRate = false
 	}
 
 	hasUndoRate := true
 	var undoRateCheck int
-	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'undo_rate'`).Scan(&undoRateCheck); err != nil || undoRateCheck == 0 {
+	if err := db.QueryRow(`/* SQL_OPTIMA */ SELECT   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'undo_rate'`).Scan(&undoRateCheck); err != nil || undoRateCheck == 0 {
 		log.Printf("[SQLSERVER] FetchAGHealthStats: undo_rate not available for %s (pre-2016)", instanceName)
 		hasUndoRate = false
 	}
 
 	hasUndoQueueSize := true
 	var undoQueueCheck int
-	if err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'undo_queue_size'`).Scan(&undoQueueCheck); err != nil || undoQueueCheck == 0 {
+	if err := db.QueryRow(`/* SQL_OPTIMA */ SELECT   COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('sys.dm_hadr_availability_replica_states') AND name = 'undo_queue_size'`).Scan(&undoQueueCheck); err != nil || undoQueueCheck == 0 {
 		log.Printf("[SQLSERVER] FetchAGHealthStats: undo_queue_size not available for %s (pre-2016)", instanceName)
 		hasUndoQueueSize = false
 	}
@@ -107,7 +107,8 @@ func (c *SqlServerRepository) FetchAGHealthStats(instanceName string) ([]AGHealt
 	if !hasSecondaryLag || !hasLastRedoneTime || !hasLastHardenedTime || !hasLogSendRate || !hasUndoRate || !hasUndoQueueSize {
 		log.Printf("[SQLSERVER] FetchAGHealthStats: Using minimal fallback query for %s (missing columns detected)", instanceName)
 		query = `
-			SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */  	
+			SELECT  
 				ag.name AS ag_name,
 				ar.replica_server_name,
 				'N/A' AS database_name,
@@ -130,7 +131,8 @@ func (c *SqlServerRepository) FetchAGHealthStats(instanceName string) ([]AGHealt
 		`
 	} else if hasDbStates {
 		query = `
-			SELECT /* SQL_OPTIMA */   
+			/* SQL_OPTIMA */  
+			SELECT   
 				ag.name AS ag_name,
 				ar.replica_server_name,
 				COALESCE(DB_NAME(dbs.database_id), 'N/A') AS database_name,
@@ -156,7 +158,8 @@ func (c *SqlServerRepository) FetchAGHealthStats(instanceName string) ([]AGHealt
 		`
 	} else {
 		query = `
-			SELECT /* SQL_OPTIMA */   
+			/* SQL_OPTIMA */
+			SELECT    
 				ag.name AS ag_name,
 				ar.replica_server_name,
 				'N/A' AS database_name,
@@ -187,7 +190,8 @@ func (c *SqlServerRepository) FetchAGHealthStats(instanceName string) ([]AGHealt
 		if strings.Contains(err.Error(), "Invalid column name") {
 			log.Printf("[SQLSERVER] FetchAGHealthStats: Retrying with ultra-minimal fallback query for %s", instanceName)
 			query = `
-				SELECT /* SQL_OPTIMA */   
+				/* SQL_OPTIMA */  
+				SELECT   
 					ag.name AS ag_name,
 					ar.replica_server_name,
 					'N/A' AS database_name,

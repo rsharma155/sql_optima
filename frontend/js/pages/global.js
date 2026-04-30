@@ -16,6 +16,7 @@ window.GlobalEstateView = async function() {
     const instances = window.appState.config.instances || [];
     
     instances.forEach((m, i) => {
+        if (!m || !m.name || String(m.name) === 'undefined') return;
         const isUp = m.available !== false;
         const stateClass = isUp ? 'status-healthy' : 'status-danger';
         const stateTitle = isUp ? 'Connected' : 'Unreachable';

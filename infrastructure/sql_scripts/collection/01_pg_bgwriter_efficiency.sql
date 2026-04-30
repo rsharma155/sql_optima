@@ -1,5 +1,5 @@
 -- Metric: pg_bgwriter_efficiency
--- Source: backend/internal/repository/pg_stats.go:1179
+-- Source: backend/internal/repository/pg_replication_metrics.go
 -- Target Table: postgres_bgwriter_stats (TimescaleDB)
 -- Description: Gets BGWriter buffers_backend and maxwritten_clean for efficiency calculation
 

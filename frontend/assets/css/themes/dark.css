@@ -1,0 +1,24 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Theme variables for dark
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+/* =========================================
+   Design System & CSS Variables
+========================================= */
+:root[data-theme="dark"] {
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --bg-base: #0f111a; --bg-surface: rgba(25, 28, 41, 0.6); --bg-surface-hover: rgba(35, 39, 56, 0.8);
+    /* Solid panel layers (used by newer UI surfaces) */
+    --bg-primary: #121526;
+    --bg-secondary: rgba(25, 28, 41, 0.85);
+    --bg-tertiary: rgba(35, 39, 56, 0.92);
+    --sidebar-bg: #131520; --text-primary: #f8f9fa; --text-secondary: #adb5bd; --text-muted: #6c757d;
+    --border-color: rgba(255, 255, 255, 0.08); --border-highlight: rgba(255, 255, 255, 0.15);
+    --accent-blue: #3b82f6; --accent-glow: rgba(59, 130, 246, 0.5); --success: #10b981; --warning: #f59e0b; --danger: #ef4444;
+    --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); --chart-grid: rgba(255, 255, 255, 0.05); --chart-text: #adb5bd;
+}

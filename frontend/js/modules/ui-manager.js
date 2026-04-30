@@ -10,16 +10,38 @@
 
 /**
  * Loads an HTML template from the specified path and returns its content as a string.
+ * Supports simple variable substitution if a context object is provided.
  * @param {string} path - The path to the HTML template file.
+ * @param {Object} [context] - Optional object containing variables for substitution.
  * @returns {Promise<string>} - The template HTML content.
  */
-export async function loadTemplate(path) {
+export async function loadTemplate(path, context = null) {
     try {
         const response = await fetch(path);
         if (!response.ok) {
             throw new Error(`Failed to load template: ${path} (HTTP ${response.status})`);
         }
-        return await response.text();
+        let template = await response.text();
+        
+        if (context) {
+            // Simple variable substitution for ${key} or ${obj.key}
+            // This handles nested objects like ${inst.name}
+            template = template.replace(/\$\{(.+?)\}/g, (match, p1) => {
+                const keys = p1.trim().split('.');
+                let value = context;
+                for (const key of keys) {
+                    if (value && Object.prototype.hasOwnProperty.call(value, key)) {
+                        value = value[key];
+                    } else {
+                        value = undefined;
+                        break;
+                    }
+                }
+                return value !== undefined ? value : match;
+            });
+        }
+        
+        return template;
     } catch (error) {
         console.error('[UIManager] Template load error:', error);
         return `<div class="alert alert-danger">Error loading view: ${error.message}</div>`;

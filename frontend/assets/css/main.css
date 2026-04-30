@@ -1,0 +1,50 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Main stylesheet entry point importing all modular micro-architecture files.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+/* =========================================
+   Main Stylesheet - Micro-Architecture
+========================================= */
+
+/* 1. Themes (Variables) */
+@import url('./themes/light.css');
+@import url('./themes/dark.css');
+
+/* 2. Base (Resets & Globals) */
+@import url('./base/reset.css');
+@import url('./base/typography.css');
+@import url('./base/global.css');
+
+/* 3. Layout (Structure) */
+@import url('./layout/grid.css');
+@import url('./layout/header.css');
+@import url('./layout/sidebar.css');
+@import url('./layout/containers.css');
+
+/* 4. Components (Reusable UI) */
+@import url('./components/buttons.css');
+@import url('./components/cards.css');
+@import url('./components/forms.css');
+@import url('./components/modals.css');
+@import url('./components/tables.css');
+@import url('./components/charts.css');
+@import url('./components/alerts.css');
+
+/* 5. Utilities (Helper classes) */
+@import url('./utilities/spacing.css');
+@import url('./utilities/colors.css');
+@import url('./utilities/flex.css');
+@import url('./utilities/visibility.css');
+
+/* 6. Pages (Last-mile overrides) */
+@import url('./pages/global-overview.css');
+@import url('./pages/setup-wizard.css');
+@import url('./pages/pg-cpu.css');
+@import url('./pages/pg-replication.css');
+@import url('./pages/pg-explain.css');
+@import url('./pages/pgss.css');

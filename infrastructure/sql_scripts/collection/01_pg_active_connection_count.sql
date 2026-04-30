@@ -1,5 +1,5 @@
 -- Metric: pg_active_connection_count
--- Source: backend/internal/repository/pg_stats.go:472
+-- Source: backend/internal/repository/pg_session_metrics.go
 -- Target Table: N/A (system stats estimation)
 -- Description: Counts active connections for CPU usage estimation
 

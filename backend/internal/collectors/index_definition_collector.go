@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/models"
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
@@ -35,7 +36,7 @@ type IndexDefinitionCatalogRow struct {
 // CollectSQLServerIndexDefinitions snapshots index definitions (for duplicate/overlap analysis).
 // On the first initial run (since.IsZero()), it collects definitions for all user tables without filtering.
 // On subsequent runs, it only collects definitions for tables modified after the specified 'since' time.
-func CollectSQLServerIndexDefinitions(ctx context.Context, dbq Queryer, since time.Time) ([]IndexDefinitionCatalogRow, error) {
+func CollectSQLServerIndexDefinitions(ctx context.Context, dbq repository.Queryer, since time.Time) ([]IndexDefinitionCatalogRow, error) {
 	var tableFilter string
 	var args []interface{}
 
@@ -120,7 +121,7 @@ func CollectSQLServerIndexDefinitions(ctx context.Context, dbq Queryer, since ti
 }
 
 // GetModifiedTables returns a list of user tables modified after the specified time.
-func GetModifiedTables(ctx context.Context, dbq Queryer, since time.Time) ([]string, error) {
+func GetModifiedTables(ctx context.Context, dbq repository.Queryer, since time.Time) ([]string, error) {
 	q := ` /* SQL_OPTIMA */
 		SELECT name AS table_name
 		FROM sys.objects 

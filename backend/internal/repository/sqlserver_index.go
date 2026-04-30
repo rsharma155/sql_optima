@@ -19,8 +19,9 @@ func (c *SqlServerRepository) CollectSQLServerIndexUsageMetrics(instanceName, da
 	}
 
 	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 
 		USE [%s];
-		SELECT /* SQL_OPTIMA */   
+		SELECT   
 			DB_NAME() AS database_name,
 			SCHEMA_NAME(t.schema_id) AS schema_name,
 			t.name AS table_name,
@@ -66,8 +67,9 @@ func (c *SqlServerRepository) CollectSQLServerIndexFragmentationMetrics(instance
 	}
 
 	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 	
 		USE [%s];
-		SELECT /* SQL_OPTIMA */   
+		SELECT   
 			DB_NAME() AS database_name,
 			SCHEMA_NAME(t.schema_id) AS schema_name,
 			t.name AS table_name,
@@ -108,6 +110,7 @@ func (c *SqlServerRepository) CollectSQLServerTableStructureMetrics(instanceName
 	}
 
 	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 		
 		USE [%s];
 		SELECT /* SQL_OPTIMA */   
 			DB_NAME() AS database_name,

@@ -383,22 +383,29 @@ async function fetchTimescaleMetrics(instanceName) {
 
         const dbQ = dashboardDatabaseQueryParam();
         const topOffendersSnapshotRange = '1h';
-        const [sqlserverRes, dbRes, topQueriesRes, longRunningRes, bottlenecksRes, liveDashRes] = await Promise.all([
+        const nowISO = new Date().toISOString();
+        const hourAgoISO = new Date(Date.now() - 3600000).toISOString();
+
+        const [sqlserverRes, dbRes, topQueriesRes, longRunningRes, bottlenecksRes, liveDashRes, cpuHistRes] = await Promise.all([
             window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/metrics?instance=${encodeURIComponent(instanceName)}`),
             window.apiClient.authenticatedFetch(`/api/sqlserver/db-throughput?instance=${encodeURIComponent(instanceName)}`),
             window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/top-queries?instance=${encodeURIComponent(instanceName)}`),
             window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/long-running-queries?instance=${encodeURIComponent(instanceName)}${dbQ}`),
             window.apiClient.authenticatedFetch(`/api/queries/bottlenecks?instance=${encodeURIComponent(instanceName)}&time_range=${encodeURIComponent(topOffendersSnapshotRange)}&limit=20${dbQ}`),
-            window.apiClient.authenticatedFetch(`/api/sqlserver/dashboard/v2?instance=${encodeURIComponent(instanceName)}`)
+            window.apiClient.authenticatedFetch(`/api/sqlserver/dashboard/v2?instance=${encodeURIComponent(instanceName)}`),
+            window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/cpu-history?instance=${encodeURIComponent(instanceName)}&from=${hourAgoISO}&to=${nowISO}`)
         ]).finally(() => {
             window.appState.fetchingMetrics = false;
         });
-        
+
         if (sqlserverRes.ok) {
             const data = await sqlserverRes.json();
             window.appState.timescaleMetrics.sqlserver = data.metrics || [];
         }
-        if (dbRes.ok) {
+        if (cpuHistRes && cpuHistRes.ok) {
+            const data = await cpuHistRes.json();
+            window.appState.timescaleMetrics.cpuHistory = data.points || [];
+        }        if (dbRes.ok) {
             const data = await dbRes.json();
             window.appState.timescaleMetrics.throughput = data.db_stats || [];
         }
@@ -581,18 +588,29 @@ async function updateDashboardCharts() {
         }
     }
     
-    // Update CPU chart from live data
+    // Update CPU chart from TimescaleDB (preferred) or live data
     if (window.currentCharts && window.currentCharts.dashRes) {
-        const cpuHist = liveData.cpu_history || liveData.CPUHistory || [];
+        let cpuHist = [];
+        if (window.appState.timescaleMetrics && window.appState.timescaleMetrics.cpuHistory && window.appState.timescaleMetrics.cpuHistory.length > 0) {
+            cpuHist = window.appState.timescaleMetrics.cpuHistory;
+        } else {
+            cpuHist = liveData.cpu_history || liveData.CPUHistory || [];
+        }
+
         if (cpuHist.length > 0) {
             const sorted = [...cpuHist].sort((a, b) => {
-                const ta = a.event_time ? new Date(a.event_time.replace(' ','T')).getTime() : 0;
-                const tb = b.event_time ? new Date(b.event_time.replace(' ','T')).getTime() : 0;
+                const ta = a.event_time ? new Date(a.event_time.replace(' ','T')).getTime() : (a.capture_timestamp ? new Date(a.capture_timestamp).getTime() : 0);
+                const tb = b.event_time ? new Date(b.event_time.replace(' ','T')).getTime() : (b.capture_timestamp ? new Date(b.capture_timestamp).getTime() : 0);
                 return ta - tb;
             }).slice(-60);
-            window.currentCharts.dashRes.data.labels = sorted.map(t => { if(!t.event_time) return ''; const parts = t.event_time.split(' '); if(parts.length < 2) return ''; return parts[1].substring(0,5); });
-            window.currentCharts.dashRes.data.datasets[0].data = sorted.map(t => t.sql_process);
-            window.currentCharts.dashRes.data.datasets[1].data = sorted.map(t => t.system_idle);
+            window.currentCharts.dashRes.data.labels = sorted.map(t => { 
+                const ts = t.event_time || t.capture_timestamp;
+                if(!ts) return ''; 
+                const d = new Date(String(ts).replace(' ','T'));
+                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            });
+            window.currentCharts.dashRes.data.datasets[0].data = sorted.map(t => t.sql_process || t.avg_cpu_load || 0);
+            window.currentCharts.dashRes.data.datasets[1].data = sorted.map(t => t.system_idle || (100 - (t.avg_cpu_load || 0)));
             window.currentCharts.dashRes.update('none');
         }
     }

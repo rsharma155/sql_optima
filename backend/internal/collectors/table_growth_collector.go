@@ -11,6 +11,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
@@ -21,7 +22,7 @@ import (
 
 // CollectSQLServerTableGrowthSnapshot is an alias of CollectSQLServerTableSizeSnapshot.
 // It returns (db, schema, table, row_count, table_size_mb, index_size_mb).
-func CollectSQLServerTableGrowthSnapshot(ctx context.Context, dbq Queryer) ([]SqlServerTableUsageRow, error) {
+func CollectSQLServerTableGrowthSnapshot(ctx context.Context, dbq repository.Queryer) ([]SqlServerTableUsageRow, error) {
 	return CollectSQLServerTableSizeSnapshot(ctx, dbq)
 }
 

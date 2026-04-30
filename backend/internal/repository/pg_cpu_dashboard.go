@@ -39,7 +39,7 @@ func (c *PgRepository) GetCpuTimeByDatabase(instanceName string) ([]PgCpuDbRow, 
 	}
 
 	var exists bool
-	if err := db.QueryRow("SELECT /* SQL_OPTIMA */   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists); err != nil || !exists {
+	if err := db.QueryRow("/* SQL_OPTIMA */ SELECT   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists); err != nil || !exists {
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
@@ -86,11 +86,11 @@ func (c *PgRepository) GetTopCpuQueries(instanceName string, limit int) ([]PgTop
 	}
 
 	var exists bool
-	if err := db.QueryRow("SELECT /* SQL_OPTIMA */   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists); err != nil || !exists {
+	if err := db.QueryRow("/* SQL_OPTIMA */ SELECT   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists); err != nil || !exists {
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
-	q := `SELECT /* SQL_OPTIMA */   s.queryid,
+	q := `/* SQL_OPTIMA */ SELECT   s.queryid,
 			now()::timestamptz AS captured_at,
 			COALESCE(r.rolname, '') AS user_name,
 			LEFT(s.query, 400) AS query,

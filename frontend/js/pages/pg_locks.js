@@ -9,13 +9,47 @@
  */
 
 window.PgLocksView = async function() {
-    window.routerOutlet.innerHTML = await window.loadTemplate('/pages/pg_locks.html');
-    setTimeout(initPgLocks, 50);
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || { name: 'Loading...', type: 'postgres' };
+    const dbName = window.appState.currentDatabase || 'all';
+
+    window.routerOutlet.innerHTML = await window.loadTemplate('/pages/pg_locks.html', { inst, dbName });
+    
+    await initPgLocks();
+
+    // Set Refresh Interval
+    if (window.pgLocksInterval) clearInterval(window.pgLocksInterval);
+    window.pgLocksInterval = setInterval(() => {
+        if (window.appState.activeViewId === 'pg-locks') {
+            initPgLocks();
+        } else {
+            clearInterval(window.pgLocksInterval);
+        }
+    }, 30000); // 30s refresh for locks
+}
+
+async function updatePgLocksHeader(instName) {
+    try {
+        const snapshotResp = await window.apiClient.authenticatedFetch(`/api/postgres/server-info?instance=${encodeURIComponent(instName)}`);
+        if (snapshotResp.ok) {
+            const s = await snapshotResp.json();
+            if (document.getElementById('pg-uptime')) document.getElementById('pg-uptime').textContent = 'Uptime: ' + (s.uptime || 'N/A');
+            if (document.getElementById('pg-version')) document.getElementById('pg-version').textContent = (s.version || '').split(',')[0];
+            if (document.getElementById('pgLastRefreshTime')) document.getElementById('pgLastRefreshTime').textContent = new Date().toLocaleTimeString();
+            
+            const hs = s.health_score || 0;
+            const healthColor = hs > 80 ? 'success' : hs > 60 ? 'warning' : 'danger';
+            const hBadge = document.getElementById('pgHealthScoreBadge');
+            if (hBadge) {
+                hBadge.textContent = hs;
+                hBadge.className = `badge badge-${healthColor}`;
+            }
+        }
+    } catch (e) { console.error("PG Locks header fetch failed:", e); }
 }
 
 function pgLocksFormatLocal(dt) {
     const pad = n => String(n).padStart(2, '0');
-    return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate()) + 'T' + pad(dt.getHours()) + ':' + pad(dt.getMinutes());
+    return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate()) + 'T' + pad(dt.getHours()) + ':' + pad(dt.getMinutes()) + ':' + pad(dt.getSeconds());
 }
 
 function pgLocksToRFC3339(datetimeLocalValue) {
@@ -26,24 +60,29 @@ function pgLocksToRFC3339(datetimeLocalValue) {
 }
 
 async function initPgLocks() {
+    console.log("[PgLocks] Initializing...");
     window.currentCharts = window.currentCharts || {};
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: ''};
     const instQ = encodeURIComponent(inst.name);
 
+    updatePgLocksHeader(inst.name);
+
     // Range UI (default last 1 hour).
     const fromEl = document.getElementById('pgLocksFrom');
     const toEl = document.getElementById('pgLocksTo');
+    console.log("[PgLocks] range elements:", {fromEl: !!fromEl, toEl: !!toEl});
+    
     const now = new Date();
     const hourAgo = new Date(now.getTime() - 3600000); // 1 hour
-    if (fromEl) fromEl.value = pgLocksFormatLocal(hourAgo);
-    if (toEl) toEl.value = pgLocksFormatLocal(now);
+    if (fromEl && !fromEl.value) fromEl.value = pgLocksFormatLocal(hourAgo);
+    if (toEl && !toEl.value) toEl.value = pgLocksFormatLocal(now);
 
     const applyBtn = document.getElementById('pgLocksApplyRange');
     if (applyBtn) {
         applyBtn.onclick = () => {
             if (fromEl) fromEl.dataset.touched = '1';
             if (toEl) toEl.dataset.touched = '1';
-            loadPgLocksRangeData();
+            loadPgLocksRangeData().catch(e => console.error("[PgLocks] loadPgLocksRangeData failed:", e));
         };
     }
 
@@ -72,6 +111,7 @@ async function initPgLocks() {
     }
 
     // Fetch locks data
+    console.log("[PgLocks] Fetching current locks for:", inst.name);
     let locks = [];
     try {
         const response = await window.apiClient.authenticatedFetch(
@@ -123,6 +163,7 @@ async function initPgLocks() {
     updatePgLocksKpis(kpis);
 
     async function loadPgLocksRangeData() {
+        console.log("[PgLocks] Loading range data...");
         if (fromEl && toEl && fromEl.value && toEl.value) {
             const rangeErr = typeof window.getDatetimeLocalRangeError === 'function'
                 ? window.getDatetimeLocalRangeError(fromEl.value, toEl.value) : '';
@@ -139,8 +180,21 @@ async function initPgLocks() {
             }
         }
 
-        const fromISO = fromEl && fromEl.value ? pgLocksToRFC3339(fromEl.value) : '';
-        const toISO = toEl && toEl.value ? pgLocksToRFC3339(toEl.value) : '';
+        let fromISO = fromEl && fromEl.value ? pgLocksToRFC3339(fromEl.value) : '';
+        let toISO = toEl && toEl.value ? pgLocksToRFC3339(toEl.value) : '';
+
+        // Fallback to 3-hour window if still empty to prevent 400 Bad Request
+        if (!fromISO || !toISO) {
+            const now = new Date();
+            const defaultFrom = new Date(now.getTime() - (3 * 3600000));
+            if (!toISO) toISO = now.toISOString();
+            if (!fromISO) fromISO = defaultFrom.toISOString();
+            
+            // Sync values back to UI if elements exist
+            if (fromEl && !fromEl.value) fromEl.value = pgLocksFormatLocal(defaultFrom);
+            if (toEl && !toEl.value) toEl.value = pgLocksFormatLocal(now);
+        }
+
         const meta = document.getElementById('pgLocksRangeMeta');
         if (meta && fromISO && toISO) {
             meta.textContent = `${new Date(fromISO).toLocaleString()} → ${new Date(toISO).toLocaleString()}`;

@@ -17,9 +17,10 @@ func NewSQLServerSnapshotRepository(db *sql.DB) *SQLServerSnapshotRepository {
 }
 
 const querySnapshotSQL = `
-SELECT /* SQL_OPTIMA */
+/* SQL_OPTIMA */
+SELECT 
  COALESCE(pa.dbid, st.dbid) AS db_id,
- DB_NAME(COALESCE(pa.dbid, st.dbid)) AS database_name,
+ ISNULL(DB_NAME(COALESCE(pa.dbid, st.dbid)), 'unknown') AS database_name,
  qs.execution_count AS total_executions,
  qs.last_execution_time,
  qs.total_worker_time/1000 AS total_cpu_ms,
@@ -35,7 +36,7 @@ SELECT /* SQL_OPTIMA */
  qs.max_grant_kb,
  qs.max_rows,
  st.text AS query_text,
- CASE 
+ ISNULL(CASE 
   WHEN st.objectid IS NOT NULL
   THEN 'EXEC ' + QUOTENAME(OBJECT_SCHEMA_NAME(st.objectid, COALESCE(pa.dbid, st.dbid)))
        + '.' + QUOTENAME(OBJECT_NAME(st.objectid, COALESCE(pa.dbid, st.dbid)))
@@ -45,7 +46,7 @@ SELECT /* SQL_OPTIMA */
           WHEN -1 THEN DATALENGTH(st.text)
           ELSE qs.statement_end_offset END
          - qs.statement_start_offset)/2) + 1)
- END AS statement_text,
+ END, '') AS statement_text,
  st.text AS query_text_raw,
  qs.query_plan_hash,
  qs.query_hash,
@@ -58,16 +59,16 @@ OUTER APPLY (
  WHERE attribute=N'dbid'
 ) pa
 WHERE pa.dbid > 4
-AND pa.dbid < 32761
 AND qs.last_execution_time > @last_watermark;
 `
 
 const sessionEnrichmentSQL = `
+
 SELECT
  r.plan_handle,
  s.login_name,
  s.program_name AS application_name,
- DB_NAME(r.database_id) AS database_name
+ ISNULL(DB_NAME(r.database_id), 'unknown') AS database_name
 FROM sys.dm_exec_requests r
 JOIN sys.dm_exec_sessions s
  ON r.session_id = s.session_id

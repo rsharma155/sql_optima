@@ -1,0 +1,73 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Page-specific override styles for pg-replication
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+/* Replication / HA: use CSS Grid rows (not <table>) so header cells stay aligned with body in scroll areas. */
+.pg-replication-page .charts-grid {
+    min-width: 0;
+}
+.pg-replication-page .tables-grid {
+    min-width: 0;
+}
+.pg-replication-page .table-card.glass-panel {
+    min-width: 0;
+    overflow: hidden;
+}
+.pg-replication-page .pg-repl-table-scroll {
+    width: 100%;
+    max-height: 280px;
+    overflow: auto;
+    min-width: 0;
+    box-sizing: border-box;
+}
+.pg-replication-page .pg-repl-row {
+    display: grid;
+    align-items: start;
+    column-gap: 0.35rem;
+    border-bottom: 1px solid var(--border-color);
+}
+.pg-replication-page .pg-repl-row > div {
+    padding: 0.45rem 0.35rem;
+    min-width: 0;
+    text-align: left;
+    font-size: 0.7rem;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+.pg-replication-page .pg-repl-row--head > div {
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    white-space: normal;
+}
+.pg-replication-page .pg-repl-row--head {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--bg-surface);
+    box-shadow: 0 1px 0 var(--border-color);
+}
+[data-theme="dark"] .pg-replication-page .pg-repl-row--head {
+    background: var(--bg-surface, #1e293b);
+}
+/* Standby: 5 columns */
+.pg-replication-page .pg-repl-standby-cols {
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.1fr) minmax(4.5rem, 0.55fr) minmax(0, 0.95fr) minmax(4rem, 0.65fr);
+}
+/* Slots: 6 columns */
+.pg-replication-page .pg-repl-slots-cols {
+    grid-template-columns: minmax(0, 1.15fr) minmax(3.5rem, 0.4fr) minmax(3.5rem, 0.4fr) minmax(4.5rem, 0.65fr) minmax(0, 1.1fr) minmax(0, 1.1fr);
+}
+.pg-replication-page .pg-repl-row code {
+    white-space: normal;
+    word-break: break-all;
+    font-size: 0.62rem;
+}
+

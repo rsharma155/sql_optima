@@ -40,6 +40,7 @@ func (c *SqlServerRepository) FetchUnusedIndexes(instanceName, databaseName stri
 
 	// NOTE: Must be executed in the target database context because dm_db_index_usage_stats is per-db.
 	q := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 
 		USE %s;
 		SELECT /* SQL_OPTIMA */   TOP (%d)
 			DB_NAME() AS database_name,
@@ -103,6 +104,7 @@ func (c *SqlServerRepository) FetchMissingIndexRecommendations(instanceName, dat
 	}
 
 	q := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 
 		USE %s;
 		SELECT /* SQL_OPTIMA */   TOP (%d)
 			(COALESCE(migs.avg_total_user_cost,0) * COALESCE(migs.avg_user_impact,0) * (COALESCE(migs.user_seeks,0) + COALESCE(migs.user_scans,0))) AS improvement_score,
@@ -161,6 +163,7 @@ func (c *SqlServerRepository) FetchIndexFragmentation(instanceName, databaseName
 	}
 
 	q := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 
 		USE %s;
 		SELECT /* SQL_OPTIMA */   TOP (%d)
 			OBJECT_NAME(ps.object_id) AS table_name,
@@ -218,6 +221,7 @@ func (c *SqlServerRepository) FetchStaleStatistics(instanceName, databaseName st
 	}
 
 	q := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 
 		USE %s;
 		SELECT /* SQL_OPTIMA */   TOP (%d)
 			OBJECT_NAME(s.object_id) AS table_name,
@@ -267,6 +271,7 @@ func (c *SqlServerRepository) FetchAutogrowthRisks(instanceName, databaseName st
 	}
 
 	q := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 
 		USE %s;
 		SELECT /* SQL_OPTIMA */   TOP (%d)
 			name,
@@ -300,6 +305,7 @@ func (c *SqlServerRepository) FetchVLFCount(instanceName, databaseName string) (
 		return 0, fmt.Errorf("no connection for instance: %s", instanceName)
 	}
 	q := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 
 		USE %s;
 		SELECT /* SQL_OPTIMA */   COUNT(*) AS vlf_count
 		FROM sys.dm_db_log_info(DB_ID());
@@ -318,7 +324,7 @@ func (c *SqlServerRepository) FetchLastFullBackupAgeHours(instanceName, database
 		return 0, fmt.Errorf("no connection for instance: %s", instanceName)
 	}
 	q := `
-		SELECT /* SQL_OPTIMA */   TOP 1 DATEDIFF(MINUTE, backup_finish_date, GETDATE()) / 60.0 AS age_hours
+		/* SQL_OPTIMA */ SELECT   TOP 1 DATEDIFF(MINUTE, backup_finish_date, GETDATE()) / 60.0 AS age_hours
 		FROM msdb.dbo.backupset
 		WHERE database_name = @p1
 		  AND type = 'D'
@@ -346,7 +352,7 @@ func (c *SqlServerRepository) FetchFailedAgentJobs24h(instanceName string, limit
 		limit = 50
 	}
 	q := fmt.Sprintf(`
-		SELECT /* SQL_OPTIMA */   TOP (%d)
+		/* SQL_OPTIMA */ SELECT   TOP (%d)
 			j.name AS job_name,
 			msdb.dbo.agent_datetime(h.run_date, h.run_time) AS run_dt,
 			h.run_status
@@ -388,7 +394,7 @@ func (c *SqlServerRepository) FetchDisabledAgentJobs(instanceName string, limit 
 	if limit <= 0 {
 		limit = 200
 	}
-	q := fmt.Sprintf(`SELECT /* SQL_OPTIMA */   TOP (%d) name FROM msdb.dbo.sysjobs WHERE enabled = 0 ORDER BY name`, limit)
+	q := fmt.Sprintf(`/* SQL_OPTIMA */ SELECT   TOP (%d) name FROM msdb.dbo.sysjobs WHERE enabled = 0 ORDER BY name`, limit)
 	rows, err := db.Query(q)
 	if err != nil {
 		return nil, err

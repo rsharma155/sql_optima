@@ -148,10 +148,76 @@ func (tl *TimescaleLogger) ClosePgBlockingIncident(ctx context.Context, incident
 		UPDATE monitor.pg_blocking_incident
 		SET ended_at = $2, status = 'resolved'
 		WHERE incident_id = $1
-		  AND status = 'active'
 	`
 	_, err := tl.pool.Exec(ctx, q, incidentID, endedAt)
 	return err
+}
+
+func (tl *TimescaleLogger) GetLatestPgSessionSnapshot(ctx context.Context, instanceID string) ([]PgSessionSnapshotRow, error) {
+	// 1. Latest timestamp
+	var latestTs *time.Time
+	err := tl.pool.QueryRow(ctx, "SELECT MAX(collected_at) FROM monitor.pg_session_snapshot WHERE server_id = $1", instanceID).Scan(&latestTs)
+	if err != nil || latestTs == nil {
+		return nil, err
+	}
+
+	q := `
+		SELECT collected_at, server_id, pid, usename, datname, application_name, client_addr,
+		       state, wait_event_type, wait_event, xact_start, query_start, state_change, query
+		FROM monitor.pg_session_snapshot
+		WHERE server_id = $1 AND collected_at = $2
+		  AND (usename IS NULL OR usename <> 'dbmonitor_user')
+		  AND query NOT LIKE '%/* SQL_OPTIMA */%'
+	`
+	rows, err := tl.pool.Query(ctx, q, instanceID, *latestTs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []PgSessionSnapshotRow
+	for rows.Next() {
+		var r PgSessionSnapshotRow
+		if err := rows.Scan(
+			&r.CollectedAt, &r.ServerID, &r.PID, &r.UserName, &r.DatabaseName, &r.ApplicationName, &r.ClientAddr,
+			&r.State, &r.WaitEventType, &r.WaitEvent, &r.XactStart, &r.QueryStart, &r.StateChange, &r.Query,
+		); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (tl *TimescaleLogger) GetLatestPgLockSnapshot(ctx context.Context, instanceID string) ([]PgLockSnapshotRow, error) {
+	var latestTs *time.Time
+	err := tl.pool.QueryRow(ctx, "SELECT MAX(collected_at) FROM monitor.pg_lock_snapshot WHERE server_id = $1", instanceID).Scan(&latestTs)
+	if err != nil || latestTs == nil {
+		return nil, err
+	}
+
+	q := `
+		SELECT collected_at, server_id, pid, locktype, mode, granted, relation_oid, relation_name, transactionid, waiting_seconds
+		FROM monitor.pg_lock_snapshot
+		WHERE server_id = $1 AND collected_at = $2
+	`
+	rows, err := tl.pool.Query(ctx, q, instanceID, *latestTs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []PgLockSnapshotRow
+	for rows.Next() {
+		var r PgLockSnapshotRow
+		if err := rows.Scan(
+			&r.CollectedAt, &r.ServerID, &r.PID, &r.LockType, &r.Mode, &r.Granted, &r.RelationOID, &r.RelationName, &r.TransactionID, &r.WaitingSeconds,
+		); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
 }
 
 type PgBlockingTimelinePoint struct {
@@ -225,6 +291,7 @@ func (tl *TimescaleLogger) GetPgBlockingIncidentsRange(ctx context.Context, serv
 		WHERE server_id = $1
 		  AND started_at >= $2
 		  AND started_at <= $3
+		  AND root_blocker_query NOT LIKE '%/* SQL_OPTIMA */%'
 		ORDER BY started_at ASC
 	`
 	rows, err := tl.pool.Query(ctx, q, serverID, from, to)
@@ -344,6 +411,8 @@ func (tl *TimescaleLogger) GetPgBlockingKpis(ctx context.Context, serverID strin
 		FROM (
 		  SELECT collected_at,
 		         COUNT(*) FILTER (WHERE LOWER(COALESCE(state,'')) = 'idle in transaction'
+		                          AND (usename IS NULL OR usename <> 'dbmonitor_user')
+		                          AND query NOT LIKE '%/* SQL_OPTIMA */%'
 		                          AND state_change IS NOT NULL
 		                          AND (collected_at - state_change) > INTERVAL '30 seconds') AS n
 		  FROM monitor.pg_session_snapshot
@@ -360,6 +429,7 @@ func (tl *TimescaleLogger) GetPgBlockingKpis(ctx context.Context, serverID strin
 		SELECT incident_id, started_at, root_blocker_pid, COALESCE(root_blocker_query,'')
 		FROM monitor.pg_blocking_incident
 		WHERE server_id = $1 AND status = 'active'
+		  AND root_blocker_query NOT LIKE '%/* SQL_OPTIMA */%'
 		ORDER BY started_at DESC
 		LIMIT 1
 	`
@@ -478,19 +548,19 @@ func (tl *TimescaleLogger) GetPgBlockingDetailsInRange(ctx context.Context, serv
 	}
 
 	// Find the most recent capture that has any blocking pairs in the selected range.
-	var at time.Time
+	var at *time.Time
 	err := tl.pool.QueryRow(ctx, `
-		SELECT COALESCE(MAX(collected_at), 'epoch'::timestamptz)
+		SELECT MAX(collected_at)
 		FROM monitor.pg_blocking_pairs
 		WHERE server_id = $1
 		  AND collected_at >= $2
 		  AND collected_at <= $3
 	`, serverID, from, to).Scan(&at)
-	if err != nil {
-		return nil, err
+	if err != nil || at == nil {
+		return &PgBlockingDetailsResponse{CollectedAt: time.Time{}, ServerID: serverID, BlockingTree: []PgBlockingNodeAt{}}, nil
 	}
 	if at.Equal(time.Unix(0, 0).UTC()) {
-		return &PgBlockingDetailsResponse{CollectedAt: at, ServerID: serverID, BlockingTree: []PgBlockingNodeAt{}}, nil
+		return &PgBlockingDetailsResponse{CollectedAt: *at, ServerID: serverID, BlockingTree: []PgBlockingNodeAt{}}, nil
 	}
 
 	// Load all pairs at that capture time.
@@ -523,7 +593,7 @@ func (tl *TimescaleLogger) GetPgBlockingDetailsInRange(ctx context.Context, serv
 		return nil, err
 	}
 	if len(pairs) == 0 {
-		return &PgBlockingDetailsResponse{CollectedAt: at, ServerID: serverID, BlockingTree: []PgBlockingNodeAt{}}, nil
+		return &PgBlockingDetailsResponse{CollectedAt: *at, ServerID: serverID, BlockingTree: []PgBlockingNodeAt{}}, nil
 	}
 
 	// Fetch session snapshots for involved pids at same collected_at.
@@ -534,7 +604,9 @@ func (tl *TimescaleLogger) GetPgBlockingDetailsInRange(ctx context.Context, serv
 		       COALESCE(LEFT(query,400),'')
 		FROM monitor.pg_session_snapshot
 		WHERE server_id = $1 AND collected_at = $2 AND pid = ANY($3)
-	`, serverID, at, intSliceKeys(pidSet))
+		  AND (usename IS NULL OR usename <> 'dbmonitor_user')
+		  AND query NOT LIKE '%/* SQL_OPTIMA */%'
+	`, serverID, *at, intSliceKeys(pidSet))
 	if err != nil {
 		return nil, err
 	}
@@ -627,7 +699,7 @@ func (tl *TimescaleLogger) GetPgBlockingDetailsInRange(ctx context.Context, serv
 	}
 
 	return &PgBlockingDetailsResponse{
-		CollectedAt:  at,
+		CollectedAt:  *at,
 		ServerID:     serverID,
 		BlockingTree: out,
 	}, nil

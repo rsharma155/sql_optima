@@ -84,7 +84,8 @@ func (c *SqlServerRepository) FetchQueryStoreStats(instanceName string) ([]Query
 
 func queryStoreStatsSelectSQL(dbPrefix string) string {
 	return fmt.Sprintf(`
-		SELECT /* SQL_OPTIMA */   TOP 100
+		/* SQL_OPTIMA */ 
+		SELECT   TOP 100
 			CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
 			qt.query_sql_text AS query_text,
 			p.plan_id,
@@ -147,7 +148,7 @@ func (c *SqlServerRepository) listUserDatabaseNamesForQueryStore(db *sql.DB) ([]
 
 func (c *SqlServerRepository) fetchQueryStoreStatsSingleDB(db *sql.DB, labelDB string) ([]QueryStoreStats, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   TOP 100
+		/* SQL_OPTIMA */ SELECT   TOP 100
 			CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
 			qt.query_sql_text AS query_text,
 			p.plan_id,
@@ -226,7 +227,7 @@ func (c *SqlServerRepository) FetchQueryStoreSQLText(instanceName, databaseName,
 
 	dbPrefix := sqlServerQuoteBracket(databaseName)
 	q := fmt.Sprintf(`
-		SELECT /* SQL_OPTIMA */   TOP 1
+		/* SQL_OPTIMA */ SELECT   TOP 1
 			qt.query_sql_text
 		FROM %s.sys.query_store_query q
 		INNER JOIN %s.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id

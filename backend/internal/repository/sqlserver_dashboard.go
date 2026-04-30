@@ -51,20 +51,21 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 	}
 
 	cpuQuery := `
-		DECLARE @ts_now bigint = (SELECT /* SQL_OPTIMA */   cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
-		SELECT /* SQL_OPTIMA */   TOP(256)
+		/* SQL_OPTIMA */ 
+		DECLARE @ts_now bigint = (SELECT   cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
+		SELECT   TOP(256)
 		    SQLProcessUtilization AS [SQL_Server_CPU], 
 		    SystemIdle AS [System_Idle_CPU], 
 		    100 - SystemIdle - SQLProcessUtilization AS [Other_Process_CPU],
 		    CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETDATE()), 120) AS [Event_Time]
 		FROM ( 
-		    SELECT /* SQL_OPTIMA */   record.value('(./Record/@id)[1]', 'int') AS record_id, 
+		    SELECT   record.value('(./Record/@id)[1]', 'int') AS record_id, 
 		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') 
 		        AS [SystemIdle], 
 		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') 
 		        AS [SQLProcessUtilization], [timestamp] 
 		    FROM ( 
-		        SELECT /* SQL_OPTIMA */   [timestamp], CONVERT(xml, record) AS [record] 
+		        SELECT   [timestamp], CONVERT(xml, record) AS [record] 
 		        FROM sys.dm_os_ring_buffers WITH (NOLOCK)
 		        WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
 		        AND record LIKE N'%<SystemHealth>%'
@@ -95,7 +96,8 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 	_ = db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
 
 	connQuery := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ 
+		SELECT  
 			ISNULL(s.login_name, 'Unknown'),
 			ISNULL(DB_NAME(s.database_id), 'Unknown'),
 			COUNT(s.session_id) as active_connections,
@@ -119,7 +121,8 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 
 	metrics.LocksByDB = make(map[string]models.LockStat)
 	lockQuery := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ 
+		SELECT  
 			ISNULL(DB_NAME(resource_database_id), 'Unknown'),
 			COUNT(*),
 			SUM(CASE WHEN request_status = 'CONVERT' THEN 1 ELSE 0 END)
@@ -142,7 +145,8 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 	}
 
 	blockDetQuery := `
-		SELECT /* SQL_OPTIMA */  
+		/* SQL_OPTIMA */ 
+		SELECT  
 			r.session_id as blocked_session_id,
 			ISNULL(r.blocking_session_id, 0) as blocking_session_id,
 			ISNULL(DB_NAME(r.database_id), 'Unknown') as database_name,
@@ -188,7 +192,8 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 
 	metrics.MemoryClerks = make([]models.MemoryStat, 0)
 	clerkQuery := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */	
+		SELECT    
 			RTRIM(counter_name) as type,
 			CAST(cntr_value AS FLOAT) / 1024.0 as size_mb
 		FROM sys.dm_os_performance_counters
@@ -219,7 +224,8 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 		metrics.DiskByDB = make(map[string]models.DiskStat)
 	}
 	diskQuery := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */   	
+		SELECT 
 			ISNULL(DB_NAME(database_id), 'Unknown'),
 			SUM(CASE WHEN type=0 THEN size * 8.0/1024.0 ELSE 0 END) as Data,
 			SUM(CASE WHEN type=1 THEN size * 8.0/1024.0 ELSE 0 END) as Log
@@ -243,7 +249,8 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 	metrics.TopQueries = []models.QueryStat{}
 
 	runningSQL := `
-		SELECT /* SQL_OPTIMA */   TOP 20
+		/* SQL_OPTIMA */
+		SELECT    TOP 20
 			ISNULL(s.login_name, 'System') as login_name,
 			ISNULL(s.program_name, 'System') as program_name,
 			ISNULL(DB_NAME(r.database_id), 'Unknown') as database_name,
@@ -282,6 +289,13 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 	// Top Queries are now fetched from TimescaleDB (sqlserver_query_metrics_v2)
 	// via the Service layer to reduce DMV overhead on the production instance.
 	metrics.TopQueries = []models.QueryStat{}
+
+	// Session Snapshots for attribution
+	if snapshots, err := CollectSessionSnapshot(context.Background(), db); err == nil {
+		metrics.SessionSnapshots = snapshots
+	} else {
+		log.Printf("[SQLSERVER] CollectSessionSnapshot failed for %s: %v", instanceName, err)
+	}
 
 	// queries.yml-driven dynamic sweep removed: all dashboard queries are now maintained in Go.
 
@@ -423,20 +437,21 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 
 	// 1. CPU Usage (Extract fully chronological 256-minute Ring Buffer history dynamically dropping arbitrary Go array bindings)
 	cpuQuery := `
-		DECLARE @ts_now bigint = (SELECT /* SQL_OPTIMA */   cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
-		SELECT /* SQL_OPTIMA */   TOP(256)
+		/* SQL_OPTIMA */
+		DECLARE @ts_now bigint = (SELECT    cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
+		SELECT   TOP(256)
 		    SQLProcessUtilization AS [SQL_Server_CPU], 
 		    SystemIdle AS [System_Idle_CPU], 
 		    100 - SystemIdle - SQLProcessUtilization AS [Other_Process_CPU],
 		    CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETDATE()), 120) AS [Event_Time]
 		FROM ( 
-		    SELECT /* SQL_OPTIMA */   record.value('(./Record/@id)[1]', 'int') AS record_id, 
+		    SELECT   record.value('(./Record/@id)[1]', 'int') AS record_id, 
 		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') 
 		        AS [SystemIdle], 
 		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') 
 		        AS [SQLProcessUtilization], [timestamp] 
 		    FROM ( 
-		        SELECT /* SQL_OPTIMA */   [timestamp], CONVERT(xml, record) AS [record] 
+		        SELECT  [timestamp], CONVERT(xml, record) AS [record] 
 		        FROM sys.dm_os_ring_buffers WITH (NOLOCK)
 		        WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
 		        AND record LIKE N'%<SystemHealth>%'
@@ -466,12 +481,13 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 	}
 
 	// 2. Active Sessions (sqlserver_active_sessions_by_status)
-	sessionQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
+	sessionQuery := `/* SQL_OPTIMA */ SELECT   COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
 	_ = db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
 
 	// 2b. Connections grouping natively over physically bounded user target logical pools
 	connQuery := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */
+		SELECT     
 			ISNULL(s.login_name, 'Unknown'),
 			ISNULL(DB_NAME(s.database_id), 'Unknown'),
 			COUNT(s.session_id) as active_connections,
@@ -496,7 +512,8 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 	// 3. Locks and Deadlocks grouped purely across target logical volumes dynamically
 	metrics.LocksByDB = make(map[string]models.LockStat)
 	lockQuery := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */
+		SELECT  
 			ISNULL(DB_NAME(resource_database_id), 'Unknown'),
 			COUNT(*),
 			SUM(CASE WHEN request_status = 'CONVERT' THEN 1 ELSE 0 END)
@@ -520,7 +537,8 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 
 	// 3b. Active Long Running & Blockers Hierarchy (Replaces rigid wait filtering)
 	blockDetQuery := `
-		SELECT /* SQL_OPTIMA */  
+		/* SQL_OPTIMA */
+		SELECT  
 			r.session_id as blocked_session_id,
 			ISNULL(r.blocking_session_id, 0) as blocking_session_id,
 			ISNULL(DB_NAME(r.database_id), 'Unknown') as database_name,
@@ -567,7 +585,8 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 
 	// Capture memory clerks exactly explicitly tracking native internal consumption footprints.
 	clerkQuery := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */
+		SELECT  
 			RTRIM(counter_name) as type,
 			CAST(cntr_value AS FLOAT) / 1024.0 as size_mb
 		FROM sys.dm_os_performance_counters
@@ -586,7 +605,7 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 	}
 
 	// 5b. Page Life Expectancy (PLE)
-	pleQuery := `SELECT /* SQL_OPTIMA */   ISNULL(CAST(cntr_value AS FLOAT), 0) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE [counter_name] = N'Page life expectancy' AND [object_name] LIKE '%Buffer Manager%'`
+	pleQuery := `/* SQL_OPTIMA */ SELECT    ISNULL(CAST(cntr_value AS FLOAT), 0) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE [counter_name] = N'Page life expectancy' AND [object_name] LIKE '%Buffer Manager%'`
 	var currentPLE float64
 	if err := db.QueryRow(pleQuery).Scan(&currentPLE); err == nil {
 		metrics.PLEHistory = append(metrics.PLEHistory, currentPLE)
@@ -596,7 +615,7 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 	}
 
 	// Wait Stats (Cumulative Deltas converting to ms/sec scaling across 60 sec loops)
-	wQuery := `SELECT /* SQL_OPTIMA */   wait_type, CAST(wait_time_ms AS FLOAT) FROM sys.dm_os_wait_stats WITH (NOLOCK) WHERE wait_type NOT IN ('DIRTY_PAGE_POLL', 'HADR_FILESTREAM_IOMGR_IOCOMPLETION', 'LAZYWRITER_SLEEP', 'LOGMGR_QUEUE', 'REQUEST_FOR_DEADLOCK_SEARCH', 'XE_DISPATCHER_WAIT', 'XE_TIMER_EVENT', 'SQLTRACE_BUFFER_FLUSH', 'SLEEP_TASK', 'BROKER_TO_FLUSH', 'SP_SERVER_DIAGNOSTICS_SLEEP') AND wait_time_ms > 0`
+	wQuery := `/* SQL_OPTIMA */ SELECT   wait_type, CAST(wait_time_ms AS FLOAT) FROM sys.dm_os_wait_stats WITH (NOLOCK) WHERE wait_type NOT IN ('DIRTY_PAGE_POLL', 'HADR_FILESTREAM_IOMGR_IOCOMPLETION', 'LAZYWRITER_SLEEP', 'LOGMGR_QUEUE', 'REQUEST_FOR_DEADLOCK_SEARCH', 'XE_DISPATCHER_WAIT', 'XE_TIMER_EVENT', 'SQLTRACE_BUFFER_FLUSH', 'SLEEP_TASK', 'BROKER_TO_FLUSH', 'SP_SERVER_DIAGNOSTICS_SLEEP') AND wait_time_ms > 0`
 	wRows, _ := db.Query(wQuery)
 	var wSnap models.WaitSnapshot
 	wSnap.Timestamp = time.Now().Format("2006-01-02 15:04:05")
@@ -629,7 +648,7 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 	}
 
 	// Virtual File IO Stats (Cumulative Deltas measuring latency scaling across 15 sec reads)
-	fQuery := `SELECT /* SQL_OPTIMA */   DB_NAME(vfs.database_id), mf.physical_name, mf.type_desc, vfs.num_of_reads, vfs.num_of_writes, vfs.io_stall_read_ms, vfs.io_stall_write_ms FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs JOIN sys.master_files AS mf WITH (NOLOCK) ON vfs.database_id = mf.database_id AND vfs.file_id = mf.file_id`
+	fQuery := `/* SQL_OPTIMA */ SELECT	   DB_NAME(vfs.database_id), mf.physical_name, mf.type_desc, vfs.num_of_reads, vfs.num_of_writes, vfs.io_stall_read_ms, vfs.io_stall_write_ms FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs JOIN sys.master_files AS mf WITH (NOLOCK) ON vfs.database_id = mf.database_id AND vfs.file_id = mf.file_id`
 	fRows, _ := db.Query(fQuery)
 	var fSnap models.FileIOSnapshot
 	fSnap.Timestamp = time.Now().Format("2006-01-02 15:04:05")
@@ -672,7 +691,7 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 		metrics.DiskByDB = make(map[string]models.DiskStat)
 	}
 	diskQuery := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ SELECT   
 			ISNULL(DB_NAME(database_id), 'Unknown'),
 			SUM(CASE WHEN type=0 THEN size * 8.0/1024.0 ELSE 0 END) as Data,
 			SUM(CASE WHEN type=1 THEN size * 8.0/1024.0 ELSE 0 END) as Log
@@ -705,7 +724,7 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 
 	// First, capture currently running queries with significant resource usage
 	runningSQL := `
-		SELECT /* SQL_OPTIMA */   TOP 20
+		/* SQL_OPTIMA */ SELECT   TOP 20
 			ISNULL(s.login_name, 'System') as login_name,
 			ISNULL(s.program_name, 'System') as program_name,
 			ISNULL(DB_NAME(r.database_id), 'Unknown') as database_name,
@@ -743,6 +762,13 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 	// Top Queries are now fetched from TimescaleDB (sqlserver_query_metrics_v2)
 	// via the Service layer to reduce DMV overhead on the production instance.
 	metrics.TopQueries = []models.QueryStat{}
+
+	// Session Snapshots for attribution
+	if snapshots, err := CollectSessionSnapshot(context.Background(), db); err == nil {
+		metrics.SessionSnapshots = snapshots
+	} else {
+		log.Printf("[SQLSERVER] CollectSessionSnapshot failed for %s: %v", instanceName, err)
+	}
 
 	// queries.yml-driven dynamic sweep removed: all dashboard queries are now maintained in Go.
 

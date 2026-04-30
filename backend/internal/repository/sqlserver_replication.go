@@ -26,7 +26,7 @@ func (c *SqlServerRepository) FetchReplicationStatus(instanceName string) ([]map
 	for _, dbn := range dbNames {
 		qb := sqlServerQuoteBracket(dbn)
 		query := fmt.Sprintf(`
-			SELECT /* SQL_OPTIMA */  
+			/* SQL_OPTIMA */ SELECT   
 				'Publication' as type,
 				p.name as name,
 				%s as database_name,

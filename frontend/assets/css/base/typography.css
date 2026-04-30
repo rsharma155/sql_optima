@@ -1,0 +1,15 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Base foundation styles for typography
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+h1, h2, h3, h4 { font-weight: 600; } p { color: var(--text-secondary); line-height: 1.5; }
+
+.code-snippet { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; background: var(--bg-surface); border: 1px solid var(--border-color); padding: 2px 6px; border-radius: 4px; color: var(--accent-blue); }
+
+.fw-bold { font-weight: 600; }
+

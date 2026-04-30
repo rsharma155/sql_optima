@@ -1,5 +1,5 @@
 -- Metric: pg_index_stats
--- Source: backend/internal/repository/pg_stats.go:1048
+-- Source: backend/internal/repository/pg_storage_metrics.go
 -- Target Table: N/A (index usage analysis)
 -- Description: Returns potentially unused indexes (idx_scan = 0) from pg_stat_user_indexes
 

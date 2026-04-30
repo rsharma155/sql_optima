@@ -25,7 +25,8 @@ func (c *SqlServerRepository) FetchBlockingSessionsCount(ctx context.Context, in
 
 	var n int
 	err := db.QueryRowContext(ctx, `
-		SELECT /* SQL_OPTIMA */   COUNT(*) AS blocking_sessions
+		/* SQL_OPTIMA */ 
+		SELECT COUNT(*) AS blocking_sessions
 		FROM sys.dm_exec_requests
 		WHERE blocking_session_id <> 0;
 	`).Scan(&n)
@@ -43,7 +44,7 @@ func (c *SqlServerRepository) FetchMemoryGrantsPending(ctx context.Context, inst
 
 	var n int
 	err := db.QueryRowContext(ctx, `
-		SELECT /* SQL_OPTIMA */   COUNT(*) AS memory_grants_pending
+		/* SQL_OPTIMA */ SELECT   COUNT(*) AS memory_grants_pending
 		FROM sys.dm_exec_query_memory_grants
 		WHERE grant_time IS NULL;
 	`).Scan(&n)
@@ -63,7 +64,7 @@ func (c *SqlServerRepository) FetchMemoryGrantsSummary(ctx context.Context, inst
 	var grantedMB float64
 	// sys.dm_exec_query_memory_grants can be empty, so use COALESCE/ISNULL for SUM.
 	err := db.QueryRowContext(ctx, `
-		SELECT /* SQL_OPTIMA */  
+		/* SQL_OPTIMA */ SELECT  
 			ISNULL(SUM(CASE WHEN grant_time IS NULL THEN 1 ELSE 0 END), 0) AS pending_grants,
 			ISNULL(SUM(CASE WHEN grant_time IS NOT NULL THEN 1 ELSE 0 END), 0) AS active_grants,
 			ISNULL(SUM(granted_memory_kb), 0) / 1024.0 AS granted_memory_mb
@@ -109,9 +110,9 @@ func (c *SqlServerRepository) FetchPerfCounters(ctx context.Context, instanceNam
 	}
 
 	q := fmt.Sprintf(`
-		SELECT /* SQL_OPTIMA */   counter_name, instance_name, CAST(cntr_value AS FLOAT) AS cntr_value
+		/* SQL_OPTIMA */ SELECT   RTRIM(counter_name) as counter_name, instance_name, CAST(cntr_value AS FLOAT) AS cntr_value
 		FROM sys.dm_os_performance_counters
-		WHERE counter_name IN (%s);
+		WHERE RTRIM(counter_name) IN (%s);
 	`, placeholders)
 
 	rows, err := db.QueryContext(ctx, q, args...)
@@ -144,7 +145,7 @@ func (c *SqlServerRepository) FetchWaitStatsCumulative(ctx context.Context, inst
 	defer cancel()
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT /* SQL_OPTIMA */   wait_type, CAST(wait_time_ms AS FLOAT) AS wait_time_ms
+		/* SQL_OPTIMA */ SELECT   wait_type, CAST(wait_time_ms AS FLOAT) AS wait_time_ms
 		FROM sys.dm_os_wait_stats
 		WHERE wait_type NOT LIKE '%SLEEP%';
 	`)
@@ -177,7 +178,7 @@ func (c *SqlServerRepository) FetchTempdbUsagePercent(ctx context.Context, insta
 	// Use tempdb DMV without switching DB context.
 	var usedMB, freeMB float64
 	err := db.QueryRowContext(ctx, `
-		SELECT /* SQL_OPTIMA */  
+		/* SQL_OPTIMA */ SELECT  
 			SUM(user_object_reserved_page_count + internal_object_reserved_page_count) * 8.0 / 1024.0 AS used_mb,
 			SUM(unallocated_extent_page_count) * 8.0 / 1024.0 AS free_mb
 		FROM tempdb.sys.dm_db_file_space_usage;
@@ -211,7 +212,7 @@ func (c *SqlServerRepository) FetchMaxDBLogUsagePercent(ctx context.Context, ins
 
 	// Discover online user DBs.
 	rows, err := db.QueryContext(ctx, `
-		SELECT /* SQL_OPTIMA */   name
+		/* SQL_OPTIMA */ SELECT   name
 		FROM sys.databases
 		WHERE database_id > 4 AND state_desc = 'ONLINE';
 	`)
@@ -236,8 +237,9 @@ func (c *SqlServerRepository) FetchMaxDBLogUsagePercent(ctx context.Context, ins
 	for _, name := range dbs {
 		// Per-db context needed for sys.dm_db_log_space_usage.
 		q := fmt.Sprintf(`
+			/* SQL_OPTIMA */ 
 			USE [%s];
-			SELECT /* SQL_OPTIMA */  
+			/* SQL_OPTIMA */ SELECT  
 				total_log_size_mb,
 				used_log_space_mb,
 				used_log_space_in_percent
@@ -274,15 +276,16 @@ func (c *SqlServerRepository) FetchFailedLoginsLast5Min(ctx context.Context, ins
 	// We count entries that mention "Login failed" within the last 5 minutes.
 	var n int
 	err := db.QueryRowContext(ctx, `
-		DECLARE @ts_now bigint = (SELECT /* SQL_OPTIMA */   cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
+		/* SQL_OPTIMA */ 
+		DECLARE @ts_now bigint = (SELECT  cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
 		WITH rb AS (
-			SELECT /* SQL_OPTIMA */  
+			SELECT  
 				DATEADD(ms, -1 * (@ts_now - [timestamp]), GETDATE()) AS event_time,
 				CONVERT(nvarchar(max), record) AS rec
 			FROM sys.dm_os_ring_buffers WITH (NOLOCK)
 			WHERE ring_buffer_type = N'RING_BUFFER_SECURITY_ERROR'
 		)
-		SELECT /* SQL_OPTIMA */   COUNT(*)
+		SELECT   COUNT(*)
 		FROM rb
 		WHERE event_time >= DATEADD(minute, -5, GETDATE())
 		  AND rec LIKE N'%Login failed%';

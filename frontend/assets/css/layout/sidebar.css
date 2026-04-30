@@ -1,0 +1,82 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Layout structural styles for sidebar
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+.sidebar {
+    width: 260px;
+    background-color: var(--sidebar-bg);
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    z-index: 10;
+    min-height: 0;
+    overflow: hidden;
+}
+.sidebar-header { padding: 1.5rem; display: flex; align-items: center; gap: 0.75rem; border-bottom: 1px solid var(--border-color); }
+.logo-icon { font-size: 1.5rem; color: var(--accent-blue); text-shadow: 0 0 10px var(--accent-glow); }
+.custom-select-group { display: flex; flex-direction: column; gap: 0.5rem; }
+.custom-select { width: 100%; padding: 0.5rem; background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-family: inherit; font-size: 0.8rem; }
+
+.nav-links {
+    list-style: none;
+    padding: 1.5rem 0.75rem;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.nav-links li { padding: 0.75rem 1rem; margin-bottom: 0.25rem; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 0.875rem; color: var(--text-secondary); transition: all 0.2s ease; font-weight: 500; font-size: 0.95rem; }
+.nav-links li:hover { background-color: var(--bg-surface-hover); color: var(--text-primary); transform: translateX(4px); }
+.nav-links li.active { background: linear-gradient(90deg, rgba(59, 130, 246, 0.1) 0%, transparent 100%); color: var(--accent-blue); border-left: 3px solid var(--accent-blue); }
+
+.sidebar-footer { padding: 1.25rem; border-top: 1px solid var(--border-color); }
+.theme-toggle-wrapper { display: flex; align-items: center; justify-content: center; gap: 0.75rem; }
+.switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #4b5563; transition: .4s; border-radius: 24px; }
+.slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+input:checked + .slider { background-color: var(--accent-blue); } input:checked + .slider:before { transform: translateX(20px); }
+
+/* Sidebar collapse (manual + laptop friendly) */
+body.sidebar-collapsed .sidebar { width: 72px; }
+body.sidebar-collapsed .sidebar-header {
+    justify-content: center;
+    padding: 1rem 0.5rem;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+body.sidebar-collapsed .sidebar-header h2 { display: none; }
+body.sidebar-collapsed .sidebar-inline-toggle { margin-left: 0 !important; }
+body.sidebar-collapsed .db-selector-wrapper { display: none; }
+body.sidebar-collapsed .nav-links { padding: 1rem 0.5rem; }
+body.sidebar-collapsed .nav-links li {
+    justify-content: center;
+    gap: 0;
+    font-size: 0; /* hide text nodes */
+}
+body.sidebar-collapsed .nav-links li i { font-size: 1.05rem; }
+body.sidebar-collapsed .nav-links li .badge { font-size: 0.65rem; }
+body.sidebar-collapsed .sidebar-footer { padding: 0.75rem; }
+
+.sidebar-inline-toggle {
+    border-color: transparent;
+    opacity: 0.75;
+}
+.sidebar-inline-toggle:hover {
+    opacity: 1;
+    border-color: var(--border-color);
+}
+.sidebar-toggle-glyph {
+    display: inline-block;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: -0.06em;
+    line-height: 1;
+}
+

@@ -9,16 +9,50 @@
  */
 
 window.PgQueriesView = async function() {
-    window.routerOutlet.innerHTML = await window.loadTemplate('/pages/queries.html');
-    setTimeout(initPgQueries, 50);
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || { name: 'Loading...', type: 'postgres' };
+    const dbName = window.appState.currentDatabase || 'all';
+
+    window.routerOutlet.innerHTML = await window.loadTemplate('/pages/queries.html', { inst, dbName });
+    
+    await initPgQueries();
+
+    // Set Refresh Interval
+    if (window.pgQueriesInterval) clearInterval(window.pgQueriesInterval);
+    window.pgQueriesInterval = setInterval(() => {
+        if (window.appState.activeViewId === 'pg-queries' || window.appState.activeViewId === 'pg-stat-statements') {
+            initPgQueries();
+        } else {
+            clearInterval(window.pgQueriesInterval);
+        }
+    }, 30000); // 30s refresh for queries
 };
+
+async function updatePgQueriesHeader(instName) {
+    try {
+        const snapshotResp = await window.apiClient.authenticatedFetch(`/api/postgres/server-info?instance=${encodeURIComponent(instName)}`);
+        if (snapshotResp.ok) {
+            const s = await snapshotResp.json();
+            if (document.getElementById('pg-uptime')) document.getElementById('pg-uptime').textContent = 'Uptime: ' + (s.uptime || 'N/A');
+            if (document.getElementById('pg-version')) document.getElementById('pg-version').textContent = (s.version || '').split(',')[0];
+            if (document.getElementById('pgLastRefreshTime')) document.getElementById('pgLastRefreshTime').textContent = new Date().toLocaleTimeString();
+            
+            const hs = s.health_score || 0;
+            const healthColor = hs > 80 ? 'success' : hs > 60 ? 'warning' : 'danger';
+            const hBadge = document.getElementById('pgHealthScoreBadge');
+            if (hBadge) {
+                hBadge.textContent = hs;
+                hBadge.className = `badge badge-${healthColor}`;
+            }
+        }
+    } catch (e) { console.error("PG Queries header fetch failed:", e); }
+}
 
 // Redirect legacy pg-stat-statements route to the merged page
 window.PgStatStatementsView = window.PgQueriesView;
 
 function pgQueriesFormatLocal(dt) {
     const pad = n => String(n).padStart(2, '0');
-    return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate()) + 'T' + pad(dt.getHours()) + ':' + pad(dt.getMinutes());
+    return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate()) + 'T' + pad(dt.getHours()) + ':' + pad(dt.getMinutes()) + ':' + pad(dt.getSeconds());
 }
 
 async function initPgQueries() {
@@ -72,27 +106,7 @@ async function initPgQueries() {
         toEl.addEventListener('change', updatePgQueriesRangeHint);
     }
 
-    try {
-        const instEl = document.getElementById('pgQueriesInstance');
-        const dbEl = document.getElementById('pgQueriesDatabase');
-        if (instEl) instEl.textContent = inst.name || '--';
-        if (dbEl) dbEl.textContent = database;
-
-        const strip = document.getElementById('pgQueriesStatusStrip');
-        if (strip && typeof window.renderStatusStrip === 'function') {
-            strip.innerHTML = window.renderStatusStrip({
-                lastUpdateId: 'pgQueriesLastRefreshTime',
-                sourceBadgeId: 'pgQueriesSourceBadge',
-                includeHealth: false,
-                includeFreshness: false,
-                autoRefreshText: ''
-            });
-        }
-        const t = document.getElementById('pgQueriesLastRefreshTime');
-        if (t) t.textContent = new Date().toLocaleTimeString();
-    } catch (e) {
-        // non-fatal
-    }
+    updatePgQueriesHeader(inst.name);
 
     // Lazy-load snapshot data when Deep Diagnostics is expanded
     const diagPanel = document.querySelector('.pgss-diagnostics-panel');

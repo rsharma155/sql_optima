@@ -21,12 +21,12 @@ func (tl *TimescaleLogger) LogPlanCacheHealth(ctx context.Context, instanceName 
 	}
 	now := time.Now().UTC()
 	_, err := tl.pool.Exec(ctx, `
-		INSERT INTO sqlserver_plan_cache_health (
-			capture_timestamp, server_instance_name,
+		INSERT INTO sqlserver_plan_cache (
+			capture_timestamp, server_instance_name, cache_type,
 			total_cache_mb, single_use_cache_mb, single_use_cache_pct,
 			adhoc_cache_mb, prepared_cache_mb, proc_cache_mb
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-	`, now, instanceName,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+	`, now, instanceName, "standardized_v2",
 		getFloat64(row, "total_cache_mb"),
 		getFloat64(row, "single_use_cache_mb"),
 		getFloat64(row, "single_use_cache_pct"),
@@ -44,7 +44,7 @@ func (tl *TimescaleLogger) GetPlanCacheHealth(ctx context.Context, instanceName 
 	q := `
 		SELECT capture_timestamp, total_cache_mb, single_use_cache_mb, single_use_cache_pct,
 		       adhoc_cache_mb, prepared_cache_mb, proc_cache_mb
-		FROM sqlserver_plan_cache_health
+		FROM sqlserver_plan_cache
 		WHERE server_instance_name = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2

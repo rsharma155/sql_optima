@@ -118,7 +118,7 @@ func collectMetrics(hostname, instanceName string) (*OSMetricsPayload, error) {
 		p.SharedBytes = v.Shared
 		p.SlabBytes = v.Slab
 		p.DirtyBytes = v.Dirty
-		p.WritebackBytes = v.Writeback
+		p.WritebackBytes = v.WriteBack
 	}
 
 	s, err := mem.SwapMemory()

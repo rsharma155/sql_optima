@@ -15,7 +15,7 @@ import (
 // CollectTempDBUsage fetches TempDB usage statistics
 func (c *SqlServerRepository) CollectTempDBUsage(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ SELECT   
 			ISNULL(DB_NAME(database_id), 'tempdb') AS database_name,
 			file_id,
 			type_desc,
@@ -56,7 +56,7 @@ func (c *SqlServerRepository) CollectTempDBUsage(db *sql.DB) ([]map[string]inter
 func (c *SqlServerRepository) CollectTempDBStats(db *sql.DB) ([]map[string]interface{}, error) {
 	// Query 1: TempDB file usage
 	fileQuery := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ SELECT   
 			DB_NAME() AS database_name,
 			t.name AS file_name,
 			t.type_desc AS file_type,
@@ -96,7 +96,7 @@ func (c *SqlServerRepository) CollectTempDBStats(db *sql.DB) ([]map[string]inter
 	// If no results from files, query for active tempdb requests
 	if len(results) == 0 {
 		requestQuery := `
-			SELECT /* SQL_OPTIMA */   TOP 20
+			/* SQL_OPTIMA */ SELECT   TOP 20
 				DB_NAME() AS database_name,
 				s.session_id,
 				s.request_id,

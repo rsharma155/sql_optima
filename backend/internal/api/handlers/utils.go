@@ -60,3 +60,12 @@ func instanceTypeFromDB(ctx context.Context, cfg *config.Config, metricsSvc *ser
 	}
 	return false
 }
+
+func firstErrString(errs ...error) string {
+	for _, e := range errs {
+		if e != nil {
+			return e.Error()
+		}
+	}
+	return ""
+}

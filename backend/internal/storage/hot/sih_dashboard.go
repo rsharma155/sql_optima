@@ -202,7 +202,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 				ORDER BY db_name, schema_name, table_name, time DESC
 			) t
 			ORDER BY v DESC
-			LIMIT 10
+			LIMIT 50
 		`, where)
 		rows, err := tl.pool.Query(ctx, q, args...)
 		if err != nil {
@@ -237,8 +237,8 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 					ORDER BY db_name, schema_name, table_name, time DESC
 				) t
 				ORDER BY v DESC
-				LIMIT 10
-			`, where)
+				LIMIT 50
+				`, where)
 			rows2, _ := tl.pool.Query(ctx, q2, args...)
 			if rows2 != nil {
 				defer rows2.Close()
@@ -269,7 +269,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 				ORDER BY db_name, schema_name, table_name, index_name, time DESC
 			) t
 			ORDER BY v DESC
-			LIMIT 10
+			LIMIT 50
 		`, where)
 		rows, err := tl.pool.Query(ctx, q, args...)
 		if err != nil {

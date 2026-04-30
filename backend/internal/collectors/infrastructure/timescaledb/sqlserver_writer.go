@@ -59,29 +59,51 @@ func (w *TimescaleWriter) SaveMetrics(ctx context.Context, instanceID string, sn
 	if err := br.Close(); err != nil {
 		return fmt.Errorf("send batch to staging: %w", err)
 	}
-
-	// 2. Production Merge Statement
-	mergeSQL := `
+// 2. Production Merge Statement
+mergeSQL := `
 WITH previous AS (
-    SELECT *
-    FROM sqlserver_query_stats_snapshot_v2
-    WHERE instance_id = $1
+SELECT *
+FROM sqlserver_query_stats_snapshot_v2
+WHERE instance_id = $1
+),
+aggregated_staging AS (
+SELECT
+instance_id, db_id, query_hash, plan_handle,
+MAX(poll_time_utc) as poll_time_utc,
+MAX(sqlserver_start_time) as sqlserver_start_time,
+MAX(database_name) as database_name,
+MAX(query_text) as query_text,
+MAX(statement_text) as statement_text,
+SUM(total_worker_time) as total_worker_time,
+SUM(total_logical_reads) as total_logical_reads,
+SUM(total_logical_writes) as total_logical_writes,
+SUM(execution_count) as execution_count,
+SUM(total_rows) as total_rows,
+SUM(total_grant_kb) as total_grant_kb,
+MAX(max_worker_time) as max_worker_time,
+MAX(max_logical_reads) as max_logical_reads,
+MAX(max_dop) as max_dop,
+MAX(max_grant_kb) as max_grant_kb,
+MAX(max_rows) as max_rows,
+MAX(last_execution_time) as last_execution_time
+FROM sqlserver_query_stats_staging_v2
+WHERE instance_id = $1
+GROUP BY instance_id, db_id, query_hash, plan_handle
 ),
 joined AS (
-    SELECT
-        s.*,
-        p.last_total_worker_time,
-        p.last_total_logical_reads,
-        p.last_total_logical_writes,
-        p.last_total_execution_count,
-        p.last_total_rows
-    FROM sqlserver_query_stats_staging_v2 s
-    LEFT JOIN previous p
-      ON p.instance_id = s.instance_id
-     AND p.db_id = s.db_id
-     AND p.query_hash = s.query_hash
-     AND p.plan_handle = s.plan_handle
-    WHERE s.instance_id = $1
+SELECT
+s.*,
+p.last_total_worker_time,
+p.last_total_logical_reads,
+p.last_total_logical_writes,
+p.last_total_execution_count,
+p.last_total_rows
+FROM aggregated_staging s
+LEFT JOIN previous p
+ON p.instance_id = s.instance_id
+AND p.db_id = s.db_id
+AND p.query_hash = s.query_hash
+AND p.plan_handle = s.plan_handle
 ),
 deltas AS (
     SELECT
@@ -134,26 +156,26 @@ WHERE exec_delta > 0 OR cpu_delta_ms > 0;
 	if _, err := tx.Exec(ctx, mergeSQL, instanceID); err != nil {
 		return fmt.Errorf("merge deltas to history: %w", err)
 	}
-
-	// 3. Upsert Snapshot
-	upsertSQL := `
+// 3. Upsert Snapshot
+upsertSQL := `
 INSERT INTO sqlserver_query_stats_snapshot_v2 (
-    instance_id, db_id, query_hash, plan_handle,
-    database_name, query_text, statement_text,
-    last_total_worker_time, last_total_logical_reads, last_total_logical_writes,
-    last_total_execution_count, last_total_rows, last_total_grant_kb,
-    max_worker_time, max_logical_reads, max_dop, max_grant_kb, max_rows,
-    last_execution_time, last_seen_poll_time
+instance_id, db_id, query_hash, plan_handle,
+database_name, query_text, statement_text,
+last_total_worker_time, last_total_logical_reads, last_total_logical_writes,
+last_total_execution_count, last_total_rows, last_total_grant_kb,
+max_worker_time, max_logical_reads, max_dop, max_grant_kb, max_rows,
+last_execution_time, last_seen_poll_time
 )
 SELECT
-    instance_id, db_id, query_hash, plan_handle,
-    database_name, query_text, statement_text,
-    total_worker_time, total_logical_reads, total_logical_writes,
-    execution_count, total_rows, total_grant_kb,
-    max_worker_time, max_logical_reads, max_dop, max_grant_kb, max_rows,
-    last_execution_time, poll_time_utc
+instance_id, db_id, query_hash, plan_handle,
+MAX(database_name), MAX(query_text), MAX(statement_text),
+SUM(total_worker_time), SUM(total_logical_reads), SUM(total_logical_writes),
+SUM(execution_count), SUM(total_rows), SUM(total_grant_kb),
+MAX(max_worker_time), MAX(max_logical_reads), MAX(max_dop), MAX(max_grant_kb), MAX(max_rows),
+MAX(last_execution_time), MAX(poll_time_utc)
 FROM sqlserver_query_stats_staging_v2
 WHERE instance_id = $1
+GROUP BY instance_id, db_id, query_hash, plan_handle
 ON CONFLICT (instance_id, db_id, query_hash, plan_handle)
 DO UPDATE SET
     database_name = EXCLUDED.database_name,

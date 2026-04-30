@@ -145,7 +145,7 @@ type WaitDeltaRow struct {
 	ServerInstanceName string    `json:"server_instance_name"`
 	WaitType           string    `json:"wait_type"`
 	WaitCategory       string    `json:"wait_category"`
-	WaitTimeMsDelta    float64   `json:"wait_time_ms_delta"`
+	WaitTimeMsDelta    float64   `json:"wait_time_ms"`
 }
 
 func (tl *TimescaleLogger) LogSQLServerWaitDeltas(ctx context.Context, rows []WaitDeltaRow) error {
@@ -155,10 +155,10 @@ func (tl *TimescaleLogger) LogSQLServerWaitDeltas(ctx context.Context, rows []Wa
 	batch := &pgx.Batch{}
 	for _, r := range rows {
 		batch.Queue(`
-			INSERT INTO sqlserver_waits_delta (
-				capture_timestamp, server_instance_name, wait_type, wait_category, wait_time_ms_delta
-			) VALUES ($1,$2,$3,$4,$5)
-		`, r.CaptureTimestamp, r.ServerInstanceName, r.WaitType, r.WaitCategory, r.WaitTimeMsDelta)
+			INSERT INTO sqlserver_wait_stats (
+				capture_timestamp, server_instance_name, wait_category, wait_time_ms
+			) VALUES ($1,$2,$3,$4)
+		`, r.CaptureTimestamp, r.ServerInstanceName, r.WaitCategory, r.WaitTimeMsDelta)
 	}
 
 	br := tl.pool.SendBatch(ctx, batch)
@@ -218,13 +218,13 @@ func (tl *TimescaleLogger) ComputeAndLogWaitDeltas(ctx context.Context, instance
 		return nil
 	}
 	sig := waitDeltaSnapshotFingerprint(instanceName, rows)
-	if tl.enterpriseSnapshotUnchanged(instanceName, enterpriseKindWaitsDelta, sig) {
+	if tl.EnterpriseSnapshotUnchanged(instanceName, enterpriseKindWaitsDelta, sig) {
 		return nil
 	}
 	if err := tl.LogSQLServerWaitDeltas(ctx, rows); err != nil {
 		return err
 	}
-	tl.rememberEnterpriseSnapshot(instanceName, enterpriseKindWaitsDelta, sig)
+	tl.RememberEnterpriseSnapshot(instanceName, enterpriseKindWaitsDelta, sig)
 	return nil
 }
 
@@ -233,7 +233,7 @@ type WaitCategoryAgg struct {
 	WaitTimeMs   float64 `json:"wait_time_ms"`
 }
 
-// GetWaitCategoryAgg returns summed wait_time_ms_delta per category over the last N minutes.
+// GetWaitCategoryAgg returns summed wait_time_ms per category over the last N minutes.
 func (tl *TimescaleLogger) GetWaitCategoryAgg(ctx context.Context, instanceName string, minutes int) ([]WaitCategoryAgg, error) {
 	if minutes <= 0 {
 		minutes = 15
@@ -242,8 +242,8 @@ func (tl *TimescaleLogger) GetWaitCategoryAgg(ctx context.Context, instanceName 
 	defer cancel()
 
 	q := `
-		SELECT wait_category, SUM(wait_time_ms_delta) AS wait_time_ms
-		FROM sqlserver_waits_delta
+		SELECT wait_category, SUM(wait_time_ms) AS wait_time_ms
+		FROM sqlserver_wait_stats
 		WHERE server_instance_name = $1
 		  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
 		GROUP BY wait_category

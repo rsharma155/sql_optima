@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/models"
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
@@ -28,7 +29,7 @@ type SqlServerTableUsageRow struct {
 
 // CollectSQLServerTableSizeSnapshot returns table size + row_count. SQL Server doesn't expose seq_scan/idx_scan,
 // so those are stored as zeros (dashboard uses index_usage_stats for seek/scan patterns).
-func CollectSQLServerTableSizeSnapshot(ctx context.Context, dbq Queryer) ([]SqlServerTableUsageRow, error) {
+func CollectSQLServerTableSizeSnapshot(ctx context.Context, dbq repository.Queryer) ([]SqlServerTableUsageRow, error) {
 	q := ` /* SQL_OPTIMA */ 
 		SELECT
 			DB_NAME() AS db_name,

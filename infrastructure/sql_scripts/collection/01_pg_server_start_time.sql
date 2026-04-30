@@ -1,5 +1,5 @@
 -- Metric: pg_server_start_time
--- Source: backend/internal/repository/pg_stats.go:443
+-- Source: backend/internal/repository/pg_system_metrics.go
 -- Target Table: N/A (server info)
 -- Description: Gets PostgreSQL postmaster start time for uptime calculation
 

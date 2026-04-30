@@ -8,9 +8,10 @@
 package repository
 
 import (
-	"github.com/rsharma155/sql_optima/internal/models"
 	"log"
 	"time"
+
+	"github.com/rsharma155/sql_optima/internal/models"
 )
 
 func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetrics {
@@ -56,7 +57,7 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 
 	// Failed in last 24h
 	failedQuery := `
-		SELECT /* SQL_OPTIMA */   COUNT(*) FROM msdb.dbo.sysjobhistory h WITH (NOLOCK)
+		/* SQL_OPTIMA */ SELECT   COUNT(*) FROM msdb.dbo.sysjobhistory h WITH (NOLOCK)
 		JOIN msdb.dbo.sysjobs j WITH (NOLOCK) ON h.job_id = j.job_id
 		WHERE h.run_status = 0 AND h.run_date >= CAST(CONVERT(VARCHAR(8), GETDATE()-1, 112) AS INT) AND h.step_id = 0
 	`
@@ -68,7 +69,7 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 
 	// 2. Job List
 	listQuery := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ SELECT   
 			ISNULL(j.name, 'Unknown') AS JobName,
 			ISNULL(c.name, 'Uncategorized') AS Category,
 			ISNULL(j.description, '') AS Description,
@@ -112,7 +113,7 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 
 	// 3. Next Run Schedules
 	schedQuery := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ SELECT   
 			ISNULL(j.name, 'Unknown') AS JobName,
 			ISNULL(j.enabled, 0),
 			ISNULL(s.name, 'N/A') AS ScheduleName,
@@ -140,7 +141,7 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 
 	// 4. Job Failures (Last 100 to limit payload sizes natively)
 	failQuery := `
-		SELECT /* SQL_OPTIMA */   TOP 100
+		/* SQL_OPTIMA */ SELECT   TOP 100
 			ISNULL(j.name, 'Unknown'),
 			ISNULL(h.step_name, 'Unknown'),
 			ISNULL(SUBSTRING(h.message, 1, 300), 'No Trace'),

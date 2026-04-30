@@ -1,5 +1,5 @@
 -- Metric: pg_connection_stats
--- Source: backend/internal/repository/pg_stats.go:354
+-- Source: backend/internal/repository/pg_session_metrics.go
 -- Target Table: postgres_connection_stats (TimescaleDB)
 -- Description: Returns active, idle, and total connection counts from pg_stat_activity
 

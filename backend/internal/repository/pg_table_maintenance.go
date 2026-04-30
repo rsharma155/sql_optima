@@ -72,7 +72,8 @@ func (c *PgRepository) GetTableMaintenanceStatsForDB(db *sql.DB, limit int) ([]P
 	}
 	// Table-level stats. Use pg_total_relation_size for bytes and pretty formatting.
 	q := `
-		SELECT /* SQL_OPTIMA */  
+		/* SQL_OPTIMA */ 
+		SELECT  
 			now() AT TIME ZONE 'UTC' AS capture_timestamp,
 			s.schemaname,
 			s.relname,

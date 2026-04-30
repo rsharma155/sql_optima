@@ -41,7 +41,7 @@ func (c *PgRepository) GetDatabaseSizeStats(instanceName string) PgDatabaseSizeS
 	}
 
 	rows, err := db.Query(`
-		SELECT /* SQL_OPTIMA */   datname, pg_database_size(datname)
+		/* SQL_OPTIMA */ SELECT    datname, pg_database_size(datname)
 		FROM pg_database
 		WHERE datistemplate = false
 		ORDER BY pg_database_size(datname) DESC;

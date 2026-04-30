@@ -587,6 +587,21 @@ type TableSizeHistoryRow struct {
 	IndexMB      float64   `json:"index_mb"`
 }
 
+func (tl *TimescaleLogger) LogTableStructureHistoryWithChangeDetection(ctx context.Context, instanceName string, rows []TableStructureHistoryRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	sig := tl.FingerprintTableStructureRows(instanceName, rows)
+	if tl.EnterpriseSnapshotUnchanged(instanceName, enterpriseKindTableStructure, sig) {
+		return nil
+	}
+	err := tl.LogTableStructureHistory(ctx, rows)
+	if err == nil {
+		tl.RememberEnterpriseSnapshot(instanceName, enterpriseKindTableStructure, sig)
+	}
+	return err
+}
+
 func (tl *TimescaleLogger) LogTableStructureHistory(ctx context.Context, rows []TableStructureHistoryRow) error {
 	if len(rows) == 0 {
 		return nil

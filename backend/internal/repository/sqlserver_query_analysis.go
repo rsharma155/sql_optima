@@ -49,8 +49,9 @@ func (c *SqlServerRepository) FetchQueryRegressions(instanceName string) ([]mode
 func fetchRegressionsForDB(db *sql.DB, dbName string) ([]models.SqlServerQueryRegression, error) {
 	_ = sqlServerQuoteBracket(dbName)
 	const query = `
-		WITH recent AS (
-			SELECT /* SQL_OPTIMA */  
+		/* SQL_OPTIMA */ 
+		;WITH recent AS (
+			SELECT 
 				CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
 				qt.query_sql_text AS query_text,
 				AVG(rs.avg_duration / 1000.0) AS avg_duration_ms,
@@ -70,7 +71,7 @@ func fetchRegressionsForDB(db *sql.DB, dbName string) ([]models.SqlServerQueryRe
 			GROUP BY q.query_hash, qt.query_sql_text
 		),
 		previous AS (
-			SELECT /* SQL_OPTIMA */  
+			SELECT
 				CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
 				AVG(rs.avg_duration / 1000.0) AS avg_duration_ms,
 				AVG(rs.avg_cpu_time / 1000.0) AS avg_cpu_ms,
@@ -83,7 +84,7 @@ func fetchRegressionsForDB(db *sql.DB, dbName string) ([]models.SqlServerQueryRe
 			  AND rsi.start_time < DATEADD(hour, -24, GETUTCDATE())
 			GROUP BY q.query_hash
 		)
-		SELECT /* SQL_OPTIMA */   TOP 50
+		SELECT TOP 50
 			r.query_hash,
 			r.query_text,
 			CASE
@@ -161,6 +162,7 @@ func (c *SqlServerRepository) FetchPlanInstability(instanceName string) ([]model
 func fetchPlanInstabilityForDB(db *sql.DB, dbName string) ([]models.SqlServerPlanInstability, error) {
 	qb := sqlServerQuoteBracket(dbName)
 	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 
 		USE %s;
 		SELECT /* SQL_OPTIMA */   TOP 50
 			CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
@@ -214,15 +216,16 @@ func (c *SqlServerRepository) FetchWatchedQueryStats(ctx context.Context, instan
 
 	qb := sqlServerQuoteBracket(dbName)
 	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 
 		USE %s;
-		SELECT /* SQL_OPTIMA */   TOP 1
+		SELECT TOP 1
 			ISNULL(rs.count_executions, 0) AS executions,
 			ISNULL(rs.avg_duration / 1000.0, 0) AS avg_duration_ms,
 			ISNULL(rs.avg_cpu_time / 1000.0, 0) AS avg_cpu_ms,
 			ISNULL(rs.avg_logical_io_reads, 0) AS avg_reads,
 			ISNULL(rs.avg_duration * rs.count_executions / 1000.0, 0) AS total_duration_ms,
 			ISNULL(rs.avg_cpu_time * rs.count_executions / 1000.0, 0) AS total_cpu_ms,
-			(SELECT /* SQL_OPTIMA */   COUNT(DISTINCT p2.plan_id) FROM sys.query_store_plan p2 WHERE p2.query_id = q.query_id) AS plan_count,
+			(SELECT  COUNT(DISTINCT p2.plan_id) FROM sys.query_store_plan p2 WHERE p2.query_id = q.query_id) AS plan_count,
 			rs.last_execution_time,
 			CAST(p.query_plan AS NVARCHAR(MAX)) AS query_plan,
 			qt.query_sql_text
@@ -269,8 +272,9 @@ func (c *SqlServerRepository) FetchQueryPlans(ctx context.Context, instanceName,
 
 	qb := sqlServerQuoteBracket(dbName)
 	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 
 		USE %s;
-		SELECT /* SQL_OPTIMA */  
+		SELECT
 			p.plan_id,
 			ISNULL(AVG(rs.avg_duration / 1000.0), 0) AS avg_duration_ms,
 			ISNULL(AVG(rs.avg_cpu_time / 1000.0), 0) AS avg_cpu_ms,
@@ -322,8 +326,9 @@ func (c *SqlServerRepository) FetchQueryWaitStats(ctx context.Context, instanceN
 
 	qb := sqlServerQuoteBracket(dbName)
 	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */ 
 		USE %s;
-		SELECT /* SQL_OPTIMA */  
+		SELECT 
 			ws.wait_category_desc,
 			AVG(ws.avg_query_wait_time_ms) AS avg_wait_ms,
 			SUM(ws.total_query_wait_time_ms) AS total_wait_ms

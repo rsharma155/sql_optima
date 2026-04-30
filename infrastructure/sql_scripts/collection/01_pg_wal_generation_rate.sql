@@ -1,5 +1,5 @@
 -- Metric: pg_wal_generation_rate
--- Source: backend/internal/repository/pg_stats.go:1165
+-- Source: backend/internal/repository/pg_replication_metrics.go
 -- Target Table: postgres_replication_stats (TimescaleDB)
 -- Description: Gets WAL generation rate (simplified calculation)
 

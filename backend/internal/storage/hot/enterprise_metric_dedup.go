@@ -13,31 +13,33 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	// Removed import to break import cycle
 )
 
 // Batch-kind keys for in-memory snapshot deduplication (per instance).
 const (
-	enterpriseKindLatchWaits   = "latch_waits"
-	enterpriseKindProcedure    = "procedure_stats"
-	enterpriseKindFileIO       = "file_io_latency"
-	enterpriseKindSpinlock     = "spinlock_stats"
-	enterpriseKindMemoryClerks = "memory_clerks"
-	enterpriseKindWaitsDelta   = "waits_delta"
+	enterpriseKindLatchWaits         = "latch_waits"
+	enterpriseKindProcedure          = "procedure_stats"
+	enterpriseKindSpinlock           = "spinlock_stats"
+	enterpriseKindMemoryClerks       = "memory_clerks"
+	enterpriseKindWaitsDelta         = "waits_delta"
+	enterpriseKindTableStructure     = "table_structure"
+	enterpriseKindPgIndexDefinitions = "pg_index_definitions"
 )
 
 func enterpriseHashKey(instance, kind string) string {
 	return instance + "\x00" + kind
 }
 
-// enterpriseSnapshotUnchanged reports whether this scrape matches the last stored snapshot for (instance, kind).
-func (tl *TimescaleLogger) enterpriseSnapshotUnchanged(instance, kind string, sig uint64) bool {
+// EnterpriseSnapshotUnchanged reports whether this scrape matches the last stored snapshot for (instance, kind).
+func (tl *TimescaleLogger) EnterpriseSnapshotUnchanged(instance, kind string, sig uint64) bool {
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
 	prev, ok := tl.prevEnterpriseBatchHash[enterpriseHashKey(instance, kind)]
 	return ok && prev == sig
 }
 
-func (tl *TimescaleLogger) rememberEnterpriseSnapshot(instance, kind string, sig uint64) {
+func (tl *TimescaleLogger) RememberEnterpriseSnapshot(instance, kind string, sig uint64) {
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
 	tl.prevEnterpriseBatchHash[enterpriseHashKey(instance, kind)] = sig
@@ -119,6 +121,71 @@ func waitDeltaSnapshotFingerprint(instance string, rows []WaitDeltaRow) uint64 {
 	})
 	for _, r := range cp {
 		_, _ = fmt.Fprintf(h, "%s:%g|", r.WaitCategory, r.WaitTimeMsDelta)
+	}
+	return h.Sum64()
+}
+
+// fingerprintTableStructureRows hashes table structure risks for change detection.
+func (tl *TimescaleLogger) FingerprintTableStructureRows(instance string, rows []TableStructureHistoryRow) uint64 {
+	h := fnv.New64a()
+	_, _ = fmt.Fprintf(h, "%s|%s|%d|", instance, enterpriseKindTableStructure, len(rows))
+	if len(rows) == 0 {
+		return h.Sum64()
+	}
+	cp := append([]TableStructureHistoryRow(nil), rows...)
+	sort.Slice(cp, func(i, j int) bool {
+		if cp[i].DatabaseName != cp[j].DatabaseName {
+			return cp[i].DatabaseName < cp[j].DatabaseName
+		}
+		if cp[i].SchemaName != cp[j].SchemaName {
+			return cp[i].SchemaName < cp[j].SchemaName
+		}
+		return cp[i].TableName < cp[j].TableName
+	})
+	for _, r := range cp {
+		_, _ = fmt.Fprintf(h, "%s.%s.%s:%v:%v|", r.DatabaseName, r.SchemaName, r.TableName, r.HasClusteredIndex, r.HasPrimaryKey)
+	}
+	return h.Sum64()
+}
+
+// Minimal copy of IndexDefinitionCatalogRow to break import cycle.
+type IndexDefinitionCatalogRow struct {
+	DBName           string
+	SchemaName       string
+	TableName        string
+	IndexName        string
+	KeyColumns       string
+	IncludeColumns   string
+	FilterDefinition struct {
+		String string
+	}
+	IsUnique  bool
+	IsPK      bool
+	IndexType string
+}
+
+// FingerprintIndexDefinitionRows hashes index definitions for change detection.
+func (tl *TimescaleLogger) FingerprintIndexDefinitionRows(instance string, rows []IndexDefinitionCatalogRow) uint64 {
+	h := fnv.New64a()
+	_, _ = fmt.Fprintf(h, "%s|%s|%d|", instance, enterpriseKindPgIndexDefinitions, len(rows))
+	if len(rows) == 0 {
+		return h.Sum64()
+	}
+	cp := append([]IndexDefinitionCatalogRow(nil), rows...)
+	sort.Slice(cp, func(i, j int) bool {
+		if cp[i].DBName != cp[j].DBName {
+			return cp[i].DBName < cp[j].DBName
+		}
+		if cp[i].SchemaName != cp[j].SchemaName {
+			return cp[i].SchemaName < cp[j].SchemaName
+		}
+		if cp[i].TableName != cp[j].TableName {
+			return cp[i].TableName < cp[j].TableName
+		}
+		return cp[i].IndexName < cp[j].IndexName
+	})
+	for _, r := range cp {
+		_, _ = fmt.Fprintf(h, "%s.%s.%s.%s:%s:%s:%s:%v:%v:%s|", r.DBName, r.SchemaName, r.TableName, r.IndexName, r.KeyColumns, r.IncludeColumns, r.FilterDefinition.String, r.IsUnique, r.IsPK, r.IndexType)
 	}
 	return h.Sum64()
 }

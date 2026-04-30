@@ -18,6 +18,43 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type WaitSnapshotRow struct {
+	CaptureTimestamp   time.Time `json:"capture_timestamp"`
+	ServerInstanceName string    `json:"server_instance_name"`
+	DiskRead           float64   `json:"disk_read"`
+	Blocking           float64   `json:"blocking"`
+	Parallelism        float64   `json:"parallelism"`
+	Other              float64   `json:"other"`
+}
+
+func (tl *TimescaleLogger) GetLatestSQLServerWaitHistory(ctx context.Context, instanceName string, limit int) ([]WaitSnapshotRow, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	q := `
+		SELECT capture_timestamp, server_instance_name, disk_read_ms_per_sec, blocking_ms_per_sec, parallelism_ms_per_sec, other_ms_per_sec
+		FROM sqlserver_wait_history
+		WHERE server_instance_name = $1
+		ORDER BY capture_timestamp DESC
+		LIMIT $2
+	`
+	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []WaitSnapshotRow
+	for rows.Next() {
+		var r WaitSnapshotRow
+		if err := rows.Scan(&r.CaptureTimestamp, &r.ServerInstanceName, &r.DiskRead, &r.Blocking, &r.Parallelism, &r.Other); err != nil {
+			continue
+		}
+		results = append(results, r)
+	}
+	return results, nil
+}
+
 func (tl *TimescaleLogger) GetSQLServerMetrics(ctx context.Context, instanceName string, limit int) ([]SQLServerMetricRow, error) {
 	if limit <= 0 {
 		limit = 100
@@ -149,7 +186,7 @@ func (tl *TimescaleLogger) LogSQLServerWaitHistory(ctx context.Context, instance
 	}
 
 	wait := waits[len(waits)-1]
-	query := `INSERT INTO sqlserver_wait_history (capture_timestamp, server_instance_name, disk_read, blocking, parallelism, other) VALUES ($1, $2, $3, $4, $5, $6)`
+	query := `INSERT INTO sqlserver_wait_history (capture_timestamp, server_instance_name, disk_read_ms_per_sec, blocking_ms_per_sec, parallelism_ms_per_sec, other_ms_per_sec) VALUES ($1, $2, $3, $4, $5, $6)`
 	now := time.Now().UTC()
 	_, err := tl.pool.Exec(ctx, query, now, instanceName,
 		getFloat64(wait, "disk_read"),
@@ -173,6 +210,7 @@ func (tl *TimescaleLogger) GetLatestSQLServerConnectionSnapshots(ctx context.Con
 				ROW_NUMBER() OVER (PARTITION BY COALESCE(database_name, '') ORDER BY capture_timestamp DESC) AS rn
 			FROM sqlserver_connection_history
 			WHERE server_instance_name = $1
+			  AND (login_name IS NULL OR login_name <> 'dbmonitor_user')
 		) t
 		WHERE rn = 1
 		ORDER BY database_name
@@ -295,6 +333,7 @@ func (tl *TimescaleLogger) LogCPUSchedulerStats(ctx context.Context, instanceNam
 		capture_timestamp, server_instance_name,
 		max_workers_count, scheduler_count, cpu_count,
 		total_runnable_tasks_count, total_work_queue_count, total_current_workers_count,
+		active_workers_count, pending_disk_io_count,
 		avg_runnable_tasks_count, total_active_request_count, total_queued_request_count,
 		total_blocked_task_count, total_active_parallel_thread_count,
 		runnable_request_count, total_request_count, runnable_percent,
@@ -303,7 +342,7 @@ func (tl *TimescaleLogger) LogCPUSchedulerStats(ctx context.Context, instanceNam
 		total_physical_memory_kb, available_physical_memory_kb,
 		system_memory_state_desc, physical_memory_pressure_warning,
 		total_node_count, nodes_online_count, offline_cpu_count, offline_cpu_warning
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)`
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)`
 
 	now := time.Now().UTC()
 	_, err := tl.pool.Exec(ctx, query, now, instanceName,
@@ -313,6 +352,8 @@ func (tl *TimescaleLogger) LogCPUSchedulerStats(ctx context.Context, instanceNam
 		getInt(statsMap, "total_runnable_tasks_count"),
 		getInt(statsMap, "total_work_queue_count"),
 		getInt(statsMap, "total_current_workers_count"),
+		getInt(statsMap, "active_workers_count"),
+		getInt(statsMap, "pending_disk_io_count"),
 		getFloat64(statsMap, "avg_runnable_tasks_count"),
 		getInt(statsMap, "total_active_request_count"),
 		getInt(statsMap, "total_queued_request_count"),

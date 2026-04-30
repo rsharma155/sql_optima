@@ -360,16 +360,16 @@ window.PgStorageView = async function() {
             const data = await storageResp.value.json();
             const tables = data.tables || [];
             
-            const worstDead = tables.reduce((best, t) => (!best || t.bloat_pct > best.bloat_pct) ? t : best, null);
+            const worstDead = tables.reduce((best, t) => (!best || t.dead_pct > best.dead_pct) ? t : best, null);
             if (worstDead) {
-                document.getElementById('val-worst-dead-pct').textContent = `${worstDead.bloat_pct.toFixed(1)}%`;
+                document.getElementById('val-worst-dead-pct').textContent = `${worstDead.dead_pct.toFixed(1)}%`;
                 document.getElementById('sub-worst-dead-pct').textContent = `${worstDead.schema}.${worstDead.table}`;
             }
 
             // Charts
             setTimeout(() => {
                 window.currentCharts = window.currentCharts || {};
-                const totalBloat = tables.length > 0 ? tables.reduce((sum, t) => sum + (t.bloat_pct || 0), 0) / tables.length : 0;
+                const totalBloat = tables.length > 0 ? tables.reduce((sum, t) => sum + (t.dead_pct || 0), 0) / tables.length : 0;
                 const bloatCtx = document.getElementById('pgBloatChart');
                 if (bloatCtx) {
                     if (window.currentCharts.pgBloat) window.currentCharts.pgBloat.destroy();

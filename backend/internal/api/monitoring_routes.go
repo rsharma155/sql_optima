@@ -12,6 +12,9 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/rsharma155/sql_optima/internal/api/handlers"
+	pg_backup_api "github.com/rsharma155/sql_optima/internal/domain/postgres_backup_dr/api"
+	pg_obs_api "github.com/rsharma155/sql_optima/internal/domain/postgres_observability/api"
+	pg_security_api "github.com/rsharma155/sql_optima/internal/domain/postgres_security/api"
 )
 
 // monitoringHandlers groups HTTP handlers registered for dashboard and live APIs.
@@ -26,6 +29,12 @@ type monitoringHandlers struct {
 	SIH                    *handlers.StorageIndexHealthTimescaleHandlers
 	SqlServerQueryAnalysis *handlers.SqlServerQueryAnalysisHandlers
 	SqlServerWatchedQuery  *handlers.SqlServerWatchedQueryHandlers
+	SqlServerWorkload      *handlers.SqlServerWorkloadHandlers
+
+	// New Postgres Domain Handlers
+	PgObservability *pg_obs_api.PostgresObservabilityHandler
+	PgBackup        *pg_backup_api.PostgresBackupHandler
+	PgSecurity      *pg_security_api.PostgresSecurityHandler
 }
 
 // registerMonitoringReadRoutes attaches read-only monitoring endpoints (viewer, dba, or admin).
@@ -37,6 +46,7 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	he := h.Health
 	q := h.Query
 	sih := h.SIH
+	wld := h.SqlServerWorkload
 
 	sr.HandleFunc("/sqlserver/dashboard", m.Dashboard).Methods("GET")
 	sr.HandleFunc("/sqlserver/dashboard/v2", m.DashboardV2).Methods("GET")
@@ -44,7 +54,15 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/sqlserver/dashboard/timeseries", m.DashboardTimeSeries).Methods("GET")
 	sr.HandleFunc("/sqlserver/storage-index/table-drilldown", m.TableDrilldown).Methods("GET")
 	sr.HandleFunc("/sqlserver/performance-debt", m.PerformanceDebt).Methods("GET")
+	sr.HandleFunc("/sqlserver/workload/summary", wld.Summary).Methods("GET")
+	sr.HandleFunc("/sqlserver/workload/trends", wld.Trends).Methods("GET")
+	sr.HandleFunc("/sqlserver/workload/top-queries", wld.TopOffenders).Methods("GET")
+	sr.HandleFunc("/sqlserver/workload/app-load", wld.AppLoad).Methods("GET")
+	sr.HandleFunc("/sqlserver/workload/login-load", wld.LoginLoad).Methods("GET")
+	sr.HandleFunc("/sqlserver/workload/top-apps", wld.TopApps).Methods("GET")
+	sr.HandleFunc("/sqlserver/workload/top-logins", wld.TopLogins).Methods("GET")
 	sr.HandleFunc("/postgres/dashboard", p.Dashboard).Methods("GET")
+	sr.HandleFunc("/pg/dashboard", p.DashboardV2).Methods("GET")
 	sr.HandleFunc("/postgres/db-observation", p.DBObservation).Methods("GET")
 	sr.HandleFunc("/postgres/overview", p.Overview).Methods("GET")
 	sr.HandleFunc("/postgres/server-info", p.ServerInfo).Methods("GET")
@@ -85,9 +103,16 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/postgres/alerts", p.Alerts).Methods("GET")
 	sr.HandleFunc("/postgres/control-center", p.ControlCenter).Methods("GET")
 	sr.HandleFunc("/postgres/control-center/history", p.ControlCenterHistory).Methods("GET")
+	sr.HandleFunc("/postgres/metrics/timeseries", p.TimeseriesMetrics).Methods("GET")
 	sr.HandleFunc("/postgres/replication-lag/history", p.ReplicationLagHistory).Methods("GET")
 	sr.HandleFunc("/postgres/replication-slots", p.ReplicationSlots).Methods("GET")
 	sr.HandleFunc("/postgres/disk", p.Disk).Methods("GET")
+
+	// New Postgres Domain Routes
+	sr.HandleFunc("/pg/observability/dashboard", h.PgObservability.GetDashboardData).Methods("GET")
+	sr.HandleFunc("/pg/backup/dashboard", h.PgBackup.GetDashboardData).Methods("GET")
+	sr.HandleFunc("/pg/security/dashboard", h.PgSecurity.GetDashboardData).Methods("GET")
+
 	sr.HandleFunc("/postgres/backups/latest", p.BackupLatest).Methods("GET")
 	sr.HandleFunc("/postgres/backups/history", p.BackupHistory).Methods("GET")
 	sr.HandleFunc("/postgres/logs/summary", p.LogsSummary).Methods("GET")

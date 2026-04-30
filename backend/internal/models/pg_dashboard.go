@@ -25,6 +25,7 @@ type PgSession struct {
 	WaitEvent     sql.NullString `json:"wait_event,omitempty"`
 	State         string         `json:"state"`
 	Query         string         `json:"query"`
+	DurationMs    float64        `json:"duration_ms"`
 }
 
 type PgDbCounters struct {

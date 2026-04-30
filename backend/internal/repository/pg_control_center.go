@@ -31,9 +31,19 @@ func (c *PgRepository) FetchWalBytesTotal(instanceName string) (uint64, error) {
 	}
 
 	var bytes sql.NullInt64
-	err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COALESCE(SUM(wal_bytes), 0) FROM pg_stat_wal`).Scan(&bytes)
-	if err != nil {
-		return 0, err
+	err := db.QueryRow(`/* SQL_OPTIMA */ SELECT   COALESCE(SUM(wal_bytes), 0) FROM pg_stat_wal`).Scan(&bytes)
+	if err != nil || !bytes.Valid || bytes.Int64 == 0 {
+		// Fallback to LSN diff from 0/0 (works on PG 10+)
+		err = db.QueryRow(`
+			/* SQL_OPTIMA */
+			SELECT  pg_wal_lsn_diff(
+				CASE WHEN pg_is_in_recovery() THEN pg_last_wal_replay_lsn() ELSE pg_current_wal_lsn() END,
+				'0/0'
+			)
+		`).Scan(&bytes)
+		if err != nil {
+			return 0, err
+		}
 	}
 	if !bytes.Valid || bytes.Int64 < 0 {
 		return 0, nil
@@ -58,7 +68,7 @@ func (c *PgRepository) FetchWalDirSizeMB(instanceName string) (float64, error) {
 	}
 
 	var mb float64
-	err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COALESCE(SUM(size), 0) / 1024.0 / 1024.0 FROM pg_ls_waldir()`).Scan(&mb)
+	err := db.QueryRow(`/* SQL_OPTIMA */ SELECT   COALESCE(SUM(size), 0) / 1024.0 / 1024.0 FROM pg_ls_waldir()`).Scan(&mb)
 	return mb, err
 }
 
@@ -79,7 +89,8 @@ func (c *PgRepository) FetchActiveWaitingSessions(instanceName string) (active i
 	}
 
 	err = db.QueryRow(`
-		SELECT /* SQL_OPTIMA */   
+	/* SQL_OPTIMA */
+		SELECT   
 			COUNT(*) FILTER (WHERE state = 'active') AS active,
 			COUNT(*) FILTER (WHERE wait_event IS NOT NULL) AS waiting
 		FROM pg_stat_activity
@@ -103,7 +114,7 @@ func (c *PgRepository) FetchSlowQueriesCount(instanceName string, thresholdMs fl
 		return 0, fmt.Errorf("connection not found")
 	}
 	var cnt int
-	err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM pg_stat_statements WHERE mean_exec_time > $1`, thresholdMs).Scan(&cnt)
+	err := db.QueryRow(`/* SQL_OPTIMA */ SELECT   COUNT(*) FROM pg_stat_statements WHERE mean_exec_time > $1`, thresholdMs).Scan(&cnt)
 	return cnt, err
 }
 
@@ -123,7 +134,7 @@ func (c *PgRepository) FetchBlockingSessionsCount(instanceName string) (int, err
 	}
 
 	var cnt int
-	err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM pg_stat_activity WHERE wait_event_type='Lock'`).Scan(&cnt)
+	err := db.QueryRow(`/* SQL_OPTIMA */ SELECT   COUNT(*) FROM pg_stat_activity WHERE wait_event_type='Lock'`).Scan(&cnt)
 	return cnt, err
 }
 
@@ -143,7 +154,7 @@ func (c *PgRepository) FetchAutovacuumWorkers(instanceName string) (int, error) 
 	}
 
 	var cnt int
-	err := db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM pg_stat_activity WHERE query ILIKE '%autovacuum%'`).Scan(&cnt)
+	err := db.QueryRow(`/* SQL_OPTIMA */ SELECT    COUNT(*) FROM pg_stat_activity WHERE query ILIKE '%autovacuum%'`).Scan(&cnt)
 	return cnt, err
 }
 
@@ -164,14 +175,51 @@ func (c *PgRepository) FetchDeadTupleRatioPct(instanceName string) (float64, err
 
 	var pct float64
 	err := db.QueryRow(`
-		SELECT /* SQL_OPTIMA */  
-			CASE WHEN (SUM(n_dead_tup) + SUM(n_live_tup)) > 0
-				THEN (SUM(n_dead_tup)::float / (SUM(n_dead_tup) + SUM(n_live_tup))) * 100.0
-				ELSE 0
-			END
-		FROM pg_stat_user_tables
+	/* SQL_OPTIMA */
+	SELECT 
+			COALESCE(SUM(n_dead_tup) * 100.0 / NULLIF(SUM(n_live_tup + n_dead_tup),0), 0) AS dead_tuple_pct
+		FROM pg_stat_all_tables
+		WHERE schemaname NOT IN ('pg_catalog','information_schema')
 	`).Scan(&pct)
 	return pct, err
+}
+
+func (c *PgRepository) FetchReplicaLagSec(instanceName string) (float64, error) {
+	c.mutex.RLock()
+	db, ok := c.conns[instanceName]
+	c.mutex.RUnlock()
+	if !ok || db == nil {
+		if c.reconnectInstance(instanceName) {
+			c.mutex.RLock()
+			db, ok = c.conns[instanceName]
+			c.mutex.RUnlock()
+		}
+	}
+	if !ok || db == nil {
+		return 0, fmt.Errorf("connection not found")
+	}
+
+	var lag float64
+	// Try primary-side check first (max lag of all standbys)
+	err := db.QueryRow(`
+		SELECT /* SQL_OPTIMA */ 
+			COALESCE(MAX(EXTRACT(EPOCH FROM replay_lag)), 0)
+		FROM pg_stat_replication
+	`).Scan(&lag)
+
+	// If it returns 0 or fails (e.g. column doesn't exist in old PG), try standby-side check
+	if err != nil || lag == 0 {
+		var isRecovery bool
+		_ = db.QueryRow("SELECT pg_is_in_recovery()").Scan(&isRecovery)
+		if isRecovery {
+			_ = db.QueryRow(`
+				SELECT /* SQL_OPTIMA */
+					COALESCE(EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())), 0)
+			`).Scan(&lag)
+		}
+	}
+
+	return lag, nil
 }
 
 func (c *PgRepository) FetchCacheHitRatioPct(instanceName string) (float64, error) {
@@ -191,7 +239,8 @@ func (c *PgRepository) FetchCacheHitRatioPct(instanceName string) (float64, erro
 
 	var pct float64
 	err := db.QueryRow(`
-		SELECT /* SQL_OPTIMA */  
+	/* SQL_OPTIMA */ 
+		SELECT  
 			CASE WHEN (SUM(blks_hit) + SUM(blks_read)) > 0
 				THEN (SUM(blks_hit)::float * 100.0) / (SUM(blks_hit) + SUM(blks_read))
 				ELSE 0
@@ -201,6 +250,30 @@ func (c *PgRepository) FetchCacheHitRatioPct(instanceName string) (float64, erro
 		  AND datname NOT LIKE 'template%';
 	`).Scan(&pct)
 	return pct, err
+}
+
+// FetchXactTotal returns the sum of xact_commit and xact_rollback from pg_stat_database.
+func (c *PgRepository) FetchXactTotal(instanceName string) (uint64, error) {
+	c.mutex.RLock()
+	db, ok := c.conns[instanceName]
+	c.mutex.RUnlock()
+	if !ok || db == nil {
+		if c.reconnectInstance(instanceName) {
+			c.mutex.RLock()
+			db, ok = c.conns[instanceName]
+			c.mutex.RUnlock()
+		}
+	}
+	if !ok || db == nil {
+		return 0, fmt.Errorf("connection not found")
+	}
+
+	var total sql.NullInt64
+	err := db.QueryRow(`/* SQL_OPTIMA */ SELECT COALESCE(SUM(xact_commit + xact_rollback), 0) FROM pg_stat_database`).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return uint64(total.Int64), nil
 }
 
 func retainedWalMBFromBytes(b int64) float64 {

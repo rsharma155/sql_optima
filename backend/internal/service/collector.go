@@ -68,13 +68,17 @@ func (s *MetricsService) StartBackgroundCollector(ctx context.Context) {
 	pgLiveInterval := s.FetchInterval(ctx, "Postgres Active Queries", 60*time.Second)
 
 	var lastMsHist time.Time
+	var lastPgHist time.Time
 	var lastMsLive time.Time
 	var lastPgLive time.Time
+	var lastIdentityUpsert time.Time
 
 	// Run one live scrape on startup only (warm cache)
 	s.runLiveDiagnosticsWithContext(ctx)
 	lastMsLive = time.Now()
 	lastPgLive = time.Now()
+	lastMsHist = time.Now()
+	lastPgHist = time.Now()
 
 	// Start stateful incident monitoring in the background
 	go s.StartPgLocksBlockingCollector(ctx)
@@ -88,10 +92,39 @@ func (s *MetricsService) StartBackgroundCollector(ctx context.Context) {
 		case <-loopTicker.C:
 			now := time.Now()
 
+			// Check SQL Server Identity Upsert (every 5 minutes)
+			if now.Sub(lastIdentityUpsert) >= 5*time.Minute {
+				if s.tsLogger != nil {
+					if err := s.tsLogger.RunSQLServerIdentityUpsertJob(ctx); err != nil {
+						log.Printf("[Collector] ERROR: RunSQLServerIdentityUpsertJob failed: %v", err)
+					} else {
+						log.Printf("[Collector] Successfully completed SQL Server Identity Upsert Job")
+
+						// Immediately run Classification Job after Identity Upsert
+						if err := s.tsLogger.RunSQLServerClassificationJob(ctx); err != nil {
+							log.Printf("[Collector] ERROR: RunSQLServerClassificationJob failed: %v", err)
+						} else {
+							log.Printf("[Collector] Successfully completed SQL Server Query Classification Job")
+						}
+					}
+				}
+				lastIdentityUpsert = now
+			}
+
 			// Check SQL Server Historical
 			if now.Sub(lastMsHist) >= msHistInterval {
-				s.runHistoricalStorageWithContext(ctx) // Note: this currently runs both MS and PG
+				s.runHistoricalStorageWithContext(ctx) 
 				lastMsHist = now
+			}
+
+			// Check Postgres Historical
+			if now.Sub(lastPgHist) >= pgHistInterval {
+				// We currently reuse runHistoricalStorageWithContext but it handles both.
+				// In a future refactor, we should split them.
+				if now.Sub(lastMsHist) >= 1*time.Second { // avoid double-run if intervals match
+				    s.runHistoricalStorageWithContext(ctx)
+				}
+				lastPgHist = now
 			}
 
 			// Check SQL Server Live Diagnostics
@@ -144,6 +177,17 @@ func (s *MetricsService) runLiveDiagnosticsWithContext(ctx context.Context) {
 			if instanceType == "sqlserver" {
 				currentMs := s.MsRepo.FetchLiveTelemetry(instanceName, prevMsTick)
 				currentMs.Timestamp = time.Now().Format("15:04:05")
+
+				// Persist session snapshots if Timescale is connected
+				if s.tsLogger != nil && len(currentMs.SessionSnapshots) > 0 {
+					// Add instance ID to snapshots
+					for i := range currentMs.SessionSnapshots {
+						currentMs.SessionSnapshots[i].InstanceID = instanceName
+					}
+					if err := s.tsLogger.LogSQLServerSessionSnapshots(ctx, currentMs.SessionSnapshots); err != nil {
+						log.Printf("[Collector] ERROR: LogSQLServerSessionSnapshots failed for %s: %v", instanceName, err)
+					}
+				}
 
 				s.cacheMutex.Lock()
 				s.dashboardCache[instanceName] = currentMs
@@ -447,7 +491,7 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 
 		idxInterval := s.FetchInterval(ctx, "SQL Server Index Usage", 15*time.Minute)
 		tblInterval := s.FetchInterval(ctx, "SQL Server Table Usage", 15*time.Minute)
-		growthInterval := s.FetchInterval(ctx, "SQL Server Storage", 6*time.Hour)     // Use 'SQL Server Storage' for growth
+		growthInterval := s.FetchInterval(ctx, "SQL Server Storage", 24*time.Hour)     // Change to Daily
 		defInterval := s.FetchInterval(ctx, "SQL Server Configuration", 24*time.Hour) // Use 'SQL Server Configuration' for definitions
 
 		s.sihMu.Lock()
@@ -455,7 +499,7 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 		s.sihMu.Unlock()
 		due15mIndex := s.sihDue(s.sihLastIndex15m, instanceName, now, idxInterval)
 		due15mTable := s.sihDue(s.sihLastTable15m, instanceName, now, tblInterval)
-		due6hGrowth := s.sihDue(s.sihLastGrowth6h, instanceName, now, growthInterval)
+		dueDailyGrowth := s.sihDue(s.sihLastGrowth6h, instanceName, now, growthInterval)
 		dueDailyDefs := s.sihDue(s.sihLastDefsDaily, instanceName, now, defInterval)
 
 		// For each user DB configured, switch context and collect.
@@ -483,7 +527,7 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 				}
 			}
 		}
-		if len(dbs) == 0 && (due15mIndex || due15mTable || due6hGrowth || dueDailyDefs) {
+		if len(dbs) == 0 && (due15mIndex || due15mTable || dueDailyGrowth || dueDailyDefs) {
 			log.Printf("[Collector][SIH] instance %q: no databases to scan (set Instances[].databases or grant access to user DBs)", instanceName)
 		}
 		for _, dbName := range dbs {
@@ -516,14 +560,14 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 			}
 
 			// Table size snapshot query powers both 15m table usage and 6h growth history; collect once if either is due.
-			if due15mTable || due6hGrowth {
+			if due15mTable || dueDailyGrowth {
 				tblRows, err := collectors.CollectSQLServerTableSizeSnapshot(ctx, conn)
 				if err == nil && len(tblRows) > 0 {
 					if due15mTable {
 						// table_usage_stats (sizes snapshot; scan counters are 0 for SQL Server)
 						_, _ = collectors.PersistSQLServerTableUsageDeltas(ctx, s.tsLogger, instanceName, tblRows, capture)
 					}
-					if due6hGrowth {
+					if dueDailyGrowth {
 						// table_size_history (growth snapshot)
 						_, _ = collectors.PersistSQLServerTableGrowthHistory(ctx, s.tsLogger, instanceName, tblRows, capture)
 					}
@@ -535,6 +579,9 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 				dayBucket := time.Date(capture.Year(), capture.Month(), capture.Day(), 0, 0, 0, 0, time.UTC)
 				defRows, err := collectors.CollectSQLServerIndexDefinitions(ctx, conn, lastDefTime)
 				if err == nil && len(defRows) > 0 {
+					// Using the daily check but change-detection in persist helper (if we had one) 
+					// or just stick to the daily collect as is since SQL Server CollectSQLServerIndexDefinitions 
+					// already has some 'since' time filtering.
 					_, _ = collectors.PersistSQLServerIndexDefinitions(ctx, s.tsLogger, instanceName, defRows, dayBucket)
 				}
 			}
@@ -577,7 +624,9 @@ func (s *MetricsService) logPostgresMetricsToTimescaleWithContext(ctx context.Co
 	} else {
 		if err := s.tsLogger.LogPostgresConnectionStats(ctx, instanceName, total, active, idle); err != nil {
 			log.Printf("[Collector] ERROR: LogPostgresConnectionStats failed for %s: %v", instanceName, err)
-			return fmt.Errorf("LogPostgresConnectionStats: %w", err)
+			// Don't return here, continue with other stats even if connection stats fail
+		} else {
+		    log.Printf("[Collector] Successfully logged Postgres connection stats for %s", instanceName)
 		}
 	}
 
@@ -586,6 +635,7 @@ func (s *MetricsService) logPostgresMetricsToTimescaleWithContext(ctx context.Co
 	if detail, derr := s.PgRepo.GetSystemStatsDetail(instanceName); derr == nil && detail != nil {
 		hostPct = detail.CPUUsagePct
 		memPct = detail.MemoryUsedPct
+		log.Printf("[Collector] Using detailed system stats for %s: CPU=%.1f%%, MEM=%.1f%%", instanceName, hostPct, memPct)
 	} else {
 		cu, mu, err := s.PgRepo.GetSystemStats(instanceName)
 		if err != nil {
@@ -593,11 +643,13 @@ func (s *MetricsService) logPostgresMetricsToTimescaleWithContext(ctx context.Co
 		} else {
 			hostPct = cu
 			memPct = mu
+			log.Printf("[Collector] Using approximated system stats for %s: CPU=%.1f%% (fallback)", instanceName, hostPct)
 		}
 	}
 	snap := pghostcpu.Collect()
 	if snap.HostCpuPercent > 0 {
 		hostPct = snap.HostCpuPercent
+		log.Printf("[Collector] Using host probe CPU for %s: %.1f%%", instanceName, hostPct)
 	}
 	pgPct := snap.PostgresCpuPercent
 
@@ -616,6 +668,8 @@ func (s *MetricsService) logPostgresMetricsToTimescaleWithContext(ctx context.Co
 	}
 	if err := s.tsLogger.LogPostgresSystemStats(ctx, instanceName, row); err != nil {
 		log.Printf("[Collector] ERROR: LogPostgresSystemStats failed for %s: %v", instanceName, err)
+	} else {
+	    log.Printf("[Collector] Successfully logged Postgres system stats for %s", instanceName)
 	}
 
 	bgStats, err := s.PgRepo.FetchBGWriterStats(instanceName)
@@ -971,6 +1025,8 @@ func (s *MetricsService) fetchAndLogCPUSchedulerStatsWithContext(ctx context.Con
 		"total_runnable_tasks_count":         stats.TotalRunnableTasksCount,
 		"total_work_queue_count":             stats.TotalWorkQueueCount,
 		"total_current_workers_count":        stats.TotalCurrentWorkersCount,
+		"active_workers_count":               stats.ActiveWorkersCount,
+		"pending_disk_io_count":              stats.PendingDiskIoCount,
 		"avg_runnable_tasks_count":           stats.AvgRunnableTasksCount,
 		"total_active_request_count":         stats.TotalActiveRequestCount,
 		"total_queued_request_count":         stats.TotalQueuedRequestCount,

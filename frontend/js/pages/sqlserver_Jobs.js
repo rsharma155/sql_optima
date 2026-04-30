@@ -76,20 +76,34 @@ window.JobsView = function() {
 }
 
 async function refreshJobsData(inst) {
-    const from = window.appState.jobsFrom || '';
-    const to = window.appState.jobsTo || '';
+    let from = window.appState.jobsFrom || '';
+    let to = window.appState.jobsTo || '';
     const content = document.getElementById('jobsDashboardContent');
     if (!content) return;
+
+    // Convert local datetime-local strings to UTC ISO for the backend
+    if (from && !from.includes('Z')) {
+        try { from = new Date(from).toISOString(); } catch(e) {}
+    }
+    if (to && !to.includes('Z')) {
+        try { to = new Date(to).toISOString(); } catch(e) {}
+    }
     
     try {
         const url = `/api/sqlserver/jobs?instance=${encodeURIComponent(inst.name)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
         const response = await window.apiClient.authenticatedFetch(url);
-        if (!response.ok) throw new Error("Jobs API failed");
+        if (!response.ok) {
+            const errBody = await response.json().catch(() => ({}));
+            throw new Error(errBody.error || "Jobs API failed");
+        }
         const data = await response.json();
         
         renderJobsContent(inst, data);
     } catch(err) {
-        content.innerHTML = `<div class="alert alert-danger">Error: ${window.escapeHtml(err.message)}</div>`;
+        content.innerHTML = `<div class="alert alert-danger" style="margin-top:1rem;">
+            <i class="fa-solid fa-triangle-exclamation"></i> <strong>Historical Data Unavailable:</strong> ${window.escapeHtml(err.message)}
+            <p class="small mt-2">Ensure the TimescaleDB collector is running and has processed at least one tick for this instance.</p>
+        </div>`;
     }
 }
 

@@ -1,0 +1,40 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Reusable UI component styles for tables
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+.tables-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem; margin-bottom: 1rem; }
+.table-card { padding: 0.75rem; }
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th, .data-table td { padding: 0.5rem 0.4rem; text-align: left; border-bottom: 1px solid var(--border-color); }
+.data-table th { color: var(--text-muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; }
+.data-table tbody tr:hover { background-color: var(--bg-surface-hover); }
+
+/* PGSS Top Queries table: enforce colgroup widths & align numeric columns */
+.pgss-sortable-table { table-layout: fixed; }
+.pgss-sortable-table th:nth-child(n+4),
+.pgss-sortable-table td:nth-child(n+4) { text-align: right; }
+.pgss-sortable-table td:nth-child(3) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Modern Table Styles */
+.modern-table { border-collapse: separate; border-spacing: 0; width: 100%; }
+.modern-table th, .modern-table td { padding: 12px 8px; text-align: left; border-bottom: 1px solid var(--border-color); }
+.modern-table th { background: var(--bg-surface); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 10; }
+.modern-table tbody tr { transition: background-color 0.2s; }
+.modern-table tbody tr:hover { background: var(--bg-surface-hover); }
+.modern-table .metric-cell { cursor: pointer; transition: all 0.2s; }
+.modern-table .metric-cell:hover { background: rgba(59, 130, 246, 0.1); transform: scale(1.02); }
+.modern-table .metric-value { font-weight: 600; color: var(--accent-blue); }
+.modern-table .sql-preview { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-secondary); }
+
+/* =========================================
+   Sortable Table Headers
+========================================= */
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: var(--accent-blue); }
+th.sortable i { margin-left: 4px; font-size: 0.7em; }
+

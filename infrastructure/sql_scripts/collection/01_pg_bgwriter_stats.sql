@@ -1,5 +1,5 @@
 -- Metric: pg_bgwriter_stats
--- Source: backend/internal/repository/pg_stats.go:1377
+-- Source: backend/internal/repository/pg_background_metrics.go
 -- Target Table: postgres_bgwriter_stats (TimescaleDB)
 -- Description: Retrieves full background writer and checkpointer statistics from pg_stat_bgwriter
 

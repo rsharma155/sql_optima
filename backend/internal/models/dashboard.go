@@ -43,6 +43,9 @@ type DashboardMetrics struct {
 	ActiveBlocks    []BlockStat      `json:"active_blocks"`
 	ConnectionStats []ConnectionStat `json:"connection_stats"`
 
+	// Session snapshots for workload attribution
+	SessionSnapshots []SQLServerSessionSnapshot `json:"session_snapshots,omitempty"`
+
 	// Extended Events Metrics
 	XEventMetrics *XEventMetrics `json:"xevent_metrics,omitempty"`
 
@@ -234,6 +237,8 @@ type CPUSchedulerStats struct {
 	TotalRunnableTasksCount        int     `json:"total_runnable_tasks_count"`
 	TotalWorkQueueCount            int64   `json:"total_work_queue_count"`
 	TotalCurrentWorkersCount       int     `json:"total_current_workers_count"`
+	ActiveWorkersCount             int     `json:"active_workers_count"`
+	PendingDiskIoCount             int     `json:"pending_disk_io_count"`
 	AvgRunnableTasksCount          float64 `json:"avg_runnable_tasks_count"`
 	TotalActiveRequestCount        int     `json:"total_active_request_count"`
 	TotalQueuedRequestCount        int     `json:"total_queued_request_count"`

@@ -250,7 +250,16 @@ window.showAddServerForm = function() {
                     <div id="srv-trust-wrap" class="srv-fld" style="grid-column:1/-1;display:none;"><label style="display:flex;align-items:center;gap:0.45rem;cursor:pointer;margin:0;font-weight:500;">
                         <input type="checkbox" id="srv-trust-cert" style="width:1rem;height:1rem;" /> Trust server certificate (Azure SQL / MI)
                     </label></div>
-                </div>
+                    <div id="pg-extension-guide" class="glass-panel" style="grid-column:1/-1; font-size:0.75rem; line-height:1.4; margin-top:0.5rem; display:none; border-color:rgba(var(--accent-rgb), 0.2); background:rgba(var(--accent-rgb), 0.03);">
+                       <h5 style="margin:0 0 0.4rem; font-size:0.8rem; font-weight:700; color:var(--accent);"><i class="fa-solid fa-circle-info"></i> PostgreSQL Configuration Tip</h5>
+                       For advanced metrics, enable <code>pg_stat_statements</code> (minimum requirement). <code>pg_stat_monitor</code> is optional but recommended for bucketed history:
+                       <ul style="margin:0.35rem 0 0; padding-left:1.1rem; color:var(--text-muted);">
+                           <li>Add to <code>shared_preload_libraries</code>: <code>'pg_stat_statements, pg_stat_monitor'</code></li>
+                           <li>Set <code>pg_stat_monitor.pgsm_bucket_time = 60</code> for 1-minute granularity (optional).</li>
+                       </ul>
+                       <p style="margin:0.4rem 0 0; font-style:italic;">Note: If <code>pg_stat_monitor</code> is unavailable, the application will automatically fall back to <code>pg_stat_statements</code>.</p>
+                    </div>                    </div>
+
                 <style>
                     #admin-add-server-form .srv-fld label { display:block; font-size:0.7rem; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.35rem; }
                     #admin-add-server-form .srv-fld .custom-input, #admin-add-server-form .srv-fld .custom-select { width:100%; min-height:2.4rem; box-sizing:border-box; }
@@ -271,10 +280,12 @@ window.showAddServerForm = function() {
     const testMsg = document.getElementById('srv-test-msg');
     const typeSel = document.getElementById('srv-type');
     const trustWrap = document.getElementById('srv-trust-wrap');
+    const pgGuide = document.getElementById('pg-extension-guide');
 
     const syncTrustUI = () => {
-        if (!trustWrap || !typeSel) return;
-        trustWrap.style.display = typeSel.value === 'sqlserver' ? 'block' : 'none';
+        if (!typeSel) return;
+        if (trustWrap) trustWrap.style.display = typeSel.value === 'sqlserver' ? 'block' : 'none';
+        if (pgGuide) pgGuide.style.display = typeSel.value === 'postgres' ? 'block' : 'none';
     };
     typeSel?.addEventListener('change', syncTrustUI);
     syncTrustUI();

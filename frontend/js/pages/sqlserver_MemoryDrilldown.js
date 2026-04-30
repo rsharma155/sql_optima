@@ -96,7 +96,7 @@ window.MemoryDrilldown = async function() {
             </div>
 
             <!-- Consolidated KPI Strip -->
-            <div class="glass-panel dashboard-strip-panel mt-3">
+            <div class="glass-panel dashboard-strip-panel mt-2">
                 <div class="dashboard-strip-metrics-row--7">
                     <div class="strip-metric-cell">
                         <div class="strip-metric-label">Health</div>
@@ -136,56 +136,52 @@ window.MemoryDrilldown = async function() {
                 </div>
             </div>
 
-            <div class="chart-card glass-panel mt-4" style="height: 240px;">
-                <div class="card-header"><h3>Correlation: PLE vs Grants Pending vs Spills/sec</h3></div>
-                <div class="chart-container" style="height: 180px;"><canvas id="memCorrelationChart"></canvas></div>
+            <div class="chart-card glass-panel mt-2" style="height: 180px;">
+                <div class="card-header" style="padding: 0.25rem 0.75rem;"><h3 style="font-size:0.85rem;">Correlation: PLE vs Grants Pending vs Spills/sec</h3></div>
+                <div class="chart-container" style="height: 140px;"><canvas id="memCorrelationChart"></canvas></div>
             </div>
 
-            <div class="grid mt-4" style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
-                <div class="chart-card glass-panel" style="height: 220px;">
-                    <div class="card-header"><h3>Memory Pressure Trend (%)</h3></div>
-                    <div class="chart-container" style="height: 160px;"><canvas id="memPressureChart"></canvas></div>
+            <div class="charts-grid mt-2" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:0.75rem;">
+                <div class="chart-card glass-panel" style="height: 170px;">
+                    <div class="card-header" style="padding: 0.25rem 0.75rem;"><h3 style="font-size:0.85rem;">Memory Pressure Trend (%)</h3></div>
+                    <div class="chart-container" style="height: 130px;"><canvas id="memPressureChart"></canvas></div>
                 </div>
-                <div class="chart-card glass-panel" style="height: 220px;">
-                    <div class="card-header"><h3>OS Free Memory %</h3></div>
-                    <div class="chart-container" style="height: 160px;"><canvas id="memOsFreePctChart"></canvas></div>
+                <div class="chart-card glass-panel" style="height: 170px;">
+                    <div class="card-header" style="padding: 0.25rem 0.75rem;"><h3 style="font-size:0.85rem;">OS Free Memory %</h3></div>
+                    <div class="chart-container" style="height: 130px;"><canvas id="memOsFreePctChart"></canvas></div>
                 </div>
-            </div>
-
-            <div class="grid mt-4" style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
-                <div class="chart-card glass-panel" style="height: 220px;">
-                    <div class="card-header"><h3>Page Life Expectancy (seconds)</h3></div>
-                    <div class="chart-container" style="height: 160px;"><canvas id="memPleChart"></canvas></div>
-                </div>
-                <div class="chart-card glass-panel" style="height: 220px;">
-                    <div class="card-header"><h3>Workspace Memory (Granted vs Requested MB)</h3></div>
-                    <div class="chart-container" style="height: 160px;"><canvas id="memWorkspaceChart"></canvas></div>
+                <div class="chart-card glass-panel" style="height: 170px;">
+                    <div class="card-header" style="padding: 0.25rem 0.75rem;"><h3 style="font-size:0.85rem;">Page Life Expectancy (s)</h3></div>
+                    <div class="chart-container" style="height: 130px;"><canvas id="memPleChart"></canvas></div>
                 </div>
             </div>
 
-            <div class="grid mt-4" style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
-                <div class="chart-card glass-panel" style="height: 220px;">
-                    <div class="card-header"><h3>TempDB Spill Indicators (warnings delta)</h3></div>
-                    <div class="chart-container" style="height: 160px;"><canvas id="memSpillChart"></canvas></div>
+            <div class="charts-grid mt-2" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:0.75rem;">
+                <div class="chart-card glass-panel" style="height: 170px;">
+                    <div class="card-header" style="padding: 0.25rem 0.75rem;"><h3 style="font-size:0.85rem;">Workspace (Granted vs Req MB)</h3></div>
+                    <div class="chart-container" style="height: 130px;"><canvas id="memWorkspaceChart"></canvas></div>
                 </div>
-                <div class="chart-card glass-panel" style="height: 220px;">
-                    <div class="card-header"><h3>Plan Cache Size Trend (MB)</h3></div>
-                    <div class="chart-container" style="height: 160px;"><canvas id="memPlanCacheChart"></canvas></div>
+                <div class="chart-card glass-panel" style="height: 170px;">
+                    <div class="card-header" style="padding: 0.25rem 0.75rem;"><h3 style="font-size:0.85rem;">TempDB Spills (warnings delta)</h3></div>
+                    <div class="chart-container" style="height: 130px;"><canvas id="memSpillChart"></canvas></div>
+                </div>
+                <div class="chart-card glass-panel" style="height: 170px;">
+                    <div class="card-header" style="padding: 0.25rem 0.75rem;"><h3 style="font-size:0.85rem;">Plan Cache Size Trend (MB)</h3></div>
+                    <div class="chart-container" style="height: 130px;"><canvas id="memPlanCacheChart"></canvas></div>
                 </div>
             </div>
 
-            <div class="grid mt-4" style="display:grid; grid-template-columns: 1.2fr 0.8fr; gap:1rem;">
-                <div class="chart-card glass-panel" style="height: 260px;">
-                    <div class="card-header"><h3>Buffer Pool by Database (MB) <span class="text-muted" style="font-size:0.7rem; font-weight:400;">User databases only</span></h3></div>
-                    <div class="chart-container" style="height: 200px;"><canvas id="memBufferPoolDbChart"></canvas></div>
+            <div class="grid mt-2" style="display:grid; grid-template-columns: 1.4fr 0.6fr; gap:0.75rem;">
+                <div class="chart-card glass-panel" style="height: 200px;">
+                    <div class="card-header" style="padding: 0.25rem 0.75rem;"><h3 style="font-size:0.85rem;">Buffer Pool by Database (MB) <span class="text-muted" style="font-size:0.65rem; font-weight:400;">User DBs only</span></h3></div>
+                    <div class="chart-container" style="height: 160px;"><canvas id="memBufferPoolDbChart"></canvas></div>
                 </div>
-                <div class="chart-card glass-panel" style="height: 260px;">
-                    <div class="card-header flex-between" style="gap:0.5rem;">
-                        <h3 style="margin:0;">Top Memory Clerks (MB)</h3>
-                        <span class="text-muted" style="font-size:0.75rem;">latest snapshot</span>
+                <div class="chart-card glass-panel" style="height: 200px;">
+                    <div class="card-header flex-between" style="padding: 0.25rem 0.75rem; gap:0.5rem;">
+                        <h3 style="margin:0; font-size:0.85rem;">Top Memory Clerks (MB)</h3>
                     </div>
-                    <div class="chart-container" style="height: 165px;"><canvas id="memClerksChart"></canvas></div>
-                    <div id="memClerksLegend" class="text-muted" style="font-size:0.72rem; padding:0.35rem 0.75rem 0.65rem 0.75rem;"></div>
+                    <div class="chart-container" style="height: 135px;"><canvas id="memClerksChart"></canvas></div>
+                    <div id="memClerksLegend" class="text-muted" style="font-size:0.65rem; padding:0.1rem 0.5rem;"></div>
                 </div>
             </div>
         </div>
@@ -251,12 +247,23 @@ window.renderMemoryDrilldownCharts = function(data) {
         const headroom = Math.max(0, target - used);
         const procLow = (last.process_physical_low === true || last.process_physical_low === 1 || String(last.process_physical_low).toLowerCase() === 'true');
 
-        document.getElementById('kpiMemGrantsPending').textContent = pending;
-        document.getElementById('kpiWaitingGrants').textContent = waiting;
-        document.getElementById('kpiActiveGrants').textContent = active;
-        document.getElementById('kpiMemHeadroom').textContent = headroom.toFixed(0);
-        document.getElementById('kpiProcLow').textContent = procLow ? 'LOW' : 'Healthy';
-        document.getElementById('kpiProcLow').style.color = procLow ? 'var(--danger)' : 'var(--success)';
+        const elPending = document.getElementById('kpiMemGrantsPending');
+        if (elPending) elPending.textContent = pending;
+        
+        const elWaiting = document.getElementById('kpiWaitingGrants');
+        if (elWaiting) elWaiting.textContent = waiting;
+        
+        const elActive = document.getElementById('kpiActiveGrants');
+        if (elActive) elActive.textContent = active;
+        
+        const elHeadroom = document.getElementById('kpiMemHeadroom');
+        if (elHeadroom) elHeadroom.textContent = headroom.toFixed(0);
+        
+        const elProcLow = document.getElementById('kpiProcLow');
+        if (elProcLow) {
+            elProcLow.textContent = procLow ? 'LOW' : 'Healthy';
+            elProcLow.style.color = procLow ? 'var(--danger)' : 'var(--success)';
+        }
 
         let health = 100;
         if (pending > 0) health -= 20;
@@ -264,9 +271,13 @@ window.renderMemoryDrilldownCharts = function(data) {
         if (headroom < 100) health -= 10;
         
         const hEl = document.getElementById('kpiMemHealth');
-        hEl.textContent = health + '%';
-        hEl.style.color = health > 80 ? 'var(--success)' : (health > 60 ? 'var(--warning)' : 'var(--danger)');
-        document.getElementById('kpiMemHealthText').textContent = health > 80 ? 'Optimal' : 'Pressure';
+        if (hEl) {
+            hEl.textContent = health + '%';
+            hEl.style.color = health > 80 ? 'var(--success)' : (health > 60 ? 'var(--warning)' : 'var(--danger)');
+        }
+        
+        const hTextEl = document.getElementById('kpiMemHealthText');
+        if (hTextEl) hTextEl.textContent = health > 80 ? 'Optimal' : 'Pressure';
     })();
 
     // 2. Correlation Chart
@@ -373,11 +384,18 @@ window.renderMemoryDrilldownCharts = function(data) {
         });
     }
     if (clerks.length && document.getElementById('memClerksChart')) {
-        const last = clerks.slice().sort((a,b) => (Number(b.memory_mb)||0) - (Number(a.memory_mb)||0)).slice(0, 10);
+        const last = clerks.slice().sort((a,b) => (Number(b.pages_mb)||0) - (Number(a.pages_mb)||0)).slice(0, 10);
         const ctx = document.getElementById('memClerksChart').getContext('2d');
+        
+        // Local truncation helper
+        const trunc = (s, n) => {
+            const t = String(s ?? '');
+            return t.length <= n ? t : t.slice(0, n) + '…';
+        };
+
         window.memoryDrillChartClerks = new Chart(ctx, {
             type: 'bar',
-            data: { labels: last.map(c => pgCpuTrunc(c.clerk_type, 20)), datasets: [{ label: 'MB', data: last.map(c => Number(c.memory_mb) || 0), backgroundColor: '#3b82f6' }] },
+            data: { labels: last.map(c => trunc(c.clerk_name || c.clerk_type || 'Unknown', 20)), datasets: [{ label: 'MB', data: last.map(c => Number(c.pages_mb) || 0), backgroundColor: '#3b82f6' }] },
             options: { ...baseOpts, indexAxis: 'y', plugins: { legend: { display: false } } }
         });
     }

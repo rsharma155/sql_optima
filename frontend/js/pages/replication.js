@@ -1,7 +1,7 @@
 /*
  * SQL Optima — https://github.com/rsharma155/sql_optima
  *
- * Purpose: Replication monitoring for PostgreSQL and SQL Server.
+ * Purpose: Replication monitoring for PostgreSQL.
  *
  * Author: Ravi Sharma
  * Copyright (c) 2026 Ravi Sharma
@@ -9,26 +9,55 @@
  */
 
 window.PgReplicationView = async function() {
-    const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...'};
-    const database = window.appState.currentDatabase || 'all';
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...', type: 'postgres'};
+    const dbName = window.appState.currentDatabase || 'all';
+
+    // 1. Initial Shell
+    window.routerOutlet.innerHTML = await window.loadTemplate('/pages/replication.html', { inst, dbName });
+    
+    // 2. Initial Fetch
+    await initPgReplication(inst.name);
+
+    // 3. Set Refresh Interval
+    if (window.pgReplicationInterval) clearInterval(window.pgReplicationInterval);
+    window.pgReplicationInterval = setInterval(() => {
+        if (window.appState.activeViewId === 'pg-replication') {
+            initPgReplication(inst.name);
+        } else {
+            clearInterval(window.pgReplicationInterval);
+        }
+    }, 60000); // 60s refresh
+};
+
+async function updatePgReplicationHeader(instName) {
+    try {
+        const snapshotResp = await window.apiClient.authenticatedFetch(`/api/postgres/server-info?instance=${encodeURIComponent(instName)}`);
+        if (snapshotResp.ok) {
+            const s = await snapshotResp.json();
+            if (document.getElementById('pg-uptime')) document.getElementById('pg-uptime').textContent = 'Uptime: ' + (s.uptime || 'N/A');
+            if (document.getElementById('pg-version')) document.getElementById('pg-version').textContent = (s.version || '').split(',')[0];
+            if (document.getElementById('pgLastRefreshTime')) document.getElementById('pgLastRefreshTime').textContent = new Date().toLocaleTimeString();
+            
+            const hs = s.health_score || 0;
+            const healthColor = hs > 80 ? 'success' : hs > 60 ? 'warning' : 'danger';
+            const hBadge = document.getElementById('pgHealthScoreBadge');
+            if (hBadge) {
+                hBadge.textContent = hs;
+                hBadge.className = `badge badge-${healthColor}`;
+            }
+        }
+    } catch (e) { console.error("PG Replication header fetch failed:", e); }
+}
+
+async function initPgReplication(instName) {
+    updatePgReplicationHeader(instName);
 
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - 3600000);
-    const pad = n => String(n).padStart(2, '0');
-    const fmtLocal = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-
-    window.appState.repl = window.appState.repl || {};
-    const state = window.appState.repl;
-    state.fromLocal = state.fromLocal || fmtLocal(oneHourAgo);
-    state.toLocal = state.toLocal || fmtLocal(now);
-
     const buildUrl = (base) => {
-        const fromIso = new Date(state.fromLocal).toISOString();
-        const toIso = new Date(state.toLocal).toISOString();
-        return `${base}?instance=${encodeURIComponent(inst.name)}&from=${fromIso}&to=${toIso}&limit=500`;
+        return `${base}?instance=${encodeURIComponent(instName)}&from=${oneHourAgo.toISOString()}&to=${now.toISOString()}&limit=500`;
     };
 
-    let replPayload = null;
     let replData = {
         is_primary: false,
         cluster_state: 'unknown',
@@ -39,388 +68,130 @@ window.PgReplicationView = async function() {
     };
     let ccHistory = null;
     let replLagSeries = null;
-    let slotPayload = null;
-    let slots = [];
+    
     try {
-        const [replResp, histResp, lagResp, slotsResp] = await Promise.all([
+        const [replResp, histResp, lagResp] = await Promise.all([
             window.apiClient.authenticatedFetch(buildUrl('/api/postgres/replication')),
             window.apiClient.authenticatedFetch(buildUrl('/api/postgres/control-center/history')),
             window.apiClient.authenticatedFetch(buildUrl('/api/postgres/replication-lag/history')),
-            window.apiClient.authenticatedFetch(buildUrl('/api/postgres/replication-slots')),
         ]);
+        
         if (replResp.ok) {
-            const contentType = replResp.headers.get('content-type') || '';
-            if (contentType.includes('application/json')) {
-                replPayload = await replResp.json();
-                replData = replPayload?.stats || replData;
-            }
-        } else console.error("Failed to load PG replication:", replResp.status);
-
+            const payload = await replResp.json();
+            replData = payload?.stats || replData;
+        }
         if (histResp.ok) {
-            const ct = histResp.headers.get('content-type') || '';
-            if (ct.includes('application/json')) {
-                const payload = await histResp.json();
-                ccHistory = payload && payload.history ? payload.history : null;
-            }
+            const payload = await histResp.json();
+            ccHistory = payload && payload.history ? payload.history : null;
         }
         if (lagResp.ok) {
-            const ct = lagResp.headers.get('content-type') || '';
-            if (ct.includes('application/json')) {
-                const payload = await lagResp.json();
-                replLagSeries = payload && payload.series ? payload.series : null;
-            }
-        }
-        if (slotsResp.ok) {
-            const ct = slotsResp.headers.get('content-type') || '';
-            if (ct.includes('application/json')) {
-                slotPayload = await slotsResp.json();
-                slots = (slotPayload && slotPayload.slots) ? slotPayload.slots : [];
-            }
+            const payload = await lagResp.json();
+            replLagSeries = payload && payload.series ? payload.series : null;
         }
     } catch (e) {
         console.error("PG replication fetch failed:", e);
     }
 
+    // Update KPIs
     const standbys = replData.standbys || [];
     const isPrimary = replData.is_primary !== false;
-    const maxLag = replData.max_lag_mb || 0;
-    const walRate = replData.wal_gen_rate_mbps || 0;
-    const bgEff = replData.bg_writer_eff_pct || 0;
-    const haProvider = (replPayload?.ha_provider || 'auto').toString();
-    const haLabel = haProvider === 'cnpg' ? 'CNPG' : haProvider === 'patroni' ? 'Patroni' : haProvider === 'streaming' ? 'Streaming Replication' : 'Auto';
-    const hasSlots = Array.isArray(slots) && slots.length > 0;
-    const maxRetained = hasSlots ? Math.max(...slots.map(s => Number(s.retained_wal_mb || 0))) : 0;
+    
+    const topoEl = document.getElementById('stat-repl-topology');
+    if (topoEl) topoEl.textContent = isPrimary ? `Primary (${standbys.length} Standbys)` : 'Standby / Replica';
+    
+    const lagEl = document.getElementById('stat-repl-max-lag');
+    if (lagEl) lagEl.textContent = (replData.max_lag_mb || 0).toFixed(1) + ' MB';
+    
+    const walEl = document.getElementById('stat-repl-wal-gen');
+    if (walEl) walEl.textContent = (replData.wal_gen_rate_mbps || 0).toFixed(1) + ' MB/s';
+    
+    const bgEl = document.getElementById('stat-repl-bgwriter');
+    if (bgEl) bgEl.textContent = (replData.bg_writer_eff_pct || 0).toFixed(1) + '%';
 
-            window.routerOutlet.innerHTML = `
-        <div class="page-view active dashboard-sky-theme pg-replication-page">
-            <div class="page-title flex-between dashboard-page-title-compact">
-                <div class="dashboard-title-line" style="flex:1; min-width:0;">
-                    <h1>Replication &amp; HA</h1>
-                    <span class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Database: <span class="text-accent">${window.escapeHtml(database)}</span></span>
-                </div>
-                <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.6rem; flex-wrap:wrap; justify-content:flex-end;">
-                    <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; border: 1px solid var(--border-color);">
-                        <label class="text-muted" style="margin:0;">from:</label>
-                        <input type="datetime-local" id="replFrom" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; width:10.5rem;" value="${state.fromLocal}" />
-                        <label class="text-muted" style="margin:0;">to:</label>
-                        <input type="datetime-local" id="replTo" style="background:transparent; border:none; color:var(--text); font-size:0.7rem; width:10.5rem;" value="${state.toLocal}" />
-                        <button type="button" class="btn btn-xs btn-accent" id="replApply" style="padding:1px 6px;"><i class="fa-solid fa-filter"></i> Apply</button>
-                    </div>
-                    <div id="pgReplStatusStrip"></div>
-                    <span class="badge badge-outline" style="font-size:0.65rem;">Mode: ${window.escapeHtml(haLabel)}</span>
-                    <button class="btn btn-sm btn-outline" data-action="navigate-back"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                    <button class="btn btn-sm btn-outline text-accent" id="replRefreshBtn"><i class="fa-solid fa-refresh"></i> Refresh</button>
-                </div>
-            </div>
-
-            <div class="top-strips dashboard-top-strips" style="margin-top:0.5rem;">
-                <div class="glass-panel dashboard-strip-panel">
-                    <div class="dashboard-strip-header">
-                        <h4>
-                            <span class="dashboard-strip-header-icons" aria-hidden="true">
-                                <i class="fa-solid fa-clone" title="Replication"></i>
-                                <i class="fa-solid fa-file-pen" title="WAL"></i>
-                                <i class="fa-solid fa-brush" title="BGWriter"></i>
-                            </span>
-                            Replication &amp; WAL snapshot
-                        </h4>
-                    </div>
-                    <div class="dashboard-strip-metrics-row--6">
-                        <div class="strip-metric-cell">
-                            <div class="strip-metric-label">Role</div>
-                            <div class="strip-metric-value">${isPrimary ? 'Primary' : 'Standby'}</div>
-                            <div class="text-muted sub">${window.escapeHtml(replData.cluster_state || 'unknown')}</div>
-                        </div>
-                        <div class="strip-metric-cell">
-                            <div class="strip-metric-label">Standbys</div>
-                            <div class="strip-metric-value">${standbys.length}</div>
-                            <div class="text-muted sub">connected</div>
-                        </div>
-                        <div class="strip-metric-cell ${maxLag > 50 ? 'strip-metric-cell--accent-bad' : (maxLag > 10 ? 'strip-metric-cell--accent-warn' : '')}">
-                            <div class="strip-metric-label">Max lag</div>
-                            <div class="strip-metric-value">${maxLag.toFixed(1)} <span class="text-muted" style="font-size:0.75em;">MB</span></div>
-                            <div class="text-muted sub">${maxLag > 10 ? 'Lag detected' : 'In sync'}</div>
-                        </div>
-                        <div class="strip-metric-cell">
-                            <div class="strip-metric-label">WAL rate</div>
-                            <div class="strip-metric-value">${walRate.toFixed(1)} <span class="text-muted" style="font-size:0.75em;">MB/s</span></div>
-                            <div class="text-muted sub">generation</div>
-                        </div>
-                        <div class="strip-metric-cell ${bgEff < 90 ? 'strip-metric-cell--accent-warn' : ''}">
-                            <div class="strip-metric-label">BGWriter eff</div>
-                            <div class="strip-metric-value">${bgEff.toFixed(0)}%</div>
-                            <div class="text-muted sub">${bgEff > 95 ? 'Efficient' : 'Review'}</div>
-                        </div>
-                        <div class="strip-metric-cell">
-                            <div class="strip-metric-label">Topology</div>
-                            <div class="strip-metric-value">${standbys.length + (isPrimary ? 1 : 0)}</div>
-                            <div class="text-muted sub">nodes</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- WAL Archiver Risk Strip (populated async) -->
-            <div id="pgWALArchiverRiskStrip" style="margin-top:0.5rem;"></div>
-
-            <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 2fr; gap:0.75rem;">
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Replication Lag Trend</h3></div>
-                    <div class="chart-container" style="height:140px;"><canvas id="pgReplCtx"></canvas></div>
-                </div>
-                <div class="chart-card glass-panel" style="padding:0.75rem;">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Checkpoint Pressure (Req/Timed)</h3></div>
-                    <div class="chart-container" style="height:140px;"><canvas id="pgCheckChart"></canvas></div>
-                </div>
-            </div>
-
-            <div class="tables-grid mt-3" style="display:grid; grid-template-columns:1fr; gap:0.75rem;">
-                <div class="table-card glass-panel">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Connected Standby Nodes (${window.escapeHtml(haLabel)})</h3></div>
-                    <div class="pg-repl-table-scroll" role="region" aria-label="Standby nodes">
-                        <div class="pg-repl-row pg-repl-row--head pg-repl-standby-cols">
-                            <div>${haProvider === 'cnpg' ? 'Pod / Application' : 'Application'}</div>
-                            <div>Client Addr</div>
-                            <div>State</div>
-                            <div>Sync State</div>
-                            <div>Lag (MB)</div>
-                        </div>
-                        ${standbys.length > 0 ? standbys.map(standby => `
-                            <div class="pg-repl-row pg-repl-standby-cols">
-                                <div><strong>${window.escapeHtml(standby.replica_pod_name || standby.app_name || '')}</strong></div>
-                                <div>${window.escapeHtml(standby.pod_ip || standby.client_addr || 'N/A')}</div>
-                                <div><span class="badge ${standby.state === 'streaming' ? 'badge-success' : 'badge-warning'}">${window.escapeHtml(standby.state)}</span></div>
-                                <div><span class="text-accent">${window.escapeHtml(standby.sync_state)}</span></div>
-                                <div>${(Number(standby.replay_lag_mb || 0)).toFixed(2)}</div>
-                            </div>
-                        `).join('') : `
-                            <div class="pg-repl-row pg-repl-standby-cols">
-                                <div class="text-muted text-center" style="grid-column: 1 / -1; padding: 1rem;">No standby connections found</div>
-                            </div>
-                        `}
-                    </div>
-                </div>
-
-                <div class="table-card glass-panel" id="pgSlotsCard" style="${hasSlots ? '' : 'display:none;'}">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Replication Slots (Risk)</h3></div>
-                    <div class="p-2 text-muted" style="font-size:0.75rem;">
-                        Worst retained WAL: <strong class="${maxRetained >= 1024 ? 'text-danger' : (maxRetained >= 256 ? 'text-warning' : 'text-success')}">${maxRetained.toFixed(1)} MB</strong>
-                        <span class="text-muted">| Source: ${window.escapeHtml((slotPayload?.source || 'timescale').toString())}</span>
-                    </div>
-                    <div class="chart-container" id="pgSlotTrendCard" style="height:120px; margin:0 0.5rem 0.5rem 0.5rem; display:none;">
-                        <canvas id="pgSlotTrendChart"></canvas>
-                    </div>
-                    <div class="pg-repl-table-scroll" role="region" aria-label="Replication slots">
-                        <div class="pg-repl-row pg-repl-row--head pg-repl-slots-cols">
-                            <div>Slot</div>
-                            <div>Type</div>
-                            <div>Active</div>
-                            <div>Retained WAL</div>
-                            <div>Restart LSN</div>
-                            <div>Confirmed Flush LSN</div>
-                        </div>
-                        ${(hasSlots ? [...slots].sort((a,b)=>Number(b.retained_wal_mb||0)-Number(a.retained_wal_mb||0)).slice(0,50) : []).map(s => `
-                            <div class="pg-repl-row pg-repl-slots-cols">
-                                <div><strong>${window.escapeHtml(String(s.slot_name || '-'))}</strong></div>
-                                <div>${window.escapeHtml(String(s.slot_type || '-'))}</div>
-                                <div>${s.active ? '<span class="badge badge-success">true</span>' : '<span class="badge badge-secondary">false</span>'}</div>
-                                <div class="${Number(s.retained_wal_mb||0) >= 1024 ? 'text-danger font-bold' : (Number(s.retained_wal_mb||0) >= 256 ? 'text-warning font-bold' : '')}">
-                                    ${Number(s.retained_wal_mb || 0).toFixed(1)} MB
-                                </div>
-                                <div class="text-muted"><code>${window.escapeHtml(String(s.restart_lsn || ''))}</code></div>
-                                <div class="text-muted"><code>${window.escapeHtml(String(s.confirmed_flush_lsn || ''))}</code></div>
-                            </div>
-                        `).join('') || `
-                            <div class="pg-repl-row pg-repl-slots-cols">
-                                <div class="text-muted text-center" style="grid-column: 1 / -1; padding: 1rem;">No replication slots found</div>
-                            </div>
-                        `}
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-
-    const replChartOpts = {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        transitions: { active: { animation: { duration: 0 } } },
-        layout: { padding: { top: 2, right: 2, bottom: 2, left: 2 } }
-    };
-
-    setTimeout(() => {
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-        try {
-            const strip = document.getElementById('pgReplStatusStrip');
-            if (strip && typeof window.renderStatusStrip === 'function') {
-                strip.innerHTML = window.renderStatusStrip({
-                    lastUpdateId: 'pgReplLastRefreshTime',
-                    sourceBadgeId: 'pgReplSourceBadge',
-                    includeHealth: false,
-                    includeFreshness: false,
-                    autoRefreshText: ''
-                });
-            }
-            const t = document.getElementById('pgReplLastRefreshTime');
-            if (t) t.textContent = new Date().toLocaleTimeString();
-        } catch (e) {
-            // non-fatal
+    // Populate Standby Table
+    const tbody = document.getElementById('pgReplicationTbody');
+    if (tbody) {
+        if (standbys.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted">${isPrimary ? 'No standbys connected' : 'Instance is not a primary'}</td></tr>`;
+        } else {
+            tbody.innerHTML = standbys.map(s => `
+                <tr>
+                    <td><strong>${window.escapeHtml(s.application_name || 'unknown')}</strong></td>
+                    <td>${window.escapeHtml(s.client_addr || '-')}</td>
+                    <td><span class="badge badge-success">${window.escapeHtml(s.state || '-')}</span></td>
+                    <td><span class="text-accent">${window.escapeHtml(s.sync_state || '-')}</span></td>
+                    <td>${window.escapeHtml(s.sent_lsn || '-')}</td>
+                    <td class="text-right ${Number(s.replay_lag_mb) > 10 ? 'text-danger font-bold' : ''}">${(s.replay_lag_mb || 0).toFixed(1)} MB</td>
+                    <td>${window.escapeHtml(s.replay_lag_time || '-')}</td>
+                </tr>
+            `).join('');
         }
+    }
 
-        window.currentCharts = window.currentCharts || {};
-        try {
-            if (window.currentCharts.pgRepl) { window.currentCharts.pgRepl.destroy(); delete window.currentCharts.pgRepl; }
-            if (window.currentCharts.pgChk) { window.currentCharts.pgChk.destroy(); delete window.currentCharts.pgChk; }
-            if (window.currentCharts.pgSlotTrend) { window.currentCharts.pgSlotTrend.destroy(); delete window.currentCharts.pgSlotTrend; }
-        } catch (e) { /* ignore */ }
+    // Render Charts
+    renderReplicationCharts(replLagSeries, ccHistory);
+}
 
-        const toLocalTime = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? iso : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); };
-
-        const replCtx = document.getElementById('pgReplCtx');
-        if (replCtx) {
-            // Prefer per-replica lag series when available, otherwise fall back to CC max lag seconds series.
-            if (replLagSeries && Object.keys(replLagSeries).length) {
-                const seriesArr = Object.values(replLagSeries);
-                const labels = (seriesArr[0]?.labels || []).map(toLocalTime);
-                const palette = ['#3b82f6','#10b981','#f59e0b','#ef4444','#a855f7'];
-                const datasets = seriesArr.map((s, idx) => ({
-                    label: s.replica_name,
-                    data: s.lag_mb || [],
-                    borderColor: palette[idx % palette.length],
-                    backgroundColor: palette[idx % palette.length],
-                    tension: 0.25,
+function renderReplicationCharts(lagSeries, ccHistory) {
+    window.currentCharts = window.currentCharts || {};
+    
+    // Lag Chart
+    const lagCtx = document.getElementById('pgReplCtx');
+    if (lagCtx && lagSeries && Array.isArray(lagSeries)) {
+        if (window.currentCharts['pgReplCtx']) window.currentCharts['pgReplCtx'].destroy();
+        const labels = lagSeries.map(p => new Date(p.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+        const data = lagSeries.map(p => p.value);
+        window.currentCharts['pgReplCtx'] = new Chart(lagCtx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    label: 'Replication Lag (MB)',
+                    data,
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    fill: true,
+                    tension: 0.3,
                     pointRadius: 0
-                }));
-                window.currentCharts.pgRepl = new Chart(replCtx.getContext('2d'), {
-                    type: 'line',
-                    data: { labels, datasets },
-                    options: replChartOpts
-                });
-            } else if (ccHistory?.labels?.length) {
-                window.currentCharts.pgRepl = new Chart(replCtx.getContext('2d'), {
-                    type: 'line',
-                    data: {
-                        labels: ccHistory.labels.map(toLocalTime),
-                        datasets: [{
-                            label: 'Max replication lag (sec)',
-                            data: ccHistory.replication_lag_seconds || [],
-                            borderColor: window.getCSSVar('--warning'),
-                            backgroundColor: 'rgba(245,158,11,0.15)',
-                            tension: 0.25,
-                            pointRadius: 0,
-                            fill: true
-                        }]
-                    },
-                    options: replChartOpts
-                });
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { maxTicksLimit: 8, color: '#94a3b8' } },
+                    y: { beginAtZero: true, ticks: { color: '#94a3b8' } }
+                }
             }
-        }
-
-        const checkCtx = document.getElementById('pgCheckChart');
-        if (checkCtx) {
-            if (ccHistory?.labels?.length) {
-                window.currentCharts.pgChk = new Chart(checkCtx.getContext('2d'), {
-                    type: 'line',
-                    data: {
-                        labels: ccHistory.labels.map(toLocalTime),
-                        datasets: [{
-                            label: 'Checkpoint pressure (req/timed)',
-                            data: (ccHistory.checkpoint_req_ratio || []),
-                            borderColor: window.getCSSVar('--danger'),
-                            backgroundColor: 'rgba(239,68,68,0.12)',
-                            tension: 0.25,
-                            pointRadius: 0,
-                            fill: true
-                        }]
-                    },
-                    options: replChartOpts
-                });
-            }
-        }
-
-        // Replication slot retention trend (worst retained MB over time)
-        try {
-            const slotTrendCanvas = document.getElementById('pgSlotTrendChart');
-            const slotTrendCard = document.getElementById('pgSlotTrendCard');
-            if (slotTrendCanvas && slotTrendCard && hasSlots) {
-                // Fetch a larger set (history) from the same endpoint (Timescale ordered by time desc).
-                window.apiClient.authenticatedFetch(`/api/postgres/replication-slots?instance=${encodeURIComponent(inst.name)}&limit=800`)
-                    .then(r => r.ok ? r.json() : null)
-                    .then(p => {
-                        const rows = (p && p.slots) ? p.slots : [];
-                        if (!rows.length) return;
-                        // We only get latest-per-slot now; if Timescale history is desired, we'd need a dedicated history endpoint.
-                        // So here we show a simple "current risk bar" chart across slots.
-                        const top = rows.slice().sort((a,b)=>Number(b.retained_wal_mb||0)-Number(a.retained_wal_mb||0)).slice(0, 8);
-                        const labels = top.map(s => String(s.slot_name || '').slice(0, 18));
-                        const data = top.map(s => Number(s.retained_wal_mb || 0));
-                        slotTrendCard.style.display = '';
-                        if (window.currentCharts.pgSlotTrend) window.currentCharts.pgSlotTrend.destroy();
-                        window.currentCharts.pgSlotTrend = new Chart(slotTrendCanvas.getContext('2d'), {
-                            type: 'bar',
-                            data: { labels, datasets: [{ label: 'Retained WAL (MB)', data, backgroundColor: window.getCSSVar('--danger') }] },
-                            options: { responsive:true, maintainAspectRatio:false, animation:false, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } }
-                        });
-                    })
-                    .catch(() => {});
-            }
-        } catch (e) {
-            // non-fatal
-        }
-            });
         });
-    }, 50);
+    }
 
-    // --- WAL Archiver Risk Strip (Epic 3.2) ---
-    window.apiClient.authenticatedFetch(`/api/postgres/wal/archiver-risk?instance=${encodeURIComponent(inst.name)}`)
-        .then(r => r.ok ? r.json() : null)
-        .then(payload => {
-            const strip = document.getElementById('pgWALArchiverRiskStrip');
-            if (!strip || !payload?.risk) return;
-            const risk = payload.risk;
-            const lvl = risk.risk_level || 'low';
-            const cls = lvl === 'critical' ? 'alert-danger' : lvl === 'high' ? 'alert-warning' : lvl === 'medium' ? 'alert-warning' : 'alert-success';
-            const icon = lvl === 'critical' || lvl === 'high' ? 'fa-triangle-exclamation' : lvl === 'medium' ? 'fa-circle-info' : 'fa-circle-check';
-            const fmtAge = (s) => {
-                if (!isFinite(s) || s < 0) return '—';
-                if (s < 60) return `${Math.round(s)}s`;
-                if (s < 3600) return `${(s/60).toFixed(1)}m`;
-                return `${(s/3600).toFixed(2)}h`;
-            };
-            const failRate = (risk.failure_rate_pct || 0).toFixed(1);
-            const retained = (risk.max_retained_slot_mb || 0).toFixed(1);
-            const details = [];
-            if (risk.archived_count !== undefined)
-                details.push(`Archived: <strong>${Number(risk.archived_count).toLocaleString()}</strong>`);
-            if (risk.failed_count !== undefined)
-                details.push(`Failed: <strong class="${risk.failed_count > 0 ? 'text-danger' : ''}">${Number(risk.failed_count).toLocaleString()}</strong> (${failRate}%)`);
-            if (risk.last_archived_wal)
-                details.push(`Last WAL: <code style="font-size:0.75rem;">${window.escapeHtml ? window.escapeHtml(risk.last_archived_wal.slice(-20)) : risk.last_archived_wal.slice(-20)}</code>`);
-            if (risk.last_archived_age_seconds >= 0)
-                details.push(`Archive lag: <strong>${fmtAge(risk.last_archived_age_seconds)}</strong>`);
-            if (Number(retained) > 0)
-                details.push(`Slot retention: <strong class="${Number(retained) >= 1024 ? 'text-danger' : (Number(retained) >= 256 ? 'text-warning' : '')}">${retained} MB</strong> (${window.escapeHtml ? window.escapeHtml(risk.high_retention_slot || '') : (risk.high_retention_slot || '')})`);
-            strip.innerHTML = `
-                <div class="alert ${cls}" style="padding:.5rem .75rem;border-radius:6px;font-size:0.82rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
-                    <i class="fa-solid ${icon}"></i>
-                    <strong>WAL Archiver Risk: ${lvl.toUpperCase()}</strong>
-                    <span class="text-muted" style="flex:1;">${details.join(' &nbsp;|&nbsp; ')}</span>
-                    ${risk.last_failed_wal ? `<span class="text-danger small">Last failed WAL: <code>${window.escapeHtml ? window.escapeHtml(risk.last_failed_wal.slice(-24)) : risk.last_failed_wal.slice(-24)}</code></span>` : ''}
-                </div>`;
-        })
-        .catch(() => {});
-
-    // Bind events
-    document.getElementById('replApply').onclick = () => {
-        state.fromLocal = document.getElementById('replFrom').value;
-        state.toLocal = document.getElementById('replTo').value;
-        window.PgReplicationView();
-    };
-    document.getElementById('replRefreshBtn').onclick = () => {
-        state.fromLocal = null; // reset to default 1h
-        state.toLocal = null;
-        window.PgReplicationView();
-    };
+    // Checkpointer Chart
+    const checkCtx = document.getElementById('pgCheckChart');
+    if (checkCtx && ccHistory) {
+        if (window.currentCharts['pgCheckChart']) window.currentCharts['pgCheckChart'].destroy();
+        const labels = ccHistory.map(p => new Date(p.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+        const timed = ccHistory.map(p => p.checkpoints_timed || 0);
+        const req = ccHistory.map(p => p.checkpoints_req || 0);
+        window.currentCharts['pgCheckChart'] = new Chart(checkCtx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Timed', data: timed, borderColor: '#10b981', tension: 0.3, pointRadius: 0 },
+                    { label: 'Requested', data: req, borderColor: '#ef4444', tension: 0.3, pointRadius: 0 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: true, position: 'top', align: 'end', labels: { boxWidth: 12, color: '#94a3b8' } } },
+                scales: {
+                    x: { ticks: { maxTicksLimit: 8, color: '#94a3b8' } },
+                    y: { beginAtZero: true, ticks: { color: '#94a3b8' } }
+                }
+            }
+        });
+    }
 }

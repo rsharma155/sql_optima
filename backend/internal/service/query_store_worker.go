@@ -21,9 +21,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rsharma155/sql_optima/internal/collectors"
 	"github.com/rsharma155/sql_optima/internal/config"
+	"github.com/rsharma155/sql_optima/internal/domain/postgres_monitoring/instance_health"
 	"github.com/rsharma155/sql_optima/internal/models"
-	"github.com/rsharma155/sql_optima/internal/reliability"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 	"github.com/rsharma155/sql_optima/pkg/dashboard"
 )
@@ -376,7 +377,7 @@ func (s *MetricsService) collectAdvancedEnterpriseMetricsForInstance(instanceNam
 		v2Clerks := make([]map[string]interface{}, 0, len(mcRows))
 		for _, r := range mcRows {
 			v2Clerks = append(v2Clerks, map[string]interface{}{
-				"clerk_name": r["clerk_type"],
+				"clerk_name": r["clerk_name"],
 				"pages_mb":   r["pages_mb"],
 			})
 		}
@@ -502,6 +503,12 @@ func (s *MetricsService) collectDatabaseThroughputForInstance(instanceName strin
 			TotalWrites:         db.TotalWrites,
 			TPS:                 db.TPS,
 			BatchRequestsPerSec: db.BatchRequestsPerSec,
+			Reads:               db.Reads,
+			Writes:              db.Writes,
+			BytesRead:           db.BytesRead,
+			BytesWritten:        db.BytesWritten,
+			ReadLatencyMs:       db.ReadLatencyMs,
+			WriteLatencyMs:      db.WriteLatencyMs,
 		}
 	}
 
@@ -524,29 +531,112 @@ func (s *MetricsService) GetAGHealthSummary(ctx context.Context, instanceName st
 }
 
 // GetJobsFromTimescale reconstructs a job view from hot storage.
-// Returns nil when no recent data is available (signals caller to fall back to live MSDB).
-func (s *MetricsService) GetJobsFromTimescale(ctx context.Context, instanceName string, from, to string) (map[string]interface{}, error) {
+// Returns empty metrics (with instance/timestamp) when no recent data is available.
+func (s *MetricsService) GetJobsFromTimescale(ctx context.Context, instanceName string, from, to string) (models.JobMetrics, error) {
+	var metrics models.JobMetrics
+	metrics.InstanceName = instanceName
+	metrics.Timestamp = time.Now().UTC().Format(time.RFC3339)
+
 	if s.tsLogger == nil {
-		return nil, nil
+		return metrics, fmt.Errorf("timescale logger not initialized")
 	}
 
-	metrics, err := s.tsLogger.GetSQLServerJobMetrics(ctx, instanceName, from, to, 1)
-	if err != nil || len(metrics) == 0 {
-		return nil, err
+	tsMetrics, err := s.tsLogger.GetSQLServerJobMetrics(ctx, instanceName, from, to, 1)
+	if err != nil {
+		return metrics, err
+	}
+
+	if len(tsMetrics) > 0 {
+		m := tsMetrics[0]
+		metrics.Summary = models.JobSummary{
+			TotalJobs:    getInt(m, "total_jobs"),
+			EnabledJobs:  getInt(m, "enabled_jobs"),
+			DisabledJobs: getInt(m, "disabled_jobs"),
+			RunningJobs:  getInt(m, "running_jobs"),
+			FailedJobs:   getInt(m, "failed_jobs_24h"),
+		}
+		if t, ok := m["timestamp"].(time.Time); ok {
+			metrics.Timestamp = t.Format(time.RFC3339)
+		}
 	}
 
 	details, _ := s.tsLogger.GetSQLServerJobDetails(ctx, instanceName, from, to)
-	schedules, _ := s.tsLogger.GetSQLServerJobSchedules(ctx, instanceName, from, to)
-	failures, _ := s.tsLogger.GetSQLServerJobFailures(ctx, instanceName, from, to, 100)
+	for _, d := range details {
+		metrics.Jobs = append(metrics.Jobs, models.JobDetail{
+			JobName:       getStr(d, "job_name"),
+			Category:      getStr(d, "category"),
+			Description:   getStr(d, "description"),
+			Enabled:       getBool(d, "enabled"),
+			Owner:         getStr(d, "owner"),
+			CreatedDate:   getStr(d, "created_date"),
+			CurrentStatus: getStr(d, "current_status"),
+			LastRunDate:   getInt(d, "last_run_date"),
+			LastRunTime:   getInt(d, "last_run_time"),
+			LastRunStatus: getStr(d, "last_run_status"),
+		})
+	}
 
-	summary := metrics[0]
-	return map[string]interface{}{
-		"Summary":   summary,
-		"Jobs":      details,
-		"Schedules": schedules,
-		"Failures":  failures,
-		"LastError": "",
-	}, nil
+	schedules, _ := s.tsLogger.GetSQLServerJobSchedules(ctx, instanceName, from, to)
+	for _, sc := range schedules {
+		var nextRun *string
+		if nr, ok := sc["next_run_datetime"].(*string); ok {
+			nextRun = nr
+		}
+		metrics.Schedules = append(metrics.Schedules, models.JobSchedule{
+			JobName:         getStr(sc, "job_name"),
+			JobEnabled:      getBool(sc, "job_enabled"),
+			ScheduleName:    getStr(sc, "schedule_name"),
+			Status:          getStr(sc, "status"),
+			NextRunDateTime: nextRun,
+		})
+	}
+
+	failures, _ := s.tsLogger.GetSQLServerJobFailures(ctx, instanceName, from, to, 100)
+	for _, f := range failures {
+		metrics.Failures = append(metrics.Failures, models.JobFailure{
+			JobName:  getStr(f, "job_name"),
+			StepName: getStr(f, "step_name"),
+			Message:  getStr(f, "message"),
+			RunDate:  getInt(f, "run_date"),
+			RunTime:  getInt(f, "run_time"),
+		})
+	}
+
+	return metrics, nil
+}
+
+// getInt, getStr, getBool helpers to extract values from maps.
+func getInt(m map[string]interface{}, key string) int {
+	if v, ok := m[key]; ok {
+		switch val := v.(type) {
+		case int:
+			return val
+		case int64:
+			return int(val)
+		case float64:
+			return int(val)
+		}
+	}
+	return 0
+}
+
+func getStr(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+		return fmt.Sprintf("%v", v)
+	}
+	return ""
+}
+
+func getBool(m map[string]interface{}, key string) bool {
+	if v, ok := m[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return false
 }
 
 // GetDatabaseThroughputSummary returns database throughput summary
@@ -624,9 +714,9 @@ func (s *MetricsService) collectPostgresEnterpriseMetrics() {
 				name string
 				fn   func(string)
 			}{
+				{"pg_snapshot", s.collectPostgresSnapshotForInstance},
 				{"pg_bgwriter", s.collectPostgresBGWriterForInstance},
-				{"pg_archiver", s.collectPostgresArchiverForInstance},
-				{"pg_wait_events", s.collectPostgresWaitEventsForInstance},
+				{"pg_archiver", s.collectPostgresArchiverForInstance},				{"pg_wait_events", s.collectPostgresWaitEventsForInstance},
 				{"pg_db_io", s.collectPostgresDbIOForInstance},
 				{"pg_settings_snapshot", s.collectPostgresSettingsSnapshotForInstance},
 				{"pg_query_dictionary", s.collectPostgresQueryDictionaryForInstance},
@@ -993,6 +1083,27 @@ func (s *MetricsService) collectPostgresDeadlocksForInstance(instanceName string
 	}
 }
 
+func (s *MetricsService) collectPostgresSnapshotForInstance(instanceName string) {
+	if s.PgHealthRepo == nil || s.PgHealthService == nil {
+		return
+	}
+
+	ctx := context.Background()
+
+	// 1. Run legacy snapshot collector
+	legacyCollector := collectors.NewPgSnapshotCollector(s.PgRepo, s.PgHealthService, s.PgHealthRepo, s.tsLogger)
+	if err := legacyCollector.Collect(ctx, instanceName); err != nil {
+		log.Printf("[PostgresEnterpriseCollector] legacy collect error for %s: %v", instanceName, err)
+	}
+
+	// 2. Run Phase 8 Timescale collector
+	if s.PgTimescaleColl != nil {
+		if err := s.PgTimescaleColl.Collect(ctx, instanceName); err != nil {
+			log.Printf("[PostgresEnterpriseCollector] Phase 8 collect error for %s: %v", instanceName, err)
+		}
+	}
+}
+
 // ComputePostgresControlCenterRow builds a live control-center snapshot from PostgreSQL.
 // WAL rate uses TimescaleLogger's WAL byte baseline when tsLogger is non-nil; otherwise it is 0.
 // When a delta is not yet available (first sample), WAL rate is 0 so history/charts can still populate.
@@ -1056,32 +1167,32 @@ func (s *MetricsService) ComputePostgresControlCenterRow(instanceName string) (*
 	}
 
 	row := hot.PostgresControlCenterRow{
-		CaptureTimestamp:        now,
-		ServerInstanceName:      instanceName,
-		WALRateMBPerMin:         walRateMBMin,
-		WALSizeMB:               walSizeMB,
-		MaxReplicationLagMB:     repl.MaxLagMB,
-		MaxReplicationLagSecond: 0,
-		CheckpointReqRatio:      checkpointReqRatio,
-		XIDAge:                  xidAge,
-		XIDWraparoundPct:        xidPct,
-		TPS:                     tps,
-		ActiveSessions:          active,
-		WaitingSessions:         waiting,
-		SlowQueriesCount:        slowCnt,
-		BlockingSessions:        blockingCnt,
-		AutovacuumWorkers:       autovacCnt,
-		DeadTupleRatioPct:       deadTuplePct,
+		CaptureTimestamp:   now,
+		ServerInstanceName: instanceName,
+		WALMBPerMin:        walRateMBMin,
+		WALSizeMB:          walSizeMB,
+		ReplicaLagMB:       repl.MaxLagMB,
+		ReplicaLagSec:      0,
+		CheckpointReqRatio: checkpointReqRatio,
+		XIDAge:             xidAge,
+		XIDWraparoundPct:   xidPct,
+		TPS:                tps,
+		ActiveSessions:     active,
+		WaitingSessions:    waiting,
+		SlowQueriesCount:   slowCnt,
+		BlockingSessions:   blockingCnt,
+		AutovacuumWorkers:  autovacCnt,
+		DeadTuplePct:       deadTuplePct,
 	}
 	if repl.WalGenRateMBps > 0 {
-		row.MaxReplicationLagSecond = row.MaxReplicationLagMB / repl.WalGenRateMBps
+		row.ReplicaLagSec = row.ReplicaLagMB / repl.WalGenRateMBps
 	}
 	row.HealthScore, row.HealthStatus = hot.ComputePgHealthScore(hot.PgHealthInputs{
-		ReplicationLagSeconds: row.MaxReplicationLagSecond,
+		ReplicationLagSeconds: row.ReplicaLagSec,
 		XIDWraparoundPct:      row.XIDWraparoundPct,
-		DeadTupleRatioPct:     row.DeadTupleRatioPct,
+		DeadTupleRatioPct:     row.DeadTuplePct,
 		CheckpointReqRatio:    row.CheckpointReqRatio,
-		WALRateMBPerMin:       row.WALRateMBPerMin,
+		WALRateMBPerMin:       row.WALMBPerMin,
 		BlockingSessions:      row.BlockingSessions,
 	})
 	return &row, repl, nil
@@ -1097,11 +1208,11 @@ func postgresControlCenterHistoryFromRow(r *hot.PostgresControlCenterRow) *hot.P
 	}
 	return &hot.PostgresControlCenterHistory{
 		Labels:             []string{ts.UTC().Format(time.RFC3339)},
-		WALRateMBPerMin:    []float64{r.WALRateMBPerMin},
-		ReplLagSeconds:     []float64{r.MaxReplicationLagSecond},
+		WALMBPerMin:        []float64{r.WALMBPerMin},
+		ReplLagSec:         []float64{r.ReplicaLagSec},
 		CheckpointReqRatio: []float64{r.CheckpointReqRatio},
 		Autovacuum:         []int{r.AutovacuumWorkers},
-		DeadTupleRatio:     []float64{r.DeadTupleRatioPct},
+		DeadTuplePct:       []float64{r.DeadTuplePct},
 		BlockingSessions:   []int{r.BlockingSessions},
 		HealthScore:        []int{r.HealthScore},
 	}
@@ -1334,127 +1445,79 @@ func (s *MetricsService) collectPostgresQueryDictionaryForInstance(instanceName 
 	log.Printf("[PostgresEnterpriseCollector] Collected %d queries from %s in %v", len(queryStats), instanceName, time.Since(t0))
 }
 
-// collectPostgresQueryStatsSnapshotForInstance stores full pg_stat_statements snapshots for Query Performance time windows.
+// collectPostgresQueryStatsSnapshotForInstance stores full pg_stat_statements or pg_stat_monitor snapshots.
 func (s *MetricsService) collectPostgresQueryStatsSnapshotForInstance(instanceName string) {
-	if s.tsLogger == nil {
+	if s.tsLogger == nil || s.PgQueryRouter == nil {
 		return
 	}
-	stats, err := s.PgRepo.GetQueryStatsForSnapshot(instanceName)
-	if err != nil {
-		slog.Warn("pgss_snapshot_skip", "instance", instanceName, "error", err)
+
+	db, ok := s.PgRepo.GetConn(instanceName)
+	if !ok {
+		slog.Error("pg_query_stats_conn_error", "instance", instanceName, "error", "connection not found")
 		return
 	}
-	if len(stats) == 0 {
-		slog.Debug("pgss_snapshot_empty", "instance", instanceName, "hint", "pg_stat_statements may be empty or extension not installed")
-		return
-	}
-	ts := time.Now().UTC()
-	rows := make([]hot.PostgresQueryStatsSnapRow, 0, len(stats))
-	for _, q := range stats {
-		rows = append(rows, hot.PostgresQueryStatsSnapRow{
-			QueryID:           q.QueryID,
-			QueryText:         q.Query,
-			Calls:             q.Calls,
-			TotalTimeMs:       q.TotalTime,
-			MeanTimeMs:        q.MeanTime,
-			Rows:              q.Rows,
-			TempBlksRead:      q.TempBlksRead,
-			TempBlksWritten:   q.TempBlksWritten,
-			BlkReadTimeMs:     q.BlkReadTime,
-			BlkWriteTimeMs:    q.BlkWriteTime,
-			SharedBlksHit:     q.SharedBlksHit,
-			SharedBlksRead:    q.SharedBlksRead,
-			SharedBlksDirtied: q.SharedBlksDirtied,
-			SharedBlksWritten: q.SharedBlksWritten,
-			WalBytes:          q.WalBytes,
-			WalRecords:        q.WalRecords,
-			WalFpi:            q.WalFpi,
-			TotalPlanTime:     q.TotalPlanTime,
-			MeanPlanTime:      q.MeanPlanTime,
-			Plans:             q.Plans,
-		})
-	}
+
 	ctx := context.Background()
-
-	retryCfg := reliability.RetryConfig{
-		MaxRetries:      3,
-		InitialInterval: 1 * time.Second,
-		MaxElapsed:      15 * time.Second,
-	}
-
-	// Upsert query text dimension table
-	if err := reliability.Do(ctx, retryCfg, "pgss_query_dim_upsert", func() error {
-		return s.tsLogger.UpsertPgssQueryDim(ctx, instanceName, rows)
-	}); err != nil {
-		slog.Error("pgss_query_dim_upsert_error", "instance", instanceName, "error", err)
-	}
-
-	if err := s.tsLogger.LogPostgresQueryStatsSnapshot(ctx, instanceName, ts, rows); err != nil {
-		slog.Error("pgss_snapshot_error", "instance", instanceName, "error", err)
-	}
-
-	// Compute and store per-minute deltas for the dashboard
-	if err := reliability.Do(ctx, retryCfg, "pgss_delta_1m_compute", func() error {
-		return s.tsLogger.ComputeAndStorePgssDelta1m(ctx, instanceName, ts)
-	}); err != nil {
-		slog.Error("pgss_delta_1m_error", "instance", instanceName, "error", err)
+	if err := s.PgQueryRouter.CollectQueryMetrics(ctx, instanceName, db); err != nil {
+		slog.Error("pg_query_stats_router_error", "instance", instanceName, "error", err)
 	}
 }
 
 // GetPostgresCheckpointSummary returns checkpoint statistics summary from TimescaleDB
-func (s *MetricsService) GetPostgresCheckpointSummary(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (s *MetricsService) GetPostgresCheckpointSummary(ctx context.Context, instanceName string, from, to time.Time, limit int) ([]map[string]interface{}, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	return s.tsLogger.GetPostgresCheckpointSummary(ctx, instanceName, limit)
+	return s.tsLogger.GetPostgresCheckpointSummary(ctx, instanceName, from, to, limit)
 }
 
 // GetPostgresArchiveSummary returns archive statistics summary from TimescaleDB
-func (s *MetricsService) GetPostgresArchiveSummary(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (s *MetricsService) GetPostgresArchiveSummary(ctx context.Context, instanceName string, from, to time.Time, limit int) ([]map[string]interface{}, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	return s.tsLogger.GetPostgresArchiveSummary(ctx, instanceName, limit)
+	return s.tsLogger.GetPostgresArchiveSummary(ctx, instanceName, from, to, limit)
 }
 
 func (s *MetricsService) GetLatestPostgresControlCenterStats(ctx context.Context, instanceName string) (*hot.PostgresControlCenterRow, error) {
-	if s.tsLogger != nil {
-		row, err := s.tsLogger.GetLatestPostgresControlCenterStats(ctx, instanceName)
-		if err == nil && row != nil {
-			return row, nil
-		}
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			log.Printf("[MetricsService] GetLatestPostgresControlCenterStats timescale: %v", err)
-		}
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
 	}
-	live, _, err := s.ComputePostgresControlCenterRow(instanceName)
+	row, err := s.tsLogger.GetLatestPostgresControlCenterStats(ctx, instanceName)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &hot.PostgresControlCenterRow{}, nil
+		}
 		return nil, err
 	}
-	return live, nil
+	return row, nil
+}
+
+func (s *MetricsService) GetLatestPostgresReplicationStats(ctx context.Context, instanceName string) (map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetLatestPostgresReplicationStats(ctx, instanceName)
 }
 
 func (s *MetricsService) GetPostgresControlCenterHistory(ctx context.Context, instanceName string, from, to string, limit int) (*hot.PostgresControlCenterHistory, error) {
-	var hist *hot.PostgresControlCenterHistory
-	var err error
-	if s.tsLogger != nil {
-		hist, err = s.tsLogger.GetPostgresControlCenterHistory(ctx, instanceName, from, to, limit)
-		if err != nil {
-			log.Printf("[MetricsService] GetPostgresControlCenterHistory timescale: %v", err)
-			hist = nil
-		}
+	if s.tsLogger == nil {
+		return &hot.PostgresControlCenterHistory{}, fmt.Errorf("TimescaleDB not connected")
 	}
-	if hist != nil && len(hist.Labels) > 0 {
-		return hist, nil
-	}
-	live, _, lerr := s.ComputePostgresControlCenterRow(instanceName)
-	if lerr != nil {
-		if hist != nil {
-			return hist, nil
-		}
+	hist, err := s.tsLogger.GetPostgresControlCenterHistory(ctx, instanceName, from, to, limit)
+	if err != nil {
+		log.Printf("[MetricsService] GetPostgresControlCenterHistory timescale: %v", err)
 		return &hot.PostgresControlCenterHistory{}, nil
 	}
-	return postgresControlCenterHistoryFromRow(live), nil
+	return hist, nil
+}
+
+
+func (s *MetricsService) GetPostgresMetricHistory(ctx context.Context, instanceName, metric string, from, to time.Time, limit int) ([]instance_health.MetricDataPoint, error) {
+	if s.PgHealthRepo == nil {
+		return nil, fmt.Errorf("PgHealthRepo is nil")
+	}
+	return s.PgHealthRepo.GetMetricHistory(ctx, instanceName, metric, from, to, limit)
 }
 
 func (s *MetricsService) GetPostgresReplicationLagDetail(ctx context.Context, instanceName string, from, to string, limit int) (map[string]hot.PostgresReplicationLagSeries, error) {
@@ -1464,18 +1527,18 @@ func (s *MetricsService) GetPostgresReplicationLagDetail(ctx context.Context, in
 	return s.tsLogger.GetPostgresReplicationLagDetail(ctx, instanceName, from, to, limit)
 }
 
-func (s *MetricsService) GetPostgresWaitEventsHistory(ctx context.Context, instanceName string, limit int) ([]hot.PostgresWaitEventRow, error) {
+func (s *MetricsService) GetPostgresWaitEventsHistory(ctx context.Context, instanceName string, from, to time.Time, limit int) ([]hot.PostgresWaitEventRow, error) {
 	if s.tsLogger == nil {
 		return []hot.PostgresWaitEventRow{}, nil
 	}
-	return s.tsLogger.GetPostgresWaitEventsHistory(ctx, instanceName, limit)
+	return s.tsLogger.GetPostgresWaitEventsHistory(ctx, instanceName, from, to, limit)
 }
 
-func (s *MetricsService) GetPostgresDbIOHistory(ctx context.Context, instanceName string, limit int) ([]hot.PostgresDbIORow, error) {
+func (s *MetricsService) GetPostgresDbIOHistory(ctx context.Context, instanceName string, from, to time.Time, limit int) ([]hot.PostgresDbIORow, error) {
 	if s.tsLogger == nil {
 		return []hot.PostgresDbIORow{}, nil
 	}
-	return s.tsLogger.GetPostgresDbIOHistory(ctx, instanceName, limit)
+	return s.tsLogger.GetPostgresDbIOHistory(ctx, instanceName, from, to, limit)
 }
 
 func (s *MetricsService) GetPostgresSettingsSnapshotLatestTwo(ctx context.Context, instanceName string) (time.Time, time.Time, []hot.PostgresSettingSnapshotRow, []hot.PostgresSettingSnapshotRow, error) {

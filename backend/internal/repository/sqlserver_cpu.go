@@ -18,7 +18,7 @@ import (
 // CollectKPIs fetches key performance indicators
 func (c *SqlServerRepository) CollectKPIs(ctx context.Context, db *sql.DB) (map[string]interface{}, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ SELECT  
 			(SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_exec_sessions s
 			 WHERE s.status = 'running'
 			   AND s.is_user_process = 1
@@ -26,9 +26,9 @@ func (c *SqlServerRepository) CollectKPIs(ctx context.Context, db *sql.DB) (map[
 			   AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
 			   AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
 			   AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')) AS active_sessions,
-			(SELECT /* SQL_OPTIMA */   total_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS total_memory_mb,
-			(SELECT /* SQL_OPTIMA */   available_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS available_memory_mb,
-			(SELECT /* SQL_OPTIMA */   ISNULL(cntr_value, 0) FROM sys.dm_os_performance_counters WHERE counter_name='Batch Requests/sec') AS batch_requests_sec
+			(SELECT   total_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS total_memory_mb,
+			(SELECT    available_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS available_memory_mb,
+			(SELECT   ISNULL(cntr_value, 0) FROM sys.dm_os_performance_counters WHERE counter_name='Batch Requests/sec') AS batch_requests_sec
 		OPTION (RECOMPILE)`
 
 	var activeSessions, totalMemory, availableMemory, batchRequests int
@@ -110,77 +110,88 @@ func (c *SqlServerRepository) CollectActiveSessions(db *sql.DB) (int, error) {
 // CollectCPUSchedulerStats collects CPU scheduler and workload group metrics with pressure warnings
 func (c *SqlServerRepository) CollectCPUSchedulerStats(ctx context.Context, db *sql.DB) (*models.CPUSchedulerStats, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   
-			GETDATE() AS capture_timestamp,
-			osi.max_workers_count,
-			osi.scheduler_count,
-			osi.cpu_count,
-			COALESCE(sched.runnable_tasks_count, 0) AS total_runnable_tasks_count,
-			COALESCE(sched.work_queue_count, 0) AS total_work_queue_count,
-			COALESCE(sched.current_workers_count, 0) AS total_current_workers_count,
-			0.0 AS avg_runnable_tasks_count,
-			0 AS total_active_request_count,
-			0 AS total_queued_request_count,
-			0 AS total_blocked_task_count,
-			0 AS total_active_parallel_thread_count,
-			0 AS runnable_request_count,
-			0 AS total_request_count,
-			0.0 AS runnable_percent,
-			CASE WHEN COALESCE(sched.current_workers_count, 0) >= osi.max_workers_count * 0.90 THEN 1 ELSE 0 END AS worker_thread_exhaustion_warning,
-			CASE WHEN COALESCE(sched.runnable_tasks_count, 0) >= osi.cpu_count THEN 1 ELSE 0 END AS runnable_tasks_warning,
-			0 AS blocked_tasks_warning,
-			0 AS queued_requests_warning,
-			osm.total_physical_memory_kb AS total_physical_memory_kb,
-			osm.available_physical_memory_kb AS available_physical_memory_kb,
-			osm.system_memory_state_desc AS system_memory_state_desc,
-			CASE WHEN osm.available_physical_memory_kb < osm.total_physical_memory_kb * 0.10 THEN 1 ELSE 0 END AS physical_memory_pressure_warning,
-			(SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64) AS total_node_count,
-			(SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64 AND node_state_desc LIKE '%ONLINE%') AS nodes_online_count,
-			(SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_os_schedulers WHERE is_online = 0) AS offline_cpu_count,
-			CASE WHEN EXISTS (SELECT /* SQL_OPTIMA */   1 FROM sys.dm_os_schedulers WHERE is_online = 0) THEN 1 ELSE 0 END AS offline_cpu_warning
-		FROM sys.dm_os_sys_info osi
-		CROSS JOIN (
-			SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */
+		WITH scheduler_stats AS (
+			SELECT
 				SUM(runnable_tasks_count) AS runnable_tasks_count,
 				SUM(work_queue_count) AS work_queue_count,
-				SUM(current_workers_count) AS current_workers_count
+				SUM(current_workers_count) AS current_workers_count,
+				SUM(active_workers_count) AS active_workers_count,
+				SUM(pending_disk_io_count) AS pending_disk_io_count
 			FROM sys.dm_os_schedulers
-			WHERE is_online = 1
-		) sched
+			WHERE status = 'VISIBLE ONLINE'
+		),
+		request_stats AS (
+			SELECT
+				COUNT(*) AS total_request_count,
+				SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS active_request_count,
+				SUM(CASE WHEN status = 'runnable' THEN 1 ELSE 0 END) AS runnable_request_count,
+				SUM(CASE WHEN blocking_session_id > 0 THEN 1 ELSE 0 END) AS blocked_task_count
+			FROM sys.dm_exec_requests
+		),
+		node_stats AS (
+			SELECT
+				COUNT(*) AS total_node_count,
+				SUM(CASE WHEN node_state_desc LIKE '%ONLINE%' THEN 1 ELSE 0 END) AS nodes_online_count
+			FROM sys.dm_os_nodes
+			WHERE node_id < 64
+		)
+		SELECT
+			GETUTCDATE() AS capture_timestamp,
+			osi.cpu_count,
+			osi.scheduler_count,
+			osi.max_workers_count,
+			ss.runnable_tasks_count,
+			ss.work_queue_count,
+			ss.current_workers_count,
+			ss.active_workers_count,
+			ss.pending_disk_io_count,
+			rs.total_request_count,
+			rs.active_request_count,
+			rs.runnable_request_count,
+			rs.blocked_task_count,
+			CAST(ss.runnable_tasks_count * 100.0 / NULLIF(osi.cpu_count,0) AS DECIMAL(8,2)) AS runnable_percent,
+			CASE WHEN ss.active_workers_count >= osi.max_workers_count * 0.90 THEN 1 ELSE 0 END AS worker_exhaustion_warning,
+			CASE WHEN ss.runnable_tasks_count >= osi.cpu_count * 2 THEN 1 ELSE 0 END AS cpu_pressure_warning,
+			osm.total_physical_memory_kb,
+			osm.available_physical_memory_kb,
+			osm.system_memory_state_desc,
+			ns.total_node_count,
+			ns.nodes_online_count,
+			CASE WHEN osm.available_physical_memory_kb < osm.total_physical_memory_kb * 0.10 THEN 1 ELSE 0 END AS memory_pressure_warning
+		FROM sys.dm_os_sys_info osi
+		CROSS JOIN scheduler_stats ss
+		CROSS JOIN request_stats rs
+		CROSS JOIN node_stats ns
 		CROSS JOIN sys.dm_os_sys_memory osm
 		OPTION (RECOMPILE)`
 
 	stats := &models.CPUSchedulerStats{}
-	var workerThreadWarning, runnableWarning, blockedWarning, queuedWarning, memPressureWarning, offlineWarning sql.NullInt64
+	var workerThreadWarning, runnableWarning, memPressureWarning sql.NullInt64
 
 	err := db.QueryRowContext(ctx, query).Scan(
 		&stats.CaptureTimestamp,
-		&stats.MaxWorkersCount,
-		&stats.SchedulerCount,
 		&stats.CPUCount,
+		&stats.SchedulerCount,
+		&stats.MaxWorkersCount,
 		&stats.TotalRunnableTasksCount,
 		&stats.TotalWorkQueueCount,
 		&stats.TotalCurrentWorkersCount,
-		&stats.AvgRunnableTasksCount,
-		&stats.TotalActiveRequestCount,
-		&stats.TotalQueuedRequestCount,
-		&stats.TotalBlockedTaskCount,
-		&stats.TotalActiveParallelThreadCount,
-		&stats.RunnableRequestCount,
+		&stats.ActiveWorkersCount,
+		&stats.PendingDiskIoCount,
 		&stats.TotalRequestCount,
+		&stats.TotalActiveRequestCount,
+		&stats.RunnableRequestCount,
+		&stats.TotalBlockedTaskCount,
 		&stats.RunnablePercent,
 		&workerThreadWarning,
 		&runnableWarning,
-		&blockedWarning,
-		&queuedWarning,
 		&stats.TotalPhysicalMemoryKB,
 		&stats.AvailablePhysicalMemoryKB,
 		&stats.SystemMemoryStateDesc,
-		&memPressureWarning,
 		&stats.TotalNodeCount,
 		&stats.NodesOnlineCount,
-		&stats.OfflineCPUCount,
-		&offlineWarning,
+		&memPressureWarning,
 	)
 	if err != nil {
 		log.Printf("[SQLSERVER] CollectCPUSchedulerStats Error: %v", err)
@@ -189,18 +200,16 @@ func (c *SqlServerRepository) CollectCPUSchedulerStats(ctx context.Context, db *
 
 	stats.WorkerThreadExhaustionWarning = workerThreadWarning.Int64 == 1
 	stats.RunnableTasksWarning = runnableWarning.Int64 == 1
-	stats.BlockedTasksWarning = blockedWarning.Int64 == 1
-	stats.QueuedRequestsWarning = queuedWarning.Int64 == 1
 	stats.PhysicalMemoryPressureWarning = memPressureWarning.Int64 == 1
-	stats.OfflineCPUWarning = offlineWarning.Int64 == 1
+	stats.BlockedTasksWarning = stats.TotalBlockedTaskCount > 0
 
 	return stats, nil
 }
 
 // CollectServerProperties collects server hardware properties
 func (c *SqlServerRepository) CollectServerProperties(ctx context.Context, db *sql.DB) (*models.ServerProperties, error) {
-	query := `
-		SELECT /* SQL_OPTIMA */   
+	query := `		
+		/* SQL_OPTIMA */ SELECT   
 			GETDATE() AS capture_timestamp,
 			osi.cpu_count,
 			osi.hyperthread_ratio,

@@ -239,7 +239,7 @@ func (tl *TimescaleLogger) GetPlanCacheHealthRange(ctx context.Context, instance
 	q := `
 		SELECT capture_timestamp, total_cache_mb, single_use_cache_mb, single_use_cache_pct,
 		       adhoc_cache_mb, prepared_cache_mb, proc_cache_mb
-		FROM sqlserver_plan_cache_health
+		FROM sqlserver_plan_cache
 		WHERE server_instance_name = $1
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3

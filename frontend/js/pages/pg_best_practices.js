@@ -22,9 +22,14 @@ window.PgBestPracticesView = async function() {
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between">
-                <div>
-                    <h1><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices Dashboard</h1>
-                    <p class="subtitle">Instance: ${window.escapeHtml(inst.name)}</p>
+                <div style="display:flex; align-items:center; gap:1rem;">
+                    <button class="btn btn-secondary btn-sm" data-action="navigate-back" title="Back to Control Center">
+                        <i class="fa-solid fa-arrow-left"></i> Back
+                    </button>
+                    <div>
+                        <h1><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices Dashboard</h1>
+                        <p class="subtitle">Instance: ${window.escapeHtml(inst.name)}</p>
+                    </div>
                 </div>
                 <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgBestPracticesView"><i class="fa-solid fa-refresh"></i> Refresh</button>
             </div>

@@ -15,5 +15,11 @@ CREATE TABLE IF NOT EXISTS sqlserver_database_throughput (
     total_writes BIGINT DEFAULT 0,
     tps DOUBLE PRECISION DEFAULT 0,
     batch_requests_per_sec DOUBLE PRECISION DEFAULT 0,
+    reads BIGINT DEFAULT 0,
+    writes BIGINT DEFAULT 0,
+    bytes_read BIGINT DEFAULT 0,
+    bytes_written BIGINT DEFAULT 0,
+    read_latency_ms BIGINT DEFAULT 0,
+    write_latency_ms BIGINT DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );

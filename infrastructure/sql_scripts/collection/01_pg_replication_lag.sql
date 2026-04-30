@@ -1,5 +1,5 @@
 -- Metric: pg_replication_lag
--- Source: backend/internal/repository/pg_stats.go:389
+-- Source: backend/internal/repository/pg_replication_metrics.go
 -- Target Table: postgres_replication_stats (TimescaleDB)
 -- Description: Calculates replication lag in MB on standby using LSN difference
 

@@ -1,60 +1,110 @@
-<div class="page-view active dashboard-sky-theme">
-  <div class="page-title flex-between dashboard-page-title-compact">
-    <div class="dashboard-title-line" style="flex:1; min-width:0;">
-      <h1><i class="fa-solid fa-file-lines text-accent"></i> PostgreSQL Log Explorer</h1>
-      <span class="subtitle">Recent ERROR/FATAL/PANIC and important warnings (Timescale-backed)</span>
+<!--
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Centralized explorer for PostgreSQL server logs with filtering and search capabilities.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+-->
+<div class="page-view active dashboard-sky-theme pg-logs-page">
+    <!-- Header -->
+    <div class="page-title flex-between dashboard-page-title-compact">
+        <div class="dashboard-title-line" style="flex:1; min-width:0; display:flex; align-items:center; gap:1rem;">
+            <button class="btn btn-secondary btn-sm" data-action="navigate-back" title="Back to Control Center">
+                <i class="fa-solid fa-arrow-left"></i>
+            </button>
+            <div>
+                <h1>Log Explorer</h1>
+                <span class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></span>
+            </div>
+        </div>
+        
+        <div class="dashboard-page-title-actions dashboard-pg-header-actions">
+            <div class="dashboard-pg-header-primary">
+                <div class="time-picker glass-panel p-2 rounded" style="display:flex; flex-wrap:wrap; align-items:center; gap:0.35rem 0.85rem; justify-content:flex-end;">
+                    <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="pgLastRefreshTime">--:--:--</span></span>
+                    <span class="text-muted" style="font-size:0.75rem;" id="pg-uptime">Loading...</span>
+                    <span class="text-muted" style="font-size:0.75rem;" id="pg-version">Loading...</span>
+                </div>
+                <div class="glass-panel p-2 rounded" style="display:flex; align-items:center; gap:0.5rem; cursor:help;" id="pgHealthTooltipContainer">
+                    <span class="text-muted" style="font-size:0.75rem;">Health</span>
+                    <span id="pgHealthScoreBadge" class="badge badge-success" style="min-width:3.5rem; text-align:center;">--</span>
+                </div>
+                <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgLogsView" title="Force refresh the dashboard data."><i class="fa-solid fa-refresh"></i> Refresh</button>
+            </div>
+        </div>
     </div>
-    <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
-      <button class="btn btn-sm btn-outline" data-action="navigate" data-route="pg-dashboard"><i class="fa-solid fa-arrow-left"></i> Back</button>
-      <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgLogsView"><i class="fa-solid fa-refresh"></i> Refresh</button>
-    </div>
-  </div>
 
-  <div class="glass-panel p-2 rounded" style="margin-top:0.75rem; display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
-    <div class="custom-select-group">
-      <label class="text-muted" style="font-size:0.75rem;">Severity</label>
-      <select id="pgLogsSeverity" class="custom-select">
-        <option value="all">All</option>
-        <option value="panic">panic</option>
-        <option value="fatal">fatal</option>
-        <option value="error" selected>error</option>
-        <option value="warning">warning</option>
-      </select>
+    <!-- ROW 1: Log KPIs -->
+    <div class="glass-panel dashboard-strip-panel mt-2">
+        <div class="dashboard-strip-header">
+            <h4><i class="fa-solid fa-list-check text-accent"></i> Log Event Summary</h4>
+        </div>
+        <div class="dashboard-strip-metrics-row--4">
+            <div class="strip-metric-cell" title="Total errors in last 24h.">
+                <div class="strip-metric-label">Errors (24h)</div>
+                <div class="strip-metric-value" id="stat-logs-errors">--</div>
+            </div>
+            <div class="strip-metric-cell" title="Fatal/Panic events in last 24h.">
+                <div class="strip-metric-label">Fatal/Panic</div>
+                <div class="strip-metric-value" id="stat-logs-fatal">--</div>
+            </div>
+            <div class="strip-metric-cell" title="Warnings in last 24h.">
+                <div class="strip-metric-label">Warnings</div>
+                <div class="strip-metric-value" id="stat-logs-warning">--</div>
+            </div>
+            <div class="strip-metric-cell" title="Log collection status.">
+                <div class="strip-metric-label">Status</div>
+                <div class="strip-metric-value text-success">ACTIVE</div>
+            </div>
+        </div>
     </div>
-    <div class="custom-select-group">
-      <label class="text-muted" style="font-size:0.75rem;">Limit</label>
-      <select id="pgLogsLimit" class="custom-select">
-        <option value="100">100</option>
-        <option value="200" selected>200</option>
-        <option value="500">500</option>
-      </select>
-    </div>
-    <div class="custom-select-group" style="min-width:260px; flex:1;">
-      <label class="text-muted" style="font-size:0.75rem;">Search</label>
-      <input id="pgLogsSearch" class="custom-input" placeholder="filter by message / sqlstate / db / user / app" />
-    </div>
-    <div class="text-muted" style="font-size:0.75rem;" id="pgLogsMeta">Loading…</div>
-  </div>
 
-  <div class="table-card glass-panel mt-3" style="padding:0.75rem;">
-    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Recent log events</h3></div>
-    <div class="table-responsive" style="max-height:560px; overflow:auto;">
-      <table class="data-table" style="font-size:0.75rem;">
-        <thead>
-          <tr>
-            <th style="min-width:110px;">Time</th>
-            <th style="min-width:80px;">Severity</th>
-            <th style="min-width:80px;">SQLSTATE</th>
-            <th>Message</th>
-            <th style="min-width:120px;">DB/User</th>
-            <th style="min-width:140px;">App/Client</th>
-          </tr>
-        </thead>
-        <tbody id="pgLogsTbody">
-          <tr><td colspan="6" class="text-center text-muted">Loading…</td></tr>
-        </tbody>
-      </table>
+    <div class="glass-panel p-2 rounded" style="margin-top:0.75rem; display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
+        <div class="custom-select-group">
+            <label class="text-muted" style="font-size:0.75rem;">Severity</label>
+            <select id="pgLogsSeverity" class="custom-select" style="font-size:0.7rem; padding:2px 5px;">
+                <option value="all">All</option>
+                <option value="panic">panic</option>
+                <option value="fatal">fatal</option>
+                <option value="error" selected>error</option>
+                <option value="warning">warning</option>
+            </select>
+        </div>
+        <div class="custom-select-group">
+            <label class="text-muted" style="font-size:0.75rem;">Limit</label>
+            <select id="pgLogsLimit" class="custom-select" style="font-size:0.7rem; padding:2px 5px;">
+                <option value="100">100</option>
+                <option value="200" selected>200</option>
+                <option value="500">500</option>
+            </select>
+        </div>
+        <div class="custom-select-group" style="min-width:260px; flex:1;">
+            <label class="text-muted" style="font-size:0.75rem;">Search</label>
+            <input id="pgLogsSearch" class="custom-input" placeholder="Search message, sqlstate, db, etc." style="font-size:0.7rem; padding:2px 8px; width:100%;" />
+        </div>
+        <div class="text-muted" style="font-size:0.7rem;" id="pgLogsMeta">Loading…</div>
     </div>
-  </div>
+
+    <div class="table-card glass-panel mt-3" style="padding:0.75rem;">
+        <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Recent Log Events</h3></div>
+        <div class="table-responsive mt-2" style="max-height:500px; overflow:auto;">
+            <table class="data-table" style="font-size:0.7rem;">
+                <thead>
+                    <tr>
+                        <th style="min-width:110px;">Time</th>
+                        <th style="min-width:80px;">Severity</th>
+                        <th style="min-width:80px;">SQLSTATE</th>
+                        <th>Message</th>
+                        <th style="min-width:120px;">DB/User</th>
+                        <th style="min-width:140px;">App/Client</th>
+                    </tr>
+                </thead>
+                <tbody id="pgLogsTbody">
+                    <tr><td colspan="6" class="text-center text-muted">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
 </div>
-

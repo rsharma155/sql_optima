@@ -26,15 +26,21 @@ func (tl *TimescaleLogger) GetSQLServerTopQueries(ctx context.Context, instanceN
 	}
 
 	query := `
-		SELECT MAX(ts) as capture_timestamp, query_hash, MAX(statement_text) as query_text, SUM(total_executions) as execution_count,
-		       SUM(total_cpu_ms) as cpu_time_ms, SUM(total_elapsed_ms) as exec_time_ms, SUM(total_logical_reads) as logical_reads,
-		       database_name, MAX(login_name) as login_name, MAX(application_name) as program_name
-		FROM sqlserver_query_metrics_v2
-		WHERE instance_id = $1
-		  AND ts >= NOW() - INTERVAL '1 hour'
-		  AND ($3 = '' OR database_name = $3)
-		GROUP BY query_hash, database_name
-		ORDER BY SUM(total_cpu_ms) DESC
+		SELECT MAX(q.ts) as capture_timestamp, q.query_hash, MAX(q.statement_text) as query_text, SUM(q.total_executions) as execution_count,
+		       SUM(q.total_cpu_ms) as cpu_time_ms, SUM(q.total_elapsed_ms) as exec_time_ms, SUM(q.total_logical_reads) as logical_reads,
+		       q.database_name, MAX(q.login_name) as login_name, MAX(q.application_name) as program_name
+		FROM sqlserver_query_metrics_v2 q
+		LEFT JOIN sqlserver_query_classification_dim class
+		  ON class.instance_id = q.instance_id
+		 AND class.query_hash = ('\x' || lpad(to_hex(q.query_hash), 16, '0'))::bytea
+		WHERE q.instance_id = $1
+		  AND q.ts >= NOW() - INTERVAL '1 hour'
+		  AND ($3 = '' OR q.database_name = $3)
+		  AND q.statement_text NOT LIKE '%/* SQL_OPTIMA */%'
+		  AND (q.login_name IS NULL OR q.login_name <> 'dbmonitor_user')
+		  AND COALESCE(class.classification, 'UNKNOWN') = 'USER'
+		GROUP BY q.query_hash, q.database_name
+		ORDER BY SUM(q.total_cpu_ms) DESC
 		LIMIT $2
 	`
 
@@ -108,29 +114,35 @@ func (tl *TimescaleLogger) GetSQLServerTopQueriesWithRange(ctx context.Context, 
 	}
 
 	query := `
-		SELECT query_hash,
-		       MAX(statement_text) AS query_text,
-		       SUM(total_executions)::bigint AS total_executions,
-		       SUM(total_cpu_ms)::bigint AS sum_cpu_ms,
-		       CASE WHEN SUM(total_executions) > 0
-		            THEN SUM(total_cpu_ms)::float8 / NULLIF(SUM(total_executions)::float8, 0)
+		SELECT q.query_hash,
+		       MAX(q.statement_text) AS query_text,
+		       SUM(q.total_executions)::bigint AS total_executions,
+		       SUM(q.total_cpu_ms)::bigint AS sum_cpu_ms,
+		       CASE WHEN SUM(q.total_executions) > 0
+		            THEN SUM(q.total_cpu_ms)::float8 / NULLIF(SUM(q.total_executions)::float8, 0)
 		            ELSE 0 END AS avg_cpu_ms,
-		       SUM(total_logical_reads)::bigint AS sum_logical_reads,
-		       CASE WHEN SUM(total_executions) > 0
-		            THEN SUM(total_logical_reads)::float8 / NULLIF(SUM(total_executions)::float8, 0)
+		       SUM(q.total_logical_reads)::bigint AS sum_logical_reads,
+		       CASE WHEN SUM(q.total_executions) > 0
+		            THEN SUM(q.total_logical_reads)::float8 / NULLIF(SUM(q.total_executions)::float8, 0)
 		            ELSE 0 END AS avg_logical_reads,
-		       SUM(total_elapsed_ms)::bigint AS sum_exec_ms,
-		       database_name,
-		       MAX(login_name) AS login_name,
-		       MAX(application_name) AS program_name,
-		       MAX(ts) AS last_capture
-		FROM sqlserver_query_metrics_v2
-		WHERE instance_id = $1
-		  AND ts >= $2
-		  AND ts <= $3
-		  AND ($5 = '' OR database_name = $5)
-		GROUP BY query_hash, database_name
-		ORDER BY SUM(total_cpu_ms) DESC
+		       SUM(q.total_elapsed_ms)::bigint AS sum_exec_ms,
+		       q.database_name,
+		       MAX(q.login_name) AS login_name,
+		       MAX(q.application_name) AS program_name,
+		       MAX(q.ts) AS last_capture
+		FROM sqlserver_query_metrics_v2 q
+		LEFT JOIN sqlserver_query_classification_dim class
+		  ON class.instance_id = q.instance_id
+		 AND class.query_hash = ('\x' || lpad(to_hex(q.query_hash), 16, '0'))::bytea
+		WHERE q.instance_id = $1
+		  AND q.ts >= $2
+		  AND q.ts <= $3
+		  AND ($5 = '' OR q.database_name = $5)
+		  AND q.statement_text NOT LIKE '%/* SQL_OPTIMA */%'
+		  AND (q.login_name IS NULL OR q.login_name <> 'dbmonitor_user')
+		  AND COALESCE(class.classification, 'UNKNOWN') = 'USER'
+		GROUP BY q.query_hash, q.database_name
+		ORDER BY SUM(q.total_cpu_ms) DESC
 		LIMIT $4
 	`
 
@@ -259,6 +271,8 @@ func (tl *TimescaleLogger) GetSQLServerLongRunningQueries(ctx context.Context, i
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 		  AND ($4::text IS NULL OR $4 = '' OR database_name = $4)
+		  AND query_text NOT LIKE '%/* SQL_OPTIMA */%'
+		  AND (login_name IS NULL OR login_name <> 'dbmonitor_user')
 		ORDER BY capture_timestamp DESC, total_elapsed_time_ms DESC
 		LIMIT $5
 	`
@@ -475,18 +489,23 @@ func (tl *TimescaleLogger) GetQueryStoreStats(ctx context.Context, instanceName 
 	}
 
 	query := fmt.Sprintf(`
-		SELECT ts as bucket_end, instance_id as server_instance_name, database_name,
-		       query_hash, statement_text as query_text, total_executions as delta_executions,
-		       (total_elapsed_ms / NULLIF(total_executions, 0)) as avg_duration_ms, 
-		       (total_cpu_ms / NULLIF(total_executions, 0)) as avg_cpu_ms, 
-		       total_logical_reads as delta_logical_reads, total_cpu_ms as delta_cpu_ms
-		FROM sqlserver_query_metrics_v2
-		WHERE UPPER(instance_id) = UPPER($1)
-		  AND ts >= NOW() - INTERVAL '%s'
-		ORDER BY ts DESC, total_cpu_ms DESC
+		SELECT q.ts as bucket_end, q.instance_id as server_instance_name, q.database_name,
+		       to_hex(q.query_hash) as query_hash, q.statement_text as query_text, q.total_executions as delta_executions,
+		       (q.total_elapsed_ms::float8 / NULLIF(q.total_executions, 0)) as avg_duration_ms,
+		       (q.total_cpu_ms::float8 / NULLIF(q.total_executions, 0)) as avg_cpu_ms,
+		       q.total_logical_reads as delta_logical_reads, q.total_cpu_ms as delta_cpu_ms
+		FROM sqlserver_query_metrics_v2 q
+		LEFT JOIN sqlserver_query_classification_dim class
+		  ON class.instance_id = q.instance_id
+		 AND class.query_hash = decode(lpad(to_hex(q.query_hash), 16, '0'), 'hex')
+		WHERE UPPER(q.instance_id) = UPPER($1)
+		  AND q.ts >= NOW() - INTERVAL '%s'
+		  AND q.statement_text NOT LIKE '%%/* SQL_OPTIMA */%%'
+		  AND (q.login_name IS NULL OR q.login_name <> 'dbmonitor_user')
+		  AND COALESCE(class.classification, 'UNKNOWN') = 'USER'
+		ORDER BY q.ts DESC, q.total_cpu_ms DESC
 		LIMIT $2
 	`, interval)
-
 	rows, err := tl.pool.Query(ctx, query, instanceName, limit)
 	if err != nil {
 		return nil, err
@@ -530,23 +549,32 @@ func (tl *TimescaleLogger) GetQueryStoreBottlenecks(ctx context.Context, instanc
 	// Querying from the true delta interval table
 	query := fmt.Sprintf(`
 		WITH recent AS (
-			SELECT query_hash, MAX(statement_text) as query_text, database_name,
-			       SUM(total_executions) as total_exec,
-			       AVG(total_cpu_ms / NULLIF(total_executions, 0)) as avg_cpu,
-			       SUM(total_cpu_ms) as total_cpu,
-			       AVG(total_elapsed_ms / NULLIF(total_executions, 0)) as avg_dur,
-			       AVG(total_logical_reads / NULLIF(total_executions, 0)) as avg_reads
-			FROM sqlserver_query_metrics_v2
-			WHERE instance_id = $1
-			  AND ts >= NOW() - INTERVAL '%s'
-			  AND ($2::text IS NULL OR $2 = '' OR database_name = $2)
-			GROUP BY query_hash, database_name
+			SELECT q.query_hash, MAX(q.statement_text) as query_text, q.database_name,
+			       SUM(q.total_executions) as total_exec,
+			       AVG(q.total_cpu_ms::float8 / NULLIF(q.total_executions, 0)) as avg_cpu,
+			       SUM(q.total_cpu_ms)::float8 as total_cpu,
+			       AVG(q.total_elapsed_ms::float8 / NULLIF(q.total_executions, 0)) as avg_dur,
+			       AVG(q.total_logical_reads::float8 / NULLIF(q.total_executions, 0)) as avg_reads,
+			       CASE 
+			         WHEN AVG(q.total_cpu_ms::float8 / NULLIF(q.total_executions, 0)) > 0.7 * AVG(q.total_elapsed_ms::float8 / NULLIF(q.total_executions, 0)) THEN 'CPU'
+			         WHEN AVG(q.total_logical_reads::float8 / NULLIF(q.total_executions, 0)) > 5000 THEN 'I/O'
+			         ELSE 'Wait'
+			       END as bottleneck_type
+			FROM sqlserver_query_metrics_v2 q
+			LEFT JOIN sqlserver_query_classification_dim class
+			  ON class.instance_id = q.instance_id
+			 AND class.query_hash = decode(lpad(to_hex(q.query_hash), 16, '0'), 'hex')
+			WHERE q.instance_id = $1
+			  AND q.ts >= NOW() - INTERVAL '%s'
+			  AND ($2::text IS NULL OR $2 = '' OR q.database_name = $2)
+			  AND q.statement_text NOT LIKE '%%/* SQL_OPTIMA */%%'
+			  AND (q.login_name IS NULL OR q.login_name <> 'dbmonitor_user')
+			  AND COALESCE(class.classification, 'UNKNOWN') = 'USER'
+			GROUP BY q.query_hash, q.database_name
 		)
-		SELECT query_hash, query_text, database_name, total_exec, avg_cpu, total_cpu, avg_dur, avg_reads,
-		       CASE WHEN avg_dur > 1000 THEN 'high_duration'
-		            WHEN avg_cpu > 500 THEN 'high_cpu'
-		            WHEN avg_reads > 100000 THEN 'high_io'
-		            ELSE 'normal' END as bottleneck_type
+		SELECT to_hex(query_hash), query_text, database_name, total_exec::bigint, 
+		       COALESCE(avg_cpu, 0), COALESCE(total_cpu, 0), COALESCE(avg_dur, 0), COALESCE(avg_reads, 0),
+		       bottleneck_type
 		FROM recent
 		WHERE total_exec > 0
 		ORDER BY total_cpu DESC

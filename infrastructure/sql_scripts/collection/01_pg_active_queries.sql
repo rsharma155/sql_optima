@@ -1,5 +1,5 @@
 -- Metric: pg_active_queries
--- Source: backend/internal/repository/pg_stats.go:624
+-- Source: backend/internal/repository/pg_session_metrics.go
 -- Target Table: N/A (session monitoring)
 -- Description: Returns all currently active queries from pg_stat_activity
 

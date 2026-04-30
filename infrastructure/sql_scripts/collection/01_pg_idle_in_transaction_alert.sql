@@ -1,5 +1,5 @@
 -- Metric: pg_idle_in_transaction_alert
--- Source: backend/internal/repository/pg_stats.go:1243
+-- Source: backend/internal/repository/pg_system_metrics.go
 -- Target Table: N/A (alerting)
 -- Description: Checks for long-running idle-in-transaction sessions from pg_stat_activity
 

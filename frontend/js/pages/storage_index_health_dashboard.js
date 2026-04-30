@@ -60,8 +60,13 @@ window.runStorageIndexHealthDashboard = async function(opts) {
         window.routerOutlet.innerHTML = `
             <div class="page-view active dashboard-sky-theme">
                 <div class="page-title flex-between dashboard-page-title-compact">
-                    <div class="dashboard-title-line" style="flex:1; min-width:0;">
-                        <h1><i class="fa-solid fa-boxes-stacked text-accent"></i> ${dashTitle}</h1>
+                    <div style="display:flex; align-items:center; gap:1rem;">
+                        <button class="btn btn-secondary btn-sm" data-action="navigate-back" title="Back to Control Center">
+                            <i class="fa-solid fa-arrow-left"></i> Back
+                        </button>
+                        <div class="dashboard-title-line" style="flex:1; min-width:0;">
+                            <h1><i class="fa-solid fa-boxes-stacked text-accent"></i> ${dashTitle}</h1>
+                        </div>
                     </div>
                     <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.6rem; flex-wrap:wrap; justify-content:flex-end;">
                         <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; border: 1px solid var(--border-color);">
@@ -90,15 +95,15 @@ window.runStorageIndexHealthDashboard = async function(opts) {
                 <div id="sihHealthBanner" class="mt-2 mb-3" style="display:none;"></div>
 
                 <!-- KPI Health Row -->
-                <div class="charts-grid" style="display:grid; grid-template-columns:repeat(6, 1fr); gap:0.75rem;">
+                <div class="charts-grid" style="display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:0.5rem;">
                     ${['TotalSize', 'Growth7d', 'Forecast30d', 'Reclaimable', 'Frag', 'WriteAmp'].map((id, i) => {
-                        const labels = ['Total DB Size', '7d Growth', '30d Forecast', 'Reclaimable Index', 'Avg Fragmentation', 'Write Amp Score'];
+                        const labels = ['DB Size', '7d Growth', '30d Forecast', 'Reclaimable', 'Avg Frag', 'Write Amp'];
                         return `
-                            <div class="metric-card glass-panel sih-kpi-card" id="card${id}" style="padding:0.6rem 0.75rem; min-height:95px;">
-                                <div class="text-muted" style="font-size:0.65rem;">${labels[i]}</div>
-                                <div id="kpi${id}" style="font-size:1.1rem; font-weight:700;">--</div>
-                                <div id="delta${id}" style="font-size:0.65rem; margin-top:0.1rem;"></div>
-                                <div style="height:25px; margin-top:0.35rem;"><canvas id="spark${id}"></canvas></div>
+                            <div class="metric-card glass-panel sih-kpi-card" id="card${id}" style="padding:0.4rem 0.6rem; min-height:75px; display:flex; flex-direction:column; justify-content:center;">
+                                <div class="text-muted" style="font-size:0.6rem; text-transform:uppercase;">${labels[i]}</div>
+                                <div id="kpi${id}" style="font-size:1rem; font-weight:700; line-height:1.2;">--</div>
+                                <div id="delta${id}" style="font-size:0.6rem;"></div>
+                                <div style="height:20px; margin-top:0.25rem;"><canvas id="spark${id}"></canvas></div>
                             </div>
                         `;
                     }).join('')}
@@ -165,22 +170,20 @@ window.runStorageIndexHealthDashboard = async function(opts) {
         }
 
         const sync = () => {
-            state.fromLocal = $('sihFrom').value;
-            state.toLocal = $('sihTo').value;
-            state.db = $('sihDb').value;
-            state.schema = $('sihSchema').value;
-            state.table = $('sihTable').value;
+            if ($('sihFrom')) state.fromLocal = $('sihFrom').value;
+            if ($('sihTo')) state.toLocal = $('sihTo').value;
+            if ($('sihDb')) state.db = $('sihDb').value;
+            if ($('sihSchema')) state.schema = $('sihSchema').value;
+            if ($('sihTable')) state.table = $('sihTable').value;
         };
         const reload = (e) => { 
             if (e) e.preventDefault();
             sync(); 
-            // Widen growth window if needed by state logic inside buildFilterQS or backend.
             void window.runStorageIndexHealthDashboard({ skipLoadingShell: true }); 
         };
         $('sihRefresh').onclick = reload;
         $('sihApply').onclick = reload;
 
-        // Auto-reload on dropdown changes for better UX
         $('sihDb').onchange = reload;
         $('sihSchema').onchange = reload;
         $('sihTable').onchange = reload;
@@ -203,6 +206,8 @@ window.runStorageIndexHealthDashboard = async function(opts) {
         updateKpi('Frag', k.avg_fragmentation_pct, '%', { orange: 10, red: 30 });
         updateKpi('WriteAmp', k.index_write_overhead_pct, '', { orange: 3, red: 6 });
 
+        const isTableFiltered = state.table && state.table !== 'all';
+
         $('sihDashboardBody').innerHTML = `
             <div class="glass-panel p-3 mb-3" style="background:var(--bg-surface-alt); border:1px solid var(--border-color);">
                 <h4 class="mb-2" style="font-size:0.9rem; color:var(--text-secondary); text-transform:uppercase;"><i class="fa-solid fa-wand-magic-sparkles text-accent"></i> Storage Insights</h4>
@@ -213,8 +218,14 @@ window.runStorageIndexHealthDashboard = async function(opts) {
                 <div class="chart-card glass-panel" style="height:320px; padding:0.75rem;"><div class="card-header flex-between"><h3>Fastest Growing Tables (7d)</h3><div class="btn-group"><button class="btn btn-xs ${state.growthMode==='abs'?'btn-accent':'btn-outline'}" id="btnGrowthAbs">MB</button><button class="btn btn-xs ${state.growthMode==='pct'?'btn-accent':'btn-outline'}" id="btnGrowthPct">%</button></div></div><div class="chart-container" style="height:270px;"><canvas id="chartTopGrowth"></canvas></div></div>
             </div>
             <div class="grid mt-3" style="display:grid; grid-template-columns: 1.2fr 0.8fr; gap:0.75rem;">
-                <div class="table-card glass-panel"><div class="card-header"><h3>Largest Tables Diagnostic</h3></div><div class="table-responsive"><table class="data-table" style="font-size:0.72rem;"><thead><tr><th>Table</th><th>Total MB</th><th>Data MB</th><th>Idx Ratio</th><th>% DB</th><th>30d Forecast</th><th>Risk</th></tr></thead><tbody id="largestTablesBody"></tbody></table></div></div>
-                <div class="table-card glass-panel"><div class="card-header"><h3>Index Efficiency & Recommendation</h3></div><div class="table-responsive"><table class="data-table" style="font-size:0.72rem;"><thead><tr><th class="sortable" data-col="index_name">Index</th><th class="sortable text-right" data-col="value2">MB</th><th class="sortable text-right" data-col="ratio">R:W</th><th class="sortable text-right" data-col="frag">Frag</th><th>Rec.</th></tr></thead><tbody id="indexEfficiencyBody"></tbody></table></div></div>
+                <div class="table-card glass-panel">
+                    <div class="card-header flex-between">
+                        <h3 style="font-size:0.85rem; margin:0;">Largest Tables Diagnostic ${isTableFiltered ? '<span class="text-accent ml-2">(Filtered)</span>' : ''}</h3>
+                        ${isTableFiltered ? '<span class="text-muted" style="font-size:0.7rem;"><i class="fa-solid fa-circle-info"></i> Click row to see table drill-down details</span>' : ''}
+                    </div>
+                    <div class="table-responsive"><table class="data-table" style="font-size:0.72rem;"><thead><tr><th>Table</th><th>Total MB</th><th>Data MB</th><th>Idx Ratio</th><th>% DB</th><th>30d Forecast</th><th>Risk</th></tr></thead><tbody id="largestTablesBody"></tbody></table></div>
+                </div>
+                <div class="table-card glass-panel"><div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Index Efficiency & Recommendation</h3></div><div class="table-responsive"><table class="data-table" style="font-size:0.72rem;"><thead><tr><th class="sortable" data-col="index_name">Index</th><th class="sortable text-right" data-col="value2">MB</th><th class="sortable text-right" data-col="ratio">R:W</th><th class="sortable text-right" data-col="frag">Frag</th><th>Rec.</th></tr></thead><tbody id="indexEfficiencyBody"></tbody></table></div></div>
             </div>
         `;
 
@@ -263,7 +274,7 @@ window.runStorageIndexHealthDashboard = async function(opts) {
         // Populate Insights Panel
         (function renderInsights() {
             const insights = $('sihInsightsBody');
-            const data = (dash.duplicate_index_candidates || []);
+            const data = (dash.Insights || []);
             if (!data.length) {
                 insights.innerHTML = '<div class="text-success" style="font-size:0.85rem;"><i class="fa-solid fa-circle-check"></i> No significant risks detected in current analytical window.</div>';
                 return;
@@ -300,10 +311,34 @@ window.runStorageIndexHealthDashboard = async function(opts) {
             renderTopGrowthChart(dash.growth || [], state.growthMode);
         }, 100);
 
-        $('sihDashboardBody').addEventListener('click', (e) => {
-            const tr = e.target.closest('tr[data-action="sih-drilldown"]');
-            if (tr) showSihTableDrilldown(inst.name, tr.dataset.db, tr.dataset.schema, tr.dataset.table);
-        });
+        // Add event listener only ONCE on router outlet for better lifecycle management
+        if (!window.sihClickListenerAdded) {
+            window.routerOutlet.addEventListener('click', (e) => {
+                const tr = e.target.closest('tr[data-action="sih-drilldown"]');
+                if (tr) showSihTableDrilldown(inst.name, tr.dataset.db, tr.dataset.schema, tr.dataset.table);
+                
+                const closeBtn = e.target.closest('[data-action="close-drilldown"]');
+                if (closeBtn) {
+                    const m = document.getElementById('sih-drilldown-modal');
+                    if (m) m.remove();
+                }
+                
+                const tabBtn = e.target.closest('.sih-tab-btn');
+                if (tabBtn) {
+                    const target = tabBtn.dataset.tab;
+                    document.querySelectorAll('.sih-tab-btn').forEach(b => b.classList.toggle('active', b === tabBtn));
+                    document.querySelectorAll('.sih-drill-pane').forEach(p => p.style.display = p.id === 'drill-' + target ? 'block' : 'none');
+                    
+                    // Trigger chart resize/re-render if needed
+                    if (target === 'growth' && window._sihDrillGrowthChart) {
+                        window._sihDrillGrowthChart.update();
+                    } else if (target === 'indexes' && window._sihDrillIndexTrendChart) {
+                        window._sihDrillIndexTrendChart.update();
+                    }
+                }
+            });
+            window.sihClickListenerAdded = true;
+        }
 
     } catch (e) {
         console.error('SIH dashboard failed', e);
@@ -318,9 +353,26 @@ function renderSparkline(canvasId, data, color) {
     if (existing) existing.destroy();
     
     if (!data || !data.length) return;
+
     new Chart(canvas, {
-        type: 'line', data: { labels: data.map((_,i)=>i), datasets: [{ data, borderColor: color, borderWidth: 2, pointRadius: 0, fill: false, tension: 0.4 }] },
-        options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{enabled:false} }, scales:{ x:{display:false}, y:{display:false} } }
+        type: 'line',
+        data: {
+            labels: data.map((_, i) => i),
+            datasets: [{
+                data: data,
+                borderColor: color,
+                borderWidth: 1.5,
+                pointRadius: 0,
+                fill: false,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            scales: { x: { display: false }, y: { display: false } }
+        }
     });
 }
 
@@ -329,11 +381,23 @@ function renderGrowthChart(growth) {
     if (!canvas) return;
     const existing = Chart.getChart(canvas);
     if (existing) existing.destroy();
-    if (!growth || !growth.length) return;
 
     new Chart(canvas, {
-        type: 'line', data: { labels: growth.map(p => new Date(p.bucket).toLocaleDateString()), datasets: [{ label: 'Data MB', data: growth.map(p => p.table_size_mb), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.25)', fill: true, tension: 0.2, pointRadius: 0 }, { label: 'Index MB', data: growth.map(p => p.index_size_mb), borderColor: '#eab308', backgroundColor: 'rgba(234,179,8,0.2)', fill: true, tension: 0.2, pointRadius: 0 }] },
-        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { tooltip: { callbacks: { footer: (items) => `Total: ${items.reduce((s, i) => s + i.parsed.y, 0).toLocaleString()} MB` } } }, scales: { x: { grid: { display: false } }, y: { stacked: true, beginAtZero: false, ticks: { callback: v => v + ' MB' } } } }
+        type: 'line',
+        data: {
+            labels: growth.map(p => new Date(p.bucket).toLocaleDateString()),
+            datasets: [
+                { label: 'Table Data', data: growth.map(p => p.table_size_mb), borderColor: '#3b82f6', backgroundColor: '#3b82f622', fill: true, tension: 0.3 },
+                { label: 'Indexes', data: growth.map(p => p.index_size_mb), borderColor: '#10b981', backgroundColor: '#10b98122', fill: true, tension: 0.3 }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: { y: { beginAtZero: false, ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' } }, x: { ticks: { color: '#94a3b8', font: { size: 10 }, maxTicksLimit: 8 }, grid: { display: false } } },
+            plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 12, color: '#94a3b8', font: { size: 10 } } } }
+        }
     });
 }
 
@@ -342,8 +406,8 @@ function renderTopGrowthChart(growth, mode) {
     if (!canvas) return;
     const existing = Chart.getChart(canvas);
     if (existing) existing.destroy();
-    if (!growth || !growth.length) return;
 
+    // Mode 'abs' = delta MB, 'pct' = %
     const data = growth.map((p,i) => { if (i===0) return 0; const diff = p.table_size_mb - growth[i-1].table_size_mb; return mode==='pct' ? (diff/(growth[i-1].table_size_mb||1))*100 : diff; });
     new Chart(canvas, {
         type: 'bar', data: { labels: growth.map(p => new Date(p.bucket).toLocaleDateString()), datasets: [{ label: mode==='pct'?'Growth %':'Growth MB', data, backgroundColor: '#f43f5e', borderRadius: 4 }] },
@@ -356,8 +420,8 @@ async function showSihTableDrilldown(instance, db, schema, table) {
     const engine = (inst.type === 'postgres') ? 'postgres' : 'sqlserver';
     const existing = document.getElementById('sih-drilldown-modal'); if(existing) existing.remove();
     const modal = document.createElement('div'); modal.id = 'sih-drilldown-modal';
-    modal.style.cssText = 'display:flex; position:fixed; z-index:99999; inset:0; background:rgba(0,0,0,0.85); align-items:center; justify-content:center; padding: 2rem;';
-    
+    modal.style.cssText = 'position:fixed; z-index:99999; inset:0; background:rgba(0,0,0,0.85); display:flex; align-items:center; justify-content:center; padding: 2rem;';
+
     modal.innerHTML = `
         <div class="glass-panel" style="width:100%; max-width:1100px; height:85vh; display:flex; flex-direction:column; background:var(--bg-surface); box-shadow: 0 0 50px rgba(0,0,0,0.5); border: 1px solid var(--border-color);">
             <div class="flex-between p-4" style="border-bottom: 1px solid var(--border-color);">
@@ -368,35 +432,47 @@ async function showSihTableDrilldown(instance, db, schema, table) {
                 <button class="btn btn-sm btn-outline" data-action="close-drilldown" style="padding: 0.5rem 1rem;"><i class="fa-solid fa-times"></i> Close</button>
             </div>
             
-            <div class="px-4 pt-3" style="background: rgba(255,255,255,0.02);">
-                <div class="tabs-container" id="sihDrillTabs">
-                    <button class="tab-btn active" data-tab="drill-breakdown">Breakdown</button>
-                    <button class="tab-btn" data-tab="drill-growth">Growth</button>
-                    <button class="tab-btn" data-tab="drill-indexes">Indexes</button>
-                    <button class="tab-btn" data-tab="drill-frag">${engine==='postgres'?'Usage Bloat':'Fragmentation'}</button>
+            <div class="flex p-2" style="background: rgba(0,0,0,0.2); border-bottom: 1px solid var(--border-color); gap: 0.5rem;">
+                <button class="btn btn-xs sih-tab-btn active" data-tab="breakdown">Breakdown</button>
+                <button class="btn btn-xs sih-tab-btn" data-tab="growth">Growth History</button>
+                <button class="btn btn-xs sih-tab-btn" data-tab="indexes">Indexes</button>
+            </div>
+
+            <div id="sihDrillContent" style="flex:1; overflow:auto; padding:1.5rem;">
+                <div style="display:flex; justify-content:center; align-items:center; height:100%;">
+                    <div class="spinner"></div><span class="ml-3">Loading table analytics...</span>
                 </div>
             </div>
-            
-            <div id="sihDrillContent" style="flex:1; overflow:auto; padding:1.5rem;">
-                <div class="text-center p-5 text-muted"><div class="spinner"></div><br>Compiling table diagnostics...</div>
-            </div>
-        </div>`;
-    document.body.appendChild(modal);
-    modal.querySelector('[data-action="close-drilldown"]').onclick = () => modal.remove();
+        </div>
+    `;
 
-    document.querySelectorAll('#sihDrillTabs .tab-btn').forEach(btn => { 
-        btn.onclick = (e) => { 
-            e.preventDefault(); 
-            document.querySelectorAll('#sihDrillTabs .tab-btn').forEach(l => l.classList.remove('active')); 
-            btn.classList.add('active'); 
-            document.querySelectorAll('.sih-drill-pane').forEach(p => p.style.display = 'none'); 
-            const target = document.getElementById(btn.dataset.tab); 
-            if (target) target.style.display = 'block'; 
-        }; 
+    document.body.appendChild(modal);
+
+    // Add Event Listeners for the modal (Fix for non-working tabs and close button)
+    modal.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+
+        if (btn.dataset.action === 'close-drilldown') {
+            modal.remove();
+            return;
+        }
+
+        if (btn.classList.contains('sih-tab-btn')) {
+            const tab = btn.dataset.tab;
+            // Update buttons
+            modal.querySelectorAll('.sih-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+            // Update panes
+            modal.querySelectorAll('.sih-drill-pane').forEach(p => {
+                const isTarget = p.id === `drill-${tab}`;
+                p.style.display = isTarget ? 'block' : 'none';
+                p.classList.toggle('active', isTarget);
+            });
+        }
     });
 
     try {
-        const fromIso = new Date(window.appState.sih.fromLocal).toISOString();
+        const fromIso = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
         const toIso = new Date(window.appState.sih.toLocal).toISOString();
         const url = `/api/sqlserver/storage-index/table-drilldown?engine=${engine}&instance=${encodeURIComponent(instance)}&db=${encodeURIComponent(db)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}&from=${fromIso}&to=${toIso}`;
         const data = await (await window.apiClient.authenticatedFetch(url)).json();
@@ -411,16 +487,6 @@ async function showSihTableDrilldown(instance, db, schema, table) {
             if (!seenIdx.has(idx.index_name)) {
                 latestIndexes.push(idx);
                 seenIdx.add(idx.index_name);
-            }
-        });
-
-        // 2. Process Fragmentation Details (Latest per Index)
-        const latestFrag = [];
-        const seenFrag = new Set();
-        (data.fragmentation || []).sort((a,b) => new Date(b.snapshot_time) - new Date(a.snapshot_time)).forEach(f => {
-            if (!seenFrag.has(f.index_name)) {
-                latestFrag.push(f);
-                seenFrag.add(f.index_name);
             }
         });
 
@@ -500,107 +566,44 @@ async function showSihTableDrilldown(instance, db, schema, table) {
                     </table>
                 </div>
             </div>
+        `;
 
-            <div class="sih-drill-pane" id="drill-frag" style="display:none;">
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1.5rem;">
-                    <div class="glass-panel p-4" style="height:450px;">
-                        <h4 class="mb-4 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">${engine==='postgres'?'Read Activity Trends':'Fragmentation Over Time (%)'}</h4>
-                        <div class="chart-container" style="height:350px;"><canvas id="drillFragChart"></canvas></div>
-                    </div>
-                    <div class="glass-panel p-4">
-                        <h4 class="mb-4 text-muted" style="text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">Latest Fragmentation Details</h4>
-                        <div class="table-responsive">
-                             <table class="data-table" style="font-size:0.7rem;">
-                                <thead><tr><th>Index Name</th><th class="text-right">Frag %</th><th class="text-right">Pages</th></tr></thead>
-                                <tbody>
-                                    ${latestFrag.map(f => `
-                                        <tr>
-                                            <td>${window.escapeHtml(f.index_name)}</td>
-                                            <td class="text-right ${f.avg_fragmentation_pct > 30 ? 'text-danger font-bold' : ''}">${Number(f.avg_fragmentation_pct).toFixed(1)}%</td>
-                                            <td class="text-right text-muted">${Number(f.page_count).toLocaleString()}</td>
-                                        </tr>
-                                    `).join('') || '<tr><td colspan="3" class="text-center">No fragmentation data recorded.</td></tr>'}
-                                </tbody>
-                             </table>
-                        </div>
-                    </div>
-                </div>
-            </div>`;
-        
-        setTimeout(() => {
-            const chartBase = { responsive:true, maintainAspectRatio:false };
+        // Render Charts
+        if (window._sihDrillBreakdownChart) window._sihDrillBreakdownChart.destroy();
+        window._sihDrillBreakdownChart = new Chart(document.getElementById('drillBreakdownChart'), {
+            type: 'doughnut',
+            data: { labels: ['Data', 'Indexes'], datasets: [{ data: [last.table_size_mb, last.index_size_mb], backgroundColor: ['#3b82f6', '#10b981'], borderWeight: 0 }] },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '70%', plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8' } } } }
+        });
 
-            // DESTROY OLD CHARTS IF ANY
-            if (window.sihDrillCharts) {
-                Object.values(window.sihDrillCharts).forEach(c => c && typeof c.destroy === 'function' && c.destroy());
-            }
-            window.sihDrillCharts = {};
+        if (window._sihDrillGrowthChart) window._sihDrillGrowthChart.destroy();
+        window._sihDrillGrowthChart = new Chart(document.getElementById('drillGrowthChart'), {
+            type: 'line',
+            data: {
+                labels: (data.growth_series || []).map(p => new Date(p.time).toLocaleDateString()),
+                datasets: [
+                    { label: 'Table MB', data: (data.growth_series || []).map(p => p.table_size_mb), borderColor: '#3b82f6', fill: false },
+                    { label: 'Index MB', data: (data.growth_series || []).map(p => p.index_size_mb), borderColor: '#10b981', fill: false }
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: false, grid: { color: 'rgba(255,255,255,0.05)' } } } }
+        });
 
-            // Breakdown Donut
-            window.sihDrillCharts.breakdown = new Chart(document.getElementById('drillBreakdownChart').getContext('2d'), { 
-                type: 'doughnut', 
-                data: { labels: ['Data', 'Index'], datasets: [{ data: [last.table_size_mb, last.index_size_mb], backgroundColor: ['#3b82f6', '#eab308'], borderWidth: 0, hoverOffset: 15 }] }, 
-                options: { ...chartBase, cutout:'75%', plugins:{ legend:{ position:'bottom', labels:{ color:'rgba(255,255,255,0.7)', padding:20, font:{size:12} } }} } 
-            });
+        if (window._sihDrillIndexTrendChart) window._sihDrillIndexTrendChart.destroy();
+        window._sihDrillIndexTrendChart = new Chart(document.getElementById('drillIndexTrendChart'), {
+            type: 'line',
+            data: {
+                labels: (data.index_usage || []).filter(ix => ix.index_name === latestIndexes[0]?.index_name).map(p => new Date(p.time).toLocaleTimeString()),
+                datasets: [
+                    { label: 'Seeks/Scans', data: (data.index_usage || []).filter(ix => ix.index_name === latestIndexes[0]?.index_name).map(p => p.seeks), borderColor: '#3b82f6', tension: 0.4 },
+                    { label: 'Updates', data: (data.index_usage || []).filter(ix => ix.index_name === latestIndexes[0]?.index_name).map(p => p.updates), borderColor: '#f43f5e', tension: 0.4 }
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+        });
 
-            // Growth Chart
-            if (data.growth_series?.length) { 
-                window.sihDrillCharts.growth = new Chart(document.getElementById('drillGrowthChart').getContext('2d'), { 
-                    type: 'line', 
-                    data: { labels: data.growth_series.map(p => new Date(p.time).toLocaleDateString()), datasets: [{ label: 'Total Space (MB)', data: data.growth_series.map(p => (Number(p.table_size_mb)||0) + (Number(p.index_size_mb)||0)), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#3b82f6' }] }, 
-                    options: { ...chartBase, plugins: { legend: { display: false } }, scales: { y: { title: { display: true, text: 'Space (MB)', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { title: { display: true, text: 'Date', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
-                }); 
-            }
-
-            // Index Trends Chart
-            if (data.index_usage?.length) {
-                const trendLabels = [...new Set(data.index_usage.map(u => new Date(u.time).toLocaleTimeString()))];
-                // Group activity by time
-                const activityMap = {};
-                data.index_usage.forEach(u => {
-                    const t = new Date(u.time).toLocaleTimeString();
-                    activityMap[t] = (activityMap[t] || 0) + (u.seeks + u.scans);
-                });
-                const updatesMap = {};
-                data.index_usage.forEach(u => {
-                    const t = new Date(u.time).toLocaleTimeString();
-                    updatesMap[t] = (updatesMap[t] || 0) + u.updates;
-                });
-
-                window.sihDrillCharts.indexTrends = new Chart(document.getElementById('drillIndexTrendChart').getContext('2d'), {
-                    type: 'line',
-                    data: {
-                        labels: trendLabels,
-                        datasets: [
-                            { label: 'Read Ops (Seeks+Scans)', data: trendLabels.map(l => activityMap[l] || 0), borderColor: '#10b981', tension: 0.4, fill: false },
-                            { label: 'Write Ops (Updates)', data: trendLabels.map(l => updatesMap[l] || 0), borderColor: '#f59e0b', tension: 0.4, fill: false }
-                        ]
-                    },
-                    options: { ...chartBase, plugins: { legend: { display: true, position: 'top', labels: { color: '#ccc', boxWidth: 12, font: { size: 10 } } } }, scales: { y: { title: { display: true, text: 'Operations Count', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { title: { display: true, text: 'Time', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)', maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } } } }
-                });
-            }
-
-            // Frag / Activity Chart
-            if (engine === 'postgres' && data.index_usage?.length) {
-                 window.sihDrillCharts.frag = new Chart(document.getElementById('drillFragChart').getContext('2d'), { 
-                    type: 'line', 
-                    data: { 
-                        labels: data.index_usage.map(p => new Date(p.time).toLocaleTimeString()), 
-                        datasets: [
-                            { label: 'Total Tuples Read', data: data.index_usage.map(p => p.seeks + p.scans), borderColor: '#10b981', tension: 0.4 },
-                            { label: 'Total Tuples Modified', data: data.index_usage.map(p => p.updates), borderColor: '#f59e0b', tension: 0.4 }
-                        ] 
-                    }, 
-                    options: { ...chartBase, plugins: { legend: { display: true, labels: { color: '#ccc' } } }, scales: { y: { title: { display: true, text: 'Tuples Count', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }, x: { title: { display: true, text: 'Time', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
-                });
-            } else if (data.fragmentation?.length) { 
-                window.sihDrillCharts.frag = new Chart(document.getElementById('drillFragChart').getContext('2d'), { 
-                    type: 'line', 
-                    data: { labels: data.fragmentation.map(p => new Date(p.snapshot_time).toLocaleDateString()), datasets: [{ label: 'Avg Fragmentation %', data: data.fragmentation.map(p => p.avg_fragmentation_pct), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#ef4444' }] }, 
-                    options: { ...chartBase, plugins: { legend: { display: false } }, scales: { y: { title: { display: true, text: 'Fragmentation %', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)', callback: v => v + '%' } }, x: { title: { display: true, text: 'Date', color: 'rgba(255,255,255,0.7)', font: { size: 10 } }, grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.5)' } } } } 
-                }); 
-            }
-
-        }, 100);
-    } catch (e) { document.getElementById('sihDrillContent').innerHTML = `<div class="alert alert-danger">Fetch failed: ${e.message}</div>`; }
+    } catch (e) {
+        console.error('Table drilldown failed', e);
+        document.getElementById('sihDrillContent').innerHTML = `<div class="alert alert-danger">Load failed: ${e.message}</div>`;
+    }
 }

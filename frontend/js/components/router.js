@@ -29,7 +29,7 @@ if (!window.__sidebarNavDelegateBound) {
             if (!li) return;
             const route = li.dataset.route;
             appDebug('Sidebar clicked:', route);
-            if (route) window.appNavigate(route);
+            if (route) window.appNavigate(route, true);
         });
         window.__sidebarNavDelegateBound = true;
     }
@@ -48,6 +48,10 @@ window.appNavigate = function(route, skipHistory = false) {
         return;
     }
     
+    if (skipHistory) {
+        window.appState.navigationHistory = [];
+    }
+
     // Track navigation history for back button functionality
     if (!skipHistory && window.appState.activeViewId && window.appState.activeViewId !== route) {
         window.appState.navigationHistory.push(window.appState.activeViewId);
@@ -55,6 +59,15 @@ window.appNavigate = function(route, skipHistory = false) {
             window.appState.navigationHistory.shift();
         }
     }
+    
+    // Global back button visibility handler
+    setTimeout(() => {
+        const backBtns = document.querySelectorAll('[data-action="navigate-back"]');
+        const hasHistory = window.appState.navigationHistory && window.appState.navigationHistory.length > 0;
+        backBtns.forEach(btn => {
+            btn.style.display = hasHistory ? 'inline-flex' : 'none';
+        });
+    }, 100);
     
     // Cleanup dashboard polling when navigating away from dashboard
     const previousRoute = window.appState.activeViewId;
@@ -91,6 +104,11 @@ window.appNavigate = function(route, skipHistory = false) {
     }
     
     window.appState.activeViewId = route;
+
+    // Refresh sidebar dynamically on navigation
+    if (window.router && typeof window.router.populateDatabaseDropdown === 'function') {
+        window.router.populateDatabaseDropdown();
+    }
 
     if (route === 'setup-schema') {
         if (typeof window.SetupSchemaProgressView === 'function') {
@@ -215,6 +233,14 @@ window.appNavigate = function(route, skipHistory = false) {
         case 'drilldown-cpu': window.CpuDrilldown(); break;
         case 'drilldown-memory': if (window.MemoryDrilldown) window.MemoryDrilldown(); break;
         case 'sqlserver-cpu-dashboard': window.SqlServerCpuDashboardView(); break;
+        case 'sqlserver-workload':
+            if (window.SqlServerWorkloadDashboardView) {
+                window.SqlServerWorkloadDashboardView();
+            } else {
+                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Workload Analytics...</h3></div>';
+                setTimeout(() => window.appNavigate('sqlserver-workload'), 200);
+            }
+            break;
         case 'instance-health': 
             appDebug('[Router] instance-health route triggered');
             appDebug('[Router] Checking for InstanceHealthDashboardView...');
@@ -361,6 +387,9 @@ window.appNavigate = function(route, skipHistory = false) {
         case 'pg-replication': window.PgReplicationView(); break;
         case 'pg-logs': window.PgLogsView(); break;
         case 'pg-backups': window.PgBackupsView(); break;
+        case 'pg-waits': if (window.PgWaitsView) window.PgWaitsView(); break;
+        case 'pg-backup-dr': if (window.PgBackupDRView) window.PgBackupDRView(); break;
+        case 'pg-security': if (window.PgSecurityView) window.PgSecurityView(); break;
         case 'pg-alerts': window.PgAlertsView(); break;
         case 'pg-autovacuum': window.PgStorageView(); break;
         // pg-config removed from sidebar (still callable if needed)        case 'pg-config': window.PgConfigView(); break;
@@ -415,9 +444,11 @@ window.router = {
         const sorted = [...window.appState.config.instances].map((inst, i) => ({inst, i})).sort((a,b) => a.inst.name.localeCompare(b.inst.name));
         
         sorted.forEach(({inst, i}) => {
-            const opt = document.createElement('option');
-            opt.value = i; opt.textContent = `${inst.name} (${inst.type})`;
-            sel.appendChild(opt);
+            if (inst && inst.name && String(inst.name) !== 'undefined') {
+                const opt = document.createElement('option');
+                opt.value = i; opt.textContent = `${inst.name} (${inst.type || 'unknown'})`;
+                sel.appendChild(opt);
+            }
         });
         window.appState.currentInstanceIdx = -1;
         window.router.populateDatabaseDropdown();
@@ -431,7 +462,7 @@ window.router = {
             ? '<li data-route="admin" id="nav-admin"><i class="fa-solid fa-user-shield"></i> Admin</li>'
             : '';
 
-        if (window.appState.currentInstanceIdx === -1) {
+        if (window.appState.currentInstanceIdx === -1 || !window.appState.config) {
             dbSel.innerHTML = '<option value="all">-- N/A --</option>';
             brand.className = 'fa-solid fa-earth-americas xl-icon logo-icon text-accent';
             sidebarNav.innerHTML = '<li data-route="global" class="active"><i class="fa-solid fa-globe"></i> Global Estate Overview</li>' + adminLi;
@@ -459,10 +490,12 @@ window.router = {
                     dbSel.innerHTML = '<option value="all">-- All Databases --</option>';
                     if (data.databases && data.databases.length > 0) {
                         data.databases.forEach(db => {
-                            const opt = document.createElement('option');
-                            opt.value = db;
-                            opt.textContent = db;
-                            dbSel.appendChild(opt);
+                            if (db && String(db) !== 'undefined' && String(db) !== 'null') {
+                                const opt = document.createElement('option');
+                                opt.value = db;
+                                opt.textContent = db;
+                                dbSel.appendChild(opt);
+                            }
                         });
                         window.appState.currentDatabase = data.databases[0];
                         dbSel.value = data.databases[0];
@@ -481,9 +514,16 @@ window.router = {
         } else {
             // For SQLSERVER, use static list
             dbSel.innerHTML = '<option value="all">-- All Databases --</option>';
-            inst.databases.forEach(db => {
-                const opt = document.createElement('option'); opt.value=db; opt.textContent=db; dbSel.appendChild(opt);
-            });
+            if (Array.isArray(inst.databases)) {
+                inst.databases.forEach(db => {
+                    if (db && String(db) !== 'undefined' && String(db) !== 'null') {
+                        const opt = document.createElement('option');
+                        opt.value = db;
+                        opt.textContent = db;
+                        dbSel.appendChild(opt);
+                    }
+                });
+            }
             if (inst.databases && inst.databases.length > 0) {
                 window.appState.currentDatabase = inst.databases[0];
                 dbSel.value = inst.databases[0];
@@ -496,15 +536,18 @@ window.router = {
             brand.className='fa-solid fa-database xl-icon logo-icon text-accent'; 
             sidebarNav.innerHTML = `
                 <li data-route="pg-dashboard" id="nav-pg-dashboard"><i class="fa-solid fa-gauge-high"></i> Control Center</li>
+                <li data-route="drilldown-pg-enterprise"><i class="fa-solid fa-chart-line"></i> Enterprise Monitor</li>
                 <li data-route="pg-cpu" class="sub-nav"><i class="fa-solid fa-microchip"></i> CPU Usage</li>
                 <li data-route="pg-memory" class="sub-nav"><i class="fa-solid fa-memory"></i> Memory Usage</li>
-                <li data-route="pg-sessions"><i class="fa-solid fa-network-wired"></i> Sessions & Activity</li>
+                <li data-route="pg-waits"><i class="fa-solid fa-clock-rotate-left"></i> Waits & Sessions</li>
                 <li data-route="pg-locks"><i class="fa-solid fa-link-slash"></i> Locks & Blocking</li>
                 <li data-route="pg-queries"><i class="fa-solid fa-bolt"></i> Query Performance</li>
                 <li data-route="pg-explain"><i class="fa-solid fa-diagram-project"></i> EXPLAIN Analyzer</li>
                 <li data-route="pg-storage"><i class="fa-solid fa-hard-drive"></i> Storage & Vacuum</li>
                 <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Index & Table Health</li>
-                <li data-route="pg-replication"><i class="fa-solid fa-clone"></i> Replication & HA</li>
+                <li data-route="pg-replication" id="nav-pg-replication" style="display:none;"><i class="fa-solid fa-clone"></i> Replication & HA</li>
+                <li data-route="pg-backup-dr"><i class="fa-solid fa-shield-heart"></i> Backup & DR</li>
+                <li data-route="pg-security"><i class="fa-solid fa-user-lock"></i> Security Mon.</li>
                 <li data-route="pg-best-practices"><i class="fa-solid fa-shield-halved"></i> Best Practices</li>
                 <li data-route="pg-alerts"><i class="fa-solid fa-bell text-danger"></i> Alerts & Events</li>
                 ${adminLi}
@@ -513,11 +556,10 @@ window.router = {
             brand.className='fa-brands fa-microsoft xl-icon logo-icon text-accent'; 
             sidebarNav.innerHTML = `
                 <li data-route="dashboard" id="nav-dashboard"><i class="fa-solid fa-gauge-high"></i> Instance Dashboard</li>
-                <li data-route="sqlserver-cpu-dashboard"><i class="fa-solid fa-microchip"></i> CPU Dashboard</li>
+                <li data-route="sqlserver-workload"><i class="fa-solid fa-chart-area"></i> Workload Analytics</li>
                 <li data-route="drilldown-memory"><i class="fa-solid fa-memory"></i> Memory Analyzer</li>
                 <li data-route="live-diagnostics"><i class="fa-solid fa-bolt text-warning"></i> Real-Time Diagnostics</li>
-                <!-- Query Bottlenecks is now treated as a drilldown from Top Offenders -->
-                <li data-route="drilldown-ha"><i class="fa-solid fa-server"></i> HA/AG Monitor</li>
+                <li data-route="drilldown-ha" style="display:none;"><i class="fa-solid fa-server"></i> HA & Replication</li>
                 <li data-route="enterprise-metrics"><i class="fa-solid fa-chart-line"></i> Enterprise Metrics</li>
                 <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Storage & Index</li>
                 <li data-route="performance-debt"><i class="fa-solid fa-screwdriver-wrench"></i> Performance Debt</li>
@@ -529,21 +571,88 @@ window.router = {
                 ${adminLi}
             `;
         }
+
+        // Apply active class to sidebar item matching current route
+        const activeRoute = window.appState.activeViewId;
+        const allLis = sidebarNav.querySelectorAll('li[data-route]');
+        allLis.forEach(li => {
+            if (li.getAttribute('data-route') === activeRoute) {
+                li.classList.add('active');
+            } else {
+                li.classList.remove('active');
+            }
+        });
+
+        // Dynamic sidebar link visibility (Replication/HA)
+        if (window.appState.currentInstanceIdx !== -1 && window.appState.config) {
+            const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+            if (inst && inst.type === 'postgres') {
+                const checkRepl = async () => {
+                    try {
+                        const r = await window.apiClient.authenticatedFetch(`/api/postgres/replication?instance=${encodeURIComponent(inst.name)}`);
+                        if (r.ok) {
+                            const d = await r.json();
+                            // stats wrapper check
+                            const s = d.stats || {};
+                            const hasRepl = s.is_primary === false || (s.standbys && s.standbys.length > 0);
+                            const li = document.querySelector('li[data-route="pg-replication"]');
+                            if (li) li.style.display = hasRepl ? 'block' : 'none';
+                        }
+                    } catch(e) {
+                        console.warn('[Router] Replication check failed', e);
+                    }
+                };
+                checkRepl();
+            } else if (inst && inst.type === 'sqlserver') {
+                const checkSQLHA = async () => {
+                    try {
+                        const [agR, lsR, replR] = await Promise.all([
+                            window.apiClient.authenticatedFetch(`/api/sqlserver/ag-health?instance=${encodeURIComponent(inst.name)}`),
+                            window.apiClient.authenticatedFetch(`/api/sqlserver/log-shipping?instance=${encodeURIComponent(inst.name)}`),
+                            window.apiClient.authenticatedFetch(`/api/sqlserver/replication-status?instance=${encodeURIComponent(inst.name)}`)
+                        ]);
+                        let hasHA = false;
+                        if (agR.ok) {
+                            const d = await agR.json();
+                            if (d.hadr_enabled || (d.ag_health && d.ag_health.length > 0)) hasHA = true;
+                        }
+                        if (!hasHA && lsR.ok) {
+                            const d = await lsR.json();
+                            if (d.log_shipping_enabled || (d.log_shipping && d.log_shipping.length > 0)) hasHA = true;
+                        }
+                        if (!hasHA && replR.ok) {
+                            const d = await replR.json();
+                            if (d.replication && d.replication.length > 0) hasHA = true;
+                        }
+                        const li = document.querySelector('li[data-route="drilldown-ha"]');
+                        if (li) li.style.display = hasHA ? 'block' : 'none';
+                    } catch(e) {
+                        console.warn('[Router] SQL HA check failed', e);
+                    }
+                };
+                checkSQLHA();
+            }
+        }
     }
 };
 
 // Event Listeners strictly mounting globally mapped nodes
 document.getElementById('instance-select').addEventListener('change', (e) => {
-    window.appState.currentInstanceIdx = parseInt(e.target.value);
-    const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+    const idx = parseInt(e.target.value);
+    window.appState.currentInstanceIdx = idx;
     
+    const inst = window.appState.config.instances[idx];
     if (!inst) {
         window.appNavigate('global');
         return;
     }
     
+    // Set current instance name for modules that rely on window.state or similar
+    if (window.state) window.state.currentInstance = inst.name;
+    
     window.router.populateDatabaseDropdown();
     
+    // Rest of logic
     if(window.appState.activeViewId === 'global') {
         window.appNavigate(inst.type === 'postgres' ? 'pg-dashboard' : 'dashboard');
     } else {

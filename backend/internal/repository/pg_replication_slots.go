@@ -48,7 +48,7 @@ func (c *PgRepository) GetReplicationSlotStats(instanceName string) ([]PgReplica
 	// - physical slot: current_wal_lsn - restart_lsn
 	// - logical slot: current_wal_lsn - confirmed_flush_lsn (if present), else restart_lsn
 	query := `
-		SELECT /* SQL_OPTIMA */  
+		/* SQL_OPTIMA */ SELECT   
 			now() AT TIME ZONE 'UTC' AS capture_timestamp,
 			slot_name,
 			slot_type,

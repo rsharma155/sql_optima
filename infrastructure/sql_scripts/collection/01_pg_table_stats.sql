@@ -1,5 +1,5 @@
 -- Metric: pg_table_stats
--- Source: backend/internal/repository/pg_stats.go:995
+-- Source: backend/internal/repository/pg_storage_metrics.go
 -- Target Table: N/A (table storage analysis)
 -- Description: Returns table statistics including size, bloat, and vacuum info from pg_stat_user_tables
 

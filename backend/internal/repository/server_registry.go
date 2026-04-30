@@ -60,10 +60,11 @@ func (r *ServerRegistryRepository) List(ctx context.Context, activeOnly bool) ([
 	q := `
 		SELECT  id, name, db_type, host, port, username, auth_type, ssl_mode, is_active, created_at, updated_at, COALESCE(created_by,''), last_test_at
 		FROM optima_servers
+		WHERE name IS NOT NULL AND name != '' AND name != 'undefined'
 	`
 	args := []any{}
 	if activeOnly {
-		q += " WHERE is_active = TRUE"
+		q += " AND is_active = TRUE"
 	}
 	q += " ORDER BY created_at DESC"
 

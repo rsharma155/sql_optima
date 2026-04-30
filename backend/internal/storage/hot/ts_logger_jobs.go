@@ -236,7 +236,7 @@ func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, instanc
 
 	rows, err := tl.pool.Query(ctx, `
 		SELECT DISTINCT ON (job_name, schedule_name)
-			capture_timestamp, job_name, job_enabled, schedule_name, status
+			capture_timestamp, job_name, job_enabled, schedule_name, status, next_run_datetime
 		FROM sqlserver_agent_schedules
 		WHERE server_instance_name = $1
 		  AND capture_timestamp <= $2
@@ -256,8 +256,9 @@ func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, instanc
 			jobEnabled   bool
 			scheduleName string
 			status       string
+			nextRun      *string
 		)
-		if err := rows.Scan(&ts, &jobName, &jobEnabled, &scheduleName, &status); err != nil {
+		if err := rows.Scan(&ts, &jobName, &jobEnabled, &scheduleName, &status, &nextRun); err != nil {
 			continue
 		}
 		results = append(results, map[string]interface{}{
@@ -266,6 +267,7 @@ func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, instanc
 			"job_enabled":       jobEnabled,
 			"schedule_name":     scheduleName,
 			"status":            status,
+			"next_run_datetime": nextRun,
 		})
 	}
 	return results, rows.Err()
@@ -301,8 +303,8 @@ func (tl *TimescaleLogger) GetSQLServerJobFailures(ctx context.Context, instance
 			jobName string
 			step    string
 			msg     string
-			runDate string
-			runTime string
+			runDate int
+			runTime int
 		)
 		if err := rows.Scan(&ts, &jobName, &step, &msg, &runDate, &runTime); err != nil {
 			continue

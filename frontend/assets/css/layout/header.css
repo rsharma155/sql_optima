@@ -1,0 +1,21 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Layout structural styles for header
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+.main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.top-header { height: 70px; padding: 0 2rem; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color); background: var(--bg-surface); backdrop-filter: blur(10px); }
+.search-bar { display: flex; align-items: center; background: rgba(0, 0, 0, 0.1); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.5rem 1rem; width: 300px; }
+.search-bar input { background: transparent; border: none; color: var(--text-primary); outline: none; margin-left: 0.5rem; width: 100%;}
+[data-theme="light"] .search-bar { background: rgba(0,0,0,0.03); }
+.header-actions { display: flex; align-items: center; gap: 1.5rem; }
+/* Hide search bar on dashboard pages */
+.page-view[data-route*="dashboard"] .search-bar,
+.page-view[data-route*="drilldown"] .search-bar {
+    display: none !important;
+}
+

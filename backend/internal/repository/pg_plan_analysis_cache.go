@@ -43,7 +43,7 @@ func (r *PlanAnalysisCacheRepository) GetReportJSON(ctx context.Context, planHas
 	var report []byte
 	var version int
 	err := r.pool.QueryRow(ctx, `
-		SELECT /* SQL_OPTIMA */   report_json, schema_version
+		/* SQL_OPTIMA */ SELECT  report_json, schema_version
 		FROM plan_analysis_cache
 		WHERE plan_hash = $1
 		LIMIT 1

@@ -1,0 +1,68 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Page-specific override styles for pg-cpu
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+/* PostgreSQL CPU dashboard (pg_cpu) */
+.pg-cpu-bottom-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    gap: 0.75rem;
+    align-items: stretch;
+}
+@media (max-width: 900px) {
+    .pg-cpu-bottom-grid {
+        grid-template-columns: 1fr;
+    }
+}
+.saturation-badge {
+    display: inline-block;
+    padding: 0.15rem 0.45rem;
+    border-radius: 0.35rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+.saturation-badge--ok {
+    background: rgba(34, 197, 94, 0.2);
+    color: var(--success, #22c55e);
+}
+.saturation-badge--warn {
+    background: rgba(245, 158, 11, 0.2);
+    color: var(--warning, #f59e0b);
+}
+.saturation-badge--danger {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--danger, #ef4444);
+}
+.saturation-badge--muted {
+    background: rgba(148, 163, 184, 0.2);
+    color: var(--text-secondary, #888);
+}
+
+.pg-cpu-second-row {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 0.75rem;
+    align-items: stretch;
+}
+.pg-cpu-third-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+}
+@media (max-width: 980px) {
+    .pg-cpu-second-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+.pg-cpu-queries-table td .pg-cpu-query-link {
+    color: var(--accent-blue, #3b82f6);
+    text-decoration: underline;
+    cursor: pointer;
+}
+

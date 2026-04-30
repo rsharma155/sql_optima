@@ -8,35 +8,6 @@
  * SPDX-License-Identifier: MIT
  */
 
-window.JobsView = function() {
-    window.routerOutlet.innerHTML = `
-        <div class="page-view active dashboard-sky-theme">
-            <div class="page-title">
-                <h1>SQL Agent Jobs</h1>
-                <p class="subtitle">Monitor job executions, schedules, and statuses.</p>
-            </div>
-            <div class="table-card glass-panel mt-4">
-                <div class="card-header">
-                    <h3>Recent Job Executions</h3>
-                    <button class="btn btn-sm btn-outline"><i class="fa-solid fa-filter"></i> Filter</button>
-                </div>
-                <div class="table-responsive">
-                    <table class="data-table">
-                        <thead>
-                            <tr><th>Status</th><th>Job Name</th><th>Last Run</th><th>Next Run</th><th>Duration</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr><td><i class="fa-solid fa-check-circle text-success"></i></td><td><strong>Nightly Full Backup</strong></td><td>Today 02:00 AM</td><td>Tmrw 02:00 AM</td><td>45m 12s</td></tr>
-                            <tr><td><i class="fa-solid fa-circle-xmark text-danger"></i></td><td><strong>Index Optimize - SalesDB</strong></td><td>Today 04:00 AM</td><td>No Schedule</td><td>1h 10m</td></tr>
-                            <tr><td><i class="fa-solid fa-spinner fa-spin text-accent"></i></td><td><strong>ETL Data Warehouse Sync</strong></td><td>Started 15m ago</td><td>N/A</td><td>Running...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
 // Global function to update alerts badge
 window.updateAlertsBadge = async function() {
     try {

@@ -53,8 +53,8 @@ func (tl *TimescaleLogger) ComputeAndStorePgssDelta1m(ctx context.Context, insta
 	// Find the previous snapshot timestamp
 	var prevTS *time.Time
 	err := tl.pool.QueryRow(ctx,
-		`SELECT MAX(ts) FROM pg_query_metrics_v2
-		 WHERE instance_id = $1 AND ts < $2`,
+		`SELECT MAX(capture_timestamp) FROM postgres_query_stats
+		 WHERE server_instance_name = $1 AND capture_timestamp < $2`,
 		instanceName, currentTS,
 	).Scan(&prevTS)
 	if err != nil || prevTS == nil {
@@ -265,6 +265,7 @@ func (tl *TimescaleLogger) GetPgssTopQueries(ctx context.Context, instanceName s
 		FROM agg a
 		CROSS JOIN grand g
 		LEFT JOIN pgss_query_dim q ON q.server_instance_name = $1 AND q.query_id = a.query_id
+		WHERE COALESCE(q.query_text, '') NOT LIKE '%%/* SQL_OPTIMA */%%'
 		ORDER BY %s DESC
 		LIMIT $4`, orderCol)
 
@@ -440,6 +441,7 @@ func (tl *TimescaleLogger) GetPgssRegressions(ctx context.Context, instanceName 
 		JOIN prev p ON p.query_id = c.query_id
 		LEFT JOIN pgss_query_dim q ON q.server_instance_name = $1 AND q.query_id = c.query_id
 		WHERE p.avg_ms > 0 AND ((c.avg_ms - p.avg_ms) / p.avg_ms) > 0.5
+		  AND COALESCE(q.query_text, '') NOT LIKE '%%/* SQL_OPTIMA */%%'
 		ORDER BY ((c.avg_ms - p.avg_ms) / NULLIF(p.avg_ms, 0)) DESC
 		LIMIT 20`
 

@@ -9,6 +9,7 @@ package hot
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -26,7 +27,7 @@ func (tl *TimescaleLogger) LogLatchWaits(ctx context.Context, instanceName strin
 	sig := fingerprintMapRows(instanceName, enterpriseKindLatchWaits, rows,
 		[]string{"wait_type"},
 		[]string{"waiting_tasks_count", "wait_time_ms", "signal_wait_time_ms"})
-	if tl.enterpriseSnapshotUnchanged(instanceName, enterpriseKindLatchWaits, sig) {
+	if tl.EnterpriseSnapshotUnchanged(instanceName, enterpriseKindLatchWaits, sig) {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -50,7 +51,7 @@ func (tl *TimescaleLogger) LogLatchWaits(ctx context.Context, instanceName strin
 			return fmt.Errorf("latch waits insert failed at row %d: %w", i, err)
 		}
 	}
-	tl.rememberEnterpriseSnapshot(instanceName, enterpriseKindLatchWaits, sig)
+	tl.RememberEnterpriseSnapshot(instanceName, enterpriseKindLatchWaits, sig)
 	return nil
 }
 
@@ -135,14 +136,15 @@ func (tl *TimescaleLogger) GetWaitingTasks(ctx context.Context, instanceName str
 
 	out := make([]map[string]interface{}, 0, limit)
 	for rows.Next() {
-		var waitType, resourceDesc string
+		var waitType string
+		var resourceDesc sql.NullString
 		var waitingTasks, waitMs int64
 		if err := rows.Scan(&waitType, &resourceDesc, &waitingTasks, &waitMs); err != nil {
 			continue
 		}
 		out = append(out, map[string]interface{}{
 			"wait_type":            waitType,
-			"resource_description": resourceDesc,
+			"resource_description": resourceDesc.String,
 			"waiting_tasks_count":  waitingTasks,
 			"wait_duration_ms":     waitMs,
 		})
@@ -190,6 +192,7 @@ func (tl *TimescaleLogger) GetMemoryGrants(ctx context.Context, instanceName str
 		SELECT session_id, database_name, login_name, granted_memory_kb, used_memory_kb, dop, query_duration_sec
 		FROM sqlserver_memory_grants
 		WHERE server_instance_name = $1
+		  AND (login_name IS NULL OR login_name <> 'dbmonitor_user')
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
@@ -229,7 +232,7 @@ func (tl *TimescaleLogger) LogProcedureStats(ctx context.Context, instanceName s
 	sig := fingerprintMapRows(instanceName, enterpriseKindProcedure, rows,
 		[]string{"database_name", "schema_name", "object_name"},
 		[]string{"execution_count", "total_worker_time_ms", "total_elapsed_time_ms", "total_logical_reads", "total_physical_reads"})
-	if tl.enterpriseSnapshotUnchanged(instanceName, enterpriseKindProcedure, sig) {
+	if tl.EnterpriseSnapshotUnchanged(instanceName, enterpriseKindProcedure, sig) {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -258,7 +261,7 @@ func (tl *TimescaleLogger) LogProcedureStats(ctx context.Context, instanceName s
 			return fmt.Errorf("procedure stats insert failed at row %d: %w", i, err)
 		}
 	}
-	tl.rememberEnterpriseSnapshot(instanceName, enterpriseKindProcedure, sig)
+	tl.RememberEnterpriseSnapshot(instanceName, enterpriseKindProcedure, sig)
 	return nil
 }
 
@@ -310,7 +313,7 @@ func (tl *TimescaleLogger) LogFileIOLatency(ctx context.Context, instanceName st
 	batch := &pgx.Batch{}
 	for _, r := range rows {
 		batch.Queue(`
-			INSERT INTO sqlserver_file_io_latency (
+			INSERT INTO sqlserver_file_io (
 				capture_timestamp, server_instance_name, database_name, file_name, file_type,
 				read_latency_ms, write_latency_ms, read_bytes_per_sec, write_bytes_per_sec
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -340,7 +343,7 @@ func (tl *TimescaleLogger) GetFileIOLatency(ctx context.Context, instanceName st
 	}
 	q := `
 		SELECT database_name, file_name, file_type, read_latency_ms, write_latency_ms
-		FROM sqlserver_file_io_latency
+		FROM sqlserver_file_io
 		WHERE server_instance_name = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
@@ -352,15 +355,15 @@ func (tl *TimescaleLogger) GetFileIOLatency(ctx context.Context, instanceName st
 	defer rows.Close()
 	out := make([]map[string]interface{}, 0, limit)
 	for rows.Next() {
-		var db, file, ft string
+		var db, file, ft sql.NullString
 		var rl, wl float64
 		if err := rows.Scan(&db, &file, &ft, &rl, &wl); err != nil {
 			continue
 		}
 		out = append(out, map[string]interface{}{
-			"database_name":    db,
-			"file_name":        file,
-			"file_type":        ft,
+			"database_name":    db.String,
+			"file_name":        file.String,
+			"file_type":        ft.String,
 			"read_latency_ms":  rl,
 			"write_latency_ms": wl,
 		})
@@ -380,7 +383,7 @@ func (tl *TimescaleLogger) GetFileIOLatencyTrend(ctx context.Context, instanceNa
 		SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
 		       AVG(read_latency_ms) AS read_latency_ms,
 		       AVG(write_latency_ms) AS write_latency_ms
-		FROM sqlserver_file_io_latency
+		FROM sqlserver_file_io
 		WHERE server_instance_name = $1
 		  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
 		GROUP BY bucket
@@ -415,7 +418,7 @@ func (tl *TimescaleLogger) LogSpinlockStats(ctx context.Context, instanceName st
 	sig := fingerprintMapRows(instanceName, enterpriseKindSpinlock, rows,
 		[]string{"spinlock_type"},
 		[]string{"collisions", "spins", "sleep_time_ms"})
-	if tl.enterpriseSnapshotUnchanged(instanceName, enterpriseKindSpinlock, sig) {
+	if tl.EnterpriseSnapshotUnchanged(instanceName, enterpriseKindSpinlock, sig) {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -439,7 +442,7 @@ func (tl *TimescaleLogger) LogSpinlockStats(ctx context.Context, instanceName st
 			return fmt.Errorf("spinlock stats insert failed at row %d: %w", i, err)
 		}
 	}
-	tl.rememberEnterpriseSnapshot(instanceName, enterpriseKindSpinlock, sig)
+	tl.RememberEnterpriseSnapshot(instanceName, enterpriseKindSpinlock, sig)
 	return nil
 }
 
@@ -481,9 +484,9 @@ func (tl *TimescaleLogger) LogMemoryClerks(ctx context.Context, instanceName str
 		return nil
 	}
 	sig := fingerprintMapRows(instanceName, enterpriseKindMemoryClerks, rows,
-		[]string{"clerk_type", "memory_node"},
+		[]string{"clerk_name", "memory_node"},
 		[]string{"pages_mb", "virtual_memory_reserved_mb", "virtual_memory_committed_mb", "awe_memory_mb"})
-	if tl.enterpriseSnapshotUnchanged(instanceName, enterpriseKindMemoryClerks, sig) {
+	if tl.EnterpriseSnapshotUnchanged(instanceName, enterpriseKindMemoryClerks, sig) {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -491,11 +494,11 @@ func (tl *TimescaleLogger) LogMemoryClerks(ctx context.Context, instanceName str
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_memory_clerks (
-				capture_timestamp, server_instance_name, clerk_type, memory_node,
+				capture_timestamp, server_instance_name, clerk_name, memory_node,
 				pages_mb, virtual_memory_reserved_mb, virtual_memory_committed_mb, awe_memory_mb
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		`, now, instanceName,
-			getStr(r, "clerk_type"),
+			getStr(r, "clerk_name"),
 			int16(getInt64FromMap(r, "memory_node")),
 			getFloat64(r, "pages_mb"),
 			getFloat64(r, "virtual_memory_reserved_mb"),
@@ -510,7 +513,7 @@ func (tl *TimescaleLogger) LogMemoryClerks(ctx context.Context, instanceName str
 			return fmt.Errorf("memory clerks insert failed at row %d: %w", i, err)
 		}
 	}
-	tl.rememberEnterpriseSnapshot(instanceName, enterpriseKindMemoryClerks, sig)
+	tl.RememberEnterpriseSnapshot(instanceName, enterpriseKindMemoryClerks, sig)
 	return nil
 }
 
@@ -519,7 +522,7 @@ func (tl *TimescaleLogger) GetMemoryClerks(ctx context.Context, instanceName str
 		limit = 50
 	}
 	q := `
-		SELECT capture_timestamp, clerk_type, memory_node, pages_mb, virtual_memory_reserved_mb, virtual_memory_committed_mb, awe_memory_mb
+		SELECT capture_timestamp, clerk_name, memory_node, pages_mb, virtual_memory_reserved_mb, virtual_memory_committed_mb, awe_memory_mb
 		FROM sqlserver_memory_clerks
 		WHERE server_instance_name = $1
 		ORDER BY capture_timestamp DESC
@@ -542,7 +545,7 @@ func (tl *TimescaleLogger) GetMemoryClerks(ctx context.Context, instanceName str
 		out = append(out, map[string]interface{}{
 			"capture_timestamp":           ts,
 			"event_time":                  ts.Format(time.RFC3339),
-			"clerk_type":                  ct,
+			"clerk_name":                  ct,
 			"memory_node":                 node,
 			"pages_mb":                    pages,
 			"virtual_memory_reserved_mb":  rsv,
@@ -612,15 +615,15 @@ func (tl *TimescaleLogger) GetTempdbFiles(ctx context.Context, instanceName stri
 	defer rows.Close()
 	out := make([]map[string]interface{}, 0, limit)
 	for rows.Next() {
-		var db, file, ft string
+		var db, file, ft sql.NullString
 		var alloc, used, free, max, growth, pct float64
 		if err := rows.Scan(&db, &file, &ft, &alloc, &used, &free, &max, &growth, &pct); err != nil {
 			continue
 		}
 		out = append(out, map[string]interface{}{
-			"database_name": db,
-			"file_name":     file,
-			"file_type":     ft,
+			"database_name": db.String,
+			"file_name":     file.String,
+			"file_type":     ft.String,
 			"allocated_mb":  alloc,
 			"used_mb":       used,
 			"free_mb":       free,

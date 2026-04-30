@@ -82,7 +82,7 @@ func (c *SqlServerRepository) FetchSchedulerWG(instanceName string) ([]map[strin
 	}
 
 	query := `
-		SELECT /* SQL_OPTIMA */
+		/* SQL_OPTIMA */ SELECT   
 			COALESCE(rp.name, 'default') AS pool_name,
 			COALESCE(wg.name, 'default') AS group_name,
 			COALESCE(wgs.active_request_count, 0) AS active_requests,

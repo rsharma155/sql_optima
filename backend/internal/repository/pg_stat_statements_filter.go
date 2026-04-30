@@ -28,7 +28,7 @@ func pgStatStatementsExcludedRoleNames() []string {
 	add("dbmonitor")
 	add("sql_optima")
 	add("sqloptima")
-	add("postgres") // superuser — exclude by default; override via SQL_OPTIMA_PG_STATEMENTS_EXCLUDE_USERS
+	// add("postgres") // superuser — removed from default exclude to allow monitoring benchmarking/load-tests run as postgres
 	if extra := os.Getenv("SQL_OPTIMA_PG_STATEMENTS_EXCLUDE_USERS"); extra != "" {
 		for _, p := range strings.Split(extra, ",") {
 			add(p)
@@ -97,10 +97,9 @@ func buildPgStatStatementsFilters() string {
 
 	// Performance thresholds: Ignore very light/rare queries.
 	// NOTE: To capture ALL queries (including low frequency and fast execution),
-	// these filters (calls > 10 and mean time > 5ms) can be reduced or removed.
+	// these filters (calls > 10 and mean time > 5ms) are removed to help troubleshoot "no data" issues.
 	b.WriteString(`
-		  AND s.calls > 10
-		  AND (s.total_exec_time / NULLIF(s.calls, 0)) > 5`)
+		  AND s.calls > 0`)
 
 	roles := pgStatStatementsExcludedRoleNames()
 	if len(roles) > 0 {

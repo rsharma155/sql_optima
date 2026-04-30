@@ -1,5 +1,5 @@
 -- Metric: pg_replication_standbys
--- Source: backend/internal/repository/pg_stats.go:1105
+-- Source: backend/internal/repository/pg_replication_metrics.go
 -- Target Table: postgres_replication_stats (TimescaleDB)
 -- Description: Gets standby replication information from pg_stat_replication on primary
 

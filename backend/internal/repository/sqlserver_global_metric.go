@@ -31,7 +31,8 @@ func (c *SqlServerRepository) GetGlobalMetric(name string, base models.GlobalIns
 	base.Status = 0
 
 	cpuQuery := `
-		SELECT /* SQL_OPTIMA */   TOP 1 
+		/* SQL_OPTIMA */	
+		SELECT  TOP 1 
 			record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') AS [SQLProcessUtilization]
 		FROM (
 			SELECT /* SQL_OPTIMA */   [timestamp], CONVERT(xml, record) AS [record]

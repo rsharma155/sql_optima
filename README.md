@@ -93,7 +93,7 @@ go mod tidy
 go run cmd/server/main.go
 ```
 
-Open **http://localhost:8080** — If this is the first run, the **Setup Wizard** will appear to help you connect to the TimescaleDB instance and bootstrap the schema automatically.
+Open **http://localhost:8080** — If this is the first run, the **Setup Wizard** will appear to help you connect to the TimescaleDB instance. Ensure you have run the schema initialization scripts (from `infrastructure/sql_scripts/`) against TimescaleDB prior to this.
 
 ### Phase 3 — Stop TimescaleDB
 
@@ -118,7 +118,7 @@ go run cmd/server/main.go
 
 Open **http://localhost:8080** and follow the **Setup Wizard**. The UI will:
 1. Test your connection to the dedicated TimescaleDB.
-2. **Initialize the schema** (tables, rules, alerts, and seed data) automatically.
+2. Allow you to verify that the **schema is initialized** (Ensure you have applied the scripts in `infrastructure/sql_scripts/` beforehand).
 3. Create your initial admin user.
 
 ---
@@ -282,7 +282,7 @@ All endpoints are **Timescale reads** and require `engine` and `instance` query 
 ## Security operations checklist
 
 1. **JWT**: Set `JWT_SECRET` to a long random value in any shared or production environment. The server logs a warning if it falls back to the development default.
-2. **API exposure**: Many read-only monitoring endpoints are public. Restrict access with network policy, VPN, or an authenticating reverse proxy if the API is Internet-facing.
+2. **API exposure**: All monitoring API endpoints now strictly enforce JWT authentication. The API is no longer public. Ensure `AUTH_REQUIRED=1` is set in your environment variables.
 3. **Secrets**: Use the Admin UI to register monitored servers. Credentials added via the UI are encrypted at rest (using Vault Transit or a local KMS) and never stored in plain text.
 4. **Auth**: Set `AUTH_REQUIRED=1` in production.
 5. **Vault**: For production, use external Vault with AppRole/policies — do not use dev-mode root tokens.
@@ -305,4 +305,4 @@ All endpoints are **Timescale reads** and require `engine` and `instance` query 
 ## PostgreSQL and SQL Server dashboards
 
 - **PostgreSQL**: Control Center, sessions, locks, queries, EXPLAIN analyzer, storage, replication/HA, autovacuum & bloat risk, enterprise monitor, best-practices, CPU/memory, alerts.
-- **SQL Server**: Instance dashboard, CPU dashboard, live diagnostics, HA/AG, enterprise metrics, performance debt, memory drilldown, agent jobs, alerts, best practices; drilldowns for CPU, queries, bottlenecks, growth, indexes, locks, deadlocks.
+- **SQL Server**: Instance dashboard (4-column KPI layout), CPU dashboard, live diagnostics, HA/AG, enterprise metrics, performance debt, memory drilldown, agent jobs (with auto-refresh), real-time delta metrics for queries, alerts, best practices; drilldowns for CPU, queries, bottlenecks, growth, indexes, locks, deadlocks.

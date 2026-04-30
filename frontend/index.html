@@ -1,3 +1,12 @@
+<!--
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Main application entry point and layout shell for the SQL Optima SPA.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+-->
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
@@ -5,13 +14,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SQL_Optima | Modular SPA</title>
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="assets/css/styles.css">
+    <link rel="stylesheet" href="assets/css/main.css">
     <!-- Google Fonts: Inter & JetBrains Mono -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+        }
+        body { font-family: var(--font-sans); }
+        code, pre { font-family: var(--font-mono); }
+    </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -25,7 +43,7 @@
                 </button>
             </div>
 
-            <!-- Target Selection -->
+            <!-- Target Selection (Reverted to Sidebar) -->
             <div class="db-selector-wrapper custom-select-group" style="padding: 0.5rem 1.5rem 1rem 1.5rem;">
                 <div>
                     <label for="instance-select" style="font-size:0.7rem;">Target Server Instance</label>
@@ -56,12 +74,24 @@
 
         <!-- Main Content Area -->
         <main class="main-content">
+            <!-- Global header removed as requested. Time picker will be injected per-page. -->
+            
             <!-- Dynamic Router Outlet -->
             <div class="views-container" id="router-outlet">
                 <!-- Modules injected here -->
             </div>
         </main>
     </div>
+
+    <!-- Hidden Time Picker Template for injection -->
+    <template id="global-time-picker-template">
+        <div class="time-picker-group compact-time-picker">
+            <input type="datetime-local" id="from-ts" class="custom-input input-xs">
+            <span class="text-muted">to</span>
+            <input type="datetime-local" id="to-ts" class="custom-input input-xs">
+            <button id="global-refresh-btn" class="btn btn-icon btn-xs" title="Refresh Data"><i class="fa-solid fa-sync"></i></button>
+        </div>
+    </template>
 
     <script src="js/utils/debug.js"></script>
     <script src="js/utils/validation.js"></script>
@@ -94,6 +124,7 @@
     <script src="js/pages/sqlserver_HADashboard.js"></script>
     <script src="js/pages/sqlserver_EnterpriseMetrics.js"></script>
     <script src="js/pages/sqlserver_PerformanceDebt.js"></script>
+    <script type="module" src="js/pages/sqlserver_WorkloadDashboard.js"></script>
     <script src="js/pages/sqlserver_QueryAnalysis.js"></script>
     <script src="js/pages/sqlserver_WatchedQueryAnalyzer.js"></script>
     <script src="js/pages/sqlserver_Settings.js"></script>
@@ -115,6 +146,9 @@
     <script src="js/pages/pg_memory.js"></script>
     <script src="js/pages/pg_enterprise.js"></script>
     <script src="js/pages/pg_backups.js"></script>
+    <script src="js/pages/pg_waits.js"></script>
+    <script src="js/pages/pg_backup_dr.js"></script>
+    <script src="js/pages/pg_security.js"></script>
     <script src="js/pages/pg_logs.js"></script>
     <script src="js/pages/pg_stat_statements.js"></script>
     <script src="js/pages/sqlserver_DeadlockDashboard.js"></script>

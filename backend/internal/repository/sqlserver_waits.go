@@ -17,7 +17,8 @@ import (
 // If database is non-empty, scopes to that DB only.
 func (c *SqlServerRepository) CollectWaitStats(db *sql.DB, database string) ([]map[string]interface{}, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   TOP 50
+		/* SQL_OPTIMA */ 
+		SELECT  TOP 50
 			w.wait_type,
 			COUNT(*) AS waiting_tasks_count,
 			CAST(SUM(w.wait_duration_ms) AS FLOAT) AS wait_time_ms
@@ -62,7 +63,7 @@ func (c *SqlServerRepository) CollectWaitStats(db *sql.DB, database string) ([]m
 // CollectWaitingTasks fetches waiting tasks from sys.dm_os_waiting_tasks
 func (c *SqlServerRepository) CollectWaitingTasks(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   TOP 50
+		/* SQL_OPTIMA */ SELECT   TOP 50
 			t.session_id,
 			t.wait_duration_ms,
 			t.wait_type,
@@ -104,7 +105,7 @@ func (c *SqlServerRepository) CollectWaitingTasks(db *sql.DB) ([]map[string]inte
 // CollectLatchStats fetches latch statistics from sys.dm_os_latch_stats
 func (c *SqlServerRepository) CollectLatchStats(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   TOP 20 
+		/* SQL_OPTIMA */ SELECT   TOP 20 
 			latch_class, 
 			waiting_requests_count, 
 			wait_time_ms 

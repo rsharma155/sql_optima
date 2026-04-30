@@ -39,7 +39,12 @@
         var steps = [
             { n: 0, label: '00 · Core schema', file: '00_timescale_schema.sql' },
             { n: 1, label: '01 · Seed data', file: '01_seed_data.sql' },
-            { n: 2, label: '02 · Rule engine', file: '02_rule_engine.sql' }
+            { n: 2, label: '02 · Rule engine', file: '02_rule_engine.sql' },
+            { n: 3, label: '03 · PG rules', file: '03_additional_pg_rules.sql' },
+            { n: 4, label: '04 · Alert engine', file: '04_alert_engine.sql' },
+            { n: 5, label: '05 · OS metrics', file: '05_os_metrics_collector.sql' },
+            { n: 6, label: '06 · SQL Server V2', file: '06_sqlserver_enterprise_metrics_v2.sql' },
+            { n: 7, label: '07 · PG snapshot', file: '07_pg_instance_snapshot.sql' }
         ];
 
         var panels = steps.map(function(s, i) {
@@ -62,7 +67,7 @@
             '<div class="setup-ref-hero__icon"><i class="fa-solid fa-database"></i></div>' +
             '<div class="setup-ref-hero__main">' +
             '<h1 class="setup-ref-hero__title">Applying schema</h1>' +
-            '<p class="setup-ref-hero__sub"><strong>' + esc(draft.host || '') + '</strong> · <strong>' + esc(draft.database || '') + '</strong> — scripts 00 → 02 (first may run several minutes).</p>' +
+            '<p class="setup-ref-hero__sub"><strong>' + esc(draft.host || '') + '</strong> · <strong>' + esc(draft.database || '') + '</strong> — scripts 00 → 07 (first may run several minutes).</p>' +
             '</div></header>' +
             '<div class="setup-ref-card setup-ref-card--migrate">' +
             '<div class="setup-ref-migrate-grid">' + panels + '</div></div>' +

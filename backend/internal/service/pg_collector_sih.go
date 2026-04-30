@@ -25,7 +25,7 @@ func (s *MetricsService) runPostgresStorageIndexHealthTick(ctx context.Context, 
 	now := capture
 	due15mIndex := s.sihDue(s.sihLastIndex15m, instanceName, now, 15*time.Minute)
 	due15mTable := s.sihDue(s.sihLastTable15m, instanceName, now, 15*time.Minute)
-	due6hGrowth := s.sihDue(s.sihLastGrowth6h, instanceName, now, 6*time.Hour)
+	dueDailyGrowth := s.sihDue(s.sihLastGrowth6h, instanceName, now, 24*time.Hour)
 	dueDailyDefs := s.sihDue(s.sihLastDefsDaily, instanceName, now, 24*time.Hour)
 
 	// PostgreSQL pg_stat_user_* views are scoped to the connected database.
@@ -63,7 +63,7 @@ func (s *MetricsService) runPostgresStorageIndexHealthTick(ctx context.Context, 
 			}
 		}
 
-		if due15mTable || due6hGrowth {
+		if due15mTable || dueDailyGrowth {
 			tblRows, err := collectors.CollectPostgresTableUsageAndSize(dbCtx, pgdb)
 			if err != nil {
 				log.Printf("[Collector][SIH] CollectPostgresTableUsageAndSize failed for %s db=%s: %v", instanceName, dbName, err)
@@ -76,7 +76,7 @@ func (s *MetricsService) runPostgresStorageIndexHealthTick(ctx context.Context, 
 						insertedTbl += n
 					}
 				}
-				if due6hGrowth {
+				if dueDailyGrowth {
 					if n, perr := collectors.PersistPostgresTableSizeHistory(dbCtx, s.tsLogger, instanceName, tblRows, capture); perr != nil {
 						log.Printf("[Collector][SIH] PersistPostgresTableSizeHistory failed for %s db=%s: %v", instanceName, dbName, perr)
 					} else {
@@ -93,8 +93,8 @@ func (s *MetricsService) runPostgresStorageIndexHealthTick(ctx context.Context, 
 				log.Printf("[Collector][SIH] CollectPostgresIndexDefinitions failed for %s db=%s: %v", instanceName, dbName, err)
 			} else if len(defRows) > 0 {
 				totalDefRows += len(defRows)
-				if n, perr := collectors.PersistPostgresIndexDefinitions(dbCtx, s.tsLogger, instanceName, defRows, dayBucket); perr != nil {
-					log.Printf("[Collector][SIH] PersistPostgresIndexDefinitions failed for %s db=%s: %v", instanceName, dbName, perr)
+				if n, perr := collectors.PersistPostgresIndexDefinitionsWithChangeDetection(dbCtx, s.tsLogger, instanceName, defRows, dayBucket); perr != nil {
+					log.Printf("[Collector][SIH] PersistPostgresIndexDefinitionsWithChangeDetection failed for %s db=%s: %v", instanceName, dbName, perr)
 				} else {
 					insertedDefs += n
 				}
@@ -111,7 +111,7 @@ func (s *MetricsService) runPostgresStorageIndexHealthTick(ctx context.Context, 
 	if due15mTable {
 		log.Printf("[Collector][SIH] postgres table usage persisted for %s dbs=%d rows=%d inserted=%d", instanceName, len(dbs), totalTblRows, insertedTbl)
 	}
-	if due6hGrowth {
+	if dueDailyGrowth {
 		log.Printf("[Collector][SIH] postgres table_size_history for %s dbs=%d rows=%d inserted=%d", instanceName, len(dbs), totalTblRows, insertedGrowth)
 	}
 	if dueDailyDefs {

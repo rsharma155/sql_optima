@@ -1,5 +1,5 @@
 -- Metric: pg_archiver_stats
--- Source: backend/internal/repository/pg_stats.go:1439
+-- Source: backend/internal/repository/pg_background_metrics.go
 -- Target Table: postgres_archiver_stats (TimescaleDB)
 -- Description: Retrieves WAL archiver statistics from pg_stat_archiver
 

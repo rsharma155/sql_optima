@@ -1,0 +1,126 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Page-specific override styles for pgss
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+/* ---- PGSS Regression table red theme ---- */
+.pgss-regression-table tr td:nth-child(4) { font-weight: 600; }
+.pgss-regression-table tr:hover { background: rgba(248,113,113,0.08); }
+.pgss-regression-table .badge-danger { font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; }
+.pgss-regression-table .badge-warning { font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; }
+
+/* ---- PGSS chart legend multi-line ---- */
+.pgss-chart-card .chartjs-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 4px 0; }
+.pgss-chart-card .chartjs-legend li { font-size: 0.75rem; color: #94a3b8; }
+
+/* ---- PGSS Tuning Flag Badges ---- */
+.pgss-badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.03em; margin-right: 2px; }
+.pgss-badge-io   { background: rgba(239,68,68,0.18); color: #ef4444; }
+.pgss-badge-temp { background: rgba(245,158,11,0.18); color: #f59e0b; }
+.pgss-badge-plan { background: rgba(168,85,247,0.18); color: #a855f7; }
+.pgss-badge-wal  { background: rgba(59,130,246,0.18); color: #3b82f6; }
+
+/* ---- PGSS Planning Warning Banner ---- */
+.pgss-planning-warning {
+    font-size: 0.7rem;
+    color: var(--warning);
+    background: rgba(245,158,11,0.1);
+    border: 1px solid rgba(245,158,11,0.25);
+    border-radius: 6px;
+    padding: 4px 10px;
+    margin-bottom: 4px;
+}
+
+/* ---- PGSS Collapsible Diagnostics Panel ---- */
+.pgss-diagnostics-panel { border: none; }
+.pgss-diagnostics-summary {
+    cursor: pointer;
+    padding: 0.65rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    user-select: none;
+}
+.pgss-diagnostics-summary::-webkit-details-marker { display: none; }
+.pgss-diagnostics-summary::before {
+    content: '▶';
+    font-size: 0.65rem;
+    transition: transform 0.2s;
+}
+.pgss-diagnostics-panel[open] > .pgss-diagnostics-summary::before {
+    transform: rotate(90deg);
+}
+.pgss-diagnostics-content {
+    animation: tabFadeIn 0.25s ease;
+}
+
+/* ---- PGSS KPI Strip Threshold Colors ---- */
+.pgss-kpi-warn .metric-value { color: var(--warning); }
+.pgss-kpi-critical .metric-value { color: var(--danger); }
+
+/* ---- PGSS Top Queries Table Layout ---- */
+#pgss-top-table { table-layout: fixed; width: 100%; }
+#pgss-top-table td,
+#pgss-top-table th {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+#pgss-top-table td:nth-child(n+4),
+#pgss-top-table th:nth-child(n+4) {
+    text-align: right;
+}
+/* Flags column: allow badges to wrap but clip overflow */
+#pgss-top-table td:nth-child(2) {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.6rem;
+}
+/* Query column: single line, truncated, clickable */
+#pgss-top-table td:nth-child(3) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    color: var(--accent, #38bdf8);
+}
+#pgss-top-table td:nth-child(3):hover {
+    opacity: 0.8;
+}
+/* ---- PGSS Sortable Column Headers ---- */
+.pgss-sortable-table th.pgss-sortable-th {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    transition: color 0.15s;
+}
+.pgss-sortable-table th.pgss-sortable-th:hover {
+    color: var(--accent, #38bdf8);
+}
+.pgss-sortable-table th.pgss-sortable-th i {
+    font-size: 0.55rem;
+    margin-left: 2px;
+    opacity: 0.5;
+    vertical-align: middle;
+}
+.pgss-sortable-table th.pgss-sortable-th[data-sort-dir] i {
+    opacity: 1;
+    color: var(--accent, #38bdf8);
+}
+
+/* ---- Responsive adjustments for pgss layout ---- */
+@media (max-width: 1024px) {
+    .pgss-diagnostics-content .charts-grid { grid-template-columns: 1fr !important; }
+}

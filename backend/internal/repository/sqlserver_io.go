@@ -15,7 +15,7 @@ import (
 // CollectFileIOLatencyForRTD limits to user databases (database_id > 4) and excludes the replication distributor DB.
 func (c *SqlServerRepository) CollectFileIOLatencyForRTD(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ SELECT   
 			DB_NAME(mf.database_id) AS database_name,
 			mf.name AS file_name,
 			mf.type_desc AS file_type,
@@ -66,7 +66,7 @@ func (c *SqlServerRepository) CollectFileIOLatencyForRTD(db *sql.DB) ([]map[stri
 // CollectFileIOLatency fetches I/O latency from sys.dm_io_virtual_file_stats
 func (c *SqlServerRepository) CollectFileIOLatency(db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ SELECT   
 			DB_NAME(mf.database_id) AS database_name,
 			mf.name AS file_name,
 			mf.type_desc AS file_type,
@@ -116,7 +116,7 @@ func (c *SqlServerRepository) CollectFileIOLatency(db *sql.DB) ([]map[string]int
 // CollectDiskUsage fetches disk usage from sys.master_files
 func (c *SqlServerRepository) CollectDiskUsage(db *sql.DB) (map[string]float64, error) {
 	query := `
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ SELECT   
 			DB_NAME(database_id) AS database_name,
 			CAST(SUM(size * 8 / 1024) AS FLOAT) AS size_mb
 		FROM sys.master_files

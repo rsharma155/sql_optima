@@ -17,24 +17,24 @@ import (
 )
 
 type PostgresControlCenterRow struct {
-	CaptureTimestamp        time.Time `json:"capture_timestamp"`
-	ServerInstanceName      string    `json:"server_instance_name"`
-	WALRateMBPerMin         float64   `json:"wal_rate_mb_per_min"`
-	WALSizeMB               float64   `json:"wal_size_mb"`
-	MaxReplicationLagMB     float64   `json:"max_replication_lag_mb"`
-	MaxReplicationLagSecond float64   `json:"max_replication_lag_seconds"`
-	CheckpointReqRatio      float64   `json:"checkpoint_req_ratio"`
-	XIDAge                  int64     `json:"xid_age"`
-	XIDWraparoundPct        float64   `json:"xid_wraparound_pct"`
-	TPS                     float64   `json:"tps"`
-	ActiveSessions          int       `json:"active_sessions"`
-	WaitingSessions         int       `json:"waiting_sessions"`
-	SlowQueriesCount        int       `json:"slow_queries_count"`
-	BlockingSessions        int       `json:"blocking_sessions"`
-	AutovacuumWorkers       int       `json:"autovacuum_workers"`
-	DeadTupleRatioPct       float64   `json:"dead_tuple_ratio_pct"`
-	HealthScore             int       `json:"health_score"`
-	HealthStatus            string    `json:"health_status"`
+	CaptureTimestamp   time.Time `json:"capture_timestamp"`
+	ServerInstanceName string    `json:"server_instance_name"`
+	WALMBPerMin        float64   `json:"wal_mb_per_min"`
+	WALSizeMB          float64   `json:"wal_size_mb"`
+	ReplicaLagMB       float64   `json:"max_replication_lag_mb"`
+	ReplicaLagSec      float64   `json:"replica_lag_sec"`
+	CheckpointReqRatio float64   `json:"checkpoint_req_ratio"`
+	XIDAge             int64     `json:"xid_age"`
+	XIDWraparoundPct   float64   `json:"xid_wraparound_pct"`
+	TPS                float64   `json:"tps"`
+	ActiveSessions     int       `json:"active_sessions"`
+	WaitingSessions    int       `json:"waiting_sessions"`
+	SlowQueriesCount   int       `json:"slow_queries_count"`
+	BlockingSessions   int       `json:"blocking_sessions"`
+	AutovacuumWorkers  int       `json:"autovacuum_workers"`
+	DeadTuplePct       float64   `json:"dead_tuple_pct"`
+	HealthScore        int       `json:"health_score"`
+	HealthStatus       string    `json:"health_status"`
 }
 
 type PostgresReplicationLagDetailRow struct {
@@ -51,10 +51,10 @@ func pgControlCenterHash(r PostgresControlCenterRow) uint64 {
 	// exclude timestamp
 	_, _ = fmt.Fprintf(h, "%s|%g|%g|%g|%g|%g|%d|%g|%g|%d|%d|%d|%d|%d|%g|%d|%s",
 		r.ServerInstanceName,
-		r.WALRateMBPerMin,
+		r.WALMBPerMin,
 		r.WALSizeMB,
-		r.MaxReplicationLagMB,
-		r.MaxReplicationLagSecond,
+		r.ReplicaLagMB,
+		r.ReplicaLagSec,
 		r.CheckpointReqRatio,
 		r.XIDAge,
 		r.XIDWraparoundPct,
@@ -64,7 +64,7 @@ func pgControlCenterHash(r PostgresControlCenterRow) uint64 {
 		r.SlowQueriesCount,
 		r.BlockingSessions,
 		r.AutovacuumWorkers,
-		r.DeadTupleRatioPct,
+		r.DeadTuplePct,
 		r.HealthScore,
 		r.HealthStatus,
 	)
@@ -85,23 +85,23 @@ func (tl *TimescaleLogger) LogPostgresControlCenterStats(ctx context.Context, ro
 	q := `
 		INSERT INTO postgres_control_center_stats (
 			capture_timestamp, server_instance_name,
-			wal_rate_mb_per_min, wal_size_mb,
-			max_replication_lag_mb, max_replication_lag_seconds,
+			wal_mb_per_min, wal_size_mb,
+			max_replication_lag_mb, replica_lag_sec,
 			checkpoint_req_ratio,
 			xid_age, xid_wraparound_pct,
 			tps, active_sessions, waiting_sessions, slow_queries_count,
-			blocking_sessions, autovacuum_workers, dead_tuple_ratio_pct,
+			blocking_sessions, autovacuum_workers, dead_tuple_pct,
 			health_score, health_status
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 	`
 	_, err := tl.pool.Exec(ctx, q,
 		row.CaptureTimestamp, row.ServerInstanceName,
-		row.WALRateMBPerMin, row.WALSizeMB,
-		row.MaxReplicationLagMB, row.MaxReplicationLagSecond,
+		row.WALMBPerMin, row.WALSizeMB,
+		row.ReplicaLagMB, row.ReplicaLagSec,
 		row.CheckpointReqRatio,
 		row.XIDAge, row.XIDWraparoundPct,
 		row.TPS, row.ActiveSessions, row.WaitingSessions, row.SlowQueriesCount,
-		row.BlockingSessions, row.AutovacuumWorkers, row.DeadTupleRatioPct,
+		row.BlockingSessions, row.AutovacuumWorkers, row.DeadTuplePct,
 		row.HealthScore, row.HealthStatus,
 	)
 	return err
@@ -113,12 +113,12 @@ func (tl *TimescaleLogger) GetLatestPostgresControlCenterStats(ctx context.Conte
 
 	q := `
 		SELECT capture_timestamp, server_instance_name,
-		       wal_rate_mb_per_min, wal_size_mb,
-		       max_replication_lag_mb, max_replication_lag_seconds,
+		       wal_mb_per_min, wal_size_mb,
+		       max_replication_lag_mb, replica_lag_sec,
 		       checkpoint_req_ratio,
 		       xid_age, xid_wraparound_pct,
 		       tps, active_sessions, waiting_sessions, slow_queries_count,
-		       blocking_sessions, autovacuum_workers, dead_tuple_ratio_pct,
+		       blocking_sessions, autovacuum_workers, dead_tuple_pct,
 		       health_score, COALESCE(health_status,'')
 		FROM postgres_control_center_stats
 		WHERE server_instance_name = $1
@@ -128,12 +128,12 @@ func (tl *TimescaleLogger) GetLatestPostgresControlCenterStats(ctx context.Conte
 	var r PostgresControlCenterRow
 	err := tl.pool.QueryRow(ctx, q, instanceName).Scan(
 		&r.CaptureTimestamp, &r.ServerInstanceName,
-		&r.WALRateMBPerMin, &r.WALSizeMB,
-		&r.MaxReplicationLagMB, &r.MaxReplicationLagSecond,
+		&r.WALMBPerMin, &r.WALSizeMB,
+		&r.ReplicaLagMB, &r.ReplicaLagSec,
 		&r.CheckpointReqRatio,
 		&r.XIDAge, &r.XIDWraparoundPct,
 		&r.TPS, &r.ActiveSessions, &r.WaitingSessions, &r.SlowQueriesCount,
-		&r.BlockingSessions, &r.AutovacuumWorkers, &r.DeadTupleRatioPct,
+		&r.BlockingSessions, &r.AutovacuumWorkers, &r.DeadTuplePct,
 		&r.HealthScore, &r.HealthStatus,
 	)
 	if err != nil {
@@ -168,11 +168,12 @@ func (tl *TimescaleLogger) LogPostgresReplicationLagDetail(ctx context.Context, 
 
 type PostgresControlCenterHistory struct {
 	Labels             []string  `json:"labels"`
-	WALRateMBPerMin    []float64 `json:"wal_rate_mb_per_min"`
-	ReplLagSeconds     []float64 `json:"replication_lag_seconds"`
+	TPS                []float64 `json:"tps"`
+	WALMBPerMin        []float64 `json:"wal_mb_per_min"`
+	ReplLagSec         []float64 `json:"replica_lag_sec"`
 	CheckpointReqRatio []float64 `json:"checkpoint_req_ratio"`
 	Autovacuum         []int     `json:"autovacuum_workers"`
-	DeadTupleRatio     []float64 `json:"dead_tuple_ratio_pct"`
+	DeadTuplePct       []float64 `json:"dead_tuple_pct"`
 	BlockingSessions   []int     `json:"blocking_sessions"`
 	HealthScore        []int     `json:"health_score"`
 }
@@ -193,11 +194,12 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 
 	query := fmt.Sprintf(`
 		SELECT capture_timestamp,
-		       wal_rate_mb_per_min,
-		       max_replication_lag_seconds,
+		       tps,
+		       wal_mb_per_min,
+		       replica_lag_sec,
 		       checkpoint_req_ratio,
 		       autovacuum_workers,
-		       dead_tuple_ratio_pct,
+		       dead_tuple_pct,
 		       blocking_sessions,
 		       health_score
 		FROM postgres_control_center_stats
@@ -209,11 +211,12 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 	if from != "" && to != "" {
 		query = fmt.Sprintf(`
 			SELECT capture_timestamp,
-				wal_rate_mb_per_min,
-				max_replication_lag_seconds,
+				tps,
+				wal_mb_per_min,
+				replica_lag_sec,
 				checkpoint_req_ratio,
 				autovacuum_workers,
-				dead_tuple_ratio_pct,
+				dead_tuple_pct,
 				blocking_sessions,
 				health_score
 			FROM postgres_control_center_stats
@@ -233,6 +236,7 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 	// reverse at end (desc -> asc)
 	type r0 struct {
 		ts    time.Time
+		tps   float64
 		wal   float64
 		lagS  float64
 		cp    float64
@@ -244,7 +248,7 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 	var tmp []r0
 	for rows.Next() {
 		var r r0
-		if err := rows.Scan(&r.ts, &r.wal, &r.lagS, &r.cp, &r.auto, &r.dead, &r.block, &r.score); err != nil {
+		if err := rows.Scan(&r.ts, &r.tps, &r.wal, &r.lagS, &r.cp, &r.auto, &r.dead, &r.block, &r.score); err != nil {
 			continue
 		}
 		tmp = append(tmp, r)
@@ -253,11 +257,12 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 	for i := len(tmp) - 1; i >= 0; i-- {
 		r := tmp[i]
 		out.Labels = append(out.Labels, r.ts.UTC().Format(time.RFC3339))
-		out.WALRateMBPerMin = append(out.WALRateMBPerMin, r.wal)
-		out.ReplLagSeconds = append(out.ReplLagSeconds, r.lagS)
+		out.TPS = append(out.TPS, r.tps)
+		out.WALMBPerMin = append(out.WALMBPerMin, r.wal)
+		out.ReplLagSec = append(out.ReplLagSec, r.lagS)
 		out.CheckpointReqRatio = append(out.CheckpointReqRatio, r.cp)
 		out.Autovacuum = append(out.Autovacuum, r.auto)
-		out.DeadTupleRatio = append(out.DeadTupleRatio, r.dead)
+		out.DeadTuplePct = append(out.DeadTuplePct, r.dead)
 		out.BlockingSessions = append(out.BlockingSessions, r.block)
 		out.HealthScore = append(out.HealthScore, r.score)
 	}
@@ -354,4 +359,23 @@ func (tl *TimescaleLogger) ComputeWalRateMBPerMin(instanceName string, walBytesT
 	}
 	mb := float64(deltaBytes) / 1024.0 / 1024.0
 	return mb * (60.0 / intervalSec), true
+}
+
+// ComputePgTps updates internal transaction state and returns average TPS for the interval.
+func (tl *TimescaleLogger) ComputePgTps(instanceName string, xactTotal uint64, intervalSec float64) (tps float64, ok bool) {
+	if intervalSec <= 0 {
+		intervalSec = 60
+	}
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+	prev, seen := tl.prevPgXactTotal[instanceName]
+	tl.prevPgXactTotal[instanceName] = xactTotal
+	if !seen {
+		return 0, false
+	}
+	delta := int64(xactTotal) - int64(prev)
+	if delta < 0 {
+		delta = 0
+	}
+	return float64(delta) / intervalSec, true
 }

@@ -94,3 +94,34 @@ func CollectPostgresIndexDefinitions(ctx context.Context, db *sql.DB) ([]IndexDe
 func PersistPostgresIndexDefinitions(ctx context.Context, tl *hot.TimescaleLogger, serverID string, rows []IndexDefinitionCatalogRow, capture time.Time) (inserted int, err error) {
 	return persistIndexDefinitions(ctx, tl, "postgres", serverID, rows, capture)
 }
+
+// PersistPostgresIndexDefinitionsWithChangeDetection writes catalog rows only if they have changed since the last snapshot.
+func PersistPostgresIndexDefinitionsWithChangeDetection(ctx context.Context, tl *hot.TimescaleLogger, serverID string, rows []IndexDefinitionCatalogRow, capture time.Time) (int, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	hotRows := make([]hot.IndexDefinitionCatalogRow, len(rows))
+	for i, r := range rows {
+		hotRows[i] = hot.IndexDefinitionCatalogRow{
+			DBName:           r.DBName,
+			SchemaName:       r.SchemaName,
+			TableName:        r.TableName,
+			IndexName:        r.IndexName,
+			KeyColumns:       r.KeyColumns,
+			IncludeColumns:   r.IncludeColumns,
+			FilterDefinition: struct{ String string }{String: r.FilterDefinition.String},
+			IsUnique:         r.IsUnique,
+			IsPK:             r.IsPK,
+			IndexType:        r.IndexType,
+		}
+	}
+	sig := tl.FingerprintIndexDefinitionRows(serverID, hotRows)
+	if tl.EnterpriseSnapshotUnchanged(serverID, "pg_index_definitions", sig) {
+		return 0, nil
+	}
+	n, err := PersistPostgresIndexDefinitions(ctx, tl, serverID, rows, capture)
+	if err == nil {
+		tl.RememberEnterpriseSnapshot(serverID, "pg_index_definitions", sig)
+	}
+	return n, err
+}

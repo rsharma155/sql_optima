@@ -26,15 +26,16 @@ func (c *SqlServerRepository) CollectPlanCacheHealth(db *sql.DB) (map[string]int
 	// Cache sizes are pages*8KB; convert to MB.
 	// single-use pressure is a common DBA signal for "Optimize for ad hoc workloads" / parameterization.
 	q := `
-		WITH plans AS (
-			SELECT /* SQL_OPTIMA */  
+		/* SQL_OPTIMA */
+		;WITH plans AS (
+			SELECT  
 				objtype,
 				usecounts,
 				size_in_bytes
 			FROM sys.dm_exec_cached_plans WITH (NOLOCK)
 		),
 		agg AS (
-			SELECT /* SQL_OPTIMA */  
+			SELECT   
 				SUM(size_in_bytes) / 1048576.0 AS total_cache_mb,
 				SUM(CASE WHEN usecounts = 1 THEN size_in_bytes ELSE 0 END) / 1048576.0 AS single_use_cache_mb,
 				SUM(CASE WHEN objtype = 'Adhoc' THEN size_in_bytes ELSE 0 END) / 1048576.0 AS adhoc_cache_mb,
@@ -42,7 +43,7 @@ func (c *SqlServerRepository) CollectPlanCacheHealth(db *sql.DB) (map[string]int
 				SUM(CASE WHEN objtype = 'Proc' THEN size_in_bytes ELSE 0 END) / 1048576.0 AS proc_cache_mb
 			FROM plans
 		)
-		SELECT /* SQL_OPTIMA */  
+		SELECT   
 			ISNULL(total_cache_mb, 0),
 			ISNULL(single_use_cache_mb, 0),
 			CASE WHEN ISNULL(total_cache_mb,0) > 0 THEN (ISNULL(single_use_cache_mb,0) / total_cache_mb) * 100.0 ELSE 0 END,
@@ -77,7 +78,7 @@ func (c *SqlServerRepository) FetchMemoryGrantWaiters(instanceName string) ([]ma
 func (c *SqlServerRepository) CollectMemoryGrantWaiters(db *sql.DB) ([]map[string]interface{}, error) {
 	// User databases only (database_id > 4), user sessions, exclude typical system sp_/xp_ batches.
 	q := `
-		SELECT /* SQL_OPTIMA */   TOP 20
+		/* SQL_OPTIMA */ SELECT   TOP 20
 			mg.session_id,
 			mg.request_id,
 			DB_NAME(ISNULL(r.database_id, s.database_id)) AS database_name,
@@ -97,9 +98,9 @@ func (c *SqlServerRepository) CollectMemoryGrantWaiters(db *sql.DB) ([]map[strin
 		WHERE mg.grant_time IS NULL
 		  AND s.is_user_process = 1
 		  AND ISNULL(r.database_id, s.database_id) > 4
-		  AND LOWER(ISNULL(DB_NAME(ISNULL(r.database_id, s.database_id)), N'')) <> N'distribution'
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND DB_NAME(ISNULL(r.database_id, s.database_id)) <> N'distribution'
+		  AND ISNULL(s.login_name,'') NOT IN ('dbmonitor_user','go-mssqldb')
+		  AND ISNULL(s.program_name,'') NOT IN ('dbmonitor_user','go-mssqldb')
 		  AND (
 			txt.text IS NULL OR (
 				LTRIM(txt.text) NOT LIKE N'sp\_%' ESCAPE '\'
@@ -150,43 +151,54 @@ func (c *SqlServerRepository) CollectTempdbTopConsumers(db *sql.DB) ([]map[strin
 	// dm_db_task_space_usage is per-task; aggregate by session_id to find top consumers.
 	// Page counts are 8KB pages -> MB = pages*8/1024.
 	q := `
-		WITH usage AS (
-			SELECT /* SQL_OPTIMA */  
-				tsu.session_id,
-				SUM(tsu.user_objects_alloc_page_count - tsu.user_objects_dealloc_page_count) AS user_pages,
-				SUM(tsu.internal_objects_alloc_page_count - tsu.internal_objects_dealloc_page_count) AS internal_pages
-			FROM tempdb.sys.dm_db_task_space_usage tsu WITH (NOLOCK)
-			GROUP BY tsu.session_id
+		/* SQL_OPTIMA */ 
+		;WITH temp_usage AS
+		(
+			SELECT
+				ssu.session_id,
+				SUM(ssu.user_objects_alloc_page_count - ssu.user_objects_dealloc_page_count) AS user_pages,
+				SUM(ssu.internal_objects_alloc_page_count - ssu.internal_objects_dealloc_page_count) AS internal_pages
+			FROM sys.dm_db_session_space_usage ssu
+			GROUP BY ssu.session_id
+		),
+		session_info AS
+		(
+			SELECT
+				s.session_id,
+				s.login_name,
+				s.host_name,
+				s.program_name,
+				s.is_user_process,
+				COALESCE(r.database_id, s.database_id) AS database_id,
+				COALESCE(r.sql_handle, c.most_recent_sql_handle) AS sql_handle
+			FROM sys.dm_exec_sessions s
+			LEFT JOIN sys.dm_exec_requests r
+				ON s.session_id = r.session_id
+			LEFT JOIN sys.dm_exec_connections c
+				ON s.session_id = c.session_id
 		)
-		SELECT /* SQL_OPTIMA */   TOP 20
-			u.session_id,
-			DB_NAME(r.database_id) AS database_name,
-			s.login_name,
-			s.host_name,
-			s.program_name,
-			((u.user_pages + u.internal_pages) * 8.0) / 1024.0 AS tempdb_mb,
-			(u.user_pages * 8.0) / 1024.0 AS user_objects_mb,
-			(u.internal_pages * 8.0) / 1024.0 AS internal_objects_mb,
-			SUBSTRING(txt.text, 1, 4000) AS query_text
-		FROM usage u
-		LEFT JOIN sys.dm_exec_requests r WITH (NOLOCK)
-			ON u.session_id = r.session_id
-		LEFT JOIN sys.dm_exec_sessions s WITH (NOLOCK)
-			ON u.session_id = s.session_id
-		OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) txt
-		WHERE (u.user_pages + u.internal_pages) > 0
-		  AND u.session_id > 50
-		  AND s.is_user_process = 1
-		  AND ISNULL(r.database_id, s.database_id) > 4
-		  AND LOWER(ISNULL(DB_NAME(ISNULL(r.database_id, s.database_id)), N'')) <> N'distribution'
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND (
-			txt.text IS NULL OR (
-				LTRIM(txt.text) NOT LIKE N'sp\_%' ESCAPE '\'
-				AND LTRIM(txt.text) NOT LIKE N'xp\_%' ESCAPE '\'
-			)
-		  )
+		SELECT TOP (20)
+			t.session_id,
+			DB_NAME(si.database_id) AS database_name,
+			si.login_name,
+			si.host_name,
+			si.program_name,
+			((t.user_pages + t.internal_pages) * 8.0) / 1024 AS tempdb_mb,
+			(t.user_pages * 8.0) / 1024 AS user_objects_mb,
+			(t.internal_pages * 8.0) / 1024 AS internal_objects_mb,
+			LEFT(txt.text, 4000) AS query_text
+		FROM temp_usage t
+		INNER JOIN session_info si
+			ON t.session_id = si.session_id
+		OUTER APPLY sys.dm_exec_sql_text(si.sql_handle) txt
+		WHERE
+			(t.user_pages + t.internal_pages) > 0
+			AND t.session_id > 50
+			AND si.is_user_process = 1
+			AND si.database_id > 4
+			AND DB_NAME(si.database_id) <> N'distribution'
+			AND ISNULL(si.login_name,'') NOT IN ('dbmonitor_user','go-mssqldb')
+			AND ISNULL(si.program_name,'') NOT IN ('dbmonitor_user','go-mssqldb')
 		ORDER BY tempdb_mb DESC;
 	`
 	rows, err := db.Query(q)

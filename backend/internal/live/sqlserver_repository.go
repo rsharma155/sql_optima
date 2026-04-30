@@ -94,7 +94,7 @@ func (r *SqlServerLiveRepository) GetBlockingChains(ctx context.Context, instanc
 func (r *SqlServerLiveRepository) GetIOLatency(ctx context.Context, instanceName string) QueryResult {
 	query := `
 		SELECT 
-			DB_NAME(database_id) AS database_name, 
+			ISNULL(DB_NAME(database_id), 'unknown') AS database_name, 
 			file_id,
 			io_stall_read_ms/NULLIF(num_of_reads,0) AS read_latency_ms,
 			io_stall_write_ms/NULLIF(num_of_writes,0) AS write_latency_ms

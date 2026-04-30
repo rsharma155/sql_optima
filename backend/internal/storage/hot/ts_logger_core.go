@@ -34,6 +34,7 @@ type TimescaleLogger struct {
 	prevEnterpriseBatchHash map[string]uint64
 	// Postgres Control Center dedup/delta state
 	prevPgWalBytesTotal        map[string]uint64
+	prevPgXactTotal            map[string]uint64
 	prevPgControlCenterHash    map[string]uint64
 	prevPgSystemStatsHash      map[string]uint64
 	prevPgConnectionStatsHash  map[string]uint64
@@ -59,6 +60,7 @@ func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
 		prevSchedulerStats:         make(map[string]uint64),
 		prevEnterpriseBatchHash:    make(map[string]uint64),
 		prevPgWalBytesTotal:        make(map[string]uint64),
+		prevPgXactTotal:            make(map[string]uint64),
 		prevPgControlCenterHash:    make(map[string]uint64),
 		prevPgSystemStatsHash:      make(map[string]uint64),
 		prevPgConnectionStatsHash:  make(map[string]uint64),
@@ -240,6 +242,13 @@ type DatabaseThroughputRow struct {
 	TotalWrites         int64     `json:"total_writes"`
 	TPS                 float64   `json:"tps"`
 	BatchRequestsPerSec float64   `json:"batch_requests_per_sec"`
+	// New I/O throughput metrics
+	Reads          int64 `json:"reads"`
+	Writes         int64 `json:"writes"`
+	BytesRead      int64 `json:"bytes_read"`
+	BytesWritten   int64 `json:"bytes_written"`
+	ReadLatencyMs  int64 `json:"read_latency_ms"`
+	WriteLatencyMs int64 `json:"write_latency_ms"`
 }
 
 type PostgresBGWriterRow struct {
@@ -435,13 +444,13 @@ func (tl *TimescaleLogger) LogSystemMetrics(ctx context.Context, instanceName st
 }
 
 func parseTimeRange(from, to string) (time.Time, time.Time, error) {
-	now := time.Now()
+	now := time.Now().UTC()
 	var start, end time.Time
-	var err error
 
 	if from != "" {
-		start, err = time.Parse(time.RFC3339, from)
-		if err != nil {
+		if t, err := parseRFC3339Flexible(from); err == nil {
+			start = t
+		} else {
 			start = now.Add(-1 * time.Hour)
 		}
 	} else {
@@ -449,8 +458,9 @@ func parseTimeRange(from, to string) (time.Time, time.Time, error) {
 	}
 
 	if to != "" {
-		end, err = time.Parse(time.RFC3339, to)
-		if err != nil {
+		if t, err := parseRFC3339Flexible(to); err == nil {
+			end = t
+		} else {
 			end = now
 		}
 	} else {
@@ -493,4 +503,56 @@ func parseTimeRangeRFC3339(from, to string) (time.Time, time.Time, error) {
 		return time.Time{}, time.Time{}, fmt.Errorf("to is before from")
 	}
 	return start, end, nil
+}
+
+// PostgresLockRow represents a historical lock event row for pg_ts_locks.
+type PostgresLockRow struct {
+	PID            int
+	DatabaseName   string
+	WaitEventType  string
+	WaitEvent      string
+	LockType       string
+	Mode           string
+	Granted        bool
+	QueryText      string
+	BlockedBy      int
+	WaitDurationMs float64
+}
+
+// PostgresStatStatementsDeltaRow represents differential query metrics for pg_ts_stat_statements_delta.
+type PostgresStatStatementsDeltaRow struct {
+	QueryID           int64
+	DatabaseName      string
+	UserName          string
+	Calls             int64
+	TotalTimeMs       float64
+	Rows              int64
+	SharedBlksHit     int64
+	SharedBlksRead    int64
+	SharedBlksDirtied int64
+	SharedBlksWritten int64
+	TempBlksRead      int64
+	TempBlksWritten   int64
+	BlkReadTimeMs     float64
+	BlkWriteTimeMs    float64
+	WalBytes          float64
+}
+
+// PostgresInstanceSnapshotRow represents a health snapshot for pg_ts_instance_snapshot.
+type PostgresInstanceSnapshotRow struct {
+	HealthScore      int
+	TotalConnections int
+	ActiveSessions   int
+	IdleSessions     int
+	WaitingSessions  int
+	BlockedSessions  int
+	LongestActiveMs  float64
+	TPS              float64
+	CacheHitRatio    float64
+	RWRatio          float64
+	AvgQueryLatencyMs float64
+	WalGenRateMbps   float64
+	ReplicaLagSec    float64
+	MaxXidAge        int64
+	CheckpointReqRatio float64
 }

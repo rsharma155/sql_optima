@@ -1,5 +1,5 @@
 -- Metric: pg_blocking_tree
--- Source: backend/internal/repository/pg_stats.go:840
+-- Source: backend/internal/repository/pg_blocking_metrics.go
 -- Target Table: N/A (blocking analysis)
 -- Description: Returns all active sessions with blocking hierarchy from pg_stat_activity
 

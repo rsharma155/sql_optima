@@ -1,5 +1,5 @@
 -- Metric: pg_sessions
--- Source: backend/internal/repository/pg_stats.go:704
+-- Source: backend/internal/repository/pg_session_metrics.go
 -- Target Table: N/A (session monitoring)
 -- Description: Returns active sessions with blocking information from pg_stat_activity
 

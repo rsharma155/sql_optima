@@ -129,6 +129,38 @@ func (tl *TimescaleLogger) GetPostgresConnections(ctx context.Context, instanceN
 	return results, rows.Err()
 }
 
+func (tl *TimescaleLogger) GetPostgresSystemStatsRange(ctx context.Context, instanceName string, from, to time.Time) ([]PostgresSystemStatsRow, error) {
+	query := `
+		SELECT capture_timestamp, server_instance_name, cpu_usage, memory_usage,
+		       active_connections, idle_connections, total_connections,
+		       COALESCE(host_cpu_percent, 0), COALESCE(postgres_cpu_percent, 0),
+		       COALESCE(load_1m, 0), COALESCE(load_5m, 0), COALESCE(load_15m, 0), COALESCE(cpu_cores, 0)
+		FROM postgres_system_stats
+		WHERE server_instance_name = $1 AND capture_timestamp BETWEEN $2 AND $3
+		ORDER BY capture_timestamp ASC
+	`
+
+	rows, err := tl.pool.Query(ctx, query, instanceName, from, to)
+	if err != nil {
+		log.Printf("[TSLogger] Failed to query Postgres system stats range: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []PostgresSystemStatsRow
+	for rows.Next() {
+		var r PostgresSystemStatsRow
+		if err := rows.Scan(&r.CaptureTimestamp, &r.ServerName, &r.CPUUsage, &r.MemoryUsage,
+			&r.ActiveConnections, &r.IdleConnections, &r.TotalConnections,
+			&r.HostCpuPercent, &r.PostgresCpuPercent, &r.Load1m, &r.Load5m, &r.Load15m, &r.CpuCores); err != nil {
+			log.Printf("[TSLogger] Failed to scan row: %v", err)
+			continue
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
 func (tl *TimescaleLogger) GetPostgresSystemStats(ctx context.Context, instanceName string, limit int) ([]PostgresSystemStatsRow, error) {
 	if limit <= 0 {
 		limit = 100
@@ -210,6 +242,43 @@ func (tl *TimescaleLogger) LogPostgresReplicationStats(ctx context.Context, inst
 		getFloat64(data, "bgwriter_eff_pct"),
 	)
 	return err
+}
+
+func (tl *TimescaleLogger) GetLatestPostgresReplicationStats(ctx context.Context, instanceName string) (map[string]interface{}, error) {
+	query := `
+		SELECT is_primary, cluster_state, max_lag_mb, wal_gen_rate_mbps, bgwriter_eff_pct
+		FROM postgres_replication_stats
+		WHERE server_instance_name = $1
+		ORDER BY capture_timestamp DESC
+		LIMIT 1
+	`
+	var isPrimary bool
+	var clusterState string
+	var maxLagMB, walGenRate, bgWriterEff float64
+
+	err := tl.pool.QueryRow(ctx, query, instanceName).Scan(
+		&isPrimary, &clusterState, &maxLagMB, &walGenRate, &bgWriterEff,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return map[string]interface{}{
+				"is_primary":    true,
+				"cluster_state": "unknown",
+				"max_lag_mb":    0,
+				"standbys":      []interface{}{},
+			}, nil
+		}
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"is_primary":        isPrimary,
+		"cluster_state":     clusterState,
+		"max_lag_mb":        maxLagMB,
+		"wal_gen_rate_mbps": walGenRate,
+		"bgwriter_eff_pct":  bgWriterEff,
+		"standbys":          []interface{}{}, // Detailed standby info can be added if joined with postgres_replication_stats
+	}, nil
 }
 
 func (tl *TimescaleLogger) LogPostgresSystemStats(ctx context.Context, instanceName string, row PgSystemStatsInsert) error {
@@ -435,26 +504,47 @@ func (tl *TimescaleLogger) UpsertPostgresQueryDictionary(ctx context.Context, en
 	return err
 }
 
-func (tl *TimescaleLogger) GetPostgresCheckpointSummary(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetPostgresCheckpointSummary(ctx context.Context, instanceName string, from, to time.Time, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
-	// Dedupe any duplicate inserts for the same capture_timestamp.
-	query := `
-		SELECT DISTINCT ON (capture_timestamp)
-		       capture_timestamp,
-		       checkpoints_timed, checkpoints_req, 
-		       checkpoint_write_time, checkpoint_sync_time,
-		       buffers_checkpoint, buffers_clean, maxwritten_clean,
-		       buffers_backend, buffers_alloc
-		FROM postgres_bgwriter_stats
-		WHERE server_instance_name = $1
-		ORDER BY capture_timestamp DESC
-		LIMIT $2
-	`
+	var query string
+	var args []interface{}
+	args = append(args, instanceName)
 
-	rows, err := tl.pool.Query(ctx, query, instanceName, limit)
+	if !from.IsZero() && !to.IsZero() {
+		query = `
+			SELECT DISTINCT ON (capture_timestamp)
+			       capture_timestamp,
+			       checkpoints_timed, checkpoints_req, 
+			       checkpoint_write_time, checkpoint_sync_time,
+			       buffers_checkpoint, buffers_clean, maxwritten_clean,
+			       buffers_backend, buffers_alloc
+			FROM postgres_bgwriter_stats
+			WHERE server_instance_name = $1
+			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
+			ORDER BY capture_timestamp DESC
+			LIMIT 2000
+		`
+		args = append(args, from, to)
+	} else {
+		query = `
+			SELECT DISTINCT ON (capture_timestamp)
+			       capture_timestamp,
+			       checkpoints_timed, checkpoints_req, 
+			       checkpoint_write_time, checkpoint_sync_time,
+			       buffers_checkpoint, buffers_clean, maxwritten_clean,
+			       buffers_backend, buffers_alloc
+			FROM postgres_bgwriter_stats
+			WHERE server_instance_name = $1
+			ORDER BY capture_timestamp DESC
+			LIMIT $2
+		`
+		args = append(args, limit)
+	}
+
+	rows, err := tl.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -490,22 +580,41 @@ func (tl *TimescaleLogger) GetPostgresCheckpointSummary(ctx context.Context, ins
 	return results, rows.Err()
 }
 
-func (tl *TimescaleLogger) GetPostgresArchiveSummary(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetPostgresArchiveSummary(ctx context.Context, instanceName string, from, to time.Time, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
-	query := `
-		SELECT capture_timestamp,
-		       archived_count, failed_count, 
-		       last_archived_wal, last_failed_wal
-		FROM postgres_archiver_stats
-		WHERE server_instance_name = $1
-		ORDER BY capture_timestamp DESC
-		LIMIT $2
-	`
+	var query string
+	var args []interface{}
+	args = append(args, instanceName)
 
-	rows, err := tl.pool.Query(ctx, query, instanceName, limit)
+	if !from.IsZero() && !to.IsZero() {
+		query = `
+			SELECT capture_timestamp,
+			       archived_count, failed_count, 
+			       last_archived_wal, last_failed_wal
+			FROM postgres_archiver_stats
+			WHERE server_instance_name = $1
+			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
+			ORDER BY capture_timestamp DESC
+			LIMIT 2000
+		`
+		args = append(args, from, to)
+	} else {
+		query = `
+			SELECT capture_timestamp,
+			       archived_count, failed_count, 
+			       last_archived_wal, last_failed_wal
+			FROM postgres_archiver_stats
+			WHERE server_instance_name = $1
+			ORDER BY capture_timestamp DESC
+			LIMIT $2
+		`
+		args = append(args, limit)
+	}
+
+	rows, err := tl.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -568,14 +677,14 @@ func (tl *TimescaleLogger) LogPostgresQueryStatsSnapshot(ctx context.Context, in
 
 func (tl *TimescaleLogger) loadPostgresQueryStatsSnapshot(ctx context.Context, instanceName string, ts time.Time) (map[int64]PostgresQueryStatsSnapRow, error) {
 	const q = `
-		SELECT queryid, query, calls, total_exec_time, (total_exec_time / NULLIF(calls, 0)), rows,
-		       0 as temp_blks_read, temp_blks_written, 0 as blk_read_time_ms, 0 as blk_write_time_ms,
-		       COALESCE(shared_blks_hit,0), COALESCE(shared_blks_read,0),
-		       0 as shared_blks_dirtied, 0 as shared_blks_written,
-		       0 as wal_bytes, 0 as wal_records, 0 as wal_fpi,
-		       0 as total_plan_time, 0 as mean_plan_time, 0 as plans
-		FROM pg_query_metrics_v2
-		WHERE instance_id = $1 AND ts = $2`
+		SELECT query_id, query_text, calls, total_time_ms, mean_time_ms, rows,
+		       temp_blks_read, temp_blks_written, blk_read_time_ms, blk_write_time_ms,
+		       shared_blks_hit, shared_blks_read, shared_blks_dirtied, shared_blks_written,
+		       wal_bytes, wal_records, wal_fpi,
+		       total_plan_time, mean_plan_time, plans
+		FROM postgres_query_stats
+		WHERE server_instance_name = $1 AND capture_timestamp = $2
+		  AND query_text NOT LIKE '%/* SQL_OPTIMA */%'`
 	rows, err := tl.pool.Query(ctx, q, instanceName, ts)
 	if err != nil {
 		return nil, err
@@ -689,16 +798,16 @@ func (tl *TimescaleLogger) GetPostgresQueryStatsWindowDelta(ctx context.Context,
 
 	var endTS sql.NullTime
 	err := tl.pool.QueryRow(ctx,
-		`SELECT MAX(ts) FROM pg_query_metrics_v2 WHERE instance_id = $1 AND ts <= $2`,
+		`SELECT MAX(capture_timestamp) FROM postgres_query_stats WHERE server_instance_name = $1 AND capture_timestamp <= $2`,
 		instanceName, to,
 	).Scan(&endTS)
 	if err != nil || !endTS.Valid {
-		return nil, time.Time{}, time.Time{}, "", fmt.Errorf("no pg_query_metrics_v2 snapshots for instance (need Timescale + enterprise collector)")
+		return nil, time.Time{}, time.Time{}, "", fmt.Errorf("no postgres_query_stats snapshots for instance (need Timescale + enterprise collector)")
 	}
 
 	var startTS sql.NullTime
 	_ = tl.pool.QueryRow(ctx,
-		`SELECT MAX(ts) FROM pg_query_metrics_v2 WHERE instance_id = $1 AND ts <= $2`,
+		`SELECT MAX(capture_timestamp) FROM postgres_query_stats WHERE server_instance_name = $1 AND capture_timestamp <= $2`,
 		instanceName, from,
 	).Scan(&startTS)
 
@@ -708,7 +817,7 @@ func (tl *TimescaleLogger) GetPostgresQueryStatsWindowDelta(ctx context.Context,
 		startT = startTS.Time
 	} else {
 		_ = tl.pool.QueryRow(ctx,
-			`SELECT MIN(ts) FROM pg_query_metrics_v2 WHERE instance_id = $1 AND ts >= $2 AND ts <= $3`,
+			`SELECT MIN(capture_timestamp) FROM postgres_query_stats WHERE server_instance_name = $1 AND capture_timestamp >= $2 AND capture_timestamp <= $3`,
 			instanceName, from, endTS.Time,
 		).Scan(&startTS)
 		if startTS.Valid && startTS.Time.Before(endTS.Time) {
@@ -717,14 +826,14 @@ func (tl *TimescaleLogger) GetPostgresQueryStatsWindowDelta(ctx context.Context,
 		} else {
 			var prev sql.NullTime
 			_ = tl.pool.QueryRow(ctx,
-				`SELECT MAX(ts) FROM pg_query_metrics_v2 WHERE instance_id = $1 AND ts < $2`,
+				`SELECT MAX(capture_timestamp) FROM postgres_query_stats WHERE server_instance_name = $1 AND capture_timestamp < $2`,
 				instanceName, endTS.Time,
 			).Scan(&prev)
 			if prev.Valid && prev.Time.Before(endTS.Time) {
 				startT = prev.Time
 				note = "using_consecutive_snapshots"
 			} else {
-				return nil, time.Time{}, endTS.Time, "", fmt.Errorf("insufficient pg_query_metrics_v2 history")
+				return nil, time.Time{}, endTS.Time, "", fmt.Errorf("insufficient postgres_query_stats history")
 			}
 		}
 	}
@@ -758,4 +867,109 @@ func (tl *TimescaleLogger) GetPostgresQueryStatsWindowDelta(ctx context.Context,
 		deltas = deltas[:topN]
 	}
 	return deltas, startT, endTS.Time, note, nil
+}
+
+func (tl *TimescaleLogger) GetPostgresDatabases(ctx context.Context, instanceName string) ([]string, error) {
+	q := `
+		SELECT DISTINCT database_name FROM (
+			SELECT database_name FROM postgres_table_maintenance_stats WHERE server_instance_name = $1
+			UNION
+			SELECT database_name FROM postgres_db_io_stats WHERE server_instance_name = $1
+			UNION
+			SELECT database_name FROM postgres_throughput_metrics WHERE server_instance_name = $1
+		) dbs
+		WHERE database_name IS NOT NULL AND database_name != ''
+		ORDER BY database_name
+	`
+	rows, err := tl.pool.Query(ctx, q, instanceName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var dbs []string
+	for rows.Next() {
+		var db string
+		if err := rows.Scan(&db); err == nil {
+			dbs = append(dbs, db)
+		}
+	}
+	return dbs, nil
+}
+
+// LogPGTimescaleLock writes historical lock telemetry to pg_ts_locks.
+func (tl *TimescaleLogger) LogPGTimescaleLock(ctx context.Context, instanceName string, captureTS time.Time, rows []PostgresLockRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	const q = `INSERT INTO pg_ts_locks (
+		capture_timestamp, server_instance_name, database_name, pid,
+		wait_event_type, wait_event, lock_type, mode, granted,
+		query_text, blocked_by, wait_duration_ms
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`
+	
+	batch := &pgx.Batch{}
+	for _, r := range rows {
+		batch.Queue(q, captureTS, instanceName, r.DatabaseName, r.PID,
+			r.WaitEventType, r.WaitEvent, r.LockType, r.Mode, r.Granted,
+			r.QueryText, r.BlockedBy, r.WaitDurationMs)
+	}
+	
+	br := tl.pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for i := 0; i < len(rows); i++ {
+		if _, err := br.Exec(); err != nil {
+			return fmt.Errorf("batch exec error at row %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// LogPGStatStatementsDelta writes differential query metrics to pg_ts_stat_statements_delta.
+func (tl *TimescaleLogger) LogPGStatStatementsDelta(ctx context.Context, instanceName string, captureTS time.Time, rows []PostgresStatStatementsDeltaRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	const q = `INSERT INTO pg_ts_stat_statements_delta (
+		capture_timestamp, server_instance_name, query_id, database_name, user_name,
+		calls_delta, total_time_delta_ms, rows_delta,
+		shared_blks_hit_delta, shared_blks_read_delta, shared_blks_dirtied_delta, shared_blks_written_delta,
+		temp_blks_read_delta, temp_blks_written_delta,
+		blk_read_time_delta_ms, blk_write_time_delta_ms, wal_bytes_delta
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`
+
+	batch := &pgx.Batch{}
+	for _, r := range rows {
+		batch.Queue(q, captureTS, instanceName, r.QueryID, r.DatabaseName, r.UserName,
+			r.Calls, r.TotalTimeMs, r.Rows,
+			r.SharedBlksHit, r.SharedBlksRead, r.SharedBlksDirtied, r.SharedBlksWritten,
+			r.TempBlksRead, r.TempBlksWritten,
+			r.BlkReadTimeMs, r.BlkWriteTimeMs, r.WalBytes)
+	}
+	
+	br := tl.pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for i := 0; i < len(rows); i++ {
+		if _, err := br.Exec(); err != nil {
+			return fmt.Errorf("batch exec error at row %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// LogPGInstanceSnapshot writes a unified health snapshot to pg_ts_instance_snapshot.
+func (tl *TimescaleLogger) LogPGInstanceSnapshot(ctx context.Context, instanceName string, captureTS time.Time, r PostgresInstanceSnapshotRow) error {
+	const q = `INSERT INTO pg_ts_instance_snapshot (
+		capture_timestamp, server_instance_name,
+		health_score, total_connections, active_sessions, idle_sessions,
+		waiting_sessions, blocked_sessions, longest_active_ms,
+		tps, cache_hit_ratio, rw_ratio, avg_query_latency_ms,
+		wal_generation_rate_mbps, replica_lag_sec, max_xid_age, checkpoint_req_ratio
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`
+	
+	_, err := tl.pool.Exec(ctx, q, captureTS, instanceName,
+		r.HealthScore, r.TotalConnections, r.ActiveSessions, r.IdleSessions,
+		r.WaitingSessions, r.BlockedSessions, r.LongestActiveMs,
+		r.TPS, r.CacheHitRatio, r.RWRatio, r.AvgQueryLatencyMs,
+		r.WalGenRateMbps, r.ReplicaLagSec, r.MaxXidAge, r.CheckpointReqRatio)
+	return err
 }

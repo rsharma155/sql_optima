@@ -40,7 +40,8 @@ func (c *PgRepository) GetSystemStatsDetail(instanceName string) (*PgSystemStats
 
 	// Prefer pg_os_info + pg_stat_cpu if available.
 	err := db.QueryRow(`
-		SELECT /* SQL_OPTIMA */   
+		/* SQL_OPTIMA */ 
+		SELECT   
 			COALESCE((SELECT /* SQL_OPTIMA */   util FROM pg_stat_cpu() WHERE util IS NOT NULL LIMIT 1), 0) AS cpu_usage,
 			COALESCE(100 * (1 - (available_memory::float / NULLIF(total_memory::float,0))), 0) AS mem_used_pct,
 			COALESCE(total_memory, 0) AS total_mem,

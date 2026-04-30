@@ -128,7 +128,7 @@ func (s *MetricsService) RunSqlServerStorageSnapshotCollection(ctx context.Conte
 						HasPrimaryKey:     m["has_primary_key"].(bool),
 					})
 				}
-				_ = s.tsLogger.LogTableStructureHistory(ctx, rows)
+				_ = s.tsLogger.LogTableStructureHistoryWithChangeDetection(ctx, inst.Name, rows)
 			}
 
 			// C: Index Usage Stats (Deltas for SIH charts)
