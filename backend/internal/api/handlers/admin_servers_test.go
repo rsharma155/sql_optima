@@ -102,6 +102,7 @@ func TestAdminServers_AddServer_ValidatesAndDoesNotEchoPassword(t *testing.T) {
 	sb := security.NewEnvelopeSecretBox()
 	ms := &service.MetricsService{ServerRepo: store, ServerKMS: kms, ServerSecretBox: sb}
 	h := NewAdminServerHandlers(ms)
+	h.tester = fakeTester{err: nil}
 
 	middleware.SetJWTSecret(bytes.Repeat([]byte("k"), 32))
 	tok, err := middleware.GenerateToken(1, "admin", "admin")
