@@ -1,15 +1,15 @@
 # Build from repository root: docker build -t sql-optima:latest .
 FROM golang:1.26-bookworm AS build
-WORKDIR /src
-COPY backend/go.mod backend/go.sum ./backend/
 WORKDIR /src/backend
+COPY backend/go.mod backend/go.sum ./
+COPY backend/internal/sqlplan-analyzer ./internal/sqlplan-analyzer
 RUN go mod download
 COPY backend/ ./
 COPY infrastructure/sql_scripts /src/infrastructure/sql_scripts
 # config.yaml is optional — instances come from server registry in Docker mode.
 # Generate a safe default; users can volume-mount their own at runtime.
 RUN echo 'instances: []' > ../config.yaml
-COPY frontend ../frontend
+COPY frontend /src/frontend
 # Force module mode even if a stale vendor/ exists in build context.
 RUN CGO_ENABLED=0 go build -mod=mod -ldflags="-s -w" -o /sql-optima ./cmd/server
 RUN mkdir -p /src/backend/logs && chmod 0777 /src/backend/logs
