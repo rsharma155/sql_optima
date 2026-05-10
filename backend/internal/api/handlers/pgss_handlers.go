@@ -329,23 +329,31 @@ func parseTimeRange(r *http.Request) (time.Time, time.Time) {
 	q := r.URL.Query()
 	toT := time.Now().UTC()
 	fromT := toT.Add(-1 * time.Hour)
+
+	var hasFrom, hasTo bool
+
 	if fromStr := strings.TrimSpace(q.Get("from")); fromStr != "" {
 		if t, err := time.Parse(time.RFC3339, fromStr); err == nil {
 			fromT = t
+			hasFrom = true
 		}
 	}
 	if toStr := strings.TrimSpace(q.Get("to")); toStr != "" {
 		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
 			toT = t
+			hasTo = true
 		}
 	}
+
 	if fromT.After(toT) {
 		fromT, toT = toT, fromT
 	}
-	// Cap range to 7 days to prevent expensive wide-range scans
+
+	// Cap range only when both bounds were explicitly provided.
 	const maxRange = 7 * 24 * time.Hour
-	if toT.Sub(fromT) > maxRange {
+	if hasFrom && hasTo && toT.Sub(fromT) > maxRange {
 		fromT = toT.Add(-maxRange)
 	}
+
 	return fromT, toT
 }
