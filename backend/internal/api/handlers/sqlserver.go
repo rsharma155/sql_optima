@@ -1460,22 +1460,7 @@ func (h *SqlServerHandlers) HealthV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	now := time.Now().UTC()
-	from := now.Add(-15 * time.Minute) // Default to last 15 mins for V2 Triage
-	to := now
-
-	if fromStr != "" {
-		if t, err := time.Parse(time.RFC3339, fromStr); err == nil {
-			from = t.UTC()
-		}
-	}
-	if toStr != "" {
-		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
-			to = t.UTC()
-		}
-	}
+	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 
 	data, err := h.metricsSvc.GetHealthV2DashboardData(r.Context(), instance, from, to)
 	if err != nil {
