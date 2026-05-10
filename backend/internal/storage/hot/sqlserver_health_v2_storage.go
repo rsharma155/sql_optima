@@ -21,13 +21,13 @@ func (tl *TimescaleLogger) GetWaitTrendV2(ctx context.Context, instanceName stri
 	q := `
 		SELECT 
 			time_bucket('1 minute', capture_timestamp) AS bucket,
-			SUM(CASE WHEN wait_type = 'SOS_SCHEDULER_YIELD' THEN wait_time_ms_total ELSE 0 END) as cpu,
-			SUM(CASE WHEN wait_type LIKE 'PAGEIOLATCH_%' OR wait_type = 'WRITELOG' THEN wait_time_ms_total ELSE 0 END) as io,
-			SUM(CASE WHEN wait_type = 'RESOURCE_SEMAPHORE' THEN wait_time_ms_total ELSE 0 END) as memory,
-			SUM(CASE WHEN wait_type LIKE 'LCK_%' THEN wait_time_ms_total ELSE 0 END) as locking,
-			SUM(CASE WHEN wait_type IN ('CXPACKET', 'CXCONSUMER') THEN wait_time_ms_total ELSE 0 END) as parallel,
-			SUM(CASE WHEN wait_type NOT LIKE 'LCK_%' AND wait_type NOT LIKE 'PAGEIOLATCH_%' AND wait_type NOT IN ('SOS_SCHEDULER_YIELD', 'WRITELOG', 'RESOURCE_SEMAPHORE', 'CXPACKET', 'CXCONSUMER') THEN wait_time_ms_total ELSE 0 END) as other
-		FROM sqlserver_wait_history
+			SUM(CASE WHEN wait_category = 'CPU' THEN wait_time_ms ELSE 0 END) as cpu,
+			SUM(CASE WHEN wait_category = 'IO' THEN wait_time_ms ELSE 0 END) as io,
+			SUM(CASE WHEN wait_category = 'Memory' THEN wait_time_ms ELSE 0 END) as memory,
+			SUM(CASE WHEN wait_category = 'Locking' THEN wait_time_ms ELSE 0 END) as locking,
+			SUM(CASE WHEN wait_category = 'Parallelism' THEN wait_time_ms ELSE 0 END) as parallel,
+			SUM(CASE WHEN wait_category NOT IN ('CPU', 'IO', 'Memory', 'Locking', 'Parallelism') THEN wait_time_ms ELSE 0 END) as other
+		FROM sqlserver_wait_stats
 		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp BETWEEN $2 AND $3
 		GROUP BY bucket
@@ -57,9 +57,9 @@ func (tl *TimescaleLogger) GetIOLatencyTrendV2(ctx context.Context, instanceName
 			AVG(CASE WHEN file_type = 'ROWS' THEN read_latency_ms ELSE NULL END) as read_lat,
 			AVG(CASE WHEN file_type = 'ROWS' THEN write_latency_ms ELSE NULL END) as write_lat,
 			AVG(CASE WHEN file_type = 'LOG' THEN write_latency_ms ELSE NULL END) as log_lat,
-			SUM(num_of_reads) as read_iops,
-			SUM(num_of_writes) as write_iops
-		FROM sqlserver_disk_history
+			SUM(read_bytes_per_sec / 1024 / 1024) as read_iops,
+			SUM(write_bytes_per_sec / 1024 / 1024) as write_iops
+		FROM sqlserver_file_io
 		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp BETWEEN $2 AND $3
 		GROUP BY bucket
@@ -88,15 +88,32 @@ func (tl *TimescaleLogger) GetIOLatencyTrendV2(ctx context.Context, instanceName
 
 func (tl *TimescaleLogger) GetThroughputTrendV2(ctx context.Context, instanceName string, from, to time.Time) ([]models.ThroughputPoint, error) {
 	q := `
+		WITH br AS (
+			SELECT 
+				time_bucket('1 minute', capture_timestamp) AS bucket,
+				AVG(value_per_sec) as batch_requests
+			FROM sqlserver_perf_counters
+			WHERE UPPER(server_instance_name) = UPPER($1)
+			  AND counter_name = 'Batch Requests/sec'
+			  AND capture_timestamp BETWEEN $2 AND $3
+			GROUP BY bucket
+		),
+		conns AS (
+			SELECT 
+				time_bucket('1 minute', capture_timestamp) AS bucket,
+				MAX(active_users) as connections
+			FROM sqlserver_metrics
+			WHERE UPPER(server_instance_name) = UPPER($1)
+			  AND capture_timestamp BETWEEN $2 AND $3
+			GROUP BY bucket
+		)
 		SELECT 
-			time_bucket('1 minute', capture_timestamp) AS bucket,
-			AVG(batch_requests) as batch_requests,
-			MAX(active_users) as connections,
+			COALESCE(br.bucket, conns.bucket) as bucket,
+			COALESCE(br.batch_requests, 0) as batch_requests,
+			COALESCE(conns.connections, 0) as connections,
 			0.0 as logins_per_sec
-		FROM sqlserver_metrics
-		WHERE UPPER(server_instance_name) = UPPER($1)
-		  AND capture_timestamp BETWEEN $2 AND $3
-		GROUP BY bucket
+		FROM br
+		FULL OUTER JOIN conns ON br.bucket = conns.bucket
 		ORDER BY bucket ASC
 	`
 	rows, err := tl.pool.Query(ctx, q, instanceName, from, to)
