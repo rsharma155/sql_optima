@@ -80,11 +80,11 @@ func (s *MetricsService) StartBackgroundCollector(ctx context.Context) {
 	msLiveInterval := s.FetchInterval(ctx, "SQL Server Active Queries", 15*time.Second)
 	pgLiveInterval := s.FetchInterval(ctx, "Postgres Active Queries", 60*time.Second)
 
-	var lastMsHist time.Time = time.Now()
-	var lastPgHist time.Time = time.Now()
-	var lastMsLive time.Time = time.Now()
-	var lastPgLive time.Time = time.Now()
-	var lastIdentityUpsert time.Time = time.Now()
+	lastMsHist := time.Now()
+	lastPgHist := time.Now()
+	lastMsLive := time.Now()
+	lastPgLive := time.Now()
+	lastIdentityUpsert := time.Now()
 
 	// Start stateful incident monitoring in the background
 	go s.StartPgLocksBlockingCollector(ctx)
@@ -237,7 +237,7 @@ func (s *MetricsService) runLiveDiagnosticsWithContext(ctx context.Context) {
 func (s *MetricsService) runLiveDiagnosticsForInstance(ctx context.Context, instanceName string) {
 	var instanceType string
 	for _, inst := range s.Config.Instances {
-		if strings.ToUpper(inst.Name) == strings.ToUpper(instanceName) {
+		if strings.EqualFold(inst.Name, instanceName) {
 			instanceType = inst.Type
 			break
 		}
@@ -531,7 +531,7 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 		// We intentionally scope to configured DB list to avoid accidental access to system DBs.
 		var dbs []string
 		for _, inst := range s.Config.Instances {
-			if strings.ToUpper(inst.Name) == strings.ToUpper(instanceName) && inst.Type == "sqlserver" {
+			if strings.EqualFold(inst.Name, instanceName) && inst.Type == "sqlserver" {
 				dbs = inst.Databases
 				break
 			}

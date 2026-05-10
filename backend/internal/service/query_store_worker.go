@@ -1261,28 +1261,6 @@ func (s *MetricsService) ComputePostgresControlCenterRow(instanceName string) (*
 	return &row, repl, nil
 }
 
-func postgresControlCenterHistoryFromRow(r *hot.PostgresControlCenterRow) *hot.PostgresControlCenterHistory {
-	if r == nil {
-		return &hot.PostgresControlCenterHistory{}
-	}
-	ts := r.CaptureTimestamp
-	if ts.IsZero() {
-		ts = time.Now().UTC()
-	}
-	return &hot.PostgresControlCenterHistory{
-		Labels:              []string{ts.UTC().Format(time.RFC3339)},
-		WALMBPerMin:         []float64{r.WALMBPerMin},
-		ReplLagSec:          []float64{r.ReplicaLagSec},
-		CheckpointReqRatio:  []float64{r.CheckpointReqRatio},
-		Autovacuum:          []int{r.AutovacuumWorkers},
-		DeadTuplePct:        []float64{r.DeadTuplePct},
-		BlockingSessions:    []int{r.BlockingSessions},
-		HealthScore:         []int{r.HealthScore},
-		CacheHitRatioPct:    []float64{r.CacheHitRatioPct},
-		ConnectionsUsagePct: []float64{r.ConnectionsUsagePct},
-	}
-}
-
 func (s *MetricsService) collectPostgresControlCenterForInstance(instanceName string) {
 	if s.tsLogger == nil {
 		return

@@ -988,7 +988,7 @@ func (s *MetricsService) GetTimescalePostgresSystemStats(instanceName string, li
 	return s.tsLogger.GetPostgresSystemStats(context.Background(), instanceName, limit)
 }
 
-// GetPostgresCpuHistory returns Timescale postgres_system_stats rows (host vs Postgres CPU, load, cores).
+// GetTimescalePostgresSystemStatsRange returns Timescale postgres_system_stats rows (host vs Postgres CPU, load, cores).
 func (s *MetricsService) GetTimescalePostgresSystemStatsRange(instanceName string, from, to time.Time) ([]hot.PostgresSystemStatsRow, error) {
 	if s.tsLogger == nil {
 		return nil, fmt.Errorf("TimescaleDB not connected")
@@ -1917,13 +1917,13 @@ func (s *MetricsService) GetPostgresQueriesForAPI(ctx context.Context, instanceN
 		"window_to":   to.UTC().Format(time.RFC3339),
 	}
 	if s.tsLogger == nil {
-		return nil, meta, fmt.Errorf("TimescaleDB not connected. Query statistics require TimescaleDB snapshots.")
+		return nil, meta, fmt.Errorf("timescaleDB not connected; query statistics require TimescaleDB snapshots")
 	}
 
 	deltas, t0, t1, winNote, err := s.tsLogger.GetPostgresQueryStatsWindowDelta(ctx, instanceName, from, to, 50)
 	if err != nil {
 		log.Printf("[MetricsService] postgres query window delta unavailable for %s: %v", instanceName, err)
-		return nil, meta, fmt.Errorf("No query statistics found in TimescaleDB for this range. Ensure the enterprise collector is active.")
+		return nil, meta, fmt.Errorf("no query statistics found in TimescaleDB for this range; ensure the enterprise collector is active")
 	}
 
 	meta["stats_source"] = "timescale_delta"
@@ -2115,15 +2115,6 @@ func (s *MetricsService) GetPostgresWaitSummary(ctx context.Context, instanceNam
 
 func (s *MetricsService) GetPostgresTopWaitEvents(ctx context.Context, instanceName string, limit int) (map[string]int, error) {
 	return s.PgRepo.GetTopWaitEvents(instanceName, limit)
-}
-
-func pleValOnly(h []map[string]interface{}) []float64 {
-	out := make([]float64, len(h))
-	for i, m := range h {
-		val, _ := m["page_life_expectancy"].(float64)
-		out[i] = val
-	}
-	return out
 }
 
 // GetHealthV2DashboardData orchestrates fetching both real-time and historical data for SQL Server Health V2.

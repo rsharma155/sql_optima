@@ -65,7 +65,7 @@ func (h *PostgresHandlers) Databases(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ControlCenter returns the latest derived DBA-first metrics snapshot from TimescaleDB.
+// Disk returns the latest derived PostgreSQL disk metrics snapshot from TimescaleDB.
 func (h *PostgresHandlers) Disk(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	instance := r.URL.Query().Get("instance")
@@ -250,7 +250,7 @@ func (h *PostgresHandlers) BloatEstimates(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// IdleInTransaction returns sessions currently stuck in idle-in-transaction state.
+// IndexBloat returns PostgreSQL index bloat estimates for the requested instance.
 func (h *PostgresHandlers) IndexBloat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	instance := r.URL.Query().Get("instance")

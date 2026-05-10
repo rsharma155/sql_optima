@@ -28,7 +28,6 @@ type SqlServerRepository struct {
 	conns           map[string]*sql.DB
 	status          map[string]string
 	mutex           sync.RWMutex
-	prevQueryCache  map[string]map[string]QueryState
 	serverInfoCache map[string]CachedServerInfo
 }
 

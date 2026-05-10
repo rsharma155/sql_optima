@@ -128,7 +128,7 @@ func waitDeltaSnapshotFingerprint(instance string, rows []WaitDeltaRow) uint64 {
 	return h.Sum64()
 }
 
-// fingerprintTableStructureRows hashes table structure risks for change detection.
+// FingerprintTableStructureRows hashes table structure risks for change detection.
 func (tl *TimescaleLogger) FingerprintTableStructureRows(instance string, rows []TableStructureHistoryRow) uint64 {
 	h := fnv.New64a()
 	_, _ = fmt.Fprintf(h, "%s|%s|%d|", instance, enterpriseKindTableStructure, len(rows))
@@ -151,7 +151,7 @@ func (tl *TimescaleLogger) FingerprintTableStructureRows(instance string, rows [
 	return h.Sum64()
 }
 
-// Minimal copy of IndexDefinitionCatalogRow to break import cycle.
+// IndexDefinitionCatalogRow is a minimal copy used to break an import cycle.
 type IndexDefinitionCatalogRow struct {
 	DBName           string
 	SchemaName       string

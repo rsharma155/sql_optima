@@ -114,15 +114,6 @@ func instanceTypeFromDB(ctx context.Context, cfg *config.Config, metricsSvc *ser
 	return false
 }
 
-func firstErrString(errs ...error) string {
-	for _, e := range errs {
-		if e != nil {
-			return e.Error()
-		}
-	}
-	return ""
-}
-
 // splitCSV takes a comma-separated string and returns a slice of strings.
 // It ignores empty strings and trims surrounding whitespace from each item.
 func splitCSV(s string) []string {

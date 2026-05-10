@@ -576,7 +576,7 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 	}
 
 	// 2. Top 10 CPU Share
-	err = tl.pool.QueryRow(ctx, `
+	if err := tl.pool.QueryRow(ctx, `
 		WITH total AS (
 			SELECT SUM(qh.cpu_delta_ms) as total_cpu
 			FROM sqlserver_query_stats_history qh
@@ -604,7 +604,9 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		SELECT COALESCE((top_cpu::float8 / NULLIF(total_cpu, 0)) * 100, 0)
 		FROM total, top10`,
 		instance, hours,
-	).Scan(&s.Top10CpuSharePct)
+	).Scan(&s.Top10CpuSharePct); err != nil {
+		log.Printf("[TSLogger] GetSqlServerQueryAnalysisSummary top10 cpu share: %v", err)
+	}
 
 	// 3. Total Queries in Snapshot (User queries)
 	q3 := fmt.Sprintf(`

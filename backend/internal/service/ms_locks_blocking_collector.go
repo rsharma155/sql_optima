@@ -216,7 +216,9 @@ func (s *MetricsService) collectAndLogMsBlocking(ctx context.Context, instanceNa
 		for fp := range state.snapLastInserted {
 			var sid, bsid int
 			var wt string
-			fmt.Sscanf(fp, "%d|%d|%s", &sid, &bsid, &wt)
+			if _, err := fmt.Sscanf(fp, "%d|%d|%s", &sid, &bsid, &wt); err != nil {
+				continue
+			}
 			if _, active := currentSIDs[sid]; !active {
 				delete(state.snapLastInserted, fp)
 			}

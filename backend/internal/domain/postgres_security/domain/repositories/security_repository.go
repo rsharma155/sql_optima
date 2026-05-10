@@ -58,16 +58,40 @@ func (r *PostgresSecurityRepository) SaveDDLActivity(ctx context.Context, activi
 
 func (r *PostgresSecurityRepository) GetKPIData(ctx context.Context, instance string, from, to string) (map[string]interface{}, error) {
 	var failedLogins int64
-	r.pool.QueryRow(ctx, "SELECT count(*) FROM monitor.pg_failed_login_events WHERE ts BETWEEN $1 AND $2 AND instance_id = $3", from, to, instance).Scan(&failedLogins)
+	if err := r.pool.QueryRow(
+		ctx,
+		"SELECT count(*) FROM monitor.pg_failed_login_events WHERE ts BETWEEN $1 AND $2 AND instance_id = $3",
+		from, to, instance,
+	).Scan(&failedLogins); err != nil {
+		return nil, err
+	}
 
 	var superusers int64
-	r.pool.QueryRow(ctx, "SELECT count(*) FROM monitor.pg_roles_snapshot WHERE rolsuper AND instance_id = $1 AND ts = (SELECT max(ts) FROM monitor.pg_roles_snapshot WHERE instance_id = $1)", instance).Scan(&superusers)
+	if err := r.pool.QueryRow(
+		ctx,
+		"SELECT count(*) FROM monitor.pg_roles_snapshot WHERE rolsuper AND instance_id = $1 AND ts = (SELECT max(ts) FROM monitor.pg_roles_snapshot WHERE instance_id = $1)",
+		instance,
+	).Scan(&superusers); err != nil {
+		return nil, err
+	}
 
 	var replPrivs int64
-	r.pool.QueryRow(ctx, "SELECT count(*) FROM monitor.pg_roles_snapshot WHERE rolreplication AND instance_id = $1 AND ts = (SELECT max(ts) FROM monitor.pg_roles_snapshot WHERE instance_id = $1)", instance).Scan(&replPrivs)
+	if err := r.pool.QueryRow(
+		ctx,
+		"SELECT count(*) FROM monitor.pg_roles_snapshot WHERE rolreplication AND instance_id = $1 AND ts = (SELECT max(ts) FROM monitor.pg_roles_snapshot WHERE instance_id = $1)",
+		instance,
+	).Scan(&replPrivs); err != nil {
+		return nil, err
+	}
 
 	var newRoles int64
-	r.pool.QueryRow(ctx, "SELECT count(*) FROM monitor.pg_roles_snapshot WHERE ts > now() - interval '7 days' AND instance_id = $1", instance).Scan(&newRoles)
+	if err := r.pool.QueryRow(
+		ctx,
+		"SELECT count(*) FROM monitor.pg_roles_snapshot WHERE ts > now() - interval '7 days' AND instance_id = $1",
+		instance,
+	).Scan(&newRoles); err != nil {
+		return nil, err
+	}
 
 	return map[string]interface{}{
 		"failed_logins":   failedLogins,

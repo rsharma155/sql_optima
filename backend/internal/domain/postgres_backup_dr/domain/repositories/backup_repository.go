@@ -291,10 +291,9 @@ func (r *PostgresBackupRepository) GetArchiverFailures(ctx context.Context, inst
 	return results, nil
 }
 
-// Keep old methods for compatibility during migration if needed, but update them to use new tables
+// SaveArchiverStats is kept for compatibility during migration and currently performs no-op persistence.
 func (r *PostgresBackupRepository) SaveArchiverStats(ctx context.Context, s entities.BackupArchiverStats) error {
-	// Redundant now that we have CollectBackupDR, but keeping for compatibility
-	return nil 
+	return nil
 }
 
 func (r *PostgresBackupRepository) SaveWALRate(ctx context.Context, s entities.WALRate) error {

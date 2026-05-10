@@ -248,9 +248,6 @@ func (c *PostgresObservabilityCollector) CollectQueryWaitProfile(ctx context.Con
 				
 				deltas = append(deltas, d)
 			}
-		} else {
-			// First time seeing this query, don't store delta yet as we don't know the baseline
-			// Alternatively, store it as is, but deltas are cleaner.
 		}
 		
 		// Update state for next run
