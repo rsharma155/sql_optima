@@ -574,7 +574,7 @@ window.router = {
         if(inst.type==='postgres') { 
             brand.className='fa-solid fa-database xl-icon logo-icon text-accent'; 
             sidebarNav.innerHTML = `
-                <li data-route="pg-dashboard" id="nav-pg-dashboard"><i class="fa-solid fa-gauge-high"></i> Control Center</li>
+                <li data-route="pg-dashboard" id="nav-pg-dashboard"><i class="fa-solid fa-gauge-high"></i> Postgres Control Center</li>
                 <li data-route="drilldown-pg-enterprise"><i class="fa-solid fa-chart-line"></i> Enterprise Monitor</li>
                 <li data-route="pg-cpu" class="sub-nav"><i class="fa-solid fa-microchip"></i> CPU Usage</li>
                 <li data-route="pg-memory" class="sub-nav"><i class="fa-solid fa-memory"></i> Memory Usage</li>
@@ -583,7 +583,7 @@ window.router = {
                 <li data-route="pg-queries"><i class="fa-solid fa-bolt"></i> Query Performance</li>
                 <li data-route="pg-explain"><i class="fa-solid fa-diagram-project"></i> EXPLAIN Analyzer</li>
                 <li data-route="pg-storage"><i class="fa-solid fa-hard-drive"></i> Storage & Vacuum</li>
-                <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Index & Table Health</li>
+                <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Postgres Index and Table Health</li>
                 <li data-route="pg-replication" id="nav-pg-replication" style="display:none;"><i class="fa-solid fa-clone"></i> Replication & HA</li>
                 <li data-route="pg-backups"><i class="fa-solid fa-shield-heart"></i> Backup & DR</li>
                 <li data-route="pg-security"><i class="fa-solid fa-user-lock"></i> Security Monitor</li>
@@ -601,7 +601,7 @@ window.router = {
                 <li data-route="sqlserver-locks"><i class="fa-solid fa-link-slash"></i> Locks & Blocking</li>
                 <li data-route="drilldown-ha" style="display:none;"><i class="fa-solid fa-server"></i> HA & Replication</li>
                 <li data-route="enterprise-metrics"><i class="fa-solid fa-chart-line"></i> Enterprise Metrics</li>
-                <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Storage & Index</li>
+                <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> SQL Server Index and Table Health</li>
                 <li data-route="performance-debt"><i class="fa-solid fa-screwdriver-wrench"></i> Performance Debt</li>
                 <li data-route="query-analysis"><i class="fa-solid fa-magnifying-glass-chart"></i> Query Analysis</li>
                 <li data-route="sqlserver-plan-analyzer"><i class="fa-solid fa-diagram-project"></i> Plan Analyzer</li>

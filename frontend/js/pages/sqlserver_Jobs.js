@@ -155,9 +155,9 @@ function renderJobsContent(inst, metrics) {
             </div>
         </div>
 
-        <div class="chart-card glass-panel mt-3" style="padding: 1rem;">
-            <div class="card-header"><h3 style="font-size:0.9rem; margin:0;"><i class="fa-solid fa-chart-area text-accent"></i> Job Failure Trend</h3></div>
-            <div class="chart-container" style="height: 180px;"><canvas id="jobsFailuresChart"></canvas></div>
+        <div class="chart-card glass-panel mt-3" style="padding: 0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-chart-area text-accent"></i> Job Failure Trend</h3></div>
+            <div class="chart-container" style="height: 120px;"><canvas id="jobsFailuresChart"></canvas></div>
         </div>
 
         <div class="tabs-container mt-3">
@@ -168,7 +168,7 @@ function renderJobsContent(inst, metrics) {
 
         <div id="jobTab-list" class="tab-panel mt-2">
             <div class="table-card glass-panel" style="padding:0;">
-                <div class="table-responsive" style="max-height:400px;">
+                <div class="table-responsive" style="max-height:300px;">
                     <table class="modern-table modern-table-compact">
                         <thead><tr><th>Job Name</th><th>Category</th><th>Enabled</th><th>Status</th><th>Last Run</th><th>Last Result</th><th>Owner</th></tr></thead>
                         <tbody>

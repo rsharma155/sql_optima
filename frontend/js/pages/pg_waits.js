@@ -89,7 +89,7 @@
                     </div>
                     <div class="col-4 col-laptop-4 col-tablet-6">
                         <div class="card glass-panel h-chart-md">
-                            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Conns by App</h3></div>
+                            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Connections by App</h3></div>
                             <div class="chart-container" style="height: 210px;"><canvas id="pg-app-conn-chart"></canvas></div>
                         </div>
                     </div>

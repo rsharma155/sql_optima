@@ -392,7 +392,12 @@ window.PgStorageView = async function() {
                     if (window.currentCharts.pgVac) window.currentCharts.pgVac.destroy();
                     window.currentCharts.pgVac = new Chart(vacCtx.getContext('2d'), {
                         type: 'line', data: {
-                            labels: history.labels || [],
+                            labels: (history.labels || []).map(l => {
+                                try {
+                                    // Remove 'Z' or format for local time display
+                                    return new Date(l).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                } catch (e) { return l; }
+                            }),
                             datasets: [{ label:'Autovacuum workers', data: history.autovacuum_workers || [], borderColor: window.getCSSVar('--warning'), backgroundColor: 'rgba(245,158,11,0.15)', fill:true, tension:0.25, pointRadius:0 }]
                         }, options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{ beginAtZero:true } } }
                     });
