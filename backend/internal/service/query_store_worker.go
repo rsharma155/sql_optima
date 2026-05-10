@@ -866,7 +866,7 @@ func (s *MetricsService) collectPostgresDiskStatsForInstance(instanceName string
 	// Local-only: requires pg_disk_paths configured on the monitoring host.
 	var diskPaths map[string]string
 	for _, inst := range s.Config.Instances {
-		if strings.ToUpper(inst.Name) == strings.ToUpper(instanceName) {
+		if strings.EqualFold(inst.Name, instanceName) {
 			diskPaths = inst.PGDiskPaths
 			break
 		}
@@ -969,7 +969,7 @@ func (s *MetricsService) collectPostgresPoolerStatsForInstance(instanceName stri
 	}
 	var dsn string
 	for i := range s.Config.Instances {
-		if strings.ToUpper(s.Config.Instances[i].Name) == strings.ToUpper(instanceName) {
+		if strings.EqualFold(s.Config.Instances[i].Name, instanceName) {
 			dsn = s.Config.Instances[i].PGBouncerAdminDSN
 			break
 		}
