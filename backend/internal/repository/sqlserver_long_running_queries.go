@@ -82,8 +82,8 @@ func (c *SqlServerRepository) FetchLongRunningQueries(instanceName string, minDu
 		WHERE r.session_id <> @@SPID AND r.session_id > 50
 		AND r.total_elapsed_time >= 5000
 		AND s.is_user_process = 1
-		AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		ORDER BY r.total_elapsed_time DESC`
 
 	rows, err := db.Query(query)

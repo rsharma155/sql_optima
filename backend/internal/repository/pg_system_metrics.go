@@ -22,14 +22,14 @@ import (
 // Uptime is calculated from pg_postmaster_start_time().
 func (c *PgRepository) GetServerInfo(instanceName string) (version string, uptime string, err error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
 		log.Printf("[POSTGRES] GetServerInfo: connection not found for %s, attempting reconnect", instanceName)
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 			if !ok || db == nil {
 				return "", "", fmt.Errorf("connection not found after reconnect")
@@ -75,7 +75,7 @@ func (c *PgRepository) GetServerInfo(instanceName string) (version string, uptim
 // Note: These are approximations based on PostgreSQL internals, not actual OS metrics.
 func (c *PgRepository) GetSystemStats(instanceName string) (cpuUsage float64, memoryUsage float64, err error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -122,7 +122,7 @@ func (c *PgRepository) GetSystemStats(instanceName string) (cpuUsage float64, me
 // GetConfig returns PostgreSQL configuration settings for key categories.
 func (c *PgRepository) GetConfig(instanceName string) ([]models.PgConfigSetting, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -165,7 +165,7 @@ func (c *PgRepository) GetConfig(instanceName string) ([]models.PgConfigSetting,
 // GetAlerts returns potential issues and alerts based on current metrics.
 func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {

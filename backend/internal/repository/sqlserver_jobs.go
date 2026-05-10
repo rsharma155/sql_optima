@@ -9,6 +9,7 @@ package repository
 
 import (
 	"log"
+	"strings"
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/models"
@@ -20,7 +21,7 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 	metrics.Timestamp = time.Now().Format("2006-01-02 15:04:05")
 
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		log.Printf("[SQLSERVER] Agent Jobs Engine Ping Failed: Database pointer absolutely nil for %s", instanceName)
@@ -59,7 +60,7 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 	failedQuery := `
 		/* SQL_OPTIMA */ SELECT   COUNT(*) FROM msdb.dbo.sysjobhistory h WITH (NOLOCK)
 		JOIN msdb.dbo.sysjobs j WITH (NOLOCK) ON h.job_id = j.job_id
-		WHERE h.run_status = 0 AND h.run_date >= CAST(CONVERT(VARCHAR(8), GETDATE()-1, 112) AS INT) AND h.step_id = 0
+		WHERE h.run_status = 0 AND h.run_date >= CAST(CONVERT(VARCHAR(8), GETUTCDATE()-1, 112) AS INT) AND h.step_id = 0
 	`
 	if err := db.QueryRow(failedQuery).Scan(&metrics.Summary.FailedJobs); err != nil {
 		log.Printf("[SQLSERVER] FetchAgentJobs: Failed to fetch failed jobs for %s: %v", instanceName, err)

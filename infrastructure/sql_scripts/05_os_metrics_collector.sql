@@ -1,7 +1,7 @@
 -- SQL Optima — https://github.com/rsharma155/sql_optima
 --
 -- Purpose: Schema for host-level OS metrics collector (agent data) for PostgreSQL.
---          Includes hypertables for raw metrics and derived analytics.
+--          Consolidated with Enhanced Memory Intelligence OS telemetry.
 --
 -- Author: Ravi Sharma
 -- Copyright (c) 2026 Ravi Sharma
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS monitor.pg_os_memory_samples (
     oom_kill_count BIGINT
 );
 
-SELECT create_hypertable('monitor.pg_os_memory_samples', 'ts', if_not_exists => TRUE);
+SELECT create_hypertable('monitor.pg_os_memory_samples', 'ts', chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_pg_os_mem_host_ts ON monitor.pg_os_memory_samples (host_id, ts DESC);
 
 -- 3. Derived memory pressure metrics table
@@ -63,10 +63,10 @@ CREATE TABLE IF NOT EXISTS monitor.pg_os_memory_pressure (
     commit_limit_bytes BIGINT,
     committed_as_bytes BIGINT,
 
-    pressure_score NUMERIC(5,2)
+    pressure_score DOUBLE PRECISION
 );
 
-SELECT create_hypertable('monitor.pg_os_memory_pressure', 'ts', if_not_exists => TRUE);
+SELECT create_hypertable('monitor.pg_os_memory_pressure', 'ts', chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_pg_os_mem_press_host_ts ON monitor.pg_os_memory_pressure (host_id, ts DESC);
 
 -- 4. Postgres process memory table
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS monitor.pg_os_process_memory (
     backend_count INT
 );
 
-SELECT create_hypertable('monitor.pg_os_process_memory', 'ts', if_not_exists => TRUE);
+SELECT create_hypertable('monitor.pg_os_process_memory', 'ts', chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_pg_os_proc_mem_host_ts ON monitor.pg_os_process_memory (host_id, ts DESC);
 
 -- 5. CPU metrics table
@@ -92,16 +92,18 @@ CREATE TABLE IF NOT EXISTS monitor.pg_os_cpu_samples (
     cpu_system_pct NUMERIC(5,2),
     cpu_idle_pct NUMERIC(5,2),
     cpu_iowait_pct NUMERIC(5,2),
+    cpu_steal_pct NUMERIC(5,2),
     load_1m NUMERIC(5,2),
     load_5m NUMERIC(5,2),
-    load_15m NUMERIC(5,2)
+    load_15m NUMERIC(5,2),
+    context_switches BIGINT,
+    interrupts BIGINT
 );
 
-SELECT create_hypertable('monitor.pg_os_cpu_samples', 'ts', if_not_exists => TRUE);
+SELECT create_hypertable('monitor.pg_os_cpu_samples', 'ts', chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_pg_os_cpu_host_ts ON monitor.pg_os_cpu_samples (host_id, ts DESC);
 
 -- 6. Continuous Aggregate for Dashboards
--- Fixed: use WITH NO DATA to avoid transaction/pipeline issues during creation
 DROP MATERIALIZED VIEW IF EXISTS monitor.ca_pg_os_memory_5m;
 CREATE MATERIALIZED VIEW monitor.ca_pg_os_memory_5m
 WITH (timescaledb.continuous) AS

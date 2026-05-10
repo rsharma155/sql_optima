@@ -11,18 +11,19 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 )
 
 // FetchWalBytesTotal returns cumulative wal_bytes from pg_stat_wal (PG 14+).
 func (c *PgRepository) FetchWalBytesTotal(instanceName string) (uint64, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		log.Printf("[POSTGRES] FetchWalBytesTotal: connection not found for %s, attempting reconnect", instanceName)
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -54,12 +55,12 @@ func (c *PgRepository) FetchWalBytesTotal(instanceName string) (uint64, error) {
 // FetchWalDirSizeMB returns total size of files in pg_wal directory (MB).
 func (c *PgRepository) FetchWalDirSizeMB(instanceName string) (float64, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -75,12 +76,12 @@ func (c *PgRepository) FetchWalDirSizeMB(instanceName string) (float64, error) {
 // FetchActiveWaitingSessions returns counts from pg_stat_activity.
 func (c *PgRepository) FetchActiveWaitingSessions(instanceName string) (active int, waiting int, err error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -101,12 +102,12 @@ func (c *PgRepository) FetchActiveWaitingSessions(instanceName string) (active i
 // FetchSlowQueriesCount returns number of queries in pg_stat_statements with mean_exec_time > thresholdMs.
 func (c *PgRepository) FetchSlowQueriesCount(instanceName string, thresholdMs float64) (int, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -120,12 +121,12 @@ func (c *PgRepository) FetchSlowQueriesCount(instanceName string, thresholdMs fl
 
 func (c *PgRepository) FetchBlockingSessionsCount(instanceName string) (int, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -140,12 +141,12 @@ func (c *PgRepository) FetchBlockingSessionsCount(instanceName string) (int, err
 
 func (c *PgRepository) FetchAutovacuumWorkers(instanceName string) (int, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -160,12 +161,12 @@ func (c *PgRepository) FetchAutovacuumWorkers(instanceName string) (int, error) 
 
 func (c *PgRepository) FetchDeadTupleRatioPct(instanceName string) (float64, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -186,12 +187,12 @@ func (c *PgRepository) FetchDeadTupleRatioPct(instanceName string) (float64, err
 
 func (c *PgRepository) FetchReplicaLagSec(instanceName string) (float64, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -224,12 +225,12 @@ func (c *PgRepository) FetchReplicaLagSec(instanceName string) (float64, error) 
 
 func (c *PgRepository) FetchCacheHitRatioPct(instanceName string) (float64, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -255,12 +256,12 @@ func (c *PgRepository) FetchCacheHitRatioPct(instanceName string) (float64, erro
 // FetchXactTotal returns the sum of xact_commit and xact_rollback from pg_stat_database.
 func (c *PgRepository) FetchXactTotal(instanceName string) (uint64, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}

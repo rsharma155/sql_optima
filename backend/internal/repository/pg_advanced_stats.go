@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 )
 
 type PgWaitEventCount struct {
@@ -37,7 +38,7 @@ type PgSettingSnapRow struct {
 
 func (c *PgRepository) GetWaitEventCounts(instanceName string) ([]PgWaitEventCount, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
@@ -71,7 +72,7 @@ func (c *PgRepository) GetWaitEventCounts(instanceName string) ([]PgWaitEventCou
 
 func (c *PgRepository) GetDbIOStats(instanceName string) ([]PgDbIOStat, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
@@ -107,7 +108,7 @@ func (c *PgRepository) GetDbIOStats(instanceName string) ([]PgDbIOStat, error) {
 // GetSettingsSnapshot returns a curated set of settings for drift tracking.
 func (c *PgRepository) GetSettingsSnapshot(instanceName string) ([]PgSettingSnapRow, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")

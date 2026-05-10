@@ -17,6 +17,9 @@ func TestComputePgHealthScore_StatusBands(t *testing.T) {
 		CheckpointReqRatio:    0.1,
 		WALRateMBPerMin:       10,
 		BlockingSessions:      0,
+		CacheHitRatioPct:    100,
+		ConnectionsUsagePct: 10,
+		DeadlocksPerMin:     0,
 	})
 	if score < 90 || status != "Healthy" {
 		t.Fatalf("expected Healthy >=90, got %d %s", score, status)
@@ -29,6 +32,9 @@ func TestComputePgHealthScore_StatusBands(t *testing.T) {
 		CheckpointReqRatio:    1.0,
 		WALRateMBPerMin:       200,
 		BlockingSessions:      1,
+		CacheHitRatioPct:    98,
+		ConnectionsUsagePct: 40,
+		DeadlocksPerMin:     0,
 	})
 	if !(score2 >= 70 && score2 <= 89) || status2 != "Watch" {
 		t.Fatalf("expected Watch 70-89, got %d %s", score2, status2)
@@ -41,6 +47,9 @@ func TestComputePgHealthScore_StatusBands(t *testing.T) {
 		CheckpointReqRatio:    2.0,
 		WALRateMBPerMin:       1000,
 		BlockingSessions:      10,
+		CacheHitRatioPct:    90,
+		ConnectionsUsagePct: 90,
+		DeadlocksPerMin:     5,
 	})
 	if score3 >= 70 || status3 != "At Risk" {
 		t.Fatalf("expected At Risk <70, got %d %s", score3, status3)

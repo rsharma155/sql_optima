@@ -77,12 +77,17 @@ type SqlServerWatchedQueryEvent struct {
 
 // SqlServerQueryAnalysisSummary represents the KPI card data for the Query Analysis dashboard.
 type SqlServerQueryAnalysisSummary struct {
-	TotalExecutions int64   `json:"total_executions"`
-	AvgDuration     float64 `json:"avg_duration_ms"`
-	AvgCPU          float64 `json:"avg_cpu_ms"`
-	AvgReads        float64 `json:"avg_reads"`
-	Regressions24h  int     `json:"regressions_24h"`
-	PlanChanges24h  int     `json:"plan_changes_24h"`
+	TotalExecutions         int64   `json:"total_executions"`
+	AvgDuration             float64 `json:"avg_duration_ms"`
+	AvgCPU                  float64 `json:"avg_cpu_ms"`
+	AvgReads                float64 `json:"avg_reads"`
+	Regressions24h          int     `json:"regressions_24h"`
+	PlanChanges24h          int     `json:"plan_changes_24h"`
+	Top10CpuSharePct        float64 `json:"top_10_cpu_share_pct"`
+	TotalQueriesInQS        int64   `json:"total_queries_in_qs"`
+	QueriesExecutedInRange  int64   `json:"queries_executed_in_range"`
+	QueriesWithMultiPlans   int64   `json:"queries_with_multi_plans"`
+	QueriesSingleExecution  int64   `json:"queries_single_execution"`
 }
 
 // SqlServerQueryPlanInfo represents plan metadata from Query Store for a watched query.
@@ -107,13 +112,16 @@ type SqlServerQueryWaitStat struct {
 
 // SqlServerTopQueryRow represents a single row in the top queries table.
 type SqlServerTopQueryRow struct {
-	QueryHash     string  `json:"query_hash"`
-	QueryText     string  `json:"query_text"`
-	DatabaseName  string  `json:"database_name"`
-	Executions    int64   `json:"executions"`
-	AvgCpuMs      float64 `json:"avg_cpu_ms"`
-	AvgDurationMs float64 `json:"avg_duration_ms"`
-	AvgReads      float64 `json:"avg_reads"`
-	TotalCpuMs    float64 `json:"total_cpu_ms"`
-	PlanCount     int     `json:"plan_count"`
+	QueryHash         string    `json:"query_hash"`
+	QueryText         string    `json:"query_text"`
+	DatabaseName      string    `json:"database_name"`
+	LoginName         string    `json:"login_name"`
+	ApplicationName   string    `json:"application_name"`
+	Executions        int64     `json:"executions"`
+	AvgCpuMs          float64   `json:"avg_cpu_ms"`
+	AvgDurationMs     float64   `json:"avg_duration_ms"`
+	AvgReads          float64   `json:"avg_reads"`
+	TotalCpuMs        float64   `json:"total_cpu_ms"`
+	PlanCount         int       `json:"plan_count"`
+	LastExecutionTime time.Time `json:"last_execution_time"`
 }

@@ -25,10 +25,16 @@ import (
 )
 
 type SqlServerRepository struct {
-	conns          map[string]*sql.DB
-	status         map[string]string
-	mutex          sync.RWMutex
-	prevQueryCache map[string]map[string]QueryState
+	conns           map[string]*sql.DB
+	status          map[string]string
+	mutex           sync.RWMutex
+	prevQueryCache  map[string]map[string]QueryState
+	serverInfoCache map[string]CachedServerInfo
+}
+
+type CachedServerInfo struct {
+	Edition   string
+	StartTime time.Time
 }
 
 type QueryState struct {
@@ -38,8 +44,9 @@ type QueryState struct {
 
 func NewSqlServerRepository(cfg *config.Config) *SqlServerRepository {
 	c := &SqlServerRepository{
-		conns:  make(map[string]*sql.DB),
-		status: make(map[string]string),
+		conns:           make(map[string]*sql.DB),
+		status:          make(map[string]string),
+		serverInfoCache: make(map[string]CachedServerInfo),
 	}
 
 	for i, inst := range cfg.Instances {
@@ -79,6 +86,7 @@ func NewSqlServerRepository(cfg *config.Config) *SqlServerRepository {
 				q.Set("database", catalog)
 				q.Set("integrated security", "true")
 				q.Set("encrypt", encrypt)
+				q.Set("app name", "sql-optima")
 				if inst.TrustServerCertificate {
 					q.Set("TrustServerCertificate", "true")
 				} else {
@@ -95,6 +103,7 @@ func NewSqlServerRepository(cfg *config.Config) *SqlServerRepository {
 				q := msURL.Query()
 				q.Set("database", catalog)
 				q.Set("encrypt", encrypt)
+				q.Set("app name", "sql-optima")
 				if inst.TrustServerCertificate {
 					q.Set("TrustServerCertificate", "true")
 				} else {
@@ -116,13 +125,13 @@ func NewSqlServerRepository(cfg *config.Config) *SqlServerRepository {
 			db.SetConnMaxLifetime(time.Minute * 10)
 
 			if err := db.Ping(); err != nil {
-				c.status[inst.Name] = "offline"
+				c.status[strings.ToUpper(inst.Name)] = "offline"
 				log.Printf("[SQLSERVER] Connection ping failure %s: %v", inst.Name, err)
 			} else {
-				c.status[inst.Name] = "online"
+				c.status[strings.ToUpper(inst.Name)] = "online"
 			}
 
-			c.conns[inst.Name] = db
+			c.conns[strings.ToUpper(inst.Name)] = db
 
 			if len(inst.Databases) == 0 {
 				query := "/* SQL_OPTIMA */ SELECT   name FROM sys.databases WHERE database_id > 4 AND state_desc = 'ONLINE'"
@@ -148,13 +157,13 @@ func NewSqlServerRepository(cfg *config.Config) *SqlServerRepository {
 func (c *SqlServerRepository) GetConn(instanceName string) (*sql.DB, bool) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	return db, ok
 }
 
 func (c *SqlServerRepository) HasConnection(instanceName string) bool {
 	c.mutex.RLock()
-	_, ok := c.conns[instanceName]
+	_, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	return ok
 }

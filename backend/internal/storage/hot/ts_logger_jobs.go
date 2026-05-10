@@ -37,7 +37,8 @@ func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, instanceN
 		lastRunTime := getInt(job, "last_run_time")
 		lastRunStatus := getStr(job, "last_run_status")
 
-		prevJob := tl.prevJobDetails[jobName]
+		fullJobKey := fmt.Sprintf("%s||%s", instanceName, jobName)
+		prevJob := tl.prevJobDetails[fullJobKey]
 		shouldInsert := true
 		if prevJob != nil {
 			if getBool(prevJob, "enabled") == enabled &&
@@ -64,7 +65,7 @@ func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, instanceN
 			insertCount++
 		}
 
-		tl.prevJobDetails[jobName] = map[string]interface{}{
+		tl.prevJobDetails[fullJobKey] = map[string]interface{}{
 			"category":        category,
 			"enabled":         enabled,
 			"owner":           owner,
@@ -119,10 +120,10 @@ func (tl *TimescaleLogger) LogSQLServerJobFailures(ctx context.Context, instance
 		jobName := getStr(fail, "job_name")
 		stepName := getStr(fail, "step_name")
 		message := getStr(fail, "message")
-		runDate := getStr(fail, "run_date")
-		runTime := getStr(fail, "run_time")
+		runDate := getInt(fail, "run_date")
+		runTime := getInt(fail, "run_time")
 
-		failKey := jobName + "||" + stepName + "||" + runDate + "||" + runTime
+		failKey := fmt.Sprintf("%s||%s||%s||%d||%d", instanceName, jobName, stepName, runDate, runTime)
 
 		prevMsg, exists := tl.prevJobFailures[failKey]
 		shouldInsert := true
@@ -181,7 +182,7 @@ func (tl *TimescaleLogger) GetSQLServerJobDetails(ctx context.Context, instanceN
 			capture_timestamp, job_name, job_category, job_description, job_enabled, job_owner, created_date,
 			current_status, last_run_date, last_run_time, last_run_status
 		FROM sqlserver_job_details
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp <= $2
 		  AND capture_timestamp >= $2 - INTERVAL '7 days'
 		ORDER BY job_name, capture_timestamp DESC
@@ -238,7 +239,7 @@ func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, instanc
 		SELECT DISTINCT ON (job_name, schedule_name)
 			capture_timestamp, job_name, job_enabled, schedule_name, status, next_run_datetime
 		FROM sqlserver_agent_schedules
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp <= $2
 		  AND capture_timestamp >= $2 - INTERVAL '7 days'
 		ORDER BY job_name, schedule_name, capture_timestamp DESC
@@ -286,7 +287,7 @@ func (tl *TimescaleLogger) GetSQLServerJobFailures(ctx context.Context, instance
 	rows, err := tl.pool.Query(ctx, `
 		SELECT capture_timestamp, job_name, step_name, error_message, run_date, run_time
 		FROM sqlserver_job_failures
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		ORDER BY capture_timestamp DESC
 		LIMIT $4
@@ -334,7 +335,7 @@ func (tl *TimescaleLogger) GetSQLServerJobMetrics(ctx context.Context, instanceN
 	query := `
 		SELECT capture_timestamp, total_jobs, enabled_jobs, disabled_jobs, running_jobs, failed_jobs_24h, error_message
 		FROM sqlserver_job_metrics
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		ORDER BY capture_timestamp DESC
 		LIMIT $4

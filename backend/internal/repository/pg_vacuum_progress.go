@@ -10,6 +10,7 @@ package repository
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -45,12 +46,12 @@ func vacuumProgressPct(total, scanned int64) float64 {
 
 func (c *PgRepository) GetVacuumProgress(instanceName string) ([]PgVacuumProgressRow, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}

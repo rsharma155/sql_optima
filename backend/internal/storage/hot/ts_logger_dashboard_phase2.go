@@ -72,7 +72,7 @@ func (tl *TimescaleLogger) GetSQLServerRiskHealthHistory(ctx context.Context, in
 		       COALESCE(batch_requests_per_sec,0),
 		       COALESCE(buffer_cache_hit_ratio,0)
 		FROM sqlserver_risk_health
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC
 	`
@@ -119,7 +119,7 @@ func (tl *TimescaleLogger) GetLatestSQLServerRiskHealth(ctx context.Context, ins
 		       COALESCE(batch_requests_per_sec,0),
 		       COALESCE(buffer_cache_hit_ratio,0)
 		FROM sqlserver_risk_health
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT 1
 	`
@@ -233,23 +233,47 @@ type WaitCategoryAgg struct {
 	WaitTimeMs   float64 `json:"wait_time_ms"`
 }
 
-// GetWaitCategoryAgg returns summed wait_time_ms per category over the last N minutes.
-func (tl *TimescaleLogger) GetWaitCategoryAgg(ctx context.Context, instanceName string, minutes int) ([]WaitCategoryAgg, error) {
-	if minutes <= 0 {
-		minutes = 15
-	}
+// GetWaitCategoryAgg returns summed wait_time_ms per category over the last N minutes or a specific range.
+func (tl *TimescaleLogger) GetWaitCategoryAgg(ctx context.Context, instanceName string, minutes int, from, to string) ([]WaitCategoryAgg, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	q := `
-		SELECT wait_category, SUM(wait_time_ms) AS wait_time_ms
-		FROM sqlserver_wait_stats
-		WHERE server_instance_name = $1
-		  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
-		GROUP BY wait_category
-		ORDER BY wait_time_ms DESC
-	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, minutes)
+	var start, end time.Time
+	var err error
+	useRange := false
+	if from != "" && to != "" {
+		start, end, err = parseTimeRangeRFC3339(from, to)
+		if err == nil {
+			useRange = true
+		}
+	}
+
+	var q string
+	var rows pgx.Rows
+	if useRange {
+		q = `
+			SELECT wait_category, SUM(wait_time_ms) AS wait_time_ms
+			FROM sqlserver_wait_stats
+			WHERE UPPER(server_instance_name) = UPPER($1)
+			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
+			GROUP BY wait_category
+			ORDER BY wait_time_ms DESC
+		`
+		rows, err = tl.pool.Query(ctx, q, instanceName, start, end)
+	} else {
+		if minutes <= 0 {
+			minutes = 15
+		}
+		q = `
+			SELECT wait_category, SUM(wait_time_ms) AS wait_time_ms
+			FROM sqlserver_wait_stats
+			WHERE UPPER(server_instance_name) = UPPER($1)
+			  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
+			GROUP BY wait_category
+			ORDER BY wait_time_ms DESC
+		`
+		rows, err = tl.pool.Query(ctx, q, instanceName, minutes)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -266,25 +290,49 @@ func (tl *TimescaleLogger) GetWaitCategoryAgg(ctx context.Context, instanceName 
 	return out, rows.Err()
 }
 
-// GetBufferCacheHitTrend returns 1-minute bucketed avg buffer cache hit ratio (%) for the last N minutes.
-// Source: sqlserver_risk_health snapshots (collector-computed).
-func (tl *TimescaleLogger) GetBufferCacheHitTrend(ctx context.Context, instanceName string, minutes int) ([]map[string]interface{}, error) {
-	if minutes <= 0 {
-		minutes = 60
-	}
+// GetBufferCacheHitTrend returns bucketed buffer cache hit ratio (%) for the last N minutes or a specific range.
+func (tl *TimescaleLogger) GetBufferCacheHitTrend(ctx context.Context, instanceName string, minutes int, from, to string) ([]map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	q := `
-		SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
-		       AVG(buffer_cache_hit_ratio) AS buffer_cache_hit_ratio
-		FROM sqlserver_risk_health
-		WHERE server_instance_name = $1
-		  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
-		GROUP BY bucket
-		ORDER BY bucket ASC
-	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, minutes)
+	var start, end time.Time
+	var err error
+	useRange := false
+	if from != "" && to != "" {
+		start, end, err = parseTimeRangeRFC3339(from, to)
+		if err == nil {
+			useRange = true
+		}
+	}
+
+	var q string
+	var rows pgx.Rows
+	if useRange {
+		q = `
+			SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
+			       AVG(buffer_cache_hit_ratio) AS buffer_cache_hit_ratio
+			FROM sqlserver_risk_health
+			WHERE UPPER(server_instance_name) = UPPER($1)
+			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
+			GROUP BY bucket
+			ORDER BY bucket ASC
+		`
+		rows, err = tl.pool.Query(ctx, q, instanceName, start, end)
+	} else {
+		if minutes <= 0 {
+			minutes = 60
+		}
+		q = `
+			SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
+			       AVG(buffer_cache_hit_ratio) AS buffer_cache_hit_ratio
+			FROM sqlserver_risk_health
+			WHERE UPPER(server_instance_name) = UPPER($1)
+			  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
+			GROUP BY bucket
+			ORDER BY bucket ASC
+		`
+		rows, err = tl.pool.Query(ctx, q, instanceName, minutes)
+	}
 	if err != nil {
 		return nil, err
 	}

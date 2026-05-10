@@ -15,6 +15,7 @@
     <title>SQL_Optima | Modular SPA</title>
     <!-- Stylesheets -->
     <link rel="stylesheet" href="assets/css/main.css">
+    <link rel="stylesheet" href="assets/css/sqlserver_health_v2.css">
     <!-- Google Fonts: Inter & JetBrains Mono -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
@@ -29,6 +30,7 @@
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
@@ -85,17 +87,21 @@
 
     <!-- Hidden Time Picker Template for injection -->
     <template id="global-time-picker-template">
-        <div class="time-picker-group compact-time-picker">
-            <input type="datetime-local" id="from-ts" class="custom-input input-xs">
-            <span class="text-muted">to</span>
-            <input type="datetime-local" id="to-ts" class="custom-input input-xs">
-            <button id="global-refresh-btn" class="btn btn-icon btn-xs" title="Refresh Data"><i class="fa-solid fa-sync"></i></button>
+        <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.7rem; border: 1px solid var(--border-color); flex-wrap: nowrap; overflow: hidden;">
+            <label class="text-muted" style="margin:0; font-weight:600; text-transform:uppercase; font-size:0.6rem;">From</label>
+            <input type="datetime-local" id="from-ts" style="background:transparent; border:none; color:inherit; font-size:0.7rem; width:9.5rem; padding:0;" />
+            <label class="text-muted" style="margin:0; font-weight:600; text-transform:uppercase; font-size:0.6rem;">To</label>
+            <input type="datetime-local" id="to-ts" style="background:transparent; border:none; color:inherit; font-size:0.7rem; width:9.5rem; padding:0;" />
+            <button id="global-refresh-btn" class="btn btn-xs btn-accent" style="padding:1px 6px; min-width:auto;" title="Apply Range"><i class="fa-solid fa-filter"></i></button>
         </div>
     </template>
 
     <script src="js/utils/debug.js"></script>
     <script src="js/utils/validation.js"></script>
     <script src="js/utils/actions.js"></script>
+    <script src="js/utils/app_common_info_modal.js"></script>
+    <script src="js/utils/pg_dashboard_info.js"></script>
+    <script src="js/utils/sqlserver_dashboard_info.js"></script>
     <script type="module" src="js/entry.js"></script>
     <script src="js/utils/template.js"></script>
     <script src="js/components/auth.js"></script>
@@ -126,16 +132,18 @@
     <script src="js/pages/sqlserver_PerformanceDebt.js"></script>
     <script type="module" src="js/pages/sqlserver_WorkloadDashboard.js"></script>
     <script src="js/pages/sqlserver_QueryAnalysis.js"></script>
+    <script src="js/pages/sqlserver_PlanAnalyzer.js"></script>
     <script src="js/pages/sqlserver_WatchedQueryAnalyzer.js"></script>
     <script src="js/pages/sqlserver_Settings.js"></script>
-    <script src="js/pages/storage_index_health_dashboard.js"></script>
+    <script src="js/pages/pg_storage_index_health_dashboard.js"></script>
+    <script src="js/pages/sqlserver_storage_index_health_dashboard.js"></script>
     <script src="js/pages/pg_storage_index_health.js"></script>
     <script src="js/pages/sqlserver_storage_index_health.js"></script>
     
     <!-- PostgreSQL Dedicated UI Layouts -->
     <script src="js/pages/overview.js"></script>
     <script src="js/pages/sessions.js"></script>
-    <script src="js/pages/pg_locks.js"></script>
+    <script src="js/pages/pg_locks.js?v=20260507"></script>
     <script src="js/pages/queries.js"></script>
     <script src="js/pages/pg_explain.js"></script>
     <script src="js/pages/PgStorage.js"></script>
@@ -152,10 +160,14 @@
     <script src="js/pages/pg_logs.js"></script>
     <script src="js/pages/pg_stat_statements.js"></script>
     <script src="js/pages/sqlserver_DeadlockDashboard.js"></script>
+    <script src="js/pages/sqlserver_LocksDashboard.js"></script>
+    <script src="js/pages/sqlserver_LocksDrilldownDetailed.js"></script>
     <script src="js/pages/cnpg_cluster.js"></script>
     <script src="js/pages/rules_engine.js"></script>
     <script src="js/pages/admin.js"></script>
     <script src="js/pages/pg_best_practices.js"></script>
+    <script src="js/pages/sqlserver_best_practices.js"></script>
+    <script src="js/pages/sqlserver_HealthDashboardV2.js"></script>
     <script src="js/pages/sqlserver_LiveDiagnostics.js"></script>
     <script src="js/components/dynamic-dashboard.js"></script>
   </body>

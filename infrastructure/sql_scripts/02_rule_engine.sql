@@ -51,6 +51,9 @@ CREATE TABLE IF NOT EXISTS ruleengine.rules (
     recommendation_template JSONB,
     rule_version         INT DEFAULT 1,
     is_enabled           BOOLEAN DEFAULT TRUE,
+    applicability_sql    TEXT,
+    context_tags         JSONB,
+    confidence           VARCHAR(20),
     created_date         TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     modified_date        TIMESTAMPTZ NULL
 );
@@ -99,7 +102,7 @@ CREATE TABLE IF NOT EXISTS ruleengine.rule_results_evaluated (
     target_db_type VARCHAR(20) DEFAULT 'sqlserver',
     status        TEXT,
     severity      VARCHAR(20),
-    confidence    NUMERIC,
+    confidence    VARCHAR(20),
     current_value TEXT,
     recommended   TEXT,
     context       JSONB,
@@ -113,6 +116,7 @@ SELECT create_hypertable(
     if_not_exists => TRUE
 );
 
+/*
 -- 1.6: Signals Table (NEW)
 CREATE TABLE IF NOT EXISTS ruleengine.signals (
     server_id INT,
@@ -145,6 +149,7 @@ SELECT create_hypertable(
     'created_at',
     if_not_exists => TRUE
 );
+*/
 
 -- 1.8: SQL Server Ignore Rules (NEW)
 CREATE TABLE IF NOT EXISTS ruleengine.sqlserver_ignore_rules(
@@ -159,7 +164,7 @@ INSERT INTO ruleengine.sqlserver_ignore_rules VALUES
 ('database','msdb'),
 ('database','tempdb'),
 ('program','SQLAgent%'),
-('program','MonitoringCollector%'),
+('program','sql-optima'),
 ('login','NT AUTHORITY\SYSTEM'),
 ('login','sa')
 ON CONFLICT DO NOTHING;
@@ -175,7 +180,8 @@ INSERT INTO ruleengine.pg_ignore_rules VALUES
 ('database','postgres'),
 ('database','template0'),
 ('database','template1'),
-('application','monitoring_collector')
+('application','monitoring_collector'),
+('application','sql-optima')
 ON CONFLICT DO NOTHING;
 
 -- Add target_db_type column if not exists
@@ -236,7 +242,7 @@ DECLARE
     v_status TEXT;
 BEGIN
     FOR r IN
-        SELECT rr.run_id, rr.server_id, rr.rule_id, rr.raw_payload, rl.target_db_type
+        SELECT rr.run_id, rr.server_id, rr.rule_id, rr.raw_payload, rl.target_db_type, rl.context_tags, rl.confidence
         FROM ruleengine.rule_results_raw rr
         JOIN ruleengine.rules rl USING(rule_id)
         WHERE rr.run_id = p_run_id
@@ -258,10 +264,9 @@ BEGIN
         END IF;
 
         INSERT INTO ruleengine.rule_results_evaluated
-        (run_id, server_id, rule_id, target_db_type, status, current_value, recommended, evaluated_at)
+        (run_id, server_id, rule_id, target_db_type, status, current_value, recommended, context, confidence, evaluated_at)
         VALUES
-        (r.run_id, r.server_id, r.rule_id, r.target_db_type, v_status, v_current_value, v_recommended, CURRENT_TIMESTAMP);
-
+        (r.run_id, r.server_id, r.rule_id, r.target_db_type, v_status, v_current_value, v_recommended, r.context_tags, r.confidence, CURRENT_TIMESTAMP);
     END LOOP;
 END;
 $$ LANGUAGE plpgsql;
@@ -297,6 +302,8 @@ SELECT DISTINCT ON (s.server_id, r.rule_id)
     e.recommended AS recommended_value,
     COALESCE(r.fix_script, r.fix_script_pg) AS fix_script,
     r.description,
+    e.context AS context_tags,
+    e.confidence,
     e.evaluated_at
 FROM ruleengine.rule_results_evaluated e
 JOIN ruleengine.rules r ON e.rule_id = r.rule_id
@@ -318,6 +325,8 @@ SELECT DISTINCT ON (s.server_id, r.rule_id)
     e.recommended AS recommended_value,
     COALESCE(r.fix_script, r.fix_script_pg) AS fix_script,
     r.description,
+    e.context AS context_tags,
+    e.confidence,
     e.evaluated_at
 FROM ruleengine.rule_results_evaluated e
 JOIN ruleengine.rules r ON e.rule_id = r.rule_id
@@ -326,7 +335,7 @@ WHERE r.is_enabled = true
 ORDER BY s.server_id, r.rule_id, e.evaluated_at DESC;
 
 -- ================================================================================
--- SECTION 4: COMPREHENSIVE RULES (from 006_complete_rules_fix.sql)
+-- SECTION 4: COMPREHENSIVE RULES (Refined & Updated)
 -- ================================================================================
 
 -- Clear existing rules for fresh start
@@ -335,101 +344,49 @@ DELETE FROM ruleengine.rule_results_raw;
 DELETE FROM ruleengine.rule_runs;
 DELETE FROM ruleengine.rules;
 
--- Insert SQL Server Rules
-INSERT INTO ruleengine.rules (rule_id, rule_name, category, applies_to, severity, dashboard_placement, description, detection_sql, detection_sql_pg, evaluation_logic, expected_calc, recommended_value, fix_script, fix_script_pg, comparison_type, threshold_value, priority, target_db_type, is_enabled) VALUES
-('INST_MEM_MAX_001','Max Server Memory','Instance Config','Instance','Critical','Main','SQL Server consuming all RAM causes OS starvation.','SELECT total_physical_memory_kb/1024/1024 AS TotalRAM_GB, CAST(value_in_use AS BIGINT) AS MaxServerMemoryMB FROM sys.configurations CROSS JOIN sys.dm_os_sys_memory WHERE name=''max server memory (MB)'';',NULL,'MaxServerMemoryMB >= 2147483647 ? "Critical" : (MaxServerMemoryMB < Recommended ? "Warning" : "OK")','(TotalRAM_GB <= 16 ? TotalRAM_GB - 4 : (TotalRAM_GB <= 32 ? TotalRAM_GB - 6 : (TotalRAM_GB <= 64 ? TotalRAM_GB - 8 : (TotalRAM_GB <= 128 ? TotalRAM_GB - 12 : (TotalRAM_GB <= 256 ? TotalRAM_GB - 16 : TotalRAM_GB - 32))))) * 1024','TotalRAM - OS Reserve','EXEC sp_configure ''max server memory (MB)'', <RecommendedMB>; RECONFIGURE;',NULL,'threshold','{"unit":"MB"}',1,'sqlserver',TRUE),
+-- Insert Refined Rules (SQL Server & PostgreSQL)
+INSERT INTO ruleengine.rules (
+    rule_id, rule_name, category, applies_to, severity, dashboard_placement, description, 
+    detection_sql, detection_sql_pg, evaluation_logic, expected_calc, recommended_value, 
+    fix_script, fix_script_pg, comparison_type, threshold_value, priority, target_db_type, 
+    is_enabled, applicability_sql, context_tags, confidence
+) VALUES
+-- SQL Server Fixes
+('INST_MEM_MAX_001', 'Max Server Memory', 'Memory', 'Instance', 'Critical', 'Main', 'SQL Server consuming all RAM causes OS starvation. Tiered reservation recommended.', 'SELECT TOP 1 total_physical_memory_kb / 1024 / 1024 AS TotalRAM_GB, CAST(c.value_in_use AS BIGINT) AS MaxServerMemoryMB FROM sys.configurations c CROSS JOIN (SELECT TOP 1 total_physical_memory_kb FROM sys.dm_os_sys_memory) m WHERE c.name = ''max server memory (MB)'';', NULL, 'MaxServerMemoryMB >= 2147483647 ? "Critical" : (MaxServerMemoryMB < Expected ? "Warning" : "OK")', '(TotalRAM_GB <= 16 ? TotalRAM_GB - 4 : (TotalRAM_GB <= 32 ? TotalRAM_GB - 6 : (TotalRAM_GB <= 64 ? TotalRAM_GB - 8 : (TotalRAM_GB <= 128 ? TotalRAM_GB - 12 : (TotalRAM_GB <= 256 ? TotalRAM_GB - 16 : TotalRAM_GB - 32))))) * 1024', 'TotalRAM - OS Reserve', 'EXEC sp_configure ''max server memory (MB)'', <RecommendedMB>; RECONFIGURE;', NULL, 'threshold', '{"unit": "MB"}', 1, 'sqlserver', TRUE, NULL, '{"category": "instance_config"}', 'definitive'),
+('INST_CPU_MAXDOP_003', 'MAXDOP Setting', 'Parallelism', 'Instance', 'Critical', 'Main', 'Wrong MAXDOP causes CXPACKET waits. Checks instance and database scoped configs.', 'SELECT (SELECT cpu_count FROM sys.dm_os_sys_info) AS cpu_count, (SELECT CAST(value_in_use AS INT) FROM sys.configurations WHERE name=''max degree of parallelism'') AS MAXDOP, (SELECT COUNT(DISTINCT parent_node_id) FROM sys.dm_os_schedulers WHERE status = ''VISIBLE ONLINE'' AND parent_node_id < 64) AS numa_node_count, ISNULL(STUFF((SELECT '', '' + d.name + '' ('' + CAST(v.value AS VARCHAR) + '')'' FROM sys.databases d CROSS APPLY (SELECT value FROM sys.database_scoped_configurations WHERE name = ''MAXDOP'') v WHERE v.value <> 0 FOR XML PATH('''')), 1, 2, ''''), ''None Scoped'') AS db_scoped_configs;', NULL, 'MAXDOP == 0 && cpu_count > 8 ? "Critical" : (MAXDOP == 0 && cpu_count <= 8 ? "Warning" : (MAXDOP > 8 ? "Warning" : "OK"))', 'cpu_count > 8 ? 8 : cpu_count', '<= 8 CPUs else 8 or cores per NUMA node', 'EXEC sp_configure ''max degree of parallelism'', <Value>; RECONFIGURE;', NULL, 'range', '{"min": 1, "max": 8}', 3, 'sqlserver', TRUE, NULL, '{"workload": "mixed"}', 'context_dependent'),
+('TEMPDB_FILECOUNT_009', 'TempDB File Count & Size', 'TempDB', 'TempDB', 'Critical', 'Main', 'Improper TempDB layout causes PAGELATCH waits. Files must be equal sized.', 'SELECT COUNT(*) AS file_count, MIN(size) AS min_size_pages, MAX(size) AS max_size_pages, CASE WHEN MAX(size) > MIN(size) THEN 1 ELSE 0 END AS unequal_sizes FROM sys.master_files WHERE database_id = 2 AND type_desc = ''ROWS'';', NULL, 'unequal_sizes == 1 ? "Critical" : (file_count < 2 ? "Warning" : "OK")', '4', '4 or CPU/4', 'Manual TempDB reconfiguration required to match file sizes', NULL, 'range', '{"min": 4, "max": 8}', 9, 'sqlserver', TRUE, NULL, '{"category": "performance"}', 'definitive'),
+('BACKUP_LOG_010', 'Log Backup Recent', 'Backup', 'Database', 'Critical', 'Main', 'Missing log backups break point-in-time recovery for FULL/BULK_LOGGED databases.', 'WITH DBs AS (SELECT name, recovery_model_desc FROM sys.databases WHERE database_id > 4 AND state = 0 AND recovery_model_desc IN (''FULL'', ''BULK_LOGGED'')), Backups AS (SELECT database_name, MAX(backup_finish_date) AS last_backup FROM msdb.dbo.backupset WHERE type = ''L'' GROUP BY database_name), Stats AS (SELECT d.name, DATEDIFF(MINUTE, b.last_backup, GETUTCDATE()) AS diff_min FROM DBs d LEFT JOIN Backups b ON d.name = b.database_name) SELECT (SELECT COUNT(*) FROM DBs) AS total_eligible, ISNULL(STUFF((SELECT '', '' + name + '' ('' + CAST(ISNULL(diff_min, 0) AS VARCHAR) + ''m)'' FROM Stats WHERE diff_min > 60 OR diff_min IS NULL FOR XML PATH('''')), 1, 2, ''''), ''All Healthy'') AS current_value, ISNULL(MAX(diff_min), 0) AS minutes_since_log_backup FROM Stats;', NULL, 'minutes_since_log_backup > 60 ? "Critical" : (minutes_since_log_backup > 15 ? "Warning" : "OK")', '15', '< 15 minutes', 'Create SQL Agent log backup job', NULL, 'threshold', '{"max": 15}', 10, 'sqlserver', TRUE, 'SELECT 1 FROM sys.databases WHERE recovery_model_desc IN (''FULL'', ''BULK_LOGGED'')', '{"recovery_model": "non-simple"}', 'definitive'),
+('QUERY_STORE_011', 'Query Store Enabled', 'Monitoring', 'Database', 'Critical', 'Main', 'Query Store provides essential performance insights for regressions.', 'SELECT (SELECT COUNT(*) FROM sys.databases WHERE database_id > 4 AND state = 0 AND compatibility_level >= 130) AS total_eligible, (SELECT COUNT(*) FROM sys.databases WHERE database_id > 4 AND state = 0 AND compatibility_level >= 130 AND is_query_store_on = 1) AS enabled_count, ISNULL(STUFF((SELECT '', '' + name FROM sys.databases WHERE database_id > 4 AND state = 0 AND compatibility_level >= 130 AND is_query_store_on = 0 FOR XML PATH('''')), 1, 2, ''''), ''All Enabled'') AS current_value;', NULL, 'enabled_count == total_eligible ? "OK" : "Warning"', 'total_eligible', 'All Enabled', 'ALTER DATABASE [DatabaseName] SET QUERY_STORE = ON (OPERATION_MODE = READ_WRITE, CLEANUP_POLICY = (STALE_QUERY_THRESHOLD_DAYS = 30), DATA_FLUSH_INTERVAL_SECONDS = 900, MAX_STORAGE_SIZE_MB = 1000, QUERY_CAPTURE_MODE = AUTO);', NULL, 'exact', '{"value": 1}', 11, 'sqlserver', TRUE, 'SELECT 1 FROM sys.databases WHERE compatibility_level >= 130', '{"version": "2016+"}', 'definitive'),
+('PERF_MEMORY_GRANTS_014', 'Memory Grants Pending', 'Performance', 'Instance', 'Critical', 'Main', 'Waiters for memory grants indicate severe memory pressure.', 'SELECT CAST(ISNULL((SELECT TOP 1 cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = ''Memory Grants Pending'' AND object_name LIKE ''%Memory Manager%''), 0) AS BIGINT) AS memory_grants;', NULL, 'memory_grants == 0 ? "OK" : (memory_grants < 10 ? "Warning" : "Critical")', '0', '0', 'Investigate memory-intensive queries or increase server RAM.', NULL, 'threshold', '{"max": 0}', 14, 'sqlserver', TRUE, NULL, '{"category": "memory"}', 'definitive'),
+('PERF_BLOCKING_015', 'Long Blocking', 'Performance', 'Instance', 'Critical', 'Main', 'Blocking chains detected lasting more than 5 seconds.', 'SELECT CAST(ISNULL((SELECT COUNT(*) FROM sys.dm_exec_requests WHERE blocking_session_id <> 0 AND wait_time > 5000), 0) AS INT) AS blocking_count;', NULL, 'blocking_count == 0 ? "OK" : (blocking_count < 3 ? "Warning" : "Critical")', '0', 'No long blocking', 'Identify the lead blocker and investigate query plan or lock contention.', NULL, 'threshold', '{"max": 0}', 15, 'sqlserver', TRUE, NULL, '{"category": "performance"}', 'definitive'),
+('HA_AG_REPLICA_017', 'AG Replica Health', 'High Availability', 'Instance', 'Critical', 'Main', 'Unhealthy Always On replicas risk data loss.', 'SELECT CASE WHEN (SELECT COUNT(*) FROM sys.availability_groups) = 0 THEN -1 ELSE (SELECT COUNT(*) FROM sys.dm_hadr_database_replica_states drs JOIN sys.availability_replicas ar ON drs.replica_id = ar.replica_id WHERE drs.synchronization_health <> 2) END AS unhealthy_replicas;', NULL, 'unhealthy_replicas == -1 ? "N/A" : (unhealthy_replicas == 0 ? "OK" : "Critical")', '0', 'All replicas HEALTHY', 'Investigate replica synchronization status in dashboard.', NULL, 'threshold', '{"max": 0}', 17, 'sqlserver', TRUE, NULL, '{"feature": "alwayson"}', 'definitive'),
+('BACKUP_RETENTION_013', 'Full Backup Recency', 'Backup', 'Instance', 'Critical', 'Main', 'Verifies that a full backup has been taken recently.', 'WITH DBs AS (SELECT name FROM sys.databases WHERE database_id > 4 AND state = 0 AND source_database_id IS NULL), Backups AS (SELECT database_name, MAX(backup_finish_date) AS last_backup FROM msdb.dbo.backupset WHERE type = ''D'' GROUP BY database_name), Stats AS (SELECT d.name, DATEDIFF(DAY, b.last_backup, GETUTCDATE()) AS diff_days FROM DBs d LEFT JOIN Backups b ON d.name = b.database_name) SELECT (SELECT COUNT(*) FROM DBs) AS total_eligible, ISNULL(STUFF((SELECT '', '' + name + '' ('' + CAST(ISNULL(diff_days, 0) AS VARCHAR) + ''d)'' FROM Stats WHERE diff_days > 7 OR diff_days IS NULL FOR XML PATH('''')), 1, 2, ''''), ''All Recent'') AS current_value, ISNULL(MAX(diff_days), 0) AS days_since_full_backup FROM Stats;', NULL, 'days_since_full_backup > 7 ? "Critical" : (days_since_full_backup > 1 ? "Warning" : "OK")', '1', '< 7 days', 'Execute a full database backup immediately.', NULL, 'threshold', '{"max": 7}', 13, 'sqlserver', TRUE, NULL, '{"category": "backup"}', 'definitive'),
 
-('INST_CPU_MAXDOP_003','MAXDOP Setting','Parallelism','Instance','Critical','Main','Wrong MAXDOP causes CXPACKET waits.','SELECT cpu_count, (SELECT CAST(value_in_use AS INT) FROM sys.configurations WHERE name=''max degree of parallelism'') AS MAXDOP FROM sys.dm_os_sys_info;',NULL,'MAXDOP <= 0 ? "Critical" : (MAXDOP > 8 ? "Warning" : "OK")','cpu_count > 8 ? 8 : cpu_count','<=8 CPUs else 8','EXEC sp_configure ''max degree of parallelism'', <Value>; RECONFIGURE;',NULL,'range','{"min":1,"max":8}',2,'sqlserver',TRUE),
-
-('INST_CPU_CTFP_004','Cost Threshold for Parallelism','Parallelism','Instance','Critical','Main','Default value 5 is too low for modern servers.','SELECT CAST(value_in_use AS INT) AS value_in_use FROM sys.configurations WHERE name=''cost threshold for parallelism'';',NULL,'value_in_use < 50 ? "Warning" : "OK"','50','50','EXEC sp_configure ''cost threshold for parallelism'',50; RECONFIGURE;',NULL,'threshold','{"min":50}',3,'sqlserver',TRUE),
-
-('INST_PLAN_CACHE_005','Optimize for AdHoc Workloads','Plan Cache','Instance','Critical','Main','Prevents plan cache bloat.','SELECT CAST(value_in_use AS INT) AS value_in_use FROM sys.configurations WHERE name=''optimize for ad hoc workloads'';',NULL,'value_in_use == 1 ? "OK" : "Warning"','1','1 (enabled)','EXEC sp_configure ''optimize for ad hoc workloads'',1; RECONFIGURE;',NULL,'exact','{"value":1}',4,'sqlserver',TRUE),
-
-('INST_IFI_006','Instant File Initialization','Storage','OS','Critical','Main','Database growth freezes server without IFI.','SELECT CAST(instant_file_initialization_enabled AS INT) AS instant_file_initialization_enabled FROM sys.dm_server_services;',NULL,'instant_file_initialization_enabled == 1 ? "OK" : "Critical"','1','1 (enabled)','Grant Perform Volume Maintenance Tasks to SQL Service Account',NULL,'exact','{"value":1}',5,'sqlserver',TRUE),
-
-('DB_AUTOSHRINK_007','Auto Shrink Enabled','Database Config','Database','Critical','Main','Causes fragmentation and performance issues.','SELECT CAST(ISNULL((SELECT TOP 1 is_auto_shrink_on FROM sys.databases WHERE database_id = DB_ID()), 0) AS INT) AS is_auto_shrink_on;',NULL,'is_auto_shrink_on == 1 ? "Critical" : "OK"','0','OFF','ALTER DATABASE SET AUTO_SHRINK OFF;',NULL,'exact','{"value":0}',6,'sqlserver',TRUE),
-
-('DB_AUTOCLOSE_008','Auto Close Enabled','Database Config','Database','Critical','Main','Causes connection latency.','SELECT CAST(ISNULL((SELECT TOP 1 is_auto_close_on FROM sys.databases WHERE database_id = DB_ID()), 0) AS INT) AS is_auto_close_on;',NULL,'is_auto_close_on == 1 ? "Critical" : "OK"','0','OFF','ALTER DATABASE SET AUTO_CLOSE OFF;',NULL,'exact','{"value":0}',7,'sqlserver',TRUE),
-
-('TEMPDB_FILECOUNT_009','TempDB File Count','TempDB','TempDB','Critical','Main','Improper TempDB layout causes PAGELATCH waits.','SELECT CAST(COUNT(*) AS INT) AS file_count FROM sys.master_files WHERE database_id=2 AND type_desc=''ROWS'';',NULL,'file_count == 0 ? "Critical" : (file_count > 8 ? "Warning" : "OK")','4','4 or CPU/4','Manual TempDB reconfiguration required',NULL,'range','{"min":4,"max":8}',8,'sqlserver',TRUE),
-
-('BACKUP_LOG_010','Log Backup Recent','Backup','Database','Critical','Main','Missing log backups break point-in-time recovery.','SELECT CAST(ISNULL(DATEDIFF(MINUTE, (SELECT MAX(backup_finish_date) FROM msdb.dbo.backupset WHERE type = ''L''), GETDATE()), 9999) AS INT) AS minutes_since_log_backup;',NULL,'minutes_since_log_backup > 60 ? "Critical" : (minutes_since_log_backup > 15 ? "Warning" : "OK")','15','< 15 minutes','Create SQL Agent log backup job',NULL,'threshold','{"max":15}',9,'sqlserver',TRUE),
-
-('QUERY_STORE_011','Query Store Enabled','Monitoring','Database','Critical','Main','Query Store provides performance insights.','SELECT CAST(ISNULL((SELECT TOP 1 is_query_store_on FROM sys.databases WHERE database_id = DB_ID()), 0) AS INT) AS is_query_store_on;',NULL,'is_query_store_on == 1 ? "OK" : "Warning"','1','ON','ALTER DATABASE SET QUERY_STORE ON;',NULL,'exact','{"value":1}',10,'sqlserver',TRUE);
-
--- Insert PostgreSQL Rules
-INSERT INTO ruleengine.rules (rule_id, rule_name, category, applies_to, severity, dashboard_placement, description, detection_sql, detection_sql_pg, evaluation_logic, expected_calc, recommended_value, fix_script, fix_script_pg, comparison_type, threshold_value, priority, target_db_type, is_enabled) VALUES
-('PG_SHARED_BUFFERS_001','Shared Buffers','Memory','Instance','Critical','Main','PostgreSQL shared_buffers at default 128MB is too low.','SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''shared_buffers'';','SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''shared_buffers'';','setting < 131072 ? "Critical" : (setting < 262144 ? "Warning" : "OK")','262144','256MB','ALTER SYSTEM SET shared_buffers = ''256MB'';','ALTER SYSTEM SET shared_buffers = ''256MB'';','threshold','{"min":262144}',1,'postgres',TRUE),
-
-('PG_MAX_CONNECTIONS_001','Max Connections','Connection','Instance','Warning','BestPractice','High connections consume memory.','SELECT setting::int AS setting FROM pg_settings WHERE name = ''max_connections'';','SELECT setting::int AS setting FROM pg_settings WHERE name = ''max_connections'';','setting > 500 ? "Warning" : "OK"','100','100','ALTER SYSTEM SET max_connections = ''100'';','ALTER SYSTEM SET max_connections = ''100'';','threshold','{"max":500}',2,'postgres',TRUE),
-
-('PG_WORK_MEM_001','Work Mem','Memory','Instance','Warning','BestPractice','Complex sorts spill to disk at default 4MB.','SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''work_mem'';','SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''work_mem'';','setting < 256 ? "Warning" : "OK"','256','256MB','ALTER SYSTEM SET work_mem = ''256MB'';','ALTER SYSTEM SET work_mem = ''256MB'';','threshold','{"min":256}',3,'postgres',TRUE),
-
-('PG_MAINT_WORK_MEM_001','Maintenance Work Mem','Maintenance','Instance','Warning','BestPractice','VACUUM and CREATE INDEX are slow at default 64MB.','SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''maintenance_work_mem'';','SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''maintenance_work_mem'';','setting < 512 ? "Warning" : "OK"','512','512MB','ALTER SYSTEM SET maintenance_work_mem = ''512MB'';','ALTER SYSTEM SET maintenance_work_mem = ''512MB'';','threshold','{"min":512}',4,'postgres',TRUE),
-
-('PG_RANDOM_PAGE_COST_001','Random Page Cost','Performance','Instance','Warning','BestPractice','Default 4.0 is for HDD, not SSD.','SELECT setting::float8 AS setting FROM pg_settings WHERE name = ''random_page_cost'';','SELECT setting::float8 AS setting FROM pg_settings WHERE name = ''random_page_cost'';','setting > 1.5 ? "Warning" : "OK"','1.1','1.1 (SSD)','ALTER SYSTEM SET random_page_cost = ''1.1'';','ALTER SYSTEM SET random_page_cost = ''1.1'';','threshold','{"max":1.1}',5,'postgres',TRUE),
-
-('PG_EFFECTIVE_CACHE_SIZE_001','Effective Cache Size','Performance','Instance','Warning','BestPractice','Default 4GB is too low for modern servers.','SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''effective_cache_size'';','SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''effective_cache_size'';','setting < 8388608 ? "Warning" : "OK"','8388608','8GB','ALTER SYSTEM SET effective_cache_size = ''8GB'';','ALTER SYSTEM SET effective_cache_size = ''8GB'';','threshold','{"min":8388608}',6,'postgres',TRUE),
-
-('PG_CHKPT_COMPLETE_TARGET_001','Checkpoint Completion Target','Performance','Instance','Warning','BestPractice','Low target causes I/O spikes.','SELECT setting::float8 AS setting FROM pg_settings WHERE name = ''checkpoint_completion_target'';','SELECT setting::float8 AS setting FROM pg_settings WHERE name = ''checkpoint_completion_target'';','setting < 0.9 ? "Warning" : "OK"','0.9','0.9','ALTER SYSTEM SET checkpoint_completion_target = ''0.9'';','ALTER SYSTEM SET checkpoint_completion_target = ''0.9'';','threshold','{"min":0.9}',7,'postgres',TRUE),
-
-('PG_WAL_BUFFERS_001','WAL Buffers','Performance','Instance','Warning','BestPractice','Low WAL buffers causes frequent flushes.','SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''wal_buffers'';','SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''wal_buffers'';','setting < 16 ? "Warning" : "OK"','16','16MB','ALTER SYSTEM SET wal_buffers = ''16MB'';','ALTER SYSTEM SET wal_buffers = ''16MB'';','threshold','{"min":16}',8,'postgres',TRUE),
-
-('PG_DEAD_TUPLES_001','Dead Tuple Ratio','Maintenance','Database','Critical','Main','High dead tuples indicate autovacuum issues.','SELECT n_dead_tup, n_live_tup, CASE WHEN n_live_tup > 0 THEN (n_dead_tup::float / n_live_tup) * 100 ELSE 0 END AS dead_pct FROM pg_stat_user_tables WHERE n_dead_tup > 1000 ORDER BY n_dead_tup DESC LIMIT 1;','SELECT n_dead_tup, n_live_tup, CASE WHEN n_live_tup > 0 THEN (n_dead_tup::float / n_live_tup) * 100 ELSE 0 END AS dead_pct FROM pg_stat_user_tables WHERE n_dead_tup > 1000 ORDER BY n_dead_tup DESC LIMIT 1;','dead_pct > 20 ? "Critical" : (dead_pct > 10 ? "Warning" : "OK")','10','< 10%','VACUUM ANALYZE;',NULL,'threshold','{"max":10}',9,'postgres',TRUE),
-
-('PG_REPL_LAG_001','Replication Lag','High Availability','Instance','Critical','Main','Standby falling behind risks data loss.','SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0)::BIGINT AS lag_bytes FROM pg_stat_replication LIMIT 1;','SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0)::BIGINT AS lag_bytes FROM pg_stat_replication LIMIT 1;','lag_bytes > 52428800 ? "Critical" : (lag_bytes > 10485760 ? "Warning" : "OK")','0','0 bytes','Check network/IO on standby',NULL,'threshold','{"max":0}',10,'postgres',TRUE),
-
-('PG_STAT_STMTS_001','pg_stat_statements','Monitoring','Instance','Critical','BestPractice','Extension needed for query analysis.','SELECT COUNT(*) AS cnt FROM pg_extension WHERE extname = ''pg_stat_statements'';','SELECT COUNT(*) AS cnt FROM pg_extension WHERE extname = ''pg_stat_statements'';','cnt > 0 ? "OK" : "Critical"','1','Installed','CREATE EXTENSION pg_stat_statements;',NULL,'exact','{"value":1}',11,'postgres',TRUE),
-
-('PG_IDLE_TX_001','Idle in Transaction','Connection','Instance','Critical','Main','Long idle transactions block VACUUM.','SELECT COUNT(*) AS cnt FROM pg_stat_activity WHERE state = ''idle in transaction'' AND state_change < current_timestamp - interval ''5 minutes'';','SELECT COUNT(*) AS cnt FROM pg_stat_activity WHERE state = ''idle in transaction'' AND state_change < current_timestamp - interval ''5 minutes'';','cnt > 0 ? "Warning" : "OK"','0','0','Set idle_in_transaction_session_timeout',NULL,'threshold','{"max":0}',12,'postgres',TRUE);
-
--- ================================================================================
--- SECTION 5: ADDITIONAL RULES (from 007_additional_rules_fix.sql)
--- ================================================================================
-
--- SQL Server Additional Rules
-INSERT INTO ruleengine.rules (rule_id, rule_name, category, applies_to, severity, dashboard_placement, description, detection_sql, detection_sql_pg, evaluation_logic, expected_calc, recommended_value, fix_script, fix_script_pg, comparison_type, threshold_value, priority, target_db_type, is_enabled) VALUES
-('INST_CPU_PRIORITYBOOST_002','Priority Boost Enabled','Instance Config','Instance','Critical','Main','Priority Boost can destabilize Windows scheduler.','SELECT CAST(ISNULL((SELECT value_in_use FROM sys.configurations WHERE name = ''priority boost''), 0) AS INT) AS priority_boost;',NULL,'priority_boost == 0 ? "OK" : "Critical"','0','Disabled (0)','EXEC sp_configure ''priority boost'',0; RECONFIGURE;',NULL,'exact','{"value":0}',11,'sqlserver',TRUE),
-
-('INST_LIGHTWEIGHT_POOLING_003','Lightweight Pooling Enabled','Instance Config','Instance','Critical','Main','Fiber mode breaks modern schedulers and parallelism.','SELECT CAST(ISNULL((SELECT value_in_use FROM sys.configurations WHERE name = ''lightweight pooling''), 0) AS INT) AS lightweight_pooling;',NULL,'lightweight_pooling == 0 ? "OK" : "Critical"','0','Disabled (0)','EXEC sp_configure ''lightweight pooling'',0; RECONFIGURE;',NULL,'exact','{"value":0}',12,'sqlserver',TRUE),
-
-('INST_LPIM_004','Lock Pages in Memory','Memory','Instance','Warning','BestPractice','Prevents OS from paging SQL memory.','SELECT sql_memory_model_desc FROM sys.dm_os_sys_info;',NULL,'sql_memory_model_desc == ''LOCK_PAGES'' ? "OK" : "Warning"','LOCK_PAGES','LPIM enabled','Grant LPIM privilege to SQL Service Account',NULL,'exact','{"value":"LOCK_PAGES"}',13,'sqlserver',TRUE),
-
-('INST_TRACEFLAGS_005','Important Trace Flags','Instance Config','Instance','Warning','BestPractice','Recommended trace flags should be enabled.','SELECT CAST(value AS INT) AS trace_flag FROM (SELECT 1117 AS value UNION SELECT 1118 UNION SELECT 3226 UNION SELECT 4199) t;',NULL,'COUNT >= 4 ? "OK" : "Warning"','4','1117,1118,3226,4199','Enable trace flags via startup parameters',NULL,'threshold','{"min":4}',14,'sqlserver',TRUE),
-
-('DB_PAGE_VERIFY_006','Page Verify CHECKSUM','Database','Database','Critical','Main','Checksum detects corruption early.','SELECT COUNT(*) AS affected_databases, MIN(page_verify_option) AS page_verify, STRING_AGG(name, '', '') AS sample_databases, STRING_AGG(page_verify_option_desc, '', '') AS page_verify_mode FROM sys.databases WHERE database_id > 4 AND source_database_id IS NULL AND page_verify_option <> 2;',NULL,'affected_databases == 0 ? "OK" : "Critical"','0','CHECKSUM','ALTER DATABASE [db_name] SET PAGE_VERIFY CHECKSUM;',NULL,'exact','{"value":0}',15,'sqlserver',TRUE),
-
-('DB_TRUSTWORTHY_007','Trustworthy Enabled','Security','Database','Critical','Main','Security vulnerability allowing privilege escalation.','SELECT COUNT(*) AS affected_databases, MAX(CAST(is_trustworthy_on AS INT)) AS is_trustworthy, STRING_AGG(name, '', '') AS sample_databases FROM sys.databases WHERE database_id > 4 AND source_database_id IS NULL AND is_trustworthy_on = 1;',NULL,'affected_databases == 0 ? "OK" : "Critical"','0','OFF','ALTER DATABASE [db_name] SET TRUSTWORTHY OFF;',NULL,'exact','{"value":0}',16,'sqlserver',TRUE),
-
-('DB_CHAINING_008','Cross DB Ownership Chaining','Security','Database','Critical','Main','Security risk allowing cross-db privilege escalation.','SELECT COUNT(*) AS affected_databases, MAX(CAST(is_db_chaining_on AS INT)) AS is_chaining, STRING_AGG(name, '', '') AS sample_databases FROM sys.databases WHERE database_id > 4 AND source_database_id IS NULL AND is_db_chaining_on = 1;',NULL,'affected_databases == 0 ? "OK" : "Critical"','0','Disabled','ALTER DATABASE [db_name] SET DB_CHAINING OFF;',NULL,'exact','{"value":0}',17,'sqlserver',TRUE),
-
-('AGENT_FAILED_JOBS_009','Failed Jobs Last 24h','SQL Agent','Instance','Critical','Main','Recent job failures detected.','SELECT COUNT(*) AS failing_jobs_24h, STRING_AGG(j.name, '', '') AS sample_jobs FROM msdb.dbo.sysjobhistory h WITH (NOLOCK) JOIN msdb.dbo.sysjobs j WITH (NOLOCK) ON h.job_id = j.job_id WHERE h.run_status = 0 AND h.run_date >= CAST(CONVERT(VARCHAR(8), DATEADD(DAY, -1, GETDATE()), 112) AS INT) AND h.step_id = 0;',NULL,'failing_jobs_24h == 0 ? "OK" : (failing_jobs_24h < 3 ? "Warning" : "Critical")','0','No failed jobs','Investigate failing SQL Agent jobs and confirm recent schedule/owner changes.',NULL,'threshold','{"max":0}',18,'sqlserver',TRUE),
-
-('AGENT_DISABLED_JOBS_010','Disabled Jobs Found','SQL Agent','Instance','Warning','BestPractice','Disabled jobs may indicate broken maintenance.','SELECT COUNT(*) AS disabled_count, STRING_AGG(name, '', '') AS sample_jobs FROM msdb.dbo.sysjobs WITH (NOLOCK) WHERE enabled = 0;',NULL,'disabled_count == 0 ? "OK" : "Warning"','0','No disabled jobs','Review disabled jobs and re-enable any maintenance or backup jobs that should still run.',NULL,'threshold','{"max":0}',19,'sqlserver',TRUE),
-
-('AGENT_JOB_OWNER_011','Jobs Not Owned by SA','Security','Instance','Warning','BestPractice','Job ownership by non-SA accounts can cause failures.','SELECT CAST(ISNULL((SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE owner_sid <> 0x01), 0) AS INT) AS non_sa_owner_count;',NULL,'non_sa_owner_count == 0 ? "OK" : "Warning"','0','All jobs owned by SA','Change job owner to sa',NULL,'threshold','{"max":0}',20,'sqlserver',TRUE),
-
-('BACKUP_ENCRYPTION_012','Backup Encryption','Backup','Instance','Warning','BestPractice','Backups should be encrypted for compliance.','SELECT CAST(ISNULL((SELECT COUNT(*) FROM msdb.dbo.backupset WHERE backup_finish_date > GETDATE()-30 AND encryptor_type IS NOT NULL), 0) AS INT) AS encrypted_count;',NULL,'encrypted_count > 0 ? "OK" : "Warning"','1','Encrypted backups','Enable backup encryption',NULL,'threshold','{"min":1}',21,'sqlserver',TRUE),
-
-('BACKUP_RETENTION_013','Backup Retention','Backup','Instance','Warning','BestPractice','Backups older than retention should exist.','SELECT CAST(ISNULL(DATEDIFF(DAY, (SELECT TOP 1 backup_finish_date FROM msdb.dbo.backupset ORDER BY backup_finish_date DESC), GETDATE()), 999) AS INT) AS days_since_backup;',NULL,'days_since_backup < 30 ? "OK" : "Warning"','30','14-30 days','Adjust backup retention policy',NULL,'threshold','{"max":30}',22,'sqlserver',TRUE),
-
-('PERF_MEMORY_GRANTS_014','Memory Grants Pending','Performance','Instance','Critical','Main','Memory pressure detected.','SELECT CAST(ISNULL((SELECT TOP 1 cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = ''Memory Grants Pending'' AND object_name LIKE ''%Buffer Manager%''), 0) AS BIGINT) AS memory_grants;',NULL,'memory_grants == 0 ? "OK" : (memory_grants < 10 ? "Warning" : "Critical")','0','0','Investigate memory pressure',NULL,'threshold','{"max":0}',23,'sqlserver',TRUE),
-
-('PERF_BLOCKING_015','Long Blocking','Performance','Instance','Critical','Main','Blocking chains detected.','SELECT CAST(ISNULL((SELECT COUNT(*) FROM sys.dm_exec_requests WHERE blocking_session_id <> 0), 0) AS INT) AS blocking_count;',NULL,'blocking_count == 0 ? "OK" : "Critical"','0','No blocking','Investigate blocking queries',NULL,'threshold','{"max":0}',24,'sqlserver',TRUE),
-
-('PERF_SINGLE_USE_PLANS_016','Plan Cache Bloat','Performance','Instance','Warning','BestPractice','Too many single-use plans.','SELECT CAST(COALESCE(SUM(CASE WHEN usecounts = 1 AND cacheobjtype = ''Compiled Plan'' THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN cacheobjtype = ''Compiled Plan'' THEN 1 ELSE 0 END), 0), 0) AS FLOAT) AS single_use_pct, SUM(CASE WHEN usecounts = 1 AND cacheobjtype = ''Compiled Plan'' THEN 1 ELSE 0 END) AS single_use_plans, SUM(CASE WHEN cacheobjtype = ''Compiled Plan'' THEN 1 ELSE 0 END) AS total_compiled_plans FROM sys.dm_exec_cached_plans WITH (NOLOCK);',NULL,'single_use_pct < 30 ? "OK" : "Warning"','30','<30%','Enable optimize for ad hoc workloads and review plan cache churn from one-off queries.',NULL,'threshold','{"max":30}',25,'sqlserver',TRUE),
-
-('HA_AG_REPLICA_017','AG Replica Health','High Availability','Instance','Critical','Main','Unhealthy Always On availability group replicas risk data loss and unplanned failover.','SELECT ISNULL(COUNT(*), 0) AS unhealthy_replicas, ISNULL(STRING_AGG(ar.replica_server_name, '', ''), '''') AS sample_replicas, ISNULL(STRING_AGG(drs.synchronization_health_desc, '', ''), '''') AS health_states FROM sys.dm_hadr_database_replica_states drs WITH (NOLOCK) JOIN sys.availability_replicas ar WITH (NOLOCK) ON drs.replica_id = ar.replica_id WHERE drs.synchronization_health <> 2;',NULL,'unhealthy_replicas == 0 ? "OK" : (unhealthy_replicas < 2 ? "Warning" : "Critical")','0','All replicas HEALTHY','Investigate replica synchronisation: check network, disk I/O, and SQL Server error log on each replica.',NULL,'threshold','{"max":0}',26,'sqlserver',TRUE);
-
--- PostgreSQL Additional Rules
-INSERT INTO ruleengine.rules (rule_id, rule_name, category, applies_to, severity, dashboard_placement, description, detection_sql, detection_sql_pg, evaluation_logic, expected_calc, recommended_value, fix_script, fix_script_pg, comparison_type, threshold_value, priority, target_db_type, is_enabled) VALUES
-('PG_AUTOVACUUM_017','Autovacuum Enabled','Maintenance','Instance','Critical','Main','Autovacuum prevents table bloat.','SELECT setting AS autovacuum FROM pg_settings WHERE name = ''autovacuum'';','SELECT setting AS autovacuum FROM pg_settings WHERE name = ''autovacuum'';','autovacuum == ''on'' ? "OK" : "Critical"','on','ON','ALTER SYSTEM SET autovacuum = on;','ALTER SYSTEM SET autovacuum = on;','exact','{"value":"on"}',13,'postgres',TRUE),
-
-('PG_IDLE_TX_018','Idle in Transaction','Connection','Instance','Critical','Main','Idle transactions cause bloat and lock retention.','SELECT COUNT(*) AS idle_tx_count FROM pg_stat_activity WHERE state = ''idle in transaction'';','SELECT COUNT(*) AS idle_tx_count FROM pg_stat_activity WHERE state = ''idle in transaction'';','idle_tx_count == 0 ? "OK" : "Critical"','0','0 sessions','Set idle_in_transaction_session_timeout',NULL,'threshold','{"max":0}',14,'postgres',TRUE),
-
-('PG_REPLICATION_LAG_019','Replication Lag','High Availability','Instance','Critical','Main','Replica lag detected.','SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0)::BIGINT AS lag_bytes FROM pg_stat_replication LIMIT 1;','SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0)::BIGINT AS lag_bytes FROM pg_stat_replication LIMIT 1;','lag_bytes == 0 ? "OK" : (lag_bytes < 10485760 ? "Warning" : "Critical")','0','<30 seconds','Investigate replication',NULL,'threshold','{"max":0}',15,'postgres',TRUE),
-
-('PG_LONG_TX_020','Long Running Transactions','Performance','Instance','Warning','BestPractice','Long transactions cause bloat.','SELECT COUNT(*) AS long_tx_count FROM pg_stat_activity WHERE state != ''idle'' AND now() - xact_start > interval ''5 minutes'';','SELECT COUNT(*) AS long_tx_count FROM pg_stat_activity WHERE state != ''idle'' AND now() - xact_start > interval ''5 minutes'';','long_tx_count == 0 ? "OK" : "Warning"','0','No long transactions','Investigate long running transactions',NULL,'threshold','{"max":0}',16,'postgres',TRUE);
+-- SQL Server Disables
+('INST_TRACEFLAGS_005', 'Important Trace Flags', 'Instance Config', 'Instance', 'Warning', 'BestPractice', 'Rule disabled: original detection logic was flawed and flags are deprecated in 2022.', NULL, NULL, '"OK"', NULL, 'Review TF 3226', NULL, NULL, 'exact', NULL, 5, 'sqlserver', FALSE, NULL, '{"reason": "deprecated"}', 'informational'),
+('INST_LPIM_004', 'Lock Pages in Memory', 'Memory', 'Instance', 'Warning', 'BestPractice', 'Rule disabled: context-dependent; prefer proper Max Server Memory configuration.', NULL, NULL, '"OK"', NULL, 'Review OS memory model', NULL, NULL, 'exact', NULL, 4, 'sqlserver', FALSE, NULL, '{"reason": "context_dependent"}', 'informational'),
+('AGENT_DISABLED_JOBS_010', 'Disabled Jobs Found', 'SQL Agent', 'Instance', 'Warning', 'BestPractice', 'Rule disabled: disabled jobs are often intentional.', NULL, NULL, '"OK"', NULL, 'Check maintenance jobs only', NULL, NULL, 'exact', NULL, 10, 'sqlserver', FALSE, NULL, '{"reason": "noise_reduction"}', 'informational'),
+('AGENT_JOB_OWNER_011', 'Jobs Not Owned by SA', 'Security', 'Instance', 'Warning', 'BestPractice', 'Rule disabled: SA ownership is no longer the absolute recommendation.', NULL, NULL, '"OK"', NULL, 'Use least-privilege accounts', NULL, NULL, 'exact', NULL, 11, 'sqlserver', FALSE, NULL, '{"reason": "security_policy"}', 'informational'),
+-- SQL Server New Rules
+('AG_QUORUM_018', 'AG Cluster Quorum Status', 'High Availability', 'Instance', 'Critical', 'Main', 'Checks if the Always On cluster has a normal quorum state.', 'SELECT quorum_state_desc FROM sys.dm_hadr_cluster;', NULL, 'upper(quorum_state_desc) == "NORMAL_QUORUM" ? "OK" : "Critical"', 'NORMAL_QUORUM', 'NORMAL_QUORUM', 'Investigate cluster quorum health and witness status.', NULL, 'exact', '{"value": "NORMAL_QUORUM"}', 18, 'sqlserver', TRUE, NULL, '{"feature": "cluster"}', 'definitive'),
+('TEMPDB_VLF_019', 'TempDB High VLF Count', 'TempDB', 'TempDB', 'Warning', 'BestPractice', 'High VLF count in TempDB log can slow down recovery and growth.', 'SELECT COUNT(*) AS vlf_count FROM tempdb.sys.database_files f CROSS APPLY sys.dm_db_log_info(2) WHERE f.type_desc = ''LOG'';', NULL, 'vlf_count > 500 ? "Critical" : (vlf_count > 200 ? "Warning" : "OK")', '100', '< 200', 'Shrink TempDB log and regrow in larger increments.', NULL, 'threshold', '{"max": 200}', 19, 'sqlserver', TRUE, NULL, '{"category": "maintenance"}', 'definitive'),
+('STATISTICS_NORECOMPUTE_020', 'Indexes with NoRecompute Stats', 'Maintenance', 'Instance', 'Warning', 'BestPractice', 'NORECOMPUTE prevents automatic statistics updates, leading to stale plans.', 'SELECT COUNT(*) AS norecompute_count FROM sys.stats s JOIN sys.objects o ON s.object_id = o.object_id WHERE s.no_recompute = 1 AND o.is_ms_shipped = 0;', NULL, 'norecompute_count > 0 ? "Warning" : "OK"', '0', '0', 'Update statistics with RECOMPUTE enabled.', NULL, 'threshold', '{"max": 0}', 20, 'sqlserver', TRUE, NULL, '{"category": "performance"}', 'informational'),
+-- PG Fixes
+('PG_SHARED_BUFFERS_001', 'Shared Buffers', 'Memory', 'Instance', 'Critical', 'Main', 'PostgreSQL shared_buffers should be ~25% of total RAM.', 'SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''shared_buffers'';', NULL, 'setting < 131072 ? "Critical" : (setting < 262144 ? "Warning" : "OK")', '262144', '2GB (for ≥8GB RAM servers)', NULL, 'ALTER SYSTEM SET shared_buffers = ''2GB'';', 'threshold', '{"min": 262144}', 1, 'postgres', TRUE, NULL, '{"unit": "blocks_8k"}', 'definitive'),
+('PG_MAX_CONNECTIONS_001', 'Max Connections', 'Connection', 'Instance', 'Warning', 'BestPractice', 'High connections consume memory; use a pooler like PgBouncer.', 'SELECT setting::int AS setting FROM pg_settings WHERE name = ''max_connections'';', NULL, 'setting > 300 ? "Warning" : "OK"', '100', 'Use PgBouncer/pgpool; < 200', NULL, 'ALTER SYSTEM SET max_connections = ''100'';', 'threshold', '{"max": 300}', 2, 'postgres', TRUE, NULL, '{"category": "scalability"}', 'context_dependent'),
+('PG_WORK_MEM_001', 'Work Mem', 'Memory', 'Instance', 'Warning', 'BestPractice', 'Complex sorts spill to disk. Avoid setting too high globally.', 'SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''work_mem'';', NULL, 'setting < 1024 ? "Critical" : (setting < 4096 ? "Warning" : (setting > 65536 ? "Warning" : "OK"))', '4096', '4-16 MB (4096-16384 kB)', NULL, 'ALTER SYSTEM SET work_mem = ''8MB'';', 'threshold', '{"min": 4096}', 3, 'postgres', TRUE, NULL, '{"unit": "kB"}', 'context_dependent'),
+('PG_MAINT_WORK_MEM_001', 'Maintenance Work Mem', 'Maintenance', 'Instance', 'Warning', 'BestPractice', 'Controls memory for VACUUM and CREATE INDEX.', 'SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''maintenance_work_mem'';', NULL, 'setting < 32768 ? "Warning" : (setting > 2097152 ? "Warning" : "OK")', '262144', '256 MB-1 GB', NULL, 'ALTER SYSTEM SET maintenance_work_mem = ''256MB'';', 'threshold', '{"min": 262144}', 4, 'postgres', TRUE, NULL, '{"unit": "kB"}', 'context_dependent'),
+('PG_WAL_BUFFERS_001', 'WAL Buffers', 'Performance', 'Instance', 'Warning', 'BestPractice', 'Low WAL buffers causes frequent flushes. Handles -1 (auto) case.', 'SELECT setting::bigint AS setting, CASE WHEN setting::bigint = -1 THEN (SELECT setting::bigint / 32 FROM pg_settings WHERE name = ''shared_buffers'') ELSE setting::bigint END AS effective_wal_buffers_pages FROM pg_settings WHERE name = ''wal_buffers'';', NULL, 'effective_wal_buffers_pages < 256 ? "Warning" : "OK"', '256', '16MB', NULL, 'ALTER SYSTEM SET wal_buffers = ''16MB'';', 'threshold', '{"min": 256}', 8, 'postgres', TRUE, NULL, '{"unit": "pages_8k"}', 'definitive'),
+('PG_DEAD_TUPLES_001', 'Dead Tuple Ratio', 'Maintenance', 'Database', 'Critical', 'Main', 'High dead tuples indicate autovacuum issues.', 'SELECT schemaname || ''.'' || relname AS worst_table, n_dead_tup, n_live_tup, ROUND((n_dead_tup::numeric / NULLIF(n_live_tup, 0)) * 100, 1) AS dead_pct FROM pg_stat_user_tables WHERE n_dead_tup > 1000 AND n_live_tup + n_dead_tup > 10000 ORDER BY dead_pct DESC LIMIT 1;', NULL, 'dead_pct > 20 ? "Critical" : (dead_pct > 10 ? "Warning" : "OK")', '10', '< 10%', NULL, 'VACUUM ANALYZE;', 'threshold', '{"max": 10}', 9, 'postgres', TRUE, NULL, '{"category": "bloat"}', 'definitive'),
+('PG_LONG_TX_020', 'Long Running Transactions', 'Performance', 'Instance', 'Warning', 'BestPractice', 'Excludes autovacuum and background workers.', 'SELECT COUNT(*) AS long_tx_count FROM pg_stat_activity WHERE state != ''idle'' AND now() - xact_start > interval ''5 minutes'' AND backend_type = ''client backend'' AND xact_start IS NOT NULL;', NULL, 'long_tx_count == 0 ? "OK" : "Warning"', '0', 'No long transactions', NULL, 'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE ...', 'threshold', '{"max": 0}', 20, 'postgres', TRUE, NULL, '{"category": "concurrency"}', 'definitive'),
+('PG_EFFECTIVE_CACHE_SIZE_001', 'Effective Cache Size', 'Performance', 'Instance', 'Warning', 'BestPractice', 'Planner hint for OS cache availability.', 'SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''effective_cache_size'';', NULL, 'setting < 131072 ? "Warning" : "OK"', '1048576', '50-75% of total RAM', NULL, 'ALTER SYSTEM SET effective_cache_size = ''8GB'';', 'threshold', '{"min": 131072}', 6, 'postgres', TRUE, NULL, '{"unit": "blocks_8k"}', 'context_dependent'),
+-- PG Disables
+('PG_IDLE_TX_018', 'Idle in Transaction (Aggressive)', 'Connection', 'Instance', 'Critical', 'Main', 'Rule disabled: superseded by PG_IDLE_TX_001 with 5-minute threshold.', NULL, NULL, '"OK"', NULL, 'See PG_IDLE_TX_001', NULL, NULL, 'exact', NULL, 18, 'postgres', FALSE, NULL, '{"reason": "duplicate"}', 'informational'),
+('PG_REPLICATION_LAG_019', 'Replication Lag (Aggressive)', 'High Availability', 'Instance', 'Critical', 'Main', 'Rule disabled: superseded by PG_REPL_LAG_001 with tiered thresholds.', NULL, NULL, '"OK"', NULL, 'See PG_REPL_LAG_001', NULL, NULL, 'exact', NULL, 19, 'postgres', FALSE, NULL, '{"reason": "duplicate"}', 'informational'),
+-- PG New Rules
+('PG_UNUSED_INDEXES_031', 'Unused Indexes', 'Performance', 'Database', 'Warning', 'BestPractice', 'Indexes with zero scans after 7 days uptime.', 'SELECT COUNT(*) AS cnt, EXTRACT(EPOCH FROM (now() - pg_postmaster_start_time())) / 86400 AS server_uptime_days FROM pg_stat_user_indexes WHERE idx_scan = 0 AND schemaname NOT IN (''pg_catalog'', ''information_schema'');', NULL, 'server_uptime_days < 7 ? "INFO" : (cnt == 0 ? "OK" : "Warning")', '0', '0', NULL, 'DROP INDEX <index_name>;', 'threshold', '{"max": 0}', 31, 'postgres', TRUE, NULL, '{"requires": "7d_uptime"}', 'context_dependent'),
+('PG_AUTOVAC_FREEZE_032', 'Autovacuum Freeze Max Age', 'Maintenance', 'Instance', 'Warning', 'BestPractice', 'Prevents transaction ID wraparound issues.', 'SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''autovacuum_freeze_max_age'';', NULL, 'setting > 800000000 ? "Critical" : (setting > 200000000 ? "Warning" : "OK")', '200000000', '200,000,000', NULL, 'ALTER SYSTEM SET autovacuum_freeze_max_age = 200000000;', 'threshold', '{"max": 200000000}', 32, 'postgres', TRUE, NULL, '{"category": "safety"}', 'context_dependent'),
+('PG_SEQUENCE_EXHAUSTION_033', 'Sequence Exhaustion Risk', 'Schema', 'Database', 'Critical', 'BestPractice', 'Checks sequences approaching their maximum value (80% threshold).', 'SELECT COUNT(*) AS cnt FROM pg_sequences WHERE maximum_value > 0 AND last_value IS NOT NULL AND (last_value::numeric - minimum_value::numeric + 1) / NULLIF((maximum_value::numeric - minimum_value::numeric + 1), 0) * 100 >= 80;', NULL, 'cnt == 0 ? "OK" : "Critical"', '0', '0', NULL, 'ALTER SEQUENCE <seq> AS BIGINT;', 'threshold', '{"max": 0}', 33, 'postgres', TRUE, NULL, '{"category": "availability"}', 'definitive');
 
 -- ================================================================================
 -- SECTION 6: VERIFICATION

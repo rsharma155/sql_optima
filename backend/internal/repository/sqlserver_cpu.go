@@ -11,6 +11,7 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"strings"
 
 	"github.com/rsharma155/sql_optima/internal/models"
 )
@@ -24,8 +25,8 @@ func (c *SqlServerRepository) CollectKPIs(ctx context.Context, db *sql.DB) (map[
 			   AND s.is_user_process = 1
 			   AND s.database_id > 4
 			   AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
-			   AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-			   AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')) AS active_sessions,
+			   AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+			   AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')) AS active_sessions,
 			(SELECT   total_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS total_memory_mb,
 			(SELECT    available_physical_memory_kb/1024 FROM sys.dm_os_sys_memory) AS available_memory_mb,
 			(SELECT   ISNULL(cntr_value, 0) FROM sys.dm_os_performance_counters WHERE counter_name='Batch Requests/sec') AS batch_requests_sec
@@ -52,18 +53,19 @@ func (c *SqlServerRepository) CollectKPIs(ctx context.Context, db *sql.DB) (map[
 // Returns CPU history array and current CPU load
 func (c *SqlServerRepository) CollectCPUMetrics(db *sql.DB) ([]models.CPUTick, float64, error) {
 	cpuQuery := `
-		DECLARE @ts_now bigint = (SELECT /* SQL_OPTIMA */   cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
-		SELECT /* SQL_OPTIMA */   TOP(256)
-		    SQLProcessUtilization AS [SQL_Server_CPU], 
-		    SystemIdle AS [System_Idle_CPU], 
-		    100 - SystemIdle - SQLProcessUtilization AS [Other_Process_CPU],
-		    CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETDATE()), 120) AS [Event_Time]
+		/* SQL_OPTIMA */
+		DECLARE @ts_now bigint = (SELECT ms_ticks FROM sys.dm_os_sys_info WITH (NOLOCK)); 
+		SELECT TOP(256)
+		    ISNULL(SQLProcessUtilization, 0) AS [SQL_Server_CPU], 
+		    ISNULL(SystemIdle, 0) AS [System_Idle_CPU], 
+		    100 - ISNULL(SystemIdle, 0) - ISNULL(SQLProcessUtilization, 0) AS [Other_Process_CPU],
+		    CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETUTCDATE()), 120) AS [Event_Time]
 		FROM ( 
-		    SELECT /* SQL_OPTIMA */   record.value('(./Record/@id)[1]', 'int') AS record_id, 
+		    SELECT record.value('(./Record/@id)[1]', 'int') AS record_id, 
 		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') AS [SystemIdle], 
 		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') AS [SQLProcessUtilization], [timestamp] 
 		    FROM ( 
-		        SELECT /* SQL_OPTIMA */   [timestamp], CONVERT(xml, record) AS [record] 
+		        SELECT [timestamp], CONVERT(xml, record) AS [record] 
 		        FROM sys.dm_os_ring_buffers WITH (NOLOCK)
 		        WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
 		        AND record LIKE N'%<SystemHealth>%'
@@ -101,7 +103,7 @@ func (c *SqlServerRepository) CollectCPUMetrics(db *sql.DB) ([]models.CPUTick, f
 
 // CollectActiveSessions counts currently running user sessions
 func (c *SqlServerRepository) CollectActiveSessions(db *sql.DB) (int, error) {
-	sessionQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
+	sessionQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')`
 	var count int
 	err := db.QueryRow(sessionQuery).Scan(&count)
 	return count, err
@@ -155,7 +157,11 @@ func (c *SqlServerRepository) CollectCPUSchedulerStats(ctx context.Context, db *
 			CASE WHEN ss.runnable_tasks_count >= osi.cpu_count * 2 THEN 1 ELSE 0 END AS cpu_pressure_warning,
 			osm.total_physical_memory_kb,
 			osm.available_physical_memory_kb,
-			osm.system_memory_state_desc,
+			CASE 
+				WHEN osm.system_memory_state_desc = 'Available physical memory is high' THEN 'Healthy'
+				WHEN osm.system_memory_state_desc = 'Physical memory usage is steady' THEN 'Stable'
+				ELSE osm.system_memory_state_desc 
+			END AS system_memory_state_desc,
 			ns.total_node_count,
 			ns.nodes_online_count,
 			CASE WHEN osm.available_physical_memory_kb < osm.total_physical_memory_kb * 0.10 THEN 1 ELSE 0 END AS memory_pressure_warning
@@ -210,7 +216,7 @@ func (c *SqlServerRepository) CollectCPUSchedulerStats(ctx context.Context, db *
 func (c *SqlServerRepository) CollectServerProperties(ctx context.Context, db *sql.DB) (*models.ServerProperties, error) {
 	query := `		
 		/* SQL_OPTIMA */ SELECT   
-			GETDATE() AS capture_timestamp,
+			GETUTCDATE() AS capture_timestamp,
 			osi.cpu_count,
 			osi.hyperthread_ratio,
 			osi.socket_count,
@@ -257,6 +263,6 @@ func (c *SqlServerRepository) CollectServerProperties(ctx context.Context, db *s
 func (c *SqlServerRepository) GetDB(instanceName string) (*sql.DB, bool) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	return db, ok
 }

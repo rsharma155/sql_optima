@@ -67,6 +67,57 @@ export async function loadCollectorConfigs() {
         const body = document.getElementById('collector-config-body');
         body.innerHTML = '';
         
+        const collectorMapping = {
+            'Postgres Active Queries': 'Dashboard: Sessions | Metric: Active Queries',
+            'Postgres Blocking Locks': 'Dashboard: Locks | Metric: Blocking Locks',
+            'Postgres CPU and Memory': 'Dashboards: CPU, Memory | Metrics: CPU, Memory stats',
+            'Postgres Wait Stats': 'Dashboard: Wait Stats | Metric: Wait Events',
+            'Postgres Storage I/O': 'Dashboard: Storage | Metric: I/O throughput/latency',
+            'Postgres Long Running Queries': 'Dashboard: Queries | Metric: Long running queries',
+            'Postgres Query Stats': 'Dashboard: pg_stat_statements | Metric: Query performance',
+            'SQL Server Active Queries': 'Dashboard: SQL Server Overview | Metric: Active Queries',
+            'SQL Server Blocking Locks': 'Dashboard: SQL Server Locks | Metric: Blocking Locks',
+            'SQL Server System Metrics': 'Dashboard: SQL Server Overview | Metric: CPU/Memory',
+            'SQL Server Storage': 'Dashboard: SQL Server Storage | Metric: File I/O',
+            'SQL Server Long Running Queries': 'Dashboard: SQL Server Queries | Metric: Long running queries',
+            'SQL Server Query Store': 'Dashboard: SQL Server Query Analysis | Metric: Query Store stats',
+            'SQL Server Database Size': 'Dashboard: Global Estate | Metric: Database size',
+            'SQL Server Configuration': 'Dashboard: SQL Server Settings | Metric: Config params',
+            'SQL Server Index Usage': 'Dashboard: SQL Server Index | Metric: Index usage stats',
+            'SQL Server Table Usage': 'Dashboard: SQL Server Table | Metric: Table usage stats',
+            'SQL Server Query Analysis': 'Dashboard: SQL Server Query Analysis | Metric: Query performance',
+            'SQL Server Watched Query Snapshot': 'Dashboard: SQL Server Watched Queries | Metric: Query snapshots',
+            'SQL Server AG Health': 'Dashboard: SQL Server HA | Metric: AG replication health',
+            'SQL Server Enterprise Metrics': 'Dashboard: SQL Server Enterprise | Metric: Enterprise KPIs',
+            'SQL Server Agent Jobs': 'Dashboard: SQL Server Jobs | Metric: Job status',
+            'sqlserver_query_snapshot': 'Dashboard: SQL Server Overview | Metric: Query metrics snapshot',
+            'sqlserver_session_enrichment': 'Dashboard: SQL Server Overview | Metric: Session enrichment data',
+            'sqlserver_blocking': 'Dashboard: SQL Server Locks | Metric: Blocking chain',            'pg_queries_v2': 'Dashboard: Queries | Metric: Query metrics v2',
+            'Performance Debt Collection': 'Dashboard: Performance Debt | Metric: Best practices score',
+            'Alert Evaluation Loop': 'System: Alerting Engine | Metric: Alert triggers',
+            'Base Collector Ticker': 'System: Core Collector | Metric: Heartbeat',
+            'Postgres Session Activity': 'Dashboard: Sessions | Metric: Session state',
+            'Postgres Wait Summary': 'Dashboard: Wait Stats | Metric: Wait summary',
+            'Postgres DB Load': 'Dashboard: Overview | Metric: Database load',
+            'Postgres Query Wait Profile': 'Dashboard: Query Analysis | Metric: Wait profile',
+            'Postgres Backup Archiver': 'Dashboard: Backups | Metric: Archiver status',
+            'Postgres WAL Rate': 'Dashboard: Enterprise | Metric: WAL generation rate',
+            'Postgres Base Backup History': 'Dashboard: Backups | Metric: Backup history',
+            'Postgres Failed Login Parsing': 'Dashboard: Logs | Metric: Failed logins',
+            'Postgres Roles Snapshot': 'Dashboard: Security | Metric: Role configuration',
+            'Postgres DDL Activity': 'Dashboard: Logs | Metric: DDL changes',
+            'Postgres Control Center': 'Dashboard: Enterprise | Metric: Checkpointer/Archiver',
+            'Postgres Connections': 'Dashboard: Sessions | Metric: Connection count',
+            'Postgres Replication': 'Dashboard: Replication | Metric: Replication lag',
+            'Postgres System Detail': 'Dashboard: Overview | Metric: OS metrics',
+            'SQL Server Live KPIs': 'Dashboard: SQL Server Live | Metric: Real-time KPIs',
+            'SQL Server Running Queries': 'Dashboard: SQL Server Live | Metric: Currently executing',
+            'SQL Server File IO Latency': 'Dashboard: SQL Server Live | Metric: I/O latency',
+            'SQL Server TempDB Usage': 'Dashboard: SQL Server Live | Metric: TempDB pressure',
+            'SQL Server Wait Stats Live': 'Dashboard: SQL Server Live | Metric: Live waits',
+            'SQL Server Connections Live': 'Dashboard: SQL Server Live | Metric: Live connections'
+        };
+
         if (!configs || configs.length === 0) {
             body.innerHTML = '<tr><td colspan="5" class="text-center text-muted" style="padding:2rem;">No collectors configured.</td></tr>';
         } else {
@@ -77,7 +128,8 @@ export async function loadCollectorConfigs() {
                 tr.style.background = 'rgba(255,255,255,0.02)';
                 
                 const moduleClass = c.module.toLowerCase() === 'postgres' ? 'badge-info' : 'badge-warning';
-                
+                const mappingInfo = collectorMapping[c.collector_name] || 'System Internal / Background Task';
+
                 tr.innerHTML = `
                     <td style="padding:1rem; border-top-left-radius:8px; border-bottom-left-radius:8px;">
                         <div style="font-weight:600; font-size:0.9rem;">${window.escapeHtml(c.collector_name)}</div>
@@ -102,8 +154,9 @@ export async function loadCollectorConfigs() {
                         </div>
                     </td>
                     <td style="padding:1rem; font-size:0.8rem;">
+                        <div style="color:var(--accent-blue); font-weight:500; margin-bottom:0.35rem;"><i class="fa-solid fa-circle-info" style="font-size:0.7rem; width:1rem;"></i> ${window.escapeHtml(mappingInfo)}</div>
                         <div class="text-muted"><i class="fa-solid fa-user" style="font-size:0.7rem; width:1rem;"></i> ${window.escapeHtml(c.updated_by || 'system')}</div>
-                        <div class="text-muted" style="margin-top:0.25rem;"><i class="fa-solid fa-clock" style="font-size:0.7rem; width:1rem;"></i> ${new Date(c.updated_at).toLocaleDateString()} ${new Date(c.updated_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                        <div class="text-muted" style="margin-top:0.2rem;"><i class="fa-solid fa-clock" style="font-size:0.7rem; width:1rem;"></i> ${new Date(c.updated_at).toLocaleDateString()} ${new Date(c.updated_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
                     </td>
                     <td style="padding:1rem; text-align:right; border-top-right-radius:8px; border-bottom-right-radius:8px;">
                         <div class="view-mode">

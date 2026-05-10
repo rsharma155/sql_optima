@@ -16,6 +16,10 @@ type PgHealthInputs struct {
 	CheckpointReqRatio    float64
 	WALRateMBPerMin       float64
 	BlockingSessions      int
+	// New — 2026-05-07
+	CacheHitRatioPct    float64 // 0–100; below 95 = I/O pressure
+	ConnectionsUsagePct float64 // 0–100; above 85 = saturation risk
+	DeadlocksPerMin     float64 // 0 = healthy; >0 = immediate attention
 }
 
 // ComputePgHealthScore returns score (0-100) and status.
@@ -23,18 +27,24 @@ type PgHealthInputs struct {
 func ComputePgHealthScore(in PgHealthInputs) (score int, status string) {
 	scoreF := 0.0
 
-	// 25: Replication lag (seconds)
-	scoreF += weightedLinear(in.ReplicationLagSeconds, 0, 300, 25)
-	// 20: XID age risk (% toward freeze max age)
-	scoreF += weightedLinear(in.XIDWraparoundPct, 0, 95, 20)
-	// 20: Dead tuple ratio %
-	scoreF += weightedLinear(in.DeadTupleRatioPct, 0, 50, 20)
-	// 15: Checkpoint pressure (req/timed); >1 means mostly requested
-	scoreF += weightedLinear(in.CheckpointReqRatio, 0, 3.0, 15)
-	// 10: WAL gen rate MB/min
-	scoreF += weightedLinear(in.WALRateMBPerMin, 0, 1000, 10)
-	// 10: Blocking sessions
-	scoreF += weightedLinear(float64(in.BlockingSessions), 0, 20, 10)
+	// 20: Replication lag (seconds)
+	scoreF += weightedLinear(in.ReplicationLagSeconds, 0, 300, 20)
+	// 15: XID age risk (% toward freeze max age)
+	scoreF += weightedLinear(in.XIDWraparoundPct, 0, 95, 15)
+	// 15: Dead tuple ratio %
+	scoreF += weightedLinear(in.DeadTupleRatioPct, 0, 50, 15)
+	// 15: Cache Hit Ratio % (penalize below 99% toward 90%)
+	scoreF += weightedLinear(100.0-in.CacheHitRatioPct, 1.0, 10.0, 15)
+	// 10: Connections Usage % (penalize above 60% toward 90%)
+	scoreF += weightedLinear(in.ConnectionsUsagePct, 60, 90, 10)
+	// 10: Checkpoint pressure (req/timed); >1 means mostly requested
+	scoreF += weightedLinear(in.CheckpointReqRatio, 0, 3.0, 10)
+	// 5: WAL gen rate MB/min
+	scoreF += weightedLinear(in.WALRateMBPerMin, 0, 1000, 5)
+	// 5: Blocking sessions
+	scoreF += weightedLinear(float64(in.BlockingSessions), 0, 20, 5)
+	// 5: Deadlocks/min
+	scoreF += weightedLinear(in.DeadlocksPerMin, 0, 5, 5)
 
 	score = int(math.Round(scoreF))
 	if score < 0 {

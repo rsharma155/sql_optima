@@ -324,7 +324,7 @@ func (c *SqlServerRepository) FetchLastFullBackupAgeHours(instanceName, database
 		return 0, fmt.Errorf("no connection for instance: %s", instanceName)
 	}
 	q := `
-		/* SQL_OPTIMA */ SELECT   TOP 1 DATEDIFF(MINUTE, backup_finish_date, GETDATE()) / 60.0 AS age_hours
+		/* SQL_OPTIMA */ SELECT   TOP 1 DATEDIFF(MINUTE, backup_finish_date, GETUTCDATE()) / 60.0 AS age_hours
 		FROM msdb.dbo.backupset
 		WHERE database_name = @p1
 		  AND type = 'D'
@@ -361,7 +361,7 @@ func (c *SqlServerRepository) FetchFailedAgentJobs24h(instanceName string, limit
 		  ON j.job_id = h.job_id
 		WHERE h.step_id = 0
 		  AND h.run_status = 0
-		  AND msdb.dbo.agent_datetime(h.run_date, h.run_time) >= DATEADD(HOUR, -24, GETDATE())
+		  AND msdb.dbo.agent_datetime(h.run_date, h.run_time) >= DATEADD(HOUR, -24, GETUTCDATE())
 		ORDER BY run_dt DESC;
 	`, limit)
 	rows, err := db.Query(q)

@@ -71,15 +71,15 @@ window.appNavigate = function(route, skipHistory = false) {
     
     // Cleanup dashboard polling when navigating away from dashboard
     const previousRoute = window.appState.activeViewId;
-    if (previousRoute === 'dashboard' && route !== 'dashboard') {
+    if ((previousRoute === 'dashboard' || previousRoute === 'sqlserver-health-v2') && route !== previousRoute) {
         if (window.cleanupDashboard) window.cleanupDashboard();
     }
     
-    if (window.appState.dashboardPollingInterval && route !== 'dashboard') {
+    if (window.appState.dashboardPollingInterval && route !== 'dashboard' && route !== 'sqlserver-health-v2') {
         clearInterval(window.appState.dashboardPollingInterval);
         window.appState.dashboardPollingInterval = null;
     }
-    if (window.dashboardRefreshInterval && route !== 'dashboard') {
+    if (window.dashboardRefreshInterval && route !== 'dashboard' && route !== 'sqlserver-health-v2') {
         clearInterval(window.dashboardRefreshInterval);
         window.dashboardRefreshInterval = null;
     }
@@ -218,17 +218,16 @@ window.appNavigate = function(route, skipHistory = false) {
                 window.appNavigate('pg-dashboard');
                 return;
             }
-            // Wait for DashboardView to be defined (in case scripts haven't loaded yet)
-            const waitForDashboard = () => {
-                if (window.DashboardView) {
-                    appDebug('Calling DashboardView...');
-                    window.DashboardView(); 
-                } else {
-                    appDebug('Waiting for DashboardView to load...');
-                    setTimeout(waitForDashboard, 100);
-                }
-            };
-            waitForDashboard();
+
+            // Always use the new optimized dashboard for SQL Server
+            window.appNavigate('sqlserver-health-v2');
+            break;
+        case 'sqlserver-health-v2':
+            if (window.SqlServerHealthV2View) {
+                window.SqlServerHealthV2View();
+            } else {
+                setTimeout(() => window.appNavigate('sqlserver-health-v2'), 200);
+            }
             break;
         case 'drilldown-cpu': window.CpuDrilldown(); break;
         case 'drilldown-memory': if (window.MemoryDrilldown) window.MemoryDrilldown(); break;
@@ -320,6 +319,14 @@ window.appNavigate = function(route, skipHistory = false) {
                 setTimeout(() => window.appNavigate('query-analysis'), 200);
             }
             break;
+        case 'sqlserver-plan-analyzer':
+            if (window.SqlServerPlanAnalyzerView) {
+                window.SqlServerPlanAnalyzerView();
+            } else {
+                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Plan Analyzer…</h3></div>';
+                setTimeout(() => window.appNavigate('sqlserver-plan-analyzer'), 200);
+            }
+            break;
         case 'watched-queries':
             if (window.sqlserver_WatchedQueryAnalyzer) {
                 window.sqlserver_WatchedQueryAnalyzer();
@@ -358,13 +365,28 @@ window.appNavigate = function(route, skipHistory = false) {
             else window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Login unavailable</h3></div>';
             break;
         case 'settings': window.SettingsView(); break;
-        case 'best-practices': 
-            if (typeof window.RulesEngineView === 'function') {
-                window.RulesEngineView(); 
+        case 'best-practices':
+            if (typeof window.SqlserverBestPracticesView === 'function') {
+                window.SqlserverBestPracticesView();
             } else {
-                appDebug('RulesEngineView not loaded yet');
+                appDebug('SqlserverBestPracticesView not loaded yet');
                 window.routerOutlet.innerHTML = '<div class="alert alert-warning">Loading Best Practices...</div>';
                 setTimeout(() => window.appNavigate('best-practices'), 500);
+            }
+            break;        case 'sqlserver-locks':
+            if (window.sqlserver_LocksDashboard) {
+                window.sqlserver_LocksDashboard();
+            } else {
+                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Locks & Blocking...</h3></div>';
+                setTimeout(() => window.appNavigate('sqlserver-locks'), 200);
+            }
+            break;
+        case 'sqlserver-locks-drilldown':
+            if (window.sqlserver_LocksDrilldownDetailed) {
+                window.sqlserver_LocksDrilldownDetailed(window.appState.routeParams);
+            } else {
+                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Deep Dive...</h3></div>';
+                setTimeout(() => window.appNavigate('sqlserver-locks-drilldown'), 200);
             }
             break;
         case 'live-diagnostics': window.LiveDiagnosticsView(); break;
@@ -376,17 +398,21 @@ window.appNavigate = function(route, skipHistory = false) {
                 window.appNavigate('dashboard');
                 return;
             }
-            window.PgDashboardView();
+            if (typeof window.PgDashboardView === 'function') {
+                window.PgDashboardView();
+            } else {
+                console.error('PgDashboardView not found');
+            }
             break;
         }
-        case 'pg-sessions': window.PgSessionsView(); break;
-        case 'pg-locks': window.PgLocksView(); break;
-        case 'pg-queries': window.PgQueriesView(); break;
-        case 'pg-explain': window.PgExplainView(); break;
-        case 'pg-storage': window.PgStorageView(); break;
-        case 'pg-replication': window.PgReplicationView(); break;
-        case 'pg-logs': window.PgLogsView(); break;
-        case 'pg-backups': window.PgBackupsView(); break;
+        case 'pg-sessions': if (typeof window.PgSessionsView === 'function') window.PgSessionsView(); break;
+        case 'pg-locks': if (typeof window.PgLocksView === 'function') window.PgLocksView(); break;
+        case 'pg-queries': if (typeof window.PgStatStatementsView === 'function') window.PgStatStatementsView(); break;
+        case 'pg-explain': if (typeof window.PgExplainView === 'function') window.PgExplainView(); break;
+        case 'pg-storage': if (typeof window.PgStorageView === 'function') window.PgStorageView(); break;
+        case 'pg-replication': if (typeof window.PgReplicationView === 'function') window.PgReplicationView(); break;
+        case 'pg-logs': if (typeof window.PgLogsView === 'function') window.PgLogsView(); break;
+        case 'pg-backups': if (typeof window.PgBackupsView === 'function') window.PgBackupsView(); break;
         case 'pg-waits': if (window.PgWaitsView) window.PgWaitsView(); break;
         case 'pg-backup-dr': if (window.PgBackupDRView) window.PgBackupDRView(); break;
         case 'pg-security': if (window.PgSecurityView) window.PgSecurityView(); break;
@@ -397,7 +423,7 @@ window.appNavigate = function(route, skipHistory = false) {
         case 'pg-memory': window.PgMemoryView(); break;
         // CNPG is being merged into replication engine; keep route for backward links.
         case 'pg-cnpg': window.CNPGClusterTopologyView(); break;
-        case 'pg-stat-statements': window.PgQueriesView(); break; // merged into Query Performance
+        case 'pg-stat-statements': if (typeof window.PgStatStatementsView === 'function') window.PgStatStatementsView(); break;
         case 'pg-best-practices':
             if (typeof window.PgBestPracticesView === 'function') {
                 window.PgBestPracticesView();
@@ -462,7 +488,7 @@ window.router = {
             ? '<li data-route="admin" id="nav-admin"><i class="fa-solid fa-user-shield"></i> Admin</li>'
             : '';
 
-        if (window.appState.currentInstanceIdx === -1 || !window.appState.config) {
+        if (window.appState.currentInstanceIdx === -1 || !window.appState.config || !window.appState.config.instances || !window.appState.config.instances[window.appState.currentInstanceIdx]) {
             dbSel.innerHTML = '<option value="all">-- N/A --</option>';
             brand.className = 'fa-solid fa-earth-americas xl-icon logo-icon text-accent';
             sidebarNav.innerHTML = '<li data-route="global" class="active"><i class="fa-solid fa-globe"></i> Global Estate Overview</li>' + adminLi;
@@ -487,7 +513,9 @@ window.router = {
                     return response.json();
                 })
                 .then(data => {
+                    const currentDb = window.appState.currentDatabase;
                     dbSel.innerHTML = '<option value="all">-- All Databases --</option>';
+                    let dbExists = false;
                     if (data.databases && data.databases.length > 0) {
                         data.databases.forEach(db => {
                             if (db && String(db) !== 'undefined' && String(db) !== 'null') {
@@ -495,10 +523,15 @@ window.router = {
                                 opt.value = db;
                                 opt.textContent = db;
                                 dbSel.appendChild(opt);
+                                if (db === currentDb) dbExists = true;
                             }
                         });
-                        window.appState.currentDatabase = data.databases[0];
-                        dbSel.value = data.databases[0];
+                        if (dbExists) {
+                            dbSel.value = currentDb;
+                        } else {
+                            window.appState.currentDatabase = data.databases[0];
+                            dbSel.value = data.databases[0];
+                        }
                         appDebug(`[Router] Loaded ${data.databases.length} databases for ${inst.name}`);
                     } else {
                         window.appState.currentDatabase = 'all';
@@ -513,7 +546,9 @@ window.router = {
                 });
         } else {
             // For SQLSERVER, use static list
+            const currentDb = window.appState.currentDatabase;
             dbSel.innerHTML = '<option value="all">-- All Databases --</option>';
+            let dbExists = false;
             if (Array.isArray(inst.databases)) {
                 inst.databases.forEach(db => {
                     if (db && String(db) !== 'undefined' && String(db) !== 'null') {
@@ -521,14 +556,18 @@ window.router = {
                         opt.value = db;
                         opt.textContent = db;
                         dbSel.appendChild(opt);
+                        if (db === currentDb) dbExists = true;
                     }
                 });
             }
-            if (inst.databases && inst.databases.length > 0) {
+            if (dbExists) {
+                dbSel.value = currentDb;
+            } else if (inst.databases && inst.databases.length > 0) {
                 window.appState.currentDatabase = inst.databases[0];
                 dbSel.value = inst.databases[0];
             } else {
                 window.appState.currentDatabase = 'all';
+                dbSel.value = 'all';
             }
         }
         
@@ -546,8 +585,8 @@ window.router = {
                 <li data-route="pg-storage"><i class="fa-solid fa-hard-drive"></i> Storage & Vacuum</li>
                 <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Index & Table Health</li>
                 <li data-route="pg-replication" id="nav-pg-replication" style="display:none;"><i class="fa-solid fa-clone"></i> Replication & HA</li>
-                <li data-route="pg-backup-dr"><i class="fa-solid fa-shield-heart"></i> Backup & DR</li>
-                <li data-route="pg-security"><i class="fa-solid fa-user-lock"></i> Security Mon.</li>
+                <li data-route="pg-backups"><i class="fa-solid fa-shield-heart"></i> Backup & DR</li>
+                <li data-route="pg-security"><i class="fa-solid fa-user-lock"></i> Security Monitor</li>
                 <li data-route="pg-best-practices"><i class="fa-solid fa-shield-halved"></i> Best Practices</li>
                 <li data-route="pg-alerts"><i class="fa-solid fa-bell text-danger"></i> Alerts & Events</li>
                 ${adminLi}
@@ -555,15 +594,17 @@ window.router = {
         } else { 
             brand.className='fa-brands fa-microsoft xl-icon logo-icon text-accent'; 
             sidebarNav.innerHTML = `
-                <li data-route="dashboard" id="nav-dashboard"><i class="fa-solid fa-gauge-high"></i> Instance Dashboard</li>
+                <li data-route="sqlserver-health-v2" id="nav-dashboard"><i class="fa-solid fa-gauge-high"></i> Instance Dashboard</li>
                 <li data-route="sqlserver-workload"><i class="fa-solid fa-chart-area"></i> Workload Analytics</li>
                 <li data-route="drilldown-memory"><i class="fa-solid fa-memory"></i> Memory Analyzer</li>
                 <li data-route="live-diagnostics"><i class="fa-solid fa-bolt text-warning"></i> Real-Time Diagnostics</li>
+                <li data-route="sqlserver-locks"><i class="fa-solid fa-link-slash"></i> Locks & Blocking</li>
                 <li data-route="drilldown-ha" style="display:none;"><i class="fa-solid fa-server"></i> HA & Replication</li>
                 <li data-route="enterprise-metrics"><i class="fa-solid fa-chart-line"></i> Enterprise Metrics</li>
                 <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Storage & Index</li>
                 <li data-route="performance-debt"><i class="fa-solid fa-screwdriver-wrench"></i> Performance Debt</li>
                 <li data-route="query-analysis"><i class="fa-solid fa-magnifying-glass-chart"></i> Query Analysis</li>
+                <li data-route="sqlserver-plan-analyzer"><i class="fa-solid fa-diagram-project"></i> Plan Analyzer</li>
                 <li data-route="watched-queries"><i class="fa-solid fa-binoculars"></i> Watched Queries</li>
                 <li data-route="jobs" id="nav-agent-jobs"><i class="fa-solid fa-briefcase"></i> SQL Agent Jobs</li>
                 <li data-route="alerts"><i class="fa-solid fa-triangle-exclamation"></i> Alerts <span id="alerts-badge" class="badge badge-danger">0</span></li>
@@ -638,11 +679,13 @@ window.router = {
 
 // Event Listeners strictly mounting globally mapped nodes
 document.getElementById('instance-select').addEventListener('change', (e) => {
-    const idx = parseInt(e.target.value);
+    let idx = parseInt(e.target.value);
+    if (isNaN(idx)) idx = -1;
     window.appState.currentInstanceIdx = idx;
     
-    const inst = window.appState.config.instances[idx];
+    const inst = window.appState.config && window.appState.config.instances ? window.appState.config.instances[idx] : null;
     if (!inst) {
+        window.appState.currentInstanceIdx = -1;
         window.appNavigate('global');
         return;
     }
@@ -654,11 +697,11 @@ document.getElementById('instance-select').addEventListener('change', (e) => {
     
     // Rest of logic
     if(window.appState.activeViewId === 'global') {
-        window.appNavigate(inst.type === 'postgres' ? 'pg-dashboard' : 'dashboard');
+        window.appNavigate(inst.type === 'postgres' ? 'pg-dashboard' : 'sqlserver-health-v2');
     } else {
         const isCurrentRoutePG = window.appState.activeViewId.startsWith('pg-');
         const isSharedEngineRoute = window.appState.activeViewId === 'storage-index-health';
-        const root = inst.type === 'postgres' ? 'pg-dashboard' : 'dashboard';
+        const root = inst.type === 'postgres' ? 'pg-dashboard' : 'sqlserver-health-v2';
         
         if(inst.type === 'postgres' && !isCurrentRoutePG && !isSharedEngineRoute) {
             window.appNavigate(root);

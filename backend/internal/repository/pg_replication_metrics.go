@@ -12,6 +12,7 @@ package repository
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/rsharma155/sql_optima/internal/models"
 )
@@ -20,7 +21,7 @@ import (
 // Returns status: "primary", "standby", or "unknown"
 func (c *PgRepository) GetReplicationLag(instanceName string) (lagMB float64, status string, err error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -59,7 +60,7 @@ func (c *PgRepository) GetReplicationLag(instanceName string) (lagMB float64, st
 // GetReplicationStats returns detailed replication information including standby lag.
 func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgReplicationStats, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -161,7 +162,19 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 
 	// Get BGWriter efficiency
 	var buffersBackend, maxwrittenClean int64
-	err = db.QueryRow("SELECT /* SQL_OPTIMA */   buffers_backend, maxwritten_clean FROM pg_stat_bgwriter").Scan(&buffersBackend, &maxwrittenClean)
+	var versionNum int
+	if err := db.QueryRow("SELECT current_setting('server_version_num')::integer").Scan(&versionNum); err != nil {
+		versionNum = 120000 
+	}
+
+	var bgQuery string
+	if versionNum >= 170000 {
+		bgQuery = "SELECT /* SQL_OPTIMA */ 0, maxwritten_clean FROM pg_stat_bgwriter"
+	} else {
+		bgQuery = "SELECT /* SQL_OPTIMA */ buffers_backend, maxwritten_clean FROM pg_stat_bgwriter"
+	}
+
+	err = db.QueryRow(bgQuery).Scan(&buffersBackend, &maxwrittenClean)
 	if err == nil && (buffersBackend+maxwrittenClean) > 0 {
 		stats.BgWriterEffPct = float64(buffersBackend) / float64(buffersBackend+maxwrittenClean) * 100
 	}

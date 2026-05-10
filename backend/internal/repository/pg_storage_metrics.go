@@ -11,6 +11,7 @@ package repository
 
 import (
 	"fmt"
+	"strings"
 )
 
 // PgTableStat represents table storage and vacuum statistics.
@@ -29,7 +30,7 @@ type PgTableStat struct {
 // GetTableStats returns table statistics including size, bloat, and vacuum information.
 func (c *PgRepository) GetTableStats(instanceName string) ([]PgTableStat, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -82,7 +83,7 @@ type PgIndexStat struct {
 // GetIndexStats returns potentially unused indexes (idx_scan = 0).
 func (c *PgRepository) GetIndexStats(instanceName string) ([]PgIndexStat, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {

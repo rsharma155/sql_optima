@@ -1,7 +1,7 @@
 <!--
  * SQL Optima — https://github.com/rsharma155/sql_optima
  *
- * Purpose: Real-time analysis of lock contention, blocking PIDs, and wait events in PostgreSQL.
+ * Purpose: PostgreSQL Locks & Blocking Dashboard — hierarchical tree, incident history, chronic blockers.
  *
  * Author: Ravi Sharma
  * Copyright (c) 2026 Ravi Sharma
@@ -10,77 +10,65 @@
 <div class="page-view active dashboard-sky-theme pg-locks-page">
     <!-- Header -->
     <div class="page-title flex-between dashboard-page-title-compact">
-        <div class="dashboard-title-line" style="flex:1; min-width:0; display:flex; align-items:center; gap:1rem;">
-            <button class="btn btn-secondary btn-sm" data-action="navigate-back" title="Back to Control Center">
-                <i class="fa-solid fa-arrow-left"></i>
-            </button>
-            <div>
-                <h1>Locks & Blocking Dashboard</h1>
-                <span class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></span>
-            </div>
+        <div class="dashboard-title-line" style="flex:1; min-width:0;">
+            <h1><i class="fa-solid fa-link-slash text-accent"></i> Locks &amp; Blocking Dashboard <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Locks & Blocking" title="Learn more about this dashboard"></i></h1>
+            <p class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></p>
         </div>
-        
-        <div class="dashboard-page-title-actions dashboard-pg-header-actions" style="gap: 1rem;">
-            <!-- Range Picker -->
-            <div class="glass-panel p-2 rounded" style="display:flex; flex-wrap:wrap; align-items:center; gap:0.5rem;">
-                <div style="display:flex; align-items:center; gap:0.3rem;">
-                    <label class="text-muted" for="pgLocksFrom" style="font-size:0.65rem;">From</label>
-                    <input type="datetime-local" id="pgLocksFrom" class="form-control" style="font-size:0.7rem; padding:2px 5px; width:130px;" step="1" />
-                </div>
-                <div style="display:flex; align-items:center; gap:0.3rem;">
-                    <label class="text-muted" for="pgLocksTo" style="font-size:0.65rem;">To</label>
-                    <input type="datetime-local" id="pgLocksTo" class="form-control" style="font-size:0.7rem; padding:2px 5px; width:130px;" step="1" />
-                </div>
-                <button type="button" class="btn btn-xs btn-outline text-accent" id="pgLocksApplyRange" style="padding: 2px 8px;">Apply</button>
-            </div>
 
+        <div class="dashboard-page-title-actions dashboard-pg-header-actions" style="gap:1rem;">
+            <div id="time-picker-insertion-point"></div>
             <div class="dashboard-pg-header-primary">
                 <div class="time-picker glass-panel p-2 rounded" style="display:flex; flex-wrap:wrap; align-items:center; gap:0.35rem 0.85rem; justify-content:flex-end;">
                     <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="pgLastRefreshTime">--:--:--</span></span>
                     <span class="text-muted" style="font-size:0.75rem;" id="pg-uptime">Loading...</span>
                     <span class="text-muted" style="font-size:0.75rem;" id="pg-version">Loading...</span>
                 </div>
-                <div class="glass-panel p-2 rounded" style="display:flex; align-items:center; gap:0.5rem; cursor:help;" id="pgHealthTooltipContainer">
-                    <span class="text-muted" style="font-size:0.75rem;">Health</span>
-                    <span id="pgHealthScoreBadge" class="badge badge-success" style="min-width:3.5rem; text-align:center;">--</span>
-                </div>
-                <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgLocksView" title="Force refresh the dashboard data."><i class="fa-solid fa-refresh"></i> Refresh</button>
+                <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgLocksView" title="Force refresh"><i class="fa-solid fa-refresh"></i> Refresh</button>
             </div>
         </div>
     </div>
 
+    <!-- Alert banner -->
     <div id="pgLocksAlertBanner" class="alert alert-danger mt-2" style="display:none; padding:0.6rem 0.75rem;">
         <i class="fa-solid fa-triangle-exclamation"></i>
         <strong id="pgLocksAlertTitle">Blocking detected</strong>
         <span class="text-muted" id="pgLocksAlertMsg" style="margin-left:0.35rem;"></span>
     </div>
 
-    <div id="pgLocksRangeHint" class="text-danger mt-1" style="font-size:0.65rem; display:none; text-align:right;" role="alert"></div>
-    <div id="pgLocksRangeMeta" class="text-muted" style="font-size:0.65rem; text-align:right;"></div>
+    <!-- Range picker -->
+    <div class="glass-panel mt-2" style="padding:0.5rem 0.75rem; display:flex; flex-wrap:wrap; align-items:center; gap:0.5rem;">
+        <span class="text-muted" style="font-size:0.75rem;">Range:</span>
+        <input type="datetime-local" id="pgLocksFrom" class="form-control" style="font-size:0.75rem; padding:0.2rem 0.4rem; width:auto;">
+        <span class="text-muted" style="font-size:0.75rem;">→</span>
+        <input type="datetime-local" id="pgLocksTo" class="form-control" style="font-size:0.75rem; padding:0.2rem 0.4rem; width:auto;">
+        <button id="pgLocksApplyRange" class="btn btn-sm btn-outline text-accent" style="font-size:0.75rem; padding:0.2rem 0.6rem;">Apply</button>
+        <span id="pgLocksRangeMeta" class="text-muted" style="font-size:0.65rem;"></span>
+        <span id="pgLocksRangeHint" class="text-danger" style="font-size:0.65rem; display:none;" role="alert"></span>
+    </div>
 
     <!-- ROW 1: KPIs -->
     <div class="table-card glass-panel mt-2" style="padding:0.75rem;">
         <div class="card-header">
             <h3 style="font-size:0.85rem; margin:0;">Realtime Status (KPIs)</h3>
         </div>
-        <div class="top-strips dashboard-top-strips" style="margin-top:0.25rem; display:grid; grid-template-columns: repeat(4, 1fr); gap:0.75rem;">
+        <div class="top-strips dashboard-top-strips" style="margin-top:0.25rem; display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem;">
             <div class="strip-metric-cell" title="Distinct blocked sessions detected.">
-                <div class="strip-metric-label" style="font-size:0.6rem;">Active Blocking Sessions</div>
+                <div class="strip-metric-label" style="font-size:0.6rem;">Active Blocking Sessions <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Locks & Blocking" data-metric="Active Blocking Sessions"></i></div>
                 <div class="strip-metric-value metric-value" id="pgKpiActiveVictims" style="font-size:1.1rem;">—</div>
                 <div class="text-muted sub" id="pgKpiIncidentMeta" style="font-size:0.6rem;">—</div>
             </div>
             <div class="strip-metric-cell" title="Root blocker PID.">
-                <div class="strip-metric-label" style="font-size:0.6rem;">Root Blocker</div>
+                <div class="strip-metric-label" style="font-size:0.6rem;">Root Blocker <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Blocked Sessions"></i></div>
                 <div class="strip-metric-value metric-value" id="pgKpiRootPid" style="font-size:1.1rem;">—</div>
                 <div class="text-muted sub" id="pgKpiRootQuery" style="font-size:0.6rem;">—</div>
             </div>
-            <div class="strip-metric-cell" title="Idle-in-transaction risk.">
-                <div class="strip-metric-label" style="font-size:0.6rem;">Idle-in-Txn Risk</div>
+            <div class="strip-metric-cell" title="Idle-in-transaction sessions with age > 30s.">
+                <div class="strip-metric-label" style="font-size:0.6rem;">Idle-in-Txn Risk <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Locks & Blocking" data-metric="Idle-in-Transaction Risk"></i></div>
                 <div class="strip-metric-value metric-value" id="pgKpiIdleRisk" style="font-size:1.1rem;">—</div>
-                <div class="text-muted sub" style="font-size:0.6rem;">age > 30s</div>
+                <div class="text-muted sub" style="font-size:0.6rem;">age &gt; 30s</div>
             </div>
             <div class="strip-metric-cell" title="Severity score.">
-                <div class="strip-metric-label" style="font-size:0.6rem;">Severity Score</div>
+                <div class="strip-metric-label" style="font-size:0.6rem;">Severity Score <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Health Score"></i></div>
                 <div class="strip-metric-value metric-value" id="pgKpiSeverity" style="font-size:1.1rem;">—</div>
                 <div class="text-muted sub" id="pgKpiSeverityBand" style="font-size:0.6rem;">—</div>
             </div>
@@ -90,22 +78,28 @@
     <!-- ROW 2: Charts -->
     <div class="charts-grid mt-2" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
         <div class="chart-card glass-panel col-span-2" style="padding:0.75rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Incident Timeline (last 1h)</h3></div>
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Incident Timeline</h3></div>
             <div class="chart-container" style="height:150px;"><canvas id="pgBlockingIncidentTimelineChart"></canvas></div>
         </div>
 
+        <!-- Blocking Tree Visualizer (redesigned) -->
         <div class="table-card glass-panel col-span-2 border-danger" style="padding:0.75rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Blocking Tree Visualizer</h3></div>
-            <div class="table-responsive p-3" style="background: rgba(0,0,0,0.2); border-radius: 8px; max-height:250px; overflow-y:auto;">
-                <ul id="blockingTreeList" style="list-style:none; padding-left:1rem; font-family:'JetBrains Mono', monospace; font-size:0.85rem;">
-                    <li style="color: var(--text-muted); font-style: italic;">Loading blocking tree...</li>
-                </ul>
+            <div class="card-header flex-between" style="align-items:center;">
+                <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-sitemap"></i> Blocking Tree Visualizer</h3>
+                <span id="pgBlockingDetailsCapturedAt" class="text-muted" style="font-size:0.65rem;">Snapshot: —</span>
+            </div>
+            <div id="pgBlockingBreadcrumb" class="text-muted" style="font-size:0.72rem; margin:0.25rem 0; display:none;"></div>
+            <div style="background:rgba(0,0,0,0.15); border-radius:8px; padding:0.75rem; max-height:320px; overflow-y:auto;">
+                <div id="blockingTreeList">
+                    <span class="text-muted" style="font-style:italic; font-size:0.85rem;">Loading blocking tree...</span>
+                </div>
             </div>
         </div>
 
+        <!-- Actionable summary -->
         <div class="table-card glass-panel col-span-2" style="padding:0.75rem;">
             <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Actionable Blocking Summary</h3></div>
-            <div class="top-strips dashboard-top-strips" style="margin-top:0.25rem; display:grid; grid-template-columns: repeat(4, 1fr); gap:0.75rem;">
+            <div class="top-strips dashboard-top-strips" style="margin-top:0.25rem; display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem;">
                 <div class="strip-metric-cell">
                     <div class="strip-metric-label" style="font-size:0.6rem;">Blocked Sessions</div>
                     <div class="strip-metric-value metric-value" id="pgBlockedSessionsTotal" style="font-size:1.1rem;">0</div>
@@ -126,25 +120,67 @@
                 </div>
             </div>
         </div>
-        
+
+        <!-- Lock wait history chart -->
         <div class="chart-card glass-panel col-span-2" style="padding:0.75rem;">
             <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Sessions waiting on lock (history)</h3></div>
             <div class="chart-container" style="height:150px;"><canvas id="pgLockWaitTrendChart"></canvas></div>
         </div>
 
+        <!-- Deadlocks chart -->
         <div class="chart-card glass-panel" style="padding:0.75rem;">
             <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Deadlocks</h3></div>
             <div class="chart-container" style="height:140px;"><canvas id="pgDeadlocksChart"></canvas></div>
         </div>
 
+        <!-- Lock distribution -->
         <div class="chart-card glass-panel" style="padding:0.75rem;">
             <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Lock Wait Distribution</h3></div>
             <div class="chart-container" style="height:140px;"><canvas id="pgLockDistChart"></canvas></div>
         </div>
     </div>
 
-    <!-- Tables -->
-    <div class="grid-row mt-2" style="display:grid; grid-template-columns: 1fr 1fr; gap:0.75rem;">
+    <!-- Blocking Incident History -->
+    <div class="glass-panel mt-2" id="pgIncidentHistoryCard" style="padding:0.75rem;">
+        <div class="card-header flex-between" style="align-items:center;">
+            <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> Blocking Incident History</h3>
+            <span class="text-muted" style="font-size:0.72rem;" id="pgIncidentCount"></span>
+        </div>
+        <div class="table-responsive" style="max-height:200px; overflow-y:auto; margin-top:0.5rem;">
+            <table class="data-table" style="font-size:0.72rem;">
+                <thead>
+                    <tr>
+                        <th>#</th><th>Started</th><th>Duration</th><th>Peak Victims</th>
+                        <th>Root PID</th><th>Status</th><th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="pgIncidentTbody">
+                    <tr><td colspan="7" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Chronic Root Blocker Queries -->
+    <div class="glass-panel mt-2" id="pgChronicBlockersCard" style="padding:0.75rem;">
+        <div class="card-header flex-between" style="align-items:center;">
+            <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-repeat"></i> Chronic Root Blocker Queries</h3>
+            <span class="text-muted" style="font-size:0.72rem;">Top queries most often the root blocker</span>
+        </div>
+        <div class="table-responsive" style="max-height:200px; overflow-y:auto; margin-top:0.5rem;">
+            <table class="data-table" style="font-size:0.72rem;">
+                <thead>
+                    <tr><th>#</th><th>Query (truncated)</th><th>Times</th><th>Total Victims</th><th>Avg (s)</th><th>Max (s)</th></tr>
+                </thead>
+                <tbody id="pgChronicBlockersTbody">
+                    <tr><td colspan="6" class="text-center text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Tables row -->
+    <div class="grid-row mt-2" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
         <div class="table-card glass-panel" style="padding:0.75rem;">
             <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Top Locked Tables</h3></div>
             <div class="table-responsive" style="max-height:200px; overflow-y:auto;">
@@ -157,7 +193,6 @@
         <div class="table-card glass-panel" style="padding:0.75rem;">
             <div class="card-header flex-between">
                 <h3 style="font-size:0.85rem; margin:0;">Blocking Details</h3>
-                <span id="pgBlockingDetailsCapturedAt" class="text-muted" style="font-size:0.65rem;">—</span>
             </div>
             <div class="table-responsive" style="max-height:200px; overflow-y:auto;">
                 <table class="data-table" style="font-size:0.72rem;">
@@ -168,6 +203,7 @@
         </div>
     </div>
 
+    <!-- Raw Locks Manifest -->
     <div class="table-card glass-panel mt-2" style="padding:0.75rem;">
         <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Raw Locks Manifest</h3></div>
         <div class="table-responsive" style="max-height:250px; overflow-y:auto;">

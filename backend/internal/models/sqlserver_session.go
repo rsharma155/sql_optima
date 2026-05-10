@@ -24,4 +24,11 @@ type SQLServerSessionSnapshot struct {
 	Status            string    `json:"status"`
 	QueryHash         []byte    `json:"query_hash"`
 	QueryPlanHash     []byte    `json:"query_plan_hash"`
+
+	// Live Session Fields (NEW - for Live Sessions dashboard)
+	TotalElapsedTimeMs *float64 `json:"total_elapsed_time_ms"` // Duration since session started
+	CPUTimeMs          *float64 `json:"cpu_time_ms"`            // CPU time used by session
+	WaitType           string   `json:"wait_type"`              // Current wait type
+	BlockingSessionID   *int     `json:"blocking_session_id"`    // SPID of blocking session (if any)
+	QueryText          string   `json:"query_text"`             // Current SQL query text
 }

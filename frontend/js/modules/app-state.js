@@ -22,5 +22,7 @@ export const appState = {
     deployment: 'dedicated',
     navigationHistory: [],
     fromTs: null,
-    toTs: null
+    toTs: null,
+    timescaleMetrics: {},
+    liveMetrics: {}
 };

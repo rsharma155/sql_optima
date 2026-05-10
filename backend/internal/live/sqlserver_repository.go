@@ -58,8 +58,8 @@ func (r *SqlServerLiveRepository) GetRunningQueries(ctx context.Context, instanc
 		INNER JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
 		CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
 		WHERE s.is_user_process = 1 AND r.session_id <> @@SPID
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		ORDER BY r.cpu_time DESC 
 		OPTION (RECOMPILE)`
 
@@ -74,8 +74,8 @@ func (r *SqlServerLiveRepository) GetBlockingChains(ctx context.Context, instanc
 			INNER JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
 			WHERE r.blocking_session_id <> 0
 			  AND s.is_user_process = 1
-			  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-			  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+			  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+			  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		)
 		SELECT 
 			b.Blocking_SPID AS Lead_Blocker, 
@@ -137,8 +137,8 @@ func (r *SqlServerLiveRepository) GetConnectionsByApp(ctx context.Context, insta
 			COUNT(DISTINCT login_name) AS unique_logins
 		FROM sys.dm_exec_sessions 
 		WHERE is_user_process = 1
-		  AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		GROUP BY program_name 
 		ORDER BY connection_count DESC
 		OPTION (RECOMPILE)`

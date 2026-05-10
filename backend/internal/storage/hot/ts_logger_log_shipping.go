@@ -95,7 +95,7 @@ func (tl *TimescaleLogger) GetLogShippingHealth(ctx context.Context, instanceNam
 			status,
 			is_primary
 		FROM sqlserver_log_shipping_health
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= NOW() - INTERVAL '1 hour'
 		ORDER BY primary_database, secondary_database, capture_timestamp DESC
 	`

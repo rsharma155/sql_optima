@@ -10,6 +10,7 @@ package repository
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 type PgDeadlockTotalRow struct {
@@ -19,7 +20,7 @@ type PgDeadlockTotalRow struct {
 
 func (c *PgRepository) GetDeadlocksTotalByDB(instanceName string) ([]PgDeadlockTotalRow, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")

@@ -59,15 +59,22 @@ func (c *PgSnapshotCollector) Collect(ctx context.Context, instanceName string) 
 
 	// CPU & Memory
 	cpuUsage := 0.0
+	memoryUsage := 0.0
 	sharedBuffersPct := 0.0
 	cacheHitRatio, _ := c.pgRepo.FetchCacheHitRatioPct(instanceName)
 
-	// Estimate CPU usage based on active connections if no OS collector is present
-	// (Simple approximation: 10% per active session, capped at 100%)
-	if active > 0 {
-		cpuUsage = float64(active) * 10.0
-		if cpuUsage > 100.0 {
-			cpuUsage = 100.0
+	// Fetch detailed system stats if available
+	sysStats, err := c.pgRepo.GetSystemStatsDetail(instanceName)
+	if err == nil && sysStats != nil {
+		cpuUsage = sysStats.CPUUsagePct
+		memoryUsage = sysStats.MemoryUsedPct
+	} else {
+		// Fallback: Estimate CPU usage based on active connections if no OS metrics available
+		if active > 0 {
+			cpuUsage = float64(active) * 10.0
+			if cpuUsage > 100.0 {
+				cpuUsage = 100.0
+			}
 		}
 	}
 	
@@ -175,6 +182,8 @@ func (c *PgSnapshotCollector) Collect(ctx context.Context, instanceName string) 
 	_ = c.healthRepo.LogMetric(ctx, instanceName, "health_score", float64(snapshot.HealthScore))
 	_ = c.healthRepo.LogMetric(ctx, instanceName, "database_size_gb", snapshot.DatabaseSizeGB)
 	_ = c.healthRepo.LogMetric(ctx, instanceName, "temp_bytes_mb", snapshot.TempBytesMB)
+	_ = c.healthRepo.LogMetric(ctx, instanceName, "cpu_usage_pct", cpuUsage)
+	_ = c.healthRepo.LogMetric(ctx, instanceName, "memory_usage_pct", memoryUsage)
 
 	// Additional metrics for Control Center graphs
 	_ = c.healthRepo.LogMetric(ctx, instanceName, "active_sessions_ts", float64(snapshot.ActiveSessions))

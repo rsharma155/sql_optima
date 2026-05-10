@@ -12,9 +12,13 @@ window.PgReplicationView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...', type: 'postgres'};
     const dbName = window.appState.currentDatabase || 'all';
 
+    window.appState.activeViewId = 'pg-replication';
+
     // 1. Initial Shell
     window.routerOutlet.innerHTML = await window.loadTemplate('/pages/replication.html', { inst, dbName });
     
+    window.initPageTimePicker();
+
     // 2. Initial Fetch
     await initPgReplication(inst.name);
 

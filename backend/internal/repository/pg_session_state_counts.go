@@ -9,6 +9,7 @@ package repository
 
 import (
 	"fmt"
+	"strings"
 )
 
 type PgSessionStateCounts struct {
@@ -21,7 +22,7 @@ type PgSessionStateCounts struct {
 
 func (c *PgRepository) GetSessionStateCounts(instanceName string) (*PgSessionStateCounts, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")

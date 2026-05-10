@@ -244,3 +244,32 @@ func (h *PostgresHandlers) LongRunningTransactions(w http.ResponseWriter, r *htt
 
 
 // IndexBloat returns index size and usage signals to help identify bloated or unused indexes.
+
+func (h *PostgresHandlers) WaitSummary(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	summary, err := h.metricsSvc.GetPostgresWaitSummary(r.Context(), instance)
+	if err != nil {
+		log.Printf("[API] PG wait-summary error for %s: %v", instance, err)
+		json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
+		return
+	}
+
+	top, err := h.metricsSvc.GetPostgresTopWaitEvents(r.Context(), instance, 10)
+	if err != nil {
+		log.Printf("[API] PG top-waits error for %s: %v", instance, err)
+		top = make(map[string]int)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance": instance,
+		"categories": summary,
+		"top_events": top,
+	})
+}

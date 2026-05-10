@@ -10,17 +10,13 @@
 <div class="page-view active dashboard-sky-theme pg-sessions-page">
     <!-- Header -->
     <div class="page-title flex-between dashboard-page-title-compact">
-        <div class="dashboard-title-line" style="flex:1; min-width:0; display:flex; align-items:center; gap:1rem;">
-            <button class="btn btn-secondary btn-sm" data-action="navigate-back" title="Back to Control Center">
-                <i class="fa-solid fa-arrow-left"></i>
-            </button>
-            <div>
-                <h1>Sessions & Activity</h1>
-                <span class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></span>
-            </div>
+        <div class="dashboard-title-line" style="flex:1; min-width:0;">
+            <h1><i class="fa-solid fa-clock-rotate-left text-accent"></i> Waits & Sessions <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Control Center" title="Learn more about this dashboard"></i></h1>
+            <p class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></p>
         </div>
         
         <div class="dashboard-page-title-actions dashboard-pg-header-actions" style="gap: 1rem;">
+            <div id="time-picker-insertion-point"></div>
             <!-- Filter -->
             <div class="glass-panel p-2 rounded custom-select-group">
                 <select id="sessionStateFilter" class="custom-select" style="font-size:0.7rem; padding:2px 5px;">
@@ -52,33 +48,33 @@
         </div>
         <div class="dashboard-strip-metrics-row--7">
             <div class="strip-metric-cell" title="Active sessions count.">
-                <div class="strip-metric-label">Active</div>
+                <div class="strip-metric-label">Active <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Active Sessions"></i></div>
                 <div class="strip-metric-value" id="pgSessActiveNow">--</div>
             </div>
             <div class="strip-metric-cell" title="Sessions waiting on events.">
-                <div class="strip-metric-label">Waiting</div>
+                <div class="strip-metric-label">Waiting <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Waiting Sessions"></i></div>
                 <div class="strip-metric-value" id="pgSessWaitingNow">--</div>
             </div>
             <div class="strip-metric-cell" title="Idle in transaction sessions.">
-                <div class="strip-metric-label">Idle in Txn</div>
+                <div class="strip-metric-label">Idle in Txn <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Locks & Blocking" data-metric="Idle-in-Transaction Risk"></i></div>
                 <div class="strip-metric-value" id="pgSessIdleInTxnNow">--</div>
             </div>
             <div class="strip-metric-cell" title="Longest active duration.">
-                <div class="strip-metric-label">Longest Active</div>
+                <div class="strip-metric-label">Longest Active <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Active Sessions"></i></div>
                 <div class="strip-metric-value" id="pgSessLongestActiveDur">--</div>
                 <div class="text-muted sub" id="pgSessLongestActivePid">--</div>
             </div>
             <div class="strip-metric-cell" title="Longest idle-in-transaction duration.">
-                <div class="strip-metric-label">Longest Idle Txn</div>
+                <div class="strip-metric-label">Longest Idle Txn <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Locks & Blocking" data-metric="Idle-in-Transaction Risk"></i></div>
                 <div class="strip-metric-value" id="pgSessLongestIdleInTxnDur">--</div>
                 <div class="text-muted sub" id="pgSessLongestIdleInTxnPid">--</div>
             </div>
             <div class="strip-metric-cell" title="Blocked sessions.">
-                <div class="strip-metric-label">Blocked</div>
+                <div class="strip-metric-label">Blocked <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Blocked Sessions"></i></div>
                 <div class="strip-metric-value" id="pgSessBlockedNow">--</div>
             </div>
             <div class="strip-metric-cell" title="Total connections.">
-                <div class="strip-metric-label">Total</div>
+                <div class="strip-metric-label">Total <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Total Connections"></i></div>
                 <div class="strip-metric-value" id="pgSessTotalNow">--</div>
             </div>
         </div>

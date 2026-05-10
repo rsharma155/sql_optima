@@ -4,7 +4,7 @@
 -- Description: Collects CPU hardware properties - runs daily due to infrequent changes
 
 SELECT /* SQL_OPTIMA */   
-    GETDATE() AS capture_timestamp,
+    GETUTCDATE() AS capture_timestamp,
     @server_instance_name AS server_instance_name,
     osi.cpu_count,
     osi.hyperthread_ratio,

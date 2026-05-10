@@ -1,17 +1,11 @@
 /*
  * SQL Optima — https://github.com/rsharma155/sql_optima
- *
- * Purpose: Best practices configuration audit page.
- *
+ * Purpose: PostgreSQL Best Practices Dashboard Controller
  * Author: Ravi Sharma
  * Copyright (c) 2026 Ravi Sharma
  * SPDX-License-Identifier: MIT
  */
 
-/**
- * PostgreSQL Best Practices: prefers Rule Engine results (Timescale) when available;
- * otherwise pg_settings DBA audit (/api/postgres/best-practices), with optional Timescale snapshot overlay.
- */
 window.PgBestPracticesView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
     if (!inst || inst.type !== 'postgres') {
@@ -19,275 +13,307 @@ window.PgBestPracticesView = async function() {
         return;
     }
 
-    window.routerOutlet.innerHTML = `
-        <div class="page-view active dashboard-sky-theme">
-            <div class="page-title flex-between">
-                <div style="display:flex; align-items:center; gap:1rem;">
-                    <button class="btn btn-secondary btn-sm" data-action="navigate-back" title="Back to Control Center">
-                        <i class="fa-solid fa-arrow-left"></i> Back
-                    </button>
-                    <div>
-                        <h1><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices Dashboard</h1>
-                        <p class="subtitle">Instance: ${window.escapeHtml(inst.name)}</p>
-                    </div>
-                </div>
-                <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgBestPracticesView"><i class="fa-solid fa-refresh"></i> Refresh</button>
-            </div>
-            <div style="display:flex; justify-content:center; align-items:center; height:50vh;">
-                <div class="spinner"></div><span style="margin-left:1rem;">Loading best practices…</span>
-            </div>
-        </div>
-    `;
+    // Load Template
+    if (typeof window.loadTemplate === 'function') {
+        window.routerOutlet.innerHTML = await window.loadTemplate('/pages/pg_best_practices.html');
+    }
+
+    const subtitleEl = document.getElementById('pg-bp-subtitle');
+    if (subtitleEl) subtitleEl.textContent = `Instance: ${inst.name} | PostgreSQL Refined Audit`;
 
     const serverId = inst.id && inst.id !== 0 ? inst.id : window.appState.currentInstanceIdx + 1;
 
-    if (typeof window.renderBestPracticesDashboard === 'function') {
-        try {
-            const rulesResp = await window.apiClient.authenticatedFetch(
-                `/api/rules/best-practices?server_id=${encodeURIComponent(serverId)}`
-            );
-            if (rulesResp.ok) {
-                const ct = rulesResp.headers.get('content-type') || '';
-                if (ct.includes('application/json')) {
-                    const rulesData = await rulesResp.json();
-                    const list = rulesData.best_practices || [];
-                    if (list.length > 0) {
-                        window.renderBestPracticesDashboard(inst, rulesData);
-                        return;
-                    }
-                }
-            }
-        } catch (e) {
-            console.warn('[PgBestPractices] Rule engine path skipped:', e);
-        }
-    }
-
     try {
         const response = await window.apiClient.authenticatedFetch(
-            `/api/postgres/best-practices?instance=${encodeURIComponent(inst.name)}`
+            `/api/rules/best-practices?server_id=${serverId}&db_type=postgres`
         );
+        
         if (!response.ok) {
+            // Fallback to live pg_settings audit if rule engine is not populated
+            if (response.status === 404 || response.status === 400) {
+                return renderPgFallbackAudit(inst);
+            }
             throw new Error(`HTTP ${response.status}`);
         }
 
-        const contentType = response.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-            const text = await response.text();
-            console.error('Best Practices API returned non-JSON:', text.substring(0, 200));
-            throw new Error('Server returned non-JSON response');
-        }
-
         const data = await response.json();
-        const srcHeader = response.headers.get('X-Data-Source') || data.data_source || '';
-        renderPgSettingsBestPracticesAudit(inst, data, srcHeader);
+        window._pgBpData = data.best_practices || [];
+        renderPgRefinedBestPractices(inst, window._pgBpData);
+        initPgBpFilters();
     } catch (error) {
         console.error('[PgBestPractices] Error:', error);
-        window.routerOutlet.innerHTML = `
-            <div class="page-view active dashboard-sky-theme">
-                <div class="page-title">
-                    <h1><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices Dashboard</h1>
-                    <p class="subtitle">Instance: ${window.escapeHtml(inst.name)}</p>
+        const container = document.getElementById('pg-bp-sections');
+        if (container) {
+            container.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="fa-solid fa-exclamation-triangle"></i> Failed to load best practices: ${window.escapeHtml(error.message)}
                 </div>
-                <div class="alert alert-danger mt-3">
-                    <i class="fa-solid fa-exclamation-triangle"></i> Failed to load best practices data: ${window.escapeHtml(error.message)}
-                </div>
-            </div>
-        `;
+            `;
+        }
     }
 };
 
-function pgBpMapStatusForDrawer(status) {
-    const u = (status || '').toUpperCase();
-    if (u === 'RED') return 'CRITICAL';
-    if (u === 'YELLOW') return 'WARNING';
-    return 'OK';
+function initPgBpFilters() {
+    const searchInput = document.getElementById('pg-bp-search');
+    const categorySelect = document.getElementById('pg-bp-filter-category');
+    const statusButtons = document.querySelectorAll('[data-filter="status"]');
+
+    if (!searchInput || !categorySelect) return;
+
+    // Populate categories
+    const categories = [...new Set(window._pgBpData.map(r => r.category || 'General'))].sort();
+    categorySelect.innerHTML = '<option value="all">All</option>' + 
+        categories.map(c => `<option value="${window.escapeHtml(c)}">${window.escapeHtml(c)}</option>`).join('');
+
+    const filterFn = () => {
+        const searchTerm = searchInput.value.toLowerCase();
+        const category = categorySelect.value;
+        const activeStatusBtn = document.querySelector('[data-filter="status"].active');
+        const status = activeStatusBtn ? activeStatusBtn.getAttribute('data-value') : 'all';
+
+        const filtered = window._pgBpData.filter(r => {
+            const matchesSearch = !searchTerm || 
+                (r.rule_name && r.rule_name.toLowerCase().includes(searchTerm)) || 
+                (r.description && r.description.toLowerCase().includes(searchTerm)) ||
+                (r.category && r.category.toLowerCase().includes(searchTerm));
+            
+            const matchesCategory = category === 'all' || r.category === category;
+            
+            const matchesStatus = status === 'all' || (r.status || 'OK').toUpperCase() === status.toUpperCase();
+
+            return matchesSearch && matchesCategory && matchesStatus;
+        });
+
+        const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+        renderPgRefinedBestPractices(inst, filtered, true); // true = partial render
+    };
+
+    searchInput.addEventListener('input', filterFn);
+    categorySelect.addEventListener('change', filterFn);
+    statusButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            statusButtons.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            filterFn();
+        });
+    });
 }
 
-function pgBpEffectiveValueCell(check) {
-    const cur = (check.current_value || '').trim();
-    const def = (check.default_value || '').trim();
-    if (!cur) {
-        return `<td><span class="text-muted" style="font-size:0.7rem;">N/A</span></td>`;
+function renderPgRefinedBestPractices(inst, rules, isPartial = false) {
+    const container = document.getElementById('pg-bp-sections');
+    if (!container) return;
+
+    // Only update KPIs and Health on initial full load
+    if (!isPartial) {
+        // 1. Calculate Counts (Global)
+        const counts = {
+            CRITICAL: rules.filter(r => r.status === 'CRITICAL').length,
+            WARNING: rules.filter(r => r.status === 'WARNING').length,
+            OK: rules.filter(r => r.status === 'OK').length,
+            INFO: rules.filter(r => r.status === 'INFO').length,
+            NA: rules.filter(r => (r.status === 'N/A' || r.status === 'NA')).length
+        };
+
+        document.getElementById('pg-bp-count-critical').textContent = counts.CRITICAL;
+        document.getElementById('pg-bp-count-warning').textContent = counts.WARNING;
+        document.getElementById('pg-bp-count-passed').textContent = counts.OK;
+        document.getElementById('pg-bp-count-na').textContent = counts.NA;
+
+        // 2. Calculate Health Score
+        const totalRelevant = rules.length - counts.NA - counts.INFO;
+        const score = totalRelevant > 0 
+            ? Math.round(((counts.OK + (counts.WARNING * 0.5)) / totalRelevant) * 100)
+            : 100;
+
+        const scoreEl = document.getElementById('pg-health-score');
+        if (scoreEl) scoreEl.textContent = score + '%';
+        
+        const labelEl = document.getElementById('pg-health-label');
+        if (labelEl) {
+            labelEl.className = 'badge ' + (score > 85 ? 'badge-success' : score > 65 ? 'badge-warning' : 'badge-danger');
+            labelEl.textContent = score > 85 ? 'Excellent' : score > 65 ? 'Fair' : 'Needs Attention';
+        }
+
+        // 3. Render Health Ring
+        initHealthRing('pg-health-ring', score);
     }
-    const same = !def || def === 'N/A' || cur === def;
-    const sub = same
-        ? '<div class="text-muted" style="font-size:0.62rem;margin-top:4px;line-height:1.35">Same as <code>reset_val</code> (on-disk default): running value matches what a reload would keep.</div>'
-        : `<div class="text-muted" style="font-size:0.62rem;margin-top:4px;line-height:1.35"><strong>Drift:</strong> on-disk reset target is <code style="font-size:0.65rem;">${window.escapeHtml(def)}</code> — live <code>setting</code> differs until reload/restart.</div>`;
-    return `<td><code style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;font-size:0.7rem;">${window.escapeHtml(cur)}</code>${sub}</td>`;
-}
 
-function renderPgSettingsBestPracticesAudit(inst, data, sourceHeader) {
-    const checks = data.server_config || [];
-
-    if (checks.length === 0) {
-        window.routerOutlet.innerHTML = `
-            <div class="page-view active dashboard-sky-theme">
-                <div class="page-title">
-                    <h1><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices Dashboard</h1>
-                    <p class="subtitle">Instance: ${window.escapeHtml(inst.name)}</p>
-                </div>
-                <div class="alert alert-warning mt-3">
-                    <i class="fa-solid fa-info-circle"></i> No configuration checks available. Ensure the PostgreSQL instance is reachable and pg_settings can be read.
-                </div>
-            </div>
-        `;
+    if (rules.length === 0) {
+        container.innerHTML = `<div class="alert alert-warning">No matching best practice rules found.</div>`;
         return;
     }
 
-    const redCount = checks.filter(c => c.status === 'RED').length;
-    const yellowCount = checks.filter(c => c.status === 'YELLOW').length;
-    const greenCount = checks.filter(c => c.status === 'GREEN').length;
-
-    const snap = data.snapshot_captured_at
-        ? `Timescale snapshot: ${window.escapeHtml(data.snapshot_captured_at)}`
-        : '';
-    const subParts = [
-        `Instance: ${window.escapeHtml(inst.name)}`,
-        'pg_settings audit (built-in DBA rules)',
-        snap
-    ].filter(Boolean);
-
+    // 4. Group by Category
     const categories = {};
-    checks.forEach(check => {
-        const cat = check.category || 'Other';
+    rules.forEach(r => {
+        const cat = r.category || 'General';
         if (!categories[cat]) categories[cat] = [];
-        categories[cat].push(check);
+        categories[cat].push(r);
     });
 
-    let html = `
-        <div class="page-view active dashboard-sky-theme">
-            <div class="page-title flex-between">
-                <div>
-                    <h1><i class="fa-solid fa-list-check text-accent"></i> Best Practices Dashboard</h1>
-                    <p class="subtitle">${subParts.join(' · ')}</p>
-                </div>
-                <div style="display:flex; align-items:center; gap:1rem;">
-                    ${typeof window.renderStatusStrip === 'function' ? window.renderStatusStrip({ lastUpdateId: 'pgBpLastRefreshTime', sourceBadgeId: 'pgBpDataSourceBadge', includeHealth: false, includeFreshness: false, autoRefreshText: '' }) : ''}
-                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgBestPracticesView"><i class="fa-solid fa-refresh"></i> Refresh</button>
-                </div>
-            </div>
+    // 5. Build HTML
+    let html = '';
+    const sortedCats = Object.keys(categories).sort();
+    
+    if (sortedCats.length === 0) {
+        container.innerHTML = `<div class="alert alert-warning">No visible best practice rules found for this instance.</div>`;
+        return;
+    }
 
-            <div class="metrics-row" style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:0.75rem; margin-top:0.75rem;">
-                <div class="metric-card glass-panel" style="padding:0.4rem 0.6rem; background:linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);">
-                    <div class="metric-header"><span class="metric-title" style="font-size:0.7rem; color:#991b1b;">Critical</span><i class="fa-solid fa-circle-xclamation card-icon" style="color:#991b1b;"></i></div>
-                    <div class="metric-value" style="font-size:1.25rem !important; font-weight:bold !important; color:#991b1b !important;">${redCount}</div>
-                    <div class="metric-trend" style="font-size:0.65rem; color:#991b1b;"><i class="fa-solid fa-triangle-exclamation"></i> Require immediate attention</div>
-                </div>
-                <div class="metric-card glass-panel" style="padding:0.4rem 0.6rem; background:linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);">
-                    <div class="metric-header"><span class="metric-title" style="font-size:0.7rem; color:#92400e;">Warnings</span><i class="fa-solid fa-triangle-exclamation card-icon" style="color:#92400e;"></i></div>
-                    <div class="metric-value" style="font-size:1.25rem !important; font-weight:bold !important; color:#92400e !important;">${yellowCount}</div>
-                    <div class="metric-trend" style="font-size:0.65rem; color:#92400e;"><i class="fa-solid fa-exclamation-circle"></i> Suboptimal configuration</div>
-                </div>
-                <div class="metric-card glass-panel" style="padding:0.4rem 0.6rem; background:linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);">
-                    <div class="metric-header"><span class="metric-title" style="font-size:0.7rem; color:#166534;">Passed</span><i class="fa-solid fa-circle-check card-icon" style="color:#166534;"></i></div>
-                    <div class="metric-value" style="font-size:1.25rem !important; font-weight:bold !important; color:#166534 !important;">${greenCount}</div>
-                    <div class="metric-trend" style="font-size:0.65rem; color:#166534;"><i class="fa-solid fa-check"></i> OK for these rules</div>
-                </div>
-            </div>
+    sortedCats.forEach(cat => {
+        const catRules = categories[cat];
+        if (catRules.length === 0) return;
 
-            <p class="text-muted" style="font-size:0.72rem; margin:0.75rem 0 0 0; line-height:1.4;">
-                <strong>Effective value</strong> is live <code>pg_settings.setting</code>. The note under it compares to <code>reset_val</code> (file/on-disk default).
-                Severity uses fixed PostgreSQL built-in baselines (e.g. 128MB for <code>shared_buffers</code>), not “current ≤ reset”.
-            </p>
-    `;
-
-    Object.keys(categories).sort().forEach(category => {
-        const catChecks = categories[category];
-        const catRed = catChecks.filter(c => c.status === 'RED').length;
-        const catYel = catChecks.filter(c => c.status === 'YELLOW').length;
-        const catBadge = catRed > 0 ? 'danger' : catYel > 0 ? 'warning' : 'success';
+        const catPassed = catRules.filter(r => r.status === 'OK').length;
+        const catPct = Math.round((catPassed / catRules.length) * 100);
 
         html += `
-            <div class="table-card glass-panel mt-3" style="padding:0.75rem;">
-                <div class="card-header" data-action="toggle-section" style="cursor:pointer;">
-                    <h3 style="font-size:0.85rem; margin:0; display:flex; align-items:center; gap:0.5rem;">
-                        <i class="fa-solid fa-chevron-up fa-chevron" style="transition:transform 0.2s;"></i>
-                        <span class="text-accent">${window.escapeHtml(category)}</span>
-                        <span class="badge badge-${catBadge}" style="font-size:0.65rem;">${catChecks.length}</span>
+            <div class="table-card glass-panel mb-3" style="padding:0.75rem; border-top: 2px solid var(--accent);">
+                <div class="card-header flex-between mb-2" style="border-bottom:1px solid var(--border-color); padding-bottom:0.4rem;">
+                    <h3 style="font-size:0.85rem; margin:0; display:flex; align-items:center; gap:0.4rem;">
+                        <span class="text-accent" style="text-transform:uppercase; letter-spacing:0.5px;">${window.escapeHtml(cat)}</span>
+                        <span class="text-muted" style="font-size:0.65rem;">(${catRules.length})</span>
                     </h3>
+                    <div style="width:100px;">
+                        <div class="progress" style="height:4px; background:var(--bg-tertiary);">
+                            <div class="progress-bar ${catPct === 100 ? 'bg-success' : 'bg-accent'}" style="width:${catPct}%"></div>
+                        </div>
+                    </div>
                 </div>
-                <div class="table-responsive" style="max-height:420px; overflow-y:auto;">
-                    <table class="data-table" style="font-size:0.75rem; width:100%; table-layout:fixed;">
-                        <thead>
-                            <tr>
-                                <th style="width:44px; text-align:center;">Status</th>
-                                <th style="width:22%;">Parameter</th>
-                                <th style="width:30%;">Effective value</th>
-                                <th style="width:28%;">Guidance</th>
-                                <th style="width:80px; text-align:center;">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
+                <div style="display:grid; grid-template-columns: 1fr; gap:0.5rem;">
         `;
 
-        catChecks.forEach(check => {
-            let statusIcon = '';
-            let statusClass = '';
-            if (check.status === 'RED') {
-                statusIcon = '<i class="fa-solid fa-circle-xmark" style="color:#dc2626;"></i>';
-                statusClass = 'style="background:rgba(239,68,68,0.05);"';
-            } else if (check.status === 'YELLOW') {
-                statusIcon = '<i class="fa-solid fa-triangle-exclamation" style="color:#d97706;"></i>';
-                statusClass = 'style="background:rgba(245,158,11,0.05);"';
-            } else {
-                statusIcon = '<i class="fa-solid fa-circle-check" style="color:#16a34a;"></i>';
-            }
-
-            const msgColor = check.status === 'RED' ? '#b91c1c' : check.status === 'YELLOW' ? '#b45309' : 'var(--text-muted)';
-            const drawerId = 'pgbp-' + Math.random().toString(36).slice(2, 11);
-            window._drawerData = window._drawerData || {};
-            window._drawerData[drawerId] = {
-                ruleName: check.configuration_name || '',
-                description: check.message || '',
-                fixScript: check.remediation_sql || '',
-                currentValue: check.current_value || '',
-                recommendedValue: (check.default_value && check.default_value !== check.current_value) ? ('reset_val target: ' + check.default_value) : 'Same as effective (no drift vs reset_val)',
-                status: pgBpMapStatusForDrawer(check.status)
-            };
-
-            html += `
-                <tr ${statusClass}>
-                    <td style="text-align:center; font-size:1rem;">${statusIcon}</td>
-                    <td style="word-wrap:break-word;"><strong style="font-family:monospace; font-size:0.72rem;">${window.escapeHtml(check.configuration_name)}</strong></td>
-                    ${pgBpEffectiveValueCell(check)}
-                    <td style="color:${msgColor}; font-size:0.72rem; word-wrap:break-word;">${window.escapeHtml(check.message)}</td>
-                    <td style="text-align:center;">
-                        <button type="button" class="btn btn-xs btn-outline" data-action="call" data-fn="showRuleDrawerById" data-arg="${drawerId}">
-                            <i class="fa-solid fa-info-circle"></i> Details
-                        </button>
-                    </td>
-                </tr>
-            `;
+        catRules.forEach(rule => {
+            html += renderRuleRow(rule);
         });
 
         html += `
-                        </tbody>
-                    </table>
                 </div>
             </div>
         `;
     });
 
-    html += `
-            <div class="table-footer glass-panel mt-2" style="padding:0.5rem 0.75rem;">
-                <small class="text-muted" style="line-height:1.4;">
-                    ${redCount > 0 ? '<span style="color:#b91c1c;"><i class="fa-solid fa-circle-xmark"></i> ' + redCount + ' critical</span> · ' : ''}
-                    ${yellowCount > 0 ? '<span style="color:#b45309;"><i class="fa-solid fa-triangle-exclamation"></i> ' + yellowCount + ' warnings</span> · ' : ''}
-                    <span style="color:#166534;"><i class="fa-solid fa-circle-check"></i> ${greenCount} passed</span>
-                    &nbsp;|&nbsp;Total: ${checks.length} checks
-                </small>
+    container.innerHTML = html || `<div class="alert alert-warning">No matching rules found.</div>`;
+}
+
+function renderRuleRow(rule) {
+    const status = (rule.status || 'OK').toUpperCase();
+    let statusConfig = {
+        icon: 'fa-circle-check',
+        color: 'var(--success)',
+        bg: 'rgba(34,197,94,0.05)',
+        label: 'PASSED'
+    };
+
+    if (status === 'CRITICAL') {
+        statusConfig = { icon: 'fa-circle-xmark', color: 'var(--danger)', bg: 'rgba(239,68,68,0.05)', label: 'CRITICAL' };
+    } else if (status === 'WARNING') {
+        statusConfig = { icon: 'fa-triangle-exclamation', color: 'var(--warning)', bg: 'rgba(245,158,11,0.05)', label: 'WARNING' };
+    } else if (status === 'INFO') {
+        statusConfig = { icon: 'fa-circle-info', color: 'var(--accent)', bg: 'rgba(59,130,246,0.05)', label: 'INFO' };
+    } else if (status === 'N/A') {
+        statusConfig = { icon: 'fa-circle-minus', color: 'var(--text-muted)', bg: 'rgba(107,114,128,0.05)', label: 'N/A' };
+    }
+
+    const confidence = (rule.confidence || 'context_dependent').toLowerCase();
+    const confLabel = confidence.replace('_', '-').charAt(0).toUpperCase() + confidence.replace('_', '-').slice(1);
+    const confClass = confidence === 'definitive' ? 'badge-success' : confidence === 'informational' ? 'badge-info' : 'badge-warning';
+
+    // Parse Context Tags
+    let tagsHtml = '';
+    if (rule.context_tags) {
+        try {
+            const tags = typeof rule.context_tags === 'string' ? JSON.parse(rule.context_tags) : rule.context_tags;
+            Object.entries(tags).forEach(([k, v]) => {
+                tagsHtml += `<span class="badge" style="font-size:0.6rem; background:var(--bg-tertiary); color:var(--text-muted); border:1px solid var(--border-color);">${k}:${v}</span> `;
+            });
+        } catch (e) { /* ignore */ }
+    }
+
+    const drawerId = 'rule-' + Math.random().toString(36).substr(2, 9);
+    window._drawerData = window._drawerData || {};
+    window._drawerData[drawerId] = {
+        ruleName: rule.rule_name,
+        description: rule.description,
+        fixScript: rule.fix_script || rule.fix_script_pg,
+        currentValue: rule.current_value,
+        recommendedValue: rule.recommended_value,
+        status: status
+    };
+
+    return `
+        <div class="rule-row glass-panel" style="display:grid; grid-template-columns: 48px 1fr 120px 80px; align-items:center; padding:0.75rem; background:${statusConfig.bg}; border:1px solid var(--border-color);">
+            <div style="text-align:center; font-size:1.2rem; color:${statusConfig.color};">
+                <i class="fa-solid ${statusConfig.icon}"></i>
+            </div>
+            <div>
+                <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                    <strong style="font-size:0.8rem; color:var(--text-main);">${window.escapeHtml(rule.rule_name)}</strong>
+                    <span class="badge ${confClass}" style="font-size:0.6rem; text-transform:uppercase;">${confLabel}</span>
+                    ${tagsHtml}
+                </div>
+                <div class="text-muted" style="font-size:0.7rem; margin-top:0.25rem;">${window.escapeHtml(rule.description)}</div>
+            </div>
+            <div style="text-align:center;">
+                <div style="font-size:0.6rem; color:var(--text-muted); text-transform:uppercase;">Current</div>
+                <code style="font-size:0.75rem; color:var(--text-main);">${window.escapeHtml(rule.current_value || '-')}</code>
+            </div>
+            <div style="text-align:right;">
+                <button class="btn btn-xs btn-outline" data-action="call" data-fn="showRuleDrawerById" data-arg="${drawerId}">
+                    <i class="fa-solid fa-circle-info"></i> Details
+                </button>
             </div>
         </div>
     `;
+}
 
-    window.routerOutlet.innerHTML = html;
-
-    setTimeout(() => {
-        const tEl = document.getElementById('pgBpLastRefreshTime');
-        if (tEl) tEl.textContent = new Date().toLocaleTimeString();
-        if (window.updateSourceBadge) {
-            const raw = (sourceHeader || data.data_source || '').toString().trim().toLowerCase();
-            window.updateSourceBadge('pgBpDataSourceBadge', raw || 'live');
+function initHealthRing(canvasId, score) {
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    const color = score > 85 ? '#22c55e' : score > 65 ? '#f59e0b' : '#ef4444';
+    
+    if (window.pgHealthChart) window.pgHealthChart.destroy();
+    
+    window.pgHealthChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            datasets: [{
+                data: [score, 100 - score],
+                backgroundColor: [color, 'rgba(0,0,0,0.05)'],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            cutout: '80%',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { tooltip: { enabled: false }, legend: { display: false } }
         }
-    }, 0);
+    });
+}
+
+async function renderPgFallbackAudit(inst) {
+    const container = document.getElementById('pg-bp-sections');
+    container.innerHTML = `<div style="text-align:center; padding:2rem;"><div class="spinner"></div><p class="mt-2">Falling back to live pg_settings audit...</p></div>`;
+    
+    try {
+        const response = await window.apiClient.authenticatedFetch(`/api/postgres/best-practices?instance=${encodeURIComponent(inst.name)}`);
+        const data = await response.json();
+        const checks = data.server_config || [];
+        
+        // Map legacy checks to the new refined structure
+        const mappedRules = checks.map(c => ({
+            rule_name: c.configuration_name,
+            category: c.category,
+            status: c.status === 'RED' ? 'CRITICAL' : c.status === 'YELLOW' ? 'WARNING' : 'OK',
+            description: c.message,
+            current_value: c.current_value,
+            recommended_value: c.default_value,
+            confidence: 'definitive',
+            context_tags: { source: 'live_audit' }
+        }));
+        
+        renderPgRefinedBestPractices(inst, { best_practices: mappedRules });
+    } catch (e) {
+        container.innerHTML = `<div class="alert alert-danger">Live audit failed: ${e.message}</div>`;
+    }
 }

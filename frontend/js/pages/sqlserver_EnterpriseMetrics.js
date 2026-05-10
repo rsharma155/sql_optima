@@ -25,27 +25,26 @@ window.EnterpriseMetricsView = async function() {
     window.routerOutlet.innerHTML = await window.loadTemplate('/pages/sqlserver_enterprise_metrics_v2.html');
     document.getElementById('emInstanceName').textContent = inst.name;
 
-    // Time picker setup
-    const fromEl = document.getElementById('emFrom');
-    const toEl = document.getElementById('emTo');
-    const now = new Date();
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    
+    // Standard Time picker setup
+    window.initPageTimePicker();
+    const fromEl = document.getElementById('from-ts');
+    const toEl = document.getElementById('to-ts');
+    const refreshBtn = document.getElementById('global-refresh-btn');
+
     const pad = (n) => String(n).padStart(2, '0');
     const fmtLocal = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     
-    fromEl.value = fmtLocal(oneHourAgo);
-    toEl.value = fmtLocal(now);
-
     window.emSetRange = (hours) => {
         const t = new Date();
         const f = new Date(t.getTime() - hours * 60 * 60 * 1000);
-        fromEl.value = fmtLocal(f);
-        toEl.value = fmtLocal(t);
+        if (fromEl) fromEl.value = fmtLocal(f);
+        if (toEl) toEl.value = fmtLocal(t);
+        window.appState.fromTs = fromEl ? fromEl.value : window.appState.fromTs;
+        window.appState.toTs = toEl ? toEl.value : window.appState.toTs;
         loadData();
     };
 
-    document.getElementById('emApplyRange').onclick = loadData;
+    if (refreshBtn) refreshBtn.onclick = loadData;
 
     // Chart state
     window._emCharts = window._emCharts || {};

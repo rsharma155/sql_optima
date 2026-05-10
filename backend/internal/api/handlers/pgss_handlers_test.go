@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -448,5 +449,214 @@ func TestPgssWorkload_SetsJSONContentType(t *testing.T) {
 	ct := rr.Header().Get("Content-Type")
 	if ct != "application/json" {
 		t.Fatalf("want Content-Type=application/json, got %q", ct)
+	}
+}
+
+// ---- New handler tests: PgssFilters ----
+
+func TestPgssFilters_MissingInstance(t *testing.T) {
+	h := NewPostgresHandlers(&service.MetricsService{}, &config.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/filters", nil)
+	rr := httptest.NewRecorder()
+	h.PgssFilters(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want %d, got %d", http.StatusBadRequest, rr.Code)
+	}
+}
+
+func TestPgssFilters_InstanceNotFound(t *testing.T) {
+	h := NewPostgresHandlers(&service.MetricsService{}, pgCfg())
+	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/filters?instance=ghost", nil)
+	rr := httptest.NewRecorder()
+	h.PgssFilters(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("want %d, got %d", http.StatusNotFound, rr.Code)
+	}
+}
+
+func TestPgssFilters_WrongInstanceType(t *testing.T) {
+	h := NewPostgresHandlers(&service.MetricsService{}, sqlserverCfg())
+	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/filters?instance=ms-test", nil)
+	rr := httptest.NewRecorder()
+	h.PgssFilters(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want %d, got %d", http.StatusBadRequest, rr.Code)
+	}
+}
+
+func TestPgssFilters_NilTsLogger_Returns200(t *testing.T) {
+	h := NewPostgresHandlers(&service.MetricsService{}, pgCfg())
+	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/filters?instance=pg-test", nil)
+	rr := httptest.NewRecorder()
+	h.PgssFilters(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var resp models.PgssFilterOptions
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp.Instance != "pg-test" {
+		t.Fatalf("want instance=pg-test, got %q", resp.Instance)
+	}
+}
+
+// ---- New handler tests: PgssDbBreakdown ----
+
+func TestPgssDbBreakdown_MissingInstance(t *testing.T) {
+	h := NewPostgresHandlers(&service.MetricsService{}, &config.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/by-database", nil)
+	rr := httptest.NewRecorder()
+	h.PgssDbBreakdown(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want %d, got %d", http.StatusBadRequest, rr.Code)
+	}
+}
+
+func TestPgssDbBreakdown_NilTsLogger_Returns200(t *testing.T) {
+	h := NewPostgresHandlers(&service.MetricsService{}, pgCfg())
+	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/by-database?instance=pg-test", nil)
+	rr := httptest.NewRecorder()
+	h.PgssDbBreakdown(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var resp models.PgssDbBreakdownResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp.Instance != "pg-test" {
+		t.Fatalf("want instance=pg-test, got %q", resp.Instance)
+	}
+}
+
+// ---- New handler tests: PgssUserBreakdown ----
+
+func TestPgssUserBreakdown_MissingInstance(t *testing.T) {
+	h := NewPostgresHandlers(&service.MetricsService{}, &config.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/by-user", nil)
+	rr := httptest.NewRecorder()
+	h.PgssUserBreakdown(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want %d, got %d", http.StatusBadRequest, rr.Code)
+	}
+}
+
+func TestPgssUserBreakdown_NilTsLogger_Returns200(t *testing.T) {
+	h := NewPostgresHandlers(&service.MetricsService{}, pgCfg())
+	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/by-user?instance=pg-test", nil)
+	rr := httptest.NewRecorder()
+	h.PgssUserBreakdown(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var resp models.PgssUserBreakdownResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp.Instance != "pg-test" {
+		t.Fatalf("want instance=pg-test, got %q", resp.Instance)
+	}
+}
+
+// ---- Filter param sanitization tests ----
+
+func TestSanitizeFilterParam_AllowsAlphanumericAndSymbols(t *testing.T) {
+	cases := []struct{ input, want string }{
+		{"mydb", "mydb"},
+		{"app_user", "app_user"},
+		{"app-user@domain.com", "app-user@domain.com"},
+		{"test123", "test123"},
+		{"'; DROP TABLE users;--", "DROPTABLEusers--"},
+		{"<script>alert(1)</script>", "scriptalert1script"},
+		{"normal_db_01", "normal_db_01"},
+	}
+	for _, tc := range cases {
+		if got := sanitizeFilterParam(tc.input); got != tc.want {
+			t.Errorf("sanitizeFilterParam(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestSanitizeQueryType_Allowlist(t *testing.T) {
+	valid := []string{"S", "I", "U", "D", "E", "O", "s", "i", "u", "d", "e", "o"}
+	for _, v := range valid {
+		if got := sanitizeQueryType(v); got == "" {
+			t.Errorf("sanitizeQueryType(%q) rejected valid type", v)
+		}
+	}
+	invalid := []string{"X", "SELECT", "'; DROP--", "", " S", "SS"}
+	for _, v := range invalid {
+		if got := sanitizeQueryType(v); got != "" && v != "S" && v != " S" {
+			t.Errorf("sanitizeQueryType(%q) = %q, want empty for invalid", v, got)
+		}
+	}
+}
+
+func TestPgssTop_WithFilterParams_Returns200(t *testing.T) {
+	h := NewPostgresHandlers(&service.MetricsService{}, pgCfg())
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/postgres/pgss/top?instance=pg-test&db_name=mydb&username=app_user&query_type=S", nil)
+	rr := httptest.NewRecorder()
+	h.PgssTop(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rr.Code)
+	}
+	var resp models.PgssTopQueriesResponse
+	json.NewDecoder(rr.Body).Decode(&resp)
+	if resp.Instance != "pg-test" {
+		t.Fatalf("want instance=pg-test, got %q", resp.Instance)
+	}
+}
+
+func TestPgssTop_SQLInjectionInFilterParam_Returns200(t *testing.T) {
+	h := NewPostgresHandlers(&service.MetricsService{}, pgCfg())
+	// URL-encode the injection string so httptest.NewRequest can parse it
+	params := url.Values{}
+	params.Set("instance", "pg-test")
+	params.Set("db_name", "'; DROP TABLE pgss_delta_1m;--")
+	req := httptest.NewRequest(http.MethodGet, "/api/postgres/pgss/top?"+params.Encode(), nil)
+	rr := httptest.NewRecorder()
+	h.PgssTop(rr, req)
+	// Should return 200 (sanitized), not 500
+	if rr.Code == http.StatusInternalServerError {
+		t.Fatal("SQL injection in filter param must not cause 500")
+	}
+}
+
+// ---- New model struct tests ----
+
+func TestPgssFilterOptionsStructFields(t *testing.T) {
+	opts := models.PgssFilterOptions{
+		Instance:  "pg-test",
+		Databases: []string{"app_db", "analytics_db"},
+		Users:     []string{"app_user"},
+		AppNames:  []string{"myapp"},
+	}
+	if opts.Instance != "pg-test" {
+		t.Fatal("Instance field missing or wrong")
+	}
+	if len(opts.Databases) != 2 {
+		t.Fatal("Databases field count wrong")
+	}
+}
+
+func TestPgssDbBreakdownStructFields(t *testing.T) {
+	r := models.PgssDbBreakdown{
+		DbName: "app_db", TotalExecMs: 1000.0, PctOfServer: 45.5,
+		TotalCalls: 500, AvgMs: 2.0, CacheHitPct: 99.1, UniqueQueryIDs: 25,
+	}
+	if r.UniqueQueryIDs != 25 {
+		t.Fatal("UniqueQueryIDs field missing")
+	}
+}
+
+func TestPgssUserBreakdownStructFields(t *testing.T) {
+	r := models.PgssUserBreakdown{
+		UserName: "app_user", TotalExecMs: 500.0, PctOfServer: 22.5,
+		TotalCalls: 250, AvgMs: 2.0, UniqueQueryIDs: 15,
+	}
+	if r.PctOfServer != 22.5 {
+		t.Fatal("PctOfServer field missing")
 	}
 }

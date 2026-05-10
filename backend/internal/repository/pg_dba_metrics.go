@@ -12,6 +12,7 @@ package repository
 import (
 	"fmt"
 	"log"
+	"strings"
 )
 
 // DBObservationMetrics holds critical DBA-focused health metrics for PostgreSQL
@@ -29,14 +30,14 @@ func (c *PgRepository) FetchDBObservationMetrics(instanceName string) (*DBObserv
 	metrics := &DBObservationMetrics{}
 
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
 		log.Printf("[POSTGRES] FetchDBObservationMetrics: connection not found for %s, attempting reconnect", instanceName)
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 			if !ok || db == nil {
 				return nil, fmt.Errorf("connection not found after reconnect")

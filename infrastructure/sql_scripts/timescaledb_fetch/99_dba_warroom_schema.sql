@@ -76,38 +76,6 @@ BEGIN
 END
 $$;
 
--- Verify sqlserver_top_queries table exists, if not create it
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'sqlserver_top_queries') THEN
-        CREATE TABLE IF NOT EXISTS sqlserver_top_queries (
-            capture_timestamp TIMESTAMPTZ NOT NULL,
-            server_instance_name TEXT NOT NULL,
-            login_name TEXT,
-            program_name TEXT,
-            database_name TEXT,
-            query_text TEXT,
-            wait_type TEXT,
-            cpu_time_ms DOUBLE PRECISION DEFAULT 0,
-            exec_time_ms DOUBLE PRECISION DEFAULT 0,
-            logical_reads BIGINT DEFAULT 0,
-            execution_count BIGINT DEFAULT 0,
-            query_hash TEXT,
-            inserted_at TIMESTAMPTZ DEFAULT NOW()
-        );
-        
-        SELECT create_hypertable('sqlserver_top_queries', 'capture_timestamp', 
-            chunk_time_interval => INTERVAL '1 day',
-            if_not_exists => TRUE);
-            
-        CREATE INDEX IF NOT EXISTS idx_top_queries_server_time 
-            ON sqlserver_top_queries (server_instance_name, capture_timestamp DESC);
-            
-        CREATE INDEX IF NOT EXISTS idx_top_queries_hash 
-            ON sqlserver_top_queries (query_hash, capture_timestamp DESC);
-    END IF;
-END
-$$;
 
 -- View 1: Hourly Wait Stats Baseline
 -- Groups wait statistics by 1-hour buckets to establish baseline patterns
@@ -141,19 +109,19 @@ SELECT add_continuous_aggregate_policy('hourly_wait_stats_baseline',
 CREATE MATERIALIZED VIEW IF NOT EXISTS hourly_query_performance_baseline
 WITH (timescaledb.continuous) AS
 SELECT 
-    time_bucket('1 hour', capture_timestamp) AS time,
-    server_instance_name,
+    time_bucket('1 hour', ts) AS time,
+    instance_id AS server_instance_name,
     query_hash,
-    AVG(exec_time_ms) AS avg_exec_time_ms,
-    SUM(execution_count) AS total_execution_count,
-    AVG(cpu_time_ms) AS avg_cpu_time_ms,
-    AVG(logical_reads) AS avg_logical_reads,
+    AVG(total_elapsed_ms / NULLIF(total_executions, 0)) AS avg_exec_time_ms,
+    SUM(total_executions) AS total_execution_count,
+    AVG(total_cpu_ms / NULLIF(total_executions, 0)) AS avg_cpu_time_ms,
+    AVG(total_logical_reads / NULLIF(total_executions, 0)) AS avg_logical_reads,
     COUNT(*) AS sample_count,
-    MIN(query_text) AS sample_query_text
-FROM sqlserver_top_queries
+    MIN(statement_text) AS sample_query_text
+FROM sqlserver_query_metrics_v2
 GROUP BY 
-    time_bucket('1 hour', capture_timestamp),
-    server_instance_name,
+    time_bucket('1 hour', ts),
+    instance_id,
     query_hash
 WITH NO DATA;
 

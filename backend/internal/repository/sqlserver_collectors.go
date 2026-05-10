@@ -45,8 +45,13 @@ func CollectActiveQueries(ctx context.Context, db *sql.DB) ([]models.ActiveQuery
 		WHERE r.session_id > 50
 		  AND r.session_id <> @@SPID
 		  AND r.status IN ('running', 'runnable', 'suspended')
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND DB_NAME(r.database_id) NOT IN ('master','model','msdb','tempdb')
+		  AND s.program_name NOT LIKE '%SQLAgent%'
+		  AND s.program_name NOT LIKE '%Monitoring%'
+		  AND s.program_name NOT LIKE '%Telegraf%'
+		  AND s.program_name NOT LIKE '%Grafana%'
 		ORDER BY r.cpu_time DESC`
 
 	rows, err := db.QueryContext(ctx, query)
@@ -144,6 +149,11 @@ func CollectLongRunningQueries(ctx context.Context, db *sql.DB) ([]models.LongRu
 		WHERE r.session_id <> @@SPID AND r.session_id > 50
 		AND r.total_elapsed_time >= 5000
 		AND s.is_user_process = 1
+		AND DB_NAME(r.database_id) NOT IN ('master','model','msdb','tempdb')
+		AND s.program_name NOT LIKE '%SQLAgent%'
+		AND s.program_name NOT LIKE '%Monitoring%'
+		AND s.program_name NOT LIKE '%Telegraf%'
+		AND s.program_name NOT LIKE '%Grafana%'
 		ORDER BY r.total_elapsed_time DESC`
 
 	rows, err := db.QueryContext(ctx, query)
@@ -227,8 +237,8 @@ func CollectBlockingLocks(ctx context.Context, db *sql.DB) ([]models.BlockingNod
 		CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
 		WHERE r.session_id > 50
 		  AND r.blocking_session_id > 0
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		UNION ALL
 		SELECT TOP 50
 			s.session_id,
@@ -250,8 +260,8 @@ func CollectBlockingLocks(ctx context.Context, db *sql.DB) ([]models.BlockingNod
 		WHERE s.status = 'idle_in_transaction'
 		  AND s.session_id > 50
 		  AND s.session_id <> @@SPID
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		ORDER BY level DESC, wait_time_ms DESC`
 
 	rows, err := db.QueryContext(ctx, query)
@@ -299,22 +309,22 @@ func CollectBlockingLocks(ctx context.Context, db *sql.DB) ([]models.BlockingNod
 // CollectCPUMemory returns CPU usage from sys.dm_os_ring_buffers and memory from sys.dm_os_sys_memory
 func CollectCPUMemory(ctx context.Context, db *sql.DB) (*models.CPUTick, *models.MemoryStats, error) {
 	cpuQuery := ` /* SQL_OPTIMA */ 
-		DECLARE @ts_now bigint = (SELECT cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
+		DECLARE @ts_now bigint = (SELECT ms_ticks FROM sys.dm_os_sys_info WITH (NOLOCK)); 
 		SELECT TOP(1)
-		    SQLProcessUtilization AS SQL_Server_CPU, 
-		    SystemIdle AS System_Idle_CPU, 
-		    100 - SystemIdle - SQLProcessUtilization AS Other_Process_CPU,
-		    CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETDATE()), 120) AS Event_Time
+		    ISNULL(SQLProcessUtilization, 0) AS SQL_Server_CPU, 
+		    ISNULL(SystemIdle, 0) AS System_Idle_CPU, 
+		    100 - ISNULL(SystemIdle, 0) - ISNULL(SQLProcessUtilization, 0) AS Other_Process_CPU,
+		    CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETUTCDATE()), 120) AS Event_Time
 		FROM ( 
 		    SELECT record.value('(./Record/@id)[1]', 'int') AS record_id, 
 		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') AS SystemIdle, 
 		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') AS SQLProcessUtilization, [timestamp] 
 		    FROM ( 
 		        SELECT [timestamp], CONVERT(xml, record) AS [record]
-		        FROM sys.dm_os_ring_buffers
+		        FROM sys.dm_os_ring_buffers WITH (NOLOCK)
 		        WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR'
-		        AND record LIKE '%<SystemHealth>%'
-		    ) AS x ORDER BY [timestamp] DESC
+		        AND record LIKE N'%<SystemHealth>%'
+		    ) AS x 
 		) AS y
 		ORDER BY record_id DESC`
 
@@ -365,14 +375,20 @@ func CollectSessionSnapshot(ctx context.Context, db *sql.DB) ([]models.SQLServer
 		s.original_login_name,
 		s.host_name,
 		s.program_name,
-		DB_NAME(r.database_id) AS database_name,
+		ISNULL(DB_NAME(r.database_id), 'Unknown') AS database_name,
 		s.is_user_process,
 		s.status,
 		r.query_hash,
-		r.query_plan_hash
+		r.query_plan_hash,
+		ISNULL(r.total_elapsed_time, 0) AS total_elapsed_time_ms,
+		ISNULL(r.cpu_time, 0) AS cpu_time_ms,
+		ISNULL(r.wait_type, '') AS wait_type,
+		ISNULL(r.blocking_session_id, 0) AS blocking_session_id,
+		ISNULL(st.text, '') AS query_text
 	FROM sys.dm_exec_sessions s
 	INNER JOIN sys.dm_exec_requests r
 		ON s.session_id = r.session_id
+	OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) st
 	WHERE s.session_id <> @@SPID
 	AND s.is_user_process = 1;`
 
@@ -386,7 +402,9 @@ func CollectSessionSnapshot(ctx context.Context, db *sql.DB) ([]models.SQLServer
 	for rows.Next() {
 		var s models.SQLServerSessionSnapshot
 		var queryHash, queryPlanHash []byte
-		var loginName, origLoginName, hostName, programName, status, dbName sql.NullString
+		var loginName, origLoginName, hostName, programName, status, dbName, waitType, queryText sql.NullString
+		var elapsedTime, cpuTime float64
+		var blockingID int
 
 		err := rows.Scan(
 			&s.SampleTime,
@@ -400,6 +418,11 @@ func CollectSessionSnapshot(ctx context.Context, db *sql.DB) ([]models.SQLServer
 			&status,
 			&queryHash,
 			&queryPlanHash,
+			&elapsedTime,
+			&cpuTime,
+			&waitType,
+			&blockingID,
+			&queryText,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning session snapshot row: %w", err)
@@ -413,6 +436,12 @@ func CollectSessionSnapshot(ctx context.Context, db *sql.DB) ([]models.SQLServer
 		s.DatabaseName = dbName.String
 		s.QueryHash = queryHash
 		s.QueryPlanHash = queryPlanHash
+
+		s.TotalElapsedTimeMs = &elapsedTime
+		s.CPUTimeMs = &cpuTime
+		s.WaitType = waitType.String
+		s.BlockingSessionID = &blockingID
+		s.QueryText = queryText.String
 
 		snapshots = append(snapshots, s)
 	}

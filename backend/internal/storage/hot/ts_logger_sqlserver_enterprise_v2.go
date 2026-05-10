@@ -31,8 +31,8 @@ func (tl *TimescaleLogger) LogSqlServerWaitStats(ctx context.Context, instanceID
 			) VALUES ($1, $2, $3, $4, $5, $6)
 		`, now, instanceID,
 			getStr(r, "wait_category"),
-			getInt64FromMap(r, "wait_time_ms"),
-			getInt64FromMap(r, "signal_wait_time_ms"),
+			getInt64FromMap(r, "wait_time_ms_delta"),
+			getInt64FromMap(r, "signal_wait_time_ms_delta"),
 			getInt64FromMap(r, "waiting_tasks_delta"),
 		)
 	}
@@ -55,7 +55,7 @@ func (tl *TimescaleLogger) GetSqlServerWaitStats(ctx context.Context, instanceID
 	q := `
 		SELECT capture_timestamp, wait_category, wait_time_ms, signal_wait_time_ms, waiting_tasks
 		FROM sqlserver_wait_stats
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC
@@ -118,7 +118,7 @@ func (tl *TimescaleLogger) GetSqlServerPerfCounters(ctx context.Context, instanc
 	q := `
 		SELECT capture_timestamp, counter_name, value_per_sec
 		FROM sqlserver_perf_counters
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 	`
@@ -191,7 +191,7 @@ func (tl *TimescaleLogger) GetSqlServerFileIO(ctx context.Context, instanceID st
 	q := `
 		SELECT capture_timestamp, database_name, file_type, read_latency_ms, write_latency_ms
 		FROM sqlserver_file_io
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC
@@ -260,7 +260,7 @@ func (tl *TimescaleLogger) GetSqlServerPlanCache(ctx context.Context, instanceID
 	q := `
 		SELECT capture_timestamp, cache_type, size_mb
 		FROM sqlserver_plan_cache
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC
@@ -325,7 +325,7 @@ func (tl *TimescaleLogger) GetSqlServerMemoryClerksV2(ctx context.Context, insta
 	q := `
 		SELECT capture_timestamp, clerk_name, pages_mb
 		FROM sqlserver_memory_clerks
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC
@@ -377,7 +377,7 @@ func (tl *TimescaleLogger) GetSqlServerMemoryGrantsV2(ctx context.Context, insta
 	q := `
 		SELECT capture_timestamp, pending_grants, active_grants, granted_memory_mb
 		FROM sqlserver_memory_grants
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC
@@ -445,7 +445,7 @@ func (tl *TimescaleLogger) GetSqlServerTempdbConsumers(ctx context.Context, inst
 	q := `
 		SELECT capture_timestamp, session_id, request_id, allocated_mb, user_object_mb, internal_object_mb, query_text
 		FROM sqlserver_tempdb_consumers
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 		  AND query_text NOT LIKE '%/* SQL_OPTIMA */%'

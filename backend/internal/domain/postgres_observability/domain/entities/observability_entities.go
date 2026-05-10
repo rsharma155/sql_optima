@@ -41,12 +41,14 @@ type WaitEventSummary struct {
 
 // DBLoad represents database load metrics.
 type DBLoad struct {
-	TS              time.Time `json:"ts"`
-	InstanceID      string    `json:"instance_id"`
-	ActiveSessions  int       `json:"active_sessions"`
-	CPUSessions     int       `json:"cpu_sessions"`
-	WaitingSessions int       `json:"waiting_sessions"`
-	IdleInTxn       int       `json:"idle_in_txn"`
+	TS               time.Time `json:"ts"`
+	InstanceID       string    `json:"instance_id"`
+	ActiveSessions   int       `json:"active_sessions"`
+	CPUSessions      int       `json:"cpu_sessions"`
+	WaitingSessions  int       `json:"waiting_sessions"`
+	IOWaitSessions   int       `json:"io_wait_sessions"`
+	LockWaitSessions int       `json:"lock_wait_sessions"`
+	IdleInTxn        int       `json:"idle_in_txn"`
 }
 
 // QueryWaitProfile represents query wait profiling data from pg_stat_statements.

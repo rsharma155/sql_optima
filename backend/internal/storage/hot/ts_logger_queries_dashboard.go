@@ -66,9 +66,6 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 	}
 
 	dimExpr := "q." + dimensionCol
-	if dimensionCol == "query_hash" {
-		dimExpr = "to_hex(q.query_hash)"
-	}
 
 	baseSelect := fmt.Sprintf(`
 		SELECT %s AS dimension_value,
@@ -82,9 +79,10 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 		FROM sqlserver_query_metrics_v2 q
 		LEFT JOIN sqlserver_query_classification_dim class
 		  ON class.instance_id = q.instance_id
-		 AND class.query_hash = decode(lpad(to_hex(q.query_hash), 16, '0'), 'hex')
+		 AND class.query_hash = q.query_hash
 		WHERE UPPER(q.instance_id) = UPPER($1)
-		  AND COALESCE(class.classification, 'UNKNOWN') = 'USER'`,
+		  AND COALESCE(q.is_user_workload, 1) = 1
+		  AND COALESCE(class.classification, 'UNKNOWN') <> 'SYSTEM'`,
 		dimExpr, metricCol)
 
 	var rows pgx.Rows
@@ -116,17 +114,29 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 
 	var results []map[string]interface{}
 	for rows.Next() {
-		var dimValue, queryText, dbName sql.NullString
+		var dimVal interface{}
+		var queryText, dbName sql.NullString
 		var metricValue, totalExecutions float64
 		var avgCPU, avgDuration, avgReads sql.NullFloat64
 
-		if err := rows.Scan(&dimValue, &queryText, &dbName, &metricValue, &totalExecutions, &avgCPU, &avgDuration, &avgReads); err != nil {
+		if err := rows.Scan(&dimVal, &queryText, &dbName, &metricValue, &totalExecutions, &avgCPU, &avgDuration, &avgReads); err != nil {
 			log.Printf("[TSLogger] GetQueryStatsDashboard scan error: %v", err)
 			continue
 		}
 
+		finalDim := ""
+		if dimensionCol == "query_hash" {
+			if h, ok := dimVal.(int64); ok {
+				finalDim = fmt.Sprintf("0x%X", uint64(h))
+			}
+		} else {
+			if s, ok := dimVal.(string); ok {
+				finalDim = s
+			}
+		}
+
 		results = append(results, map[string]interface{}{
-			"dimension":        dimValue.String,
+			"dimension":        finalDim,
 			"query_text":       queryText.String,
 			"database_name":    dbName.String,
 			"metric_value":     metricValue,
@@ -139,16 +149,7 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 	return results, rows.Err()
 }
 
-func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, instanceName, metric string, timeRange string) ([]map[string]interface{}, error) {
-	tr := map[string]string{
-		"15m": "15 minutes",
-		"1h":  "1 hour",
-		"24h": "24 hours",
-	}[timeRange]
-	if tr == "" {
-		tr = "1 hour"
-	}
-
+func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, instanceName, metric string, from, to string, dbName string) ([]map[string]interface{}, error) {
 	metricCol := map[string]string{
 		"cpu":        "total_cpu_ms",
 		"duration":   "total_elapsed_ms",
@@ -159,21 +160,34 @@ func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, instance
 		metricCol = "total_cpu_ms"
 	}
 
+	dbFilter := ""
+	if dbName != "" && dbName != "all" {
+		dbFilter = fmt.Sprintf("AND q.database_name = '%s'", strings.ReplaceAll(dbName, "'", "''"))
+	}
+
 	query := fmt.Sprintf(`
 		SELECT time_bucket('5 min', q.ts) AS time,
 		       SUM(q.%s)::float8 AS value
 		FROM sqlserver_query_metrics_v2 q
 		LEFT JOIN sqlserver_query_classification_dim class
 		  ON class.instance_id = q.instance_id
-		 AND class.query_hash = decode(lpad(to_hex(q.query_hash), 16, '0'), 'hex')
+		 AND class.query_hash = q.query_hash
 		WHERE UPPER(q.instance_id) = UPPER($1)
-		  AND q.ts > now() - INTERVAL '%s'
-		  AND COALESCE(class.classification, 'UNKNOWN') = 'USER'
+		  AND q.ts >= $2 AND q.ts <= $3
+		  AND q.query_text_raw NOT LIKE '%%%%/* SQL_OPTIMA%%%%'
+		  AND q.statement_text NOT LIKE '%%%%sys.all_objects%%%%'
+		  AND q.statement_text NOT LIKE '%%%%[sys].all_objects%%%%'
+		  AND q.statement_text NOT LIKE '%%%%sp_MShistory_cleanup%%%%'
+		  AND UPPER(q.statement_text) NOT LIKE '%%%%SYS.%%%%'
+		  AND UPPER(q.statement_text) NOT LIKE '%%%%[SYS].%%%%'
+		  AND COALESCE(q.is_user_workload, 1) = 1
+		  AND COALESCE(class.classification, 'UNKNOWN') <> 'SYSTEM'
+		  %s
 		GROUP BY time
 		ORDER BY time
-	`, metricCol, tr)
+	`, metricCol, dbFilter)
 
-	rows, err := tl.pool.Query(ctx, query, instanceName)
+	rows, err := tl.pool.Query(ctx, query, instanceName, from, to)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,637 @@
+<!--
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * File: sqlserver_locks_drilldown_detailed.html
+ * Purpose: Read-only Blocking Incident Diagnostic Console.
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+-->
+<div class="page-view active dashboard-sky-theme sqlserver-locks-drilldown-page" id="ddv2Root">
+
+    <!-- HEADER BAR -->
+    <div class="ddv2-header glass-panel" id="incidentHeader">
+        <div class="ddv2-hdr-left">
+            <button class="btn btn-sm btn-outline" id="btnBackToLocks">
+                <i class="fa-solid fa-arrow-left"></i> Back to Blocking Visualizer
+            </button>
+            <div>
+                <div class="ddv2-hdr-title">Blocking Incident &nbsp;<span class="badge badge-danger" style="font-size:0.7rem;" id="ddSummarySpid">SPID --</span></div>
+                <div class="ddv2-hdr-sub" id="ddHeaderSub">DB: -- &nbsp;•&nbsp; Host: -- &nbsp;•&nbsp; Login: -- &nbsp;•&nbsp; Iso: -- &nbsp;•&nbsp; OpenTran: --</div>
+            </div>
+        </div>
+        <div class="ddv2-hdr-kpis">
+            <div class="ddv2-kpi-chip">
+                <span class="ddv2-kpi-lbl">Wait Impact</span>
+                <span id="ddKpiWaitImpact" class="ddv2-kpi-val text-warning">--</span>
+            </div>
+            <div class="ddv2-kpi-chip">
+                <span class="ddv2-kpi-lbl">Victims</span>
+                <span id="ddKpiVictims" class="ddv2-kpi-val">--</span>
+            </div>
+            <div class="ddv2-kpi-chip">
+                <span class="ddv2-kpi-lbl">Longest Wait</span>
+                <span id="ddKpiLongestWait" class="ddv2-kpi-val text-danger">--</span>
+            </div>
+            <div class="ddv2-kpi-chip">
+                <span class="ddv2-kpi-lbl">Duration</span>
+                <span id="ddKpiDuration" class="ddv2-kpi-val">--</span>
+            </div>
+            <span id="ddSeverityPill" class="badge badge-warning" style="font-size:0.7rem; padding:4px 10px;">--</span>
+            <button class="btn btn-sm btn-outline" id="btnRefreshDrilldown" title="Refresh"><i class="fa-solid fa-sync"></i></button>
+        </div>
+    </div>
+
+    <!-- BODY GRID: Row1 (42%) + Row2 (28%) + Row3 (30%) -->
+    <div class="ddv2-body">
+
+        <!-- ROW 1: Root Blocker (65%) + Victims (35%) -->
+        <div class="ddv2-row ddv2-row1">
+
+            <!-- Root Blocker Panel -->
+            <div class="glass-panel ddv2-panel ddv2-border-top-danger" id="rootBlockerPanel">
+                <div class="ddv2-panel-hdr border-danger-hdr">
+                    <span class="ddv2-panel-title text-danger"><i class="fa-solid fa-biohazard"></i> Root Blocker Diagnostics</span>
+                    <span id="ddBlockerSpidTag" class="badge badge-danger">#--</span>
+                </div>
+
+                <!-- Tab Nav -->
+                <div class="ddv2-tab-nav" id="rootBlockerTabNav">
+                    <button class="ddv2-tab-btn active" data-pane="tab-session">SESSION</button>
+                    <button class="ddv2-tab-btn" data-pane="tab-query">QUERY</button>
+                    <button class="ddv2-tab-btn" data-pane="tab-transaction">TRANSACTION</button>
+                    <button class="ddv2-tab-btn" data-pane="tab-locks">LOCKS HELD</button>
+                </div>
+
+                <!-- Tab Panes -->
+                <div class="ddv2-tab-area">
+
+                    <!-- SESSION -->
+                    <div id="tab-session" class="ddv2-pane" style="display:flex;">
+                        <div class="ddv2-metrics-grid">
+                            <div class="ddv2-metric">
+                                <div class="ddv2-metric-lbl">Status</div>
+                                <div id="ddStatus" class="ddv2-metric-val text-accent">--</div>
+                            </div>
+                            <div class="ddv2-metric">
+                                <div class="ddv2-metric-lbl">Program</div>
+                                <div id="ddProgram" class="ddv2-metric-val ddv2-trunc" title="">--</div>
+                            </div>
+                            <div class="ddv2-metric">
+                                <div class="ddv2-metric-lbl">Host</div>
+                                <div id="ddHost" class="ddv2-metric-val ddv2-trunc">--</div>
+                            </div>
+                            <div class="ddv2-metric">
+                                <div class="ddv2-metric-lbl">Login</div>
+                                <div id="ddLogin" class="ddv2-metric-val ddv2-trunc">--</div>
+                            </div>
+                            <div class="ddv2-metric">
+                                <div class="ddv2-metric-lbl">CPU (ms)</div>
+                                <div id="ddCpu" class="ddv2-metric-val font-mono">--</div>
+                            </div>
+                            <div class="ddv2-metric">
+                                <div class="ddv2-metric-lbl">Memory (pages)</div>
+                                <div id="ddMemory" class="ddv2-metric-val font-mono">--</div>
+                            </div>
+                            <div class="ddv2-metric">
+                                <div class="ddv2-metric-lbl">Reads</div>
+                                <div id="ddReads" class="ddv2-metric-val font-mono">--</div>
+                            </div>
+                            <div class="ddv2-metric">
+                                <div class="ddv2-metric-lbl">Writes</div>
+                                <div id="ddWrites" class="ddv2-metric-val font-mono">--</div>
+                            </div>
+                            <div class="ddv2-metric">
+                                <div class="ddv2-metric-lbl">Snapshot Time</div>
+                                <div id="ddLastRequest" class="ddv2-metric-val">--</div>
+                            </div>
+                            <div class="ddv2-metric">
+                                <div class="ddv2-metric-lbl">Open Tran</div>
+                                <div id="ddOpenTran" class="ddv2-metric-val text-warning font-mono">--</div>
+                            </div>
+                            <div class="ddv2-metric">
+                                <div class="ddv2-metric-lbl">Isolation</div>
+                                <div id="ddIso" class="ddv2-metric-val">--</div>
+                            </div>
+                            <div class="ddv2-metric">
+                                <div class="ddv2-metric-lbl">Wait Type</div>
+                                <div id="ddWaitType" class="ddv2-metric-val text-accent">--</div>
+                            </div>
+                        </div>
+                        <div class="ddv2-sql-label">Blocking Query <span class="text-muted" style="font-size:0.6rem; font-weight:400;">(click to expand)</span></div>
+                        <pre id="ddSessionQueryBox" class="ddv2-sql-preview ddv2-sql-clickable" title="Click to view full SQL">-- No query captured</pre>
+                    </div>
+
+                    <!-- QUERY -->
+                    <div id="tab-query" class="ddv2-pane" style="display:none;">
+                        <div class="ddv2-qi-strip">
+                            <div class="ddv2-qi-item">
+                                <span class="ddv2-qi-lbl">Query Hash</span>
+                                <span id="ddSqlHash" class="ddv2-qi-val font-mono">--</span>
+                            </div>
+                            <div class="ddv2-qi-item">
+                                <span class="ddv2-qi-lbl">Plan Hash</span>
+                                <span id="ddPlanHash" class="ddv2-qi-val font-mono">--</span>
+                            </div>
+                            <div class="ddv2-qi-item">
+                                <span class="ddv2-qi-lbl">Incident Count</span>
+                                <span id="ddExecCount" class="ddv2-qi-val">--</span>
+                            </div>
+                            <div class="ddv2-qi-item">
+                                <span class="ddv2-qi-lbl">Avg Wait (ms)</span>
+                                <span id="ddAvgWait" class="ddv2-qi-val">--</span>
+                            </div>
+                        </div>
+                        <div class="ddv2-sql-label">
+                            SQL Text <span class="text-muted" style="font-size:0.6rem; font-weight:400;">(click to expand)</span>
+                            <button class="btn btn-xs btn-outline" id="btnCopySql" style="float:right; margin-top:-2px;"><i class="fa-solid fa-copy"></i> Copy</button>
+                        </div>
+                        <pre id="ddQueryText" class="ddv2-sql-full ddv2-sql-clickable" title="Click to view full SQL">-- No SQL text captured</pre>
+                    </div>
+
+                    <!-- TRANSACTION -->
+                    <div id="tab-transaction" class="ddv2-pane" style="display:none;">
+                        <table class="data-table ddv2-kv-table">
+                            <tbody>
+                                <tr>
+                                    <td class="ddv2-kv-key">Transaction Begin Time</td>
+                                    <td id="ddTxnStart" class="ddv2-kv-val font-mono">--</td>
+                                </tr>
+                                <tr>
+                                    <td class="ddv2-kv-key">Transaction Age (sec)</td>
+                                    <td id="ddTxnAge" class="ddv2-kv-val text-warning font-mono">--</td>
+                                </tr>
+                                <tr>
+                                    <td class="ddv2-kv-key">Log Used (MB)</td>
+                                    <td id="ddLogUsed" class="ddv2-kv-val font-mono">--</td>
+                                </tr>
+                                <tr>
+                                    <td class="ddv2-kv-key">Log Reserved (MB)</td>
+                                    <td id="ddLogReserved" class="ddv2-kv-val font-mono">--</td>
+                                </tr>
+                                <tr>
+                                    <td class="ddv2-kv-key">Transaction State</td>
+                                    <td id="ddTxnState" class="ddv2-kv-val text-accent">--</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- LOCKS HELD -->
+                    <div id="tab-locks" class="ddv2-pane" style="display:none; overflow-y:auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Resource Type</th>
+                                    <th>Object / Description</th>
+                                    <th>Lock Mode</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ddBlockerLocksTbody">
+                                <tr><td colspan="4" class="text-center text-muted" style="padding:1rem;">Loading locks...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                </div><!-- /ddv2-tab-area -->
+            </div><!-- /root blocker panel -->
+
+            <!-- Victims Panel -->
+            <div class="glass-panel ddv2-panel ddv2-border-top-warning" id="victimsPanel">
+                <div class="ddv2-panel-hdr border-warning-hdr">
+                    <span class="ddv2-panel-title text-warning"><i class="fa-solid fa-users-viewfinder"></i> Victim Sessions</span>
+                    <span id="ddVictimCountBadge" class="badge badge-warning" style="font-size:0.7rem;">0 Sessions</span>
+                </div>
+                <div class="ddv2-table-scroll">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>SPID</th>
+                                <th>Wait Type</th>
+                                <th>Wait(s)</th>
+                                <th>Resource</th>
+                                <th>DB</th>
+                                <th>Hash</th>
+                                <th>Tran Age</th>
+                                <th>Query</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ddVictimsTbody">
+                            <tr><td colspan="8" class="text-center text-muted" style="padding:1rem;">Gathering victim sessions...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div><!-- /row1 -->
+
+        <!-- ROW 2: Wait Chart + Blocking Objects -->
+        <div class="ddv2-row ddv2-row2">
+
+            <div class="glass-panel ddv2-panel">
+                <div class="ddv2-panel-hdr">
+                    <span class="ddv2-panel-title"><i class="fa-solid fa-chart-bar"></i> Wait Type Contribution</span>
+                    <span class="ddv2-panel-sub">BY WAIT TYPE (SEC)</span>
+                </div>
+                <div class="ddv2-chart-area">
+                    <canvas id="ddWaitContributionChart"></canvas>
+                </div>
+            </div>
+
+            <div class="glass-panel ddv2-panel">
+                <div class="ddv2-panel-hdr">
+                    <span class="ddv2-panel-title"><i class="fa-solid fa-table"></i> Blocking Objects</span>
+                    <span class="ddv2-panel-sub">HOTSPOTS</span>
+                </div>
+                <div class="ddv2-table-scroll">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Database</th>
+                                <th>Object Name</th>
+                                <th>Lock Mode</th>
+                                <th>Wait(s)</th>
+                                <th>Count</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ddObjectsTbody">
+                            <tr><td colspan="5" class="text-center text-muted" style="padding:1rem;">No hotspots identified.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div><!-- /row2 -->
+
+        <!-- ROW 3: Wait Accumulation + Recurring Offender -->
+        <div class="ddv2-row ddv2-row3">
+
+            <div class="glass-panel ddv2-panel">
+                <div class="ddv2-panel-hdr">
+                    <span class="ddv2-panel-title"><i class="fa-solid fa-chart-line"></i> Incident Wait Accumulation</span>
+                    <span class="ddv2-panel-sub">CUMULATIVE WAIT (S)</span>
+                </div>
+                <div class="ddv2-chart-area">
+                    <canvas id="ddWaitAccumulationChart"></canvas>
+                </div>
+            </div>
+
+            <div class="glass-panel ddv2-panel">
+                <div class="ddv2-panel-hdr">
+                    <span class="ddv2-panel-title"><i class="fa-solid fa-clock-rotate-left"></i> Recurring Offender (7 Days)</span>
+                    <span class="ddv2-panel-sub">INCIDENTS PER HOUR</span>
+                </div>
+                <div class="ddv2-chart-area">
+                    <canvas id="ddRecurrenceChart"></canvas>
+                </div>
+            </div>
+
+        </div><!-- /row3 -->
+
+    </div><!-- /ddv2-body -->
+
+</div><!-- /page-view -->
+
+<style>
+/* ─── Page outer container ─────────────────────────────── */
+.sqlserver-locks-drilldown-page {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: 8px;
+    gap: 8px;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+/* ─── Header ────────────────────────────────────────────── */
+.ddv2-header {
+    flex-shrink: 0;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    gap: 12px;
+    border-bottom: 3px solid var(--border-color);
+    border-radius: 8px;
+    transition: border-bottom-color 0.3s;
+}
+.ddv2-header.sev-low    { border-bottom-color: #eab308; }
+.ddv2-header.sev-medium { border-bottom-color: #f97316; }
+.ddv2-header.sev-high   { border-bottom-color: var(--danger, #ef4444); }
+.ddv2-hdr-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+.ddv2-hdr-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-primary, #e2e8f0);
+    white-space: nowrap;
+}
+.ddv2-hdr-sub {
+    font-size: 0.62rem;
+    color: var(--text-muted, #94a3b8);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 480px;
+}
+.ddv2-hdr-kpis {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+.ddv2-kpi-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.ddv2-kpi-lbl {
+    font-size: 0.52rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted, #94a3b8);
+    white-space: nowrap;
+}
+.ddv2-kpi-val {
+    font-size: 0.95rem;
+    font-weight: 800;
+    white-space: nowrap;
+    color: var(--text-primary, #e2e8f0);
+}
+
+/* ─── Body 3-row grid ────────────────────────────────────── */
+.ddv2-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow: hidden;
+}
+.ddv2-row {
+    display: grid;
+    gap: 8px;
+    min-height: 0;
+    overflow: hidden;
+}
+.ddv2-row1 {
+    flex: 42;
+    grid-template-columns: 65fr 35fr;
+}
+.ddv2-row2 {
+    flex: 28;
+    grid-template-columns: 1fr 1fr;
+}
+.ddv2-row3 {
+    flex: 30;
+    grid-template-columns: 1fr 1fr;
+}
+
+/* ─── Panel base ─────────────────────────────────────────── */
+.ddv2-panel {
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border-radius: 8px;
+}
+.ddv2-border-top-danger  { border-top: 2px solid var(--danger, #ef4444) !important; }
+.ddv2-border-top-warning { border-top: 2px solid var(--warning, #f59e0b) !important; }
+
+/* ─── Panel header ────────────────────────────────────────── */
+.ddv2-panel-hdr {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-surface-dark, rgba(0,0,0,0.1));
+}
+.border-danger-hdr  { background: rgba(239,68,68,0.06); }
+.border-warning-hdr { background: rgba(245,158,11,0.06); }
+.ddv2-panel-title {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.ddv2-panel-sub {
+    font-size: 0.52rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+/* ─── Tab nav ─────────────────────────────────────────────── */
+.ddv2-tab-nav {
+    flex-shrink: 0;
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-surface, rgba(0,0,0,0.05));
+}
+.ddv2-tab-btn {
+    flex: 1;
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 7px 0;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.ddv2-tab-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.04); }
+.ddv2-tab-btn.active {
+    color: var(--accent, #3b82f6);
+    border-bottom-color: var(--accent, #3b82f6);
+}
+
+/* ─── Tab area & panes ────────────────────────────────────── */
+.ddv2-tab-area {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+}
+.ddv2-pane {
+    position: absolute;
+    inset: 0;
+    padding: 10px 12px;
+    flex-direction: column;
+    gap: 6px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    box-sizing: border-box;
+}
+
+/* ─── Session tab metrics ─────────────────────────────────── */
+.ddv2-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 5px 8px;
+    flex-shrink: 0;
+}
+.ddv2-metric-lbl {
+    font-size: 0.52rem;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+}
+.ddv2-metric-val {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ddv2-trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ─── SQL boxes ──────────────────────────────────────────── */
+.ddv2-sql-label {
+    font-size: 0.55rem;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+.ddv2-sql-preview {
+    flex-shrink: 0;
+    height: 76px;
+    margin: 0;
+    padding: 6px 8px;
+    background: var(--code-bg, rgba(0,0,0,0.2));
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 0.62rem;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow: hidden;
+    line-height: 1.4;
+}
+.ddv2-sql-full {
+    flex: 1;
+    min-height: 100px;
+    margin: 0;
+    padding: 8px;
+    background: var(--code-bg, rgba(0,0,0,0.2));
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 0.62rem;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-y: auto;
+    line-height: 1.5;
+}
+.ddv2-sql-clickable {
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+.ddv2-sql-clickable:hover { border-color: var(--accent, #3b82f6) !important; }
+
+/* ─── Query intelligence strip ───────────────────────────── */
+.ddv2-qi-strip {
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px 8px;
+    padding: 8px;
+    background: rgba(59,130,246,0.05);
+    border: 1px solid rgba(59,130,246,0.12);
+    border-radius: 4px;
+}
+.ddv2-qi-item { display: flex; flex-direction: column; }
+.ddv2-qi-lbl {
+    font-size: 0.5rem;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+}
+.ddv2-qi-val {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--accent, #3b82f6);
+    word-break: break-all;
+}
+
+/* ─── Transaction KV table ────────────────────────────────── */
+.ddv2-kv-table { width: 100%; }
+.ddv2-kv-key {
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    width: 45%;
+}
+.ddv2-kv-val {
+    font-size: 0.76rem;
+    font-weight: 600;
+}
+
+/* ─── Scrollable table body ───────────────────────────────── */
+.ddv2-table-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* ─── Chart area ──────────────────────────────────────────── */
+.ddv2-chart-area {
+    flex: 1;
+    min-height: 0;
+    padding: 6px 8px;
+    position: relative;
+    overflow: hidden;
+}
+
+/* ─── Victim table row highlights ────────────────────────── */
+.ddv2-victim-row-red td   { background: rgba(239,68,68,0.08) !important; }
+.ddv2-victim-row-orange td { background: rgba(249,115,22,0.07) !important; }
+
+/* ─── Clickable SQL in victims ────────────────────────────── */
+.ddv2-sql-link {
+    display: inline-block;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--accent, #3b82f6);
+    border-bottom: 1px dashed rgba(59,130,246,0.35);
+}
+.ddv2-sql-link:hover { color: var(--accent-light, #60a5fa); }
+
+/* ─── Util ────────────────────────────────────────────────── */
+.font-mono { font-family: 'JetBrains Mono', 'Fira Code', monospace !important; }
+.text-danger  { color: var(--danger, #ef4444) !important; }
+.text-warning { color: var(--warning, #f59e0b) !important; }
+.text-accent  { color: var(--accent, #3b82f6) !important; }
+.text-muted   { color: var(--text-muted, #94a3b8) !important; }
+</style>

@@ -87,7 +87,8 @@ window.loadSqlServerCpuDashboard = async function() {
         }
 
         window.renderCpuDashboard(inst, serverProps, schedulerStats);
-        document.getElementById('cpuDashboardLastUpdate').textContent = new Date().toLocaleTimeString();
+        const elLastUpdate = document.getElementById('cpuDashboardLastUpdate');
+        if (elLastUpdate) elLastUpdate.textContent = new Date().toLocaleTimeString();
 
     } catch (err) {
         appDebug('[CPU Dashboard] Error loading data:', err);

@@ -65,62 +65,249 @@
 /* ---- PGSS KPI Strip Threshold Colors ---- */
 .pgss-kpi-warn .metric-value { color: var(--warning); }
 .pgss-kpi-critical .metric-value { color: var(--danger); }
+.glass-panel.metric-card-compact.kpi-warn .metric-value { color: var(--warning, #f59e0b); }
+.glass-panel.metric-card-compact.kpi-critical .metric-value { color: var(--danger, #ef4444); }
+.glass-panel.metric-card-compact.kpi-good .metric-value { color: var(--success, #10b981); }
 
-/* ---- PGSS Top Queries Table Layout ---- */
-#pgss-top-table { table-layout: fixed; width: 100%; }
-#pgss-top-table td,
-#pgss-top-table th {
+/* ====================================================
+   Unified PGSS Data Grid
+   Shared by Top Queries, By Database, By User tabs
+   ==================================================== */
+.pgss-grid {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    table-layout: fixed;
+}
+
+.pgss-grid thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg-tertiary, rgba(35,39,56,0.97));
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    padding: 0.5rem 0.75rem;
+    border-bottom: 2px solid var(--border-color);
+    white-space: nowrap;
+    vertical-align: bottom;
+}
+.pgss-grid tbody td {
+    padding: 0.45rem 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: middle;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    vertical-align: middle;
 }
-#pgss-top-table td:nth-child(n+4),
-#pgss-top-table th:nth-child(n+4) {
+.pgss-grid tbody tr:hover td { background: var(--bg-surface-hover); }
+.pgss-grid tbody tr[data-query] { cursor: pointer; }
+
+/* Numeric columns — right-aligned, monospaced, tabular */
+.pgss-grid .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+}
+/* Center-aligned columns (badges, type) */
+.pgss-grid .ctr { text-align: center; }
+
+/* Row number */
+.pgss-grid .c-rownum {
+    color: var(--text-muted);
+    font-size: 0.7rem;
     text-align: right;
 }
-/* Flags column: allow badges to wrap but clip overflow */
-#pgss-top-table td:nth-child(2) {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-size: 0.6rem;
+/* Query text — monospaced, accent-colored */
+.pgss-grid .c-query {
+    color: var(--accent-blue);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
 }
-/* Query column: single line, truncated, clickable */
-#pgss-top-table td:nth-child(3) {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-    color: var(--accent, #38bdf8);
-}
-#pgss-top-table td:nth-child(3):hover {
-    opacity: 0.8;
-}
-/* ---- PGSS Sortable Column Headers ---- */
-.pgss-sortable-table th.pgss-sortable-th {
-    cursor: pointer;
-    user-select: none;
-    white-space: nowrap;
-    transition: color 0.15s;
-}
-.pgss-sortable-table th.pgss-sortable-th:hover {
-    color: var(--accent, #38bdf8);
-}
-.pgss-sortable-table th.pgss-sortable-th i {
-    font-size: 0.55rem;
-    margin-left: 2px;
+/* Dim secondary text (db name, username) */
+.pgss-grid .c-dim { color: var(--text-secondary); font-size: 0.76rem; }
+/* Highlighted numeric (e.g. Avg ms) */
+.pgss-grid .c-hi { color: var(--accent-blue); font-weight: 600; }
+/* Name/label column */
+.pgss-grid .c-name { font-weight: 500; }
+
+/* Load share cell: inline progress bar + pct */
+.pgss-grid .c-load { white-space: nowrap; }
+.pgss-grid .load-bar {
+    display: inline-block;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--accent-blue);
     opacity: 0.5;
     vertical-align: middle;
+    margin-right: 6px;
+    min-width: 2px;
 }
-.pgss-sortable-table th.pgss-sortable-th[data-sort-dir] i {
-    opacity: 1;
-    color: var(--accent, #38bdf8);
+
+/* Sortable column headers */
+.pgss-grid thead th.pgss-sortable-th {
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s;
+}
+.pgss-grid thead th.pgss-sortable-th:hover { color: var(--text-primary); }
+.pgss-grid thead th.pgss-sortable-th i {
+    font-size: 0.55rem;
+    margin-left: 3px;
+    opacity: 0.35;
+    vertical-align: middle;
+    transition: opacity 0.15s;
+}
+.pgss-grid thead th.pgss-sortable-th:hover i { opacity: 0.7; }
+
+/* Scrollable table wrapper — enables sticky header */
+.pgss-table-scroll {
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 440px;
 }
 
 /* ---- Responsive adjustments for pgss layout ---- */
 @media (max-width: 1024px) {
     .pgss-diagnostics-content .charts-grid { grid-template-columns: 1fr !important; }
+}
+
+/* ---- PGSS KPI Strip ---- */
+.pgss-kpi-strip {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 0.6rem;
+    margin-top: 0.75rem;
+}
+.pgss-kpi-tile {
+    background: var(--panel-bg, rgba(30,41,59,0.7));
+    border: 1px solid var(--border, rgba(255,255,255,0.08));
+    border-radius: 8px;
+    padding: 0.55rem 0.75rem;
+    text-align: center;
+}
+.pgss-kpi-tile .kpi-label {
+    font-size: 0.65rem;
+    color: var(--text-muted, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+}
+.pgss-kpi-tile .kpi-value {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-primary, #e2e8f0);
+    font-variant-numeric: tabular-nums;
+}
+.pgss-kpi-tile .kpi-sub {
+    font-size: 0.62rem;
+    color: var(--text-muted, #64748b);
+    margin-top: 1px;
+}
+.pgss-kpi-tile.kpi-warn .kpi-value { color: var(--warning, #f59e0b); }
+.pgss-kpi-tile.kpi-critical .kpi-value { color: var(--danger, #ef4444); }
+.pgss-kpi-tile.kpi-good .kpi-value { color: var(--success, #10b981); }
+@media (max-width: 1200px) {
+    .pgss-kpi-strip { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 768px) {
+    .pgss-kpi-strip { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ---- PGSS Filter Bar ---- */
+.pgss-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: flex-end;
+    padding: 0.6rem 0;
+    margin-top: 0.75rem;
+}
+.pgss-filter-bar .filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 130px;
+}
+.pgss-filter-bar .filter-group label {
+    font-size: 0.65rem;
+    color: var(--text-muted, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.pgss-filter-bar select,
+.pgss-filter-bar input[type="text"] {
+    font-size: 0.8rem;
+    padding: 0.3rem 0.5rem;
+    border-radius: 5px;
+    background: var(--input-bg, rgba(15,23,42,0.6));
+    border: 1px solid var(--border, rgba(255,255,255,0.12));
+    color: var(--text-primary, #e2e8f0);
+    min-width: 120px;
+}
+.pgss-filter-actions { display: flex; gap: 0.4rem; align-items: flex-end; }
+
+/* ---- PGSS Tab Navigation ---- */
+.pgss-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--border, rgba(255,255,255,0.1));
+    margin-bottom: 0;
+}
+.pgss-tab-btn {
+    padding: 0.5rem 1.2rem;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--text-muted, #64748b);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+.pgss-tab-btn:hover { color: var(--text-primary, #e2e8f0); }
+.pgss-tab-btn.active {
+    color: var(--accent, #38bdf8);
+    border-bottom-color: var(--accent, #38bdf8);
+    font-weight: 600;
+}
+.pgss-tab-panel { display: none; }
+.pgss-tab-panel.active { display: block; }
+
+/* ---- Query-type Badges ---- */
+.qtype-badge {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    vertical-align: middle;
+}
+.qtype-S { background: rgba(56,189,248,0.2); color: #38bdf8; }   /* SELECT — blue */
+.qtype-I { background: rgba(16,185,129,0.2); color: #10b981; }   /* INSERT — green */
+.qtype-U { background: rgba(245,158,11,0.2); color: #f59e0b; }   /* UPDATE — amber */
+.qtype-D { background: rgba(239,68,68,0.2);  color: #ef4444; }   /* DELETE — red */
+.qtype-E { background: rgba(168,85,247,0.2); color: #a855f7; }   /* DDL    — purple */
+.qtype-O { background: rgba(100,116,139,0.2); color: #94a3b8; }  /* Other  — gray */
+
+/* .pgss-breakdown-pct-bar and .pgss-breakdown-table superseded by .pgss-grid .load-bar */
+
+/* ---- PGSS Inline Search ---- */
+.pgss-inline-search {
+    flex: 1;
+    min-width: 180px;
+    max-width: 280px;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.8rem;
+    border-radius: 5px;
+    background: var(--input-bg, rgba(15,23,42,0.6));
+    border: 1px solid var(--border, rgba(255,255,255,0.12));
+    color: var(--text-primary, #e2e8f0);
 }

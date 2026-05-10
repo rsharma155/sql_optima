@@ -17,6 +17,7 @@ type DashboardMetrics struct {
 	// Top Header KPIs
 	AvgCPULoad  float64 `json:"avg_cpu_load"`
 	MemoryUsage float64 `json:"memory_usage"`
+	PLE         float64 `json:"ple"`
 	ActiveUsers int     `json:"active_users"`
 	TotalLocks  int     `json:"total_locks"`
 	Deadlocks   int     `json:"deadlocks"`

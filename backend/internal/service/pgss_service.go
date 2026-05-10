@@ -109,24 +109,83 @@ func (s *MetricsService) GetPgssLatency(ctx context.Context, instanceName string
 }
 
 // GetPgssTopQueries returns top queries from pgss_delta_1m for a time window.
-func (s *MetricsService) GetPgssTopQueries(ctx context.Context, instanceName string, from, to time.Time, sortBy string, limit int) ([]models.PgssTopQuery, error) {
+// Optional filters: dbName, userName, appName, queryType (empty = all).
+func (s *MetricsService) GetPgssTopQueries(ctx context.Context, instanceName string, from, to time.Time, sortBy string, limit int, dbName, userName, appName, queryType string, hideSystem bool) ([]models.PgssTopQuery, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	hotQ, err := s.tsLogger.GetPgssTopQueries(ctx, instanceName, from, to, sortBy, limit)
+	hotQ, err := s.tsLogger.GetPgssTopQueries(ctx, instanceName, from, to, sortBy, limit, dbName, userName, appName, queryType, hideSystem)
 	if err != nil {
 		return nil, err
 	}
 	q := make([]models.PgssTopQuery, len(hotQ))
 	for i, h := range hotQ {
 		q[i] = models.PgssTopQuery{
-			QueryID: h.QueryID, Query: h.Query, TotalTime: h.TotalTime, PctDBTime: h.PctDBTime,
+			QueryID: h.QueryID, Query: h.Query,
+			DbName: h.DbName, UserName: h.UserName, AppName: h.AppName, QueryType: h.QueryType,
+			TotalTime: h.TotalTime, PctDBTime: h.PctDBTime,
 			Calls: h.Calls, AvgMs: h.AvgMs, RowsPerCall: h.RowsPerCall,
 			HitPct: h.HitPct, TempMB: h.TempMB, WalMB: h.WalMB,
 			ReadsPerCall: h.ReadsPerCall, PlanRatio: h.PlanRatio, Flags: h.Flags,
 		}
 	}
 	return q, nil
+}
+
+// GetPgssFilterOptions returns distinct db_name/username/app_name for filter dropdowns.
+func (s *MetricsService) GetPgssFilterOptions(ctx context.Context, instanceName string, from, to time.Time) (*models.PgssFilterOptions, error) {
+	if s.tsLogger == nil {
+		return &models.PgssFilterOptions{Instance: instanceName}, nil
+	}
+	opts, err := s.tsLogger.GetPgssFilterOptions(ctx, instanceName, from, to)
+	if err != nil || opts == nil {
+		return &models.PgssFilterOptions{Instance: instanceName}, nil
+	}
+	return &models.PgssFilterOptions{
+		Instance:  instanceName,
+		Databases: opts.Databases,
+		Users:     opts.Users,
+		AppNames:  opts.AppNames,
+	}, nil
+}
+
+// GetPgssDbBreakdown returns per-database workload totals.
+func (s *MetricsService) GetPgssDbBreakdown(ctx context.Context, instanceName string, from, to time.Time) ([]models.PgssDbBreakdown, error) {
+	if s.tsLogger == nil {
+		return nil, nil
+	}
+	rows, err := s.tsLogger.GetPgssDbBreakdown(ctx, instanceName, from, to)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]models.PgssDbBreakdown, len(rows))
+	for i, r := range rows {
+		out[i] = models.PgssDbBreakdown{
+			DbName: r.DbName, TotalExecMs: r.TotalExecMs, PctOfServer: r.PctOfServer,
+			TotalCalls: r.TotalCalls, AvgMs: r.AvgMs, CacheHitPct: r.CacheHitPct,
+			UniqueQueryIDs: r.UniqueQueryIDs,
+		}
+	}
+	return out, nil
+}
+
+// GetPgssUserBreakdown returns per-login workload totals.
+func (s *MetricsService) GetPgssUserBreakdown(ctx context.Context, instanceName string, from, to time.Time) ([]models.PgssUserBreakdown, error) {
+	if s.tsLogger == nil {
+		return nil, nil
+	}
+	rows, err := s.tsLogger.GetPgssUserBreakdown(ctx, instanceName, from, to)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]models.PgssUserBreakdown, len(rows))
+	for i, r := range rows {
+		out[i] = models.PgssUserBreakdown{
+			UserName: r.UserName, TotalExecMs: r.TotalExecMs, PctOfServer: r.PctOfServer,
+			TotalCalls: r.TotalCalls, AvgMs: r.AvgMs, UniqueQueryIDs: r.UniqueQueryIDs,
+		}
+	}
+	return out, nil
 }
 
 // GetPgssRegressions returns queries that degraded between the last 30m and previous 30m.
@@ -143,6 +202,7 @@ func (s *MetricsService) GetPgssRegressions(ctx context.Context, instanceName st
 		r[i] = models.PgssRegression{
 			QueryID: h.QueryID, Query: h.Query, PrevAvgMs: h.PrevAvgMs,
 			CurrAvgMs: h.CurrAvgMs, ChangePct: h.ChangePct, Status: h.Status,
+			DetectedAt: h.DetectedAt,
 		}
 	}
 	return r, nil
@@ -166,5 +226,6 @@ func (s *MetricsService) GetPgssSummary(ctx context.Context, instanceName string
 		TempMbSec:          hotS.TempMbSec,
 		WalMbSec:           hotS.WalMbSec,
 		CpuSaturationMsSec: hotS.CpuSaturationMsSec,
+		UniqueQueryCount:   hotS.UniqueQueryCount,
 	}, nil
 }

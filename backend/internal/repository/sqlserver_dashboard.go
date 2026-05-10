@@ -29,7 +29,7 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 	metrics.PrevFileStats = make(map[string]models.FileIOStat)
 
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -51,28 +51,28 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 	}
 
 	cpuQuery := `
-		/* SQL_OPTIMA */ 
-		DECLARE @ts_now bigint = (SELECT   cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
-		SELECT   TOP(256)
-		    SQLProcessUtilization AS [SQL_Server_CPU], 
-		    SystemIdle AS [System_Idle_CPU], 
-		    100 - SystemIdle - SQLProcessUtilization AS [Other_Process_CPU],
-		    CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETDATE()), 120) AS [Event_Time]
-		FROM ( 
-		    SELECT   record.value('(./Record/@id)[1]', 'int') AS record_id, 
-		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') 
-		        AS [SystemIdle], 
-		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') 
-		        AS [SQLProcessUtilization], [timestamp] 
-		    FROM ( 
-		        SELECT   [timestamp], CONVERT(xml, record) AS [record] 
-		        FROM sys.dm_os_ring_buffers WITH (NOLOCK)
-		        WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
-		        AND record LIKE N'%<SystemHealth>%'
-		    ) AS x 
-		) AS y 
-		ORDER BY record_id DESC;
-	`
+	        /* SQL_OPTIMA */ 
+	        DECLARE @ts_now bigint = (SELECT ms_ticks FROM sys.dm_os_sys_info WITH (NOLOCK)); 
+	        SELECT TOP(256)
+	            ISNULL(SQLProcessUtilization, 0) AS [SQL_Server_CPU], 
+	            ISNULL(SystemIdle, 0) AS [System_Idle_CPU], 
+	            100 - ISNULL(SystemIdle, 0) - ISNULL(SQLProcessUtilization, 0) AS [Other_Process_CPU],
+	            CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETUTCDATE()), 120) AS [Event_Time]
+	        FROM ( 
+	            SELECT record.value('(./Record/@id)[1]', 'int') AS record_id, 
+	                record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') 
+	                AS [SystemIdle], 
+	                record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') 
+	                AS [SQLProcessUtilization], [timestamp] 
+	            FROM ( 
+	                SELECT [timestamp], CONVERT(xml, record) AS [record] 
+	                FROM sys.dm_os_ring_buffers WITH (NOLOCK)
+	                WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
+	                AND record LIKE N'%<SystemHealth>%'
+	            ) AS x 
+	        ) AS y 
+	        ORDER BY [timestamp] DESC;
+	        `
 	cpuRows, errCpu := db.Query(cpuQuery)
 	if errCpu == nil {
 		defer cpuRows.Close()
@@ -92,7 +92,7 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 		}
 	}
 
-	sessionQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
+	sessionQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')`
 	_ = db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
 
 	connQuery := `
@@ -104,8 +104,8 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 			SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as active_requests
 		FROM sys.dm_exec_sessions s WITH (NOLOCK)
 		WHERE is_user_process = 1
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		GROUP BY s.login_name, s.database_id
 	`
 	connRows, _ := db.Query(connQuery)
@@ -160,8 +160,8 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 		JOIN sys.dm_exec_sessions s WITH (NOLOCK) ON r.session_id = s.session_id
 		CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
 		WHERE r.session_id > 50 AND r.session_id <> @@SPID
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 	`
 	blockRows, errBlk := db.Query(blockDetQuery)
 	if errBlk == nil {
@@ -214,6 +214,7 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 	pleQuery := `SELECT /* SQL_OPTIMA */   ISNULL(CAST(cntr_value AS FLOAT), 0) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE [counter_name] = N'Page life expectancy' AND [object_name] LIKE '%Buffer Manager%'`
 	var currentPLE float64
 	if err := db.QueryRow(pleQuery).Scan(&currentPLE); err == nil {
+		metrics.PLE = currentPLE
 		metrics.PLEHistory = append(metrics.PLEHistory, currentPLE)
 		if len(metrics.PLEHistory) > 960 {
 			metrics.PLEHistory = metrics.PLEHistory[1:]
@@ -226,11 +227,13 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 	diskQuery := `
 		/* SQL_OPTIMA */   	
 		SELECT 
-			ISNULL(DB_NAME(database_id), 'Unknown'),
-			SUM(CASE WHEN type=0 THEN size * 8.0/1024.0 ELSE 0 END) as Data,
-			SUM(CASE WHEN type=1 THEN size * 8.0/1024.0 ELSE 0 END) as Log
-		FROM sys.master_files
-		GROUP BY database_id
+			ISNULL(DB_NAME(mf.database_id), 'Unknown') as db_name,
+			SUM(CASE WHEN mf.type=0 THEN mf.size * 8.0/1024.0 ELSE 0 END) as Data,
+			SUM(CASE WHEN mf.type=1 THEN mf.size * 8.0/1024.0 ELSE 0 END) as Log,
+			ISNULL(AVG(CAST(vs.available_bytes AS FLOAT) / 1024.0 / 1024.0), 0) as Free
+		FROM sys.master_files mf
+		OUTER APPLY sys.dm_os_volume_stats(mf.database_id, mf.file_id) vs
+		GROUP BY mf.database_id
 	`
 	dRows, errD := db.Query(diskQuery)
 	if errD == nil {
@@ -238,10 +241,12 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 		for dRows.Next() {
 			var dbName string
 			var d models.DiskStat
-			if err := dRows.Scan(&dbName, &d.DataMB, &d.LogMB); err == nil {
+			if err := dRows.Scan(&dbName, &d.DataMB, &d.LogMB, &d.FreeMB); err == nil {
 				metrics.DiskByDB[dbName] = d
 				metrics.DiskUsage.DataMB += d.DataMB
 				metrics.DiskUsage.LogMB += d.LogMB
+				// DiskUsage.FreeMB should ideally be total free on all involved volumes,
+				// but for the dashboard aggregate we can leave it or sum distinct volumes.
 			}
 		}
 	}
@@ -266,8 +271,8 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 		WHERE s.is_user_process = 1
 		  AND r.session_id <> @@SPID
 		  AND (r.cpu_time > 50 OR r.total_elapsed_time > 5000000 OR r.logical_reads > 5000)
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		ORDER BY r.total_elapsed_time DESC
 	`
 	rows, err := db.Query(runningSQL)
@@ -322,7 +327,7 @@ func (c *SqlServerRepository) FetchHistoricalTelemetry(instanceName string, prev
 	}
 
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -428,7 +433,7 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 	metrics.LocksByDB = make(map[string]models.LockStat)
 
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -437,28 +442,28 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 
 	// 1. CPU Usage (Extract fully chronological 256-minute Ring Buffer history dynamically dropping arbitrary Go array bindings)
 	cpuQuery := `
-		/* SQL_OPTIMA */
-		DECLARE @ts_now bigint = (SELECT    cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
-		SELECT   TOP(256)
-		    SQLProcessUtilization AS [SQL_Server_CPU], 
-		    SystemIdle AS [System_Idle_CPU], 
-		    100 - SystemIdle - SQLProcessUtilization AS [Other_Process_CPU],
-		    CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETDATE()), 120) AS [Event_Time]
-		FROM ( 
-		    SELECT   record.value('(./Record/@id)[1]', 'int') AS record_id, 
-		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') 
-		        AS [SystemIdle], 
-		        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') 
-		        AS [SQLProcessUtilization], [timestamp] 
-		    FROM ( 
-		        SELECT  [timestamp], CONVERT(xml, record) AS [record] 
-		        FROM sys.dm_os_ring_buffers WITH (NOLOCK)
-		        WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
-		        AND record LIKE N'%<SystemHealth>%'
-		    ) AS x 
-		) AS y 
-		ORDER BY record_id DESC;
-	`
+	        /* SQL_OPTIMA */ 
+	        DECLARE @ts_now bigint = (SELECT ms_ticks FROM sys.dm_os_sys_info WITH (NOLOCK)); 
+	        SELECT TOP(256)
+	            ISNULL(SQLProcessUtilization, 0) AS [SQL_Server_CPU], 
+	            ISNULL(SystemIdle, 0) AS [System_Idle_CPU], 
+	            100 - ISNULL(SystemIdle, 0) - ISNULL(SQLProcessUtilization, 0) AS [Other_Process_CPU],
+	            CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETUTCDATE()), 120) AS [Event_Time]
+	        FROM ( 
+	            SELECT record.value('(./Record/@id)[1]', 'int') AS record_id, 
+	                record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') 
+	                AS [SystemIdle], 
+	                record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') 
+	                AS [SQLProcessUtilization], [timestamp] 
+	            FROM ( 
+	                SELECT [timestamp], CONVERT(xml, record) AS [record] 
+	                FROM sys.dm_os_ring_buffers WITH (NOLOCK)
+	                WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
+	                AND record LIKE N'%<SystemHealth>%'
+	            ) AS x 
+	        ) AS y 
+	        ORDER BY [timestamp] DESC;
+	        `
 	cpuRows, errCpu := db.Query(cpuQuery)
 	if errCpu == nil {
 		defer cpuRows.Close()
@@ -481,7 +486,7 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 	}
 
 	// 2. Active Sessions (sqlserver_active_sessions_by_status)
-	sessionQuery := `/* SQL_OPTIMA */ SELECT   COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')`
+	sessionQuery := `/* SQL_OPTIMA */ SELECT   COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')`
 	_ = db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
 
 	// 2b. Connections grouping natively over physically bounded user target logical pools
@@ -494,8 +499,8 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 			SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as active_requests
 		FROM sys.dm_exec_sessions s WITH (NOLOCK)
 		WHERE is_user_process = 1
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		GROUP BY s.login_name, s.database_id
 	`
 	connRows, _ := db.Query(connQuery)
@@ -552,8 +557,8 @@ func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev 
 		JOIN sys.dm_exec_sessions s WITH (NOLOCK) ON r.session_id = s.session_id
 		CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
 		WHERE r.session_id > 50 AND r.session_id <> @@SPID
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 	`
 	blockRows, errBlk := db.Query(blockDetQuery)
 	if errBlk == nil {

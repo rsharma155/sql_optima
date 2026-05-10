@@ -67,6 +67,7 @@ func fetchRegressionsForDB(db *sql.DB, dbName string) ([]models.SqlServerQueryRe
 			WHERE rsi.start_time >= DATEADD(hour, -24, GETUTCDATE())
 			  AND q.is_internal_query = 0
 			  AND qt.query_sql_text NOT LIKE '%%sys.query_store%%'
+			  AND qt.query_sql_text NOT LIKE '%%/* SQL_OPTIMA */%%'
 			  AND q.last_bind_duration > 0
 			GROUP BY q.query_hash, qt.query_sql_text
 		),
@@ -164,7 +165,7 @@ func fetchPlanInstabilityForDB(db *sql.DB, dbName string) ([]models.SqlServerPla
 	query := fmt.Sprintf(`
 		/* SQL_OPTIMA */ 
 		USE %s;
-		SELECT /* SQL_OPTIMA */   TOP 50
+		SELECT  TOP 50
 			CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
 			qt.query_sql_text AS query_text,
 			COUNT(DISTINCT p.plan_id) AS plan_count,
@@ -175,6 +176,7 @@ func fetchPlanInstabilityForDB(db *sql.DB, dbName string) ([]models.SqlServerPla
 		JOIN sys.query_store_runtime_stats rs ON rs.plan_id = p.plan_id
 		WHERE q.is_internal_query = 0
 		  AND qt.query_sql_text NOT LIKE '%%sys.query_store%%'
+		  AND qt.query_sql_text NOT LIKE '%%/* SQL_OPTIMA */%%'
 		  AND q.last_bind_duration > 0
 		GROUP BY q.query_hash, qt.query_sql_text
 		HAVING COUNT(DISTINCT p.plan_id) > 3

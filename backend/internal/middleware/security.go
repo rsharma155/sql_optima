@@ -20,8 +20,8 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	hstsDisabled := strings.TrimSpace(os.Getenv("HSTS_DISABLED")) == "1"
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Prevent clickjacking
-		w.Header().Set("X-Frame-Options", "DENY")
+		// Prevent clickjacking - allow framing from the same origin
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 
 		// Prevent MIME type sniffing
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -44,11 +44,12 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 		// connect-src allows cdn.jsdelivr.net only for Chart.js CDN fetch (auto-upgrade check).
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "+
+				"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "+
 				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "+
 				"font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; "+
 				"img-src 'self' data: https:; "+
-				"connect-src 'self' https://cdn.jsdelivr.net")
+				"connect-src 'self' https://cdn.jsdelivr.net; "+
+				"frame-src 'self' blob: data:;")
 
 		next.ServeHTTP(w, r)
 	})

@@ -122,6 +122,8 @@ func (r *Runner) processRule(ctx context.Context, workerID int, rule models.Rule
 		RuleName:   rule.RuleName,
 		Category:   rule.Category,
 		DetectedAt: time.Now(),
+		ContextTags: rule.ContextTags,
+		Confidence:  rule.Confidence,
 	}
 
 	ruleCtx, cancel := context.WithTimeout(ctx, RuleTimeout)
@@ -134,6 +136,29 @@ func (r *Runner) processRule(ctx context.Context, workerID int, rule models.Rule
 	sqlCol := r.sqlServerCol
 	pgCol := r.pgCol
 	r.mu.RUnlock()
+
+	// NEW: Applicability check
+	if rule.ApplicabilitySQL != "" {
+		var appResults []map[string]interface{}
+		var appErr error
+		switch rule.TargetDBType {
+		case "postgres":
+			if pgCol != nil {
+				appResults, _, appErr = pgCol.ExecuteRule(ruleCtx, rule.ApplicabilitySQL)
+			}
+		case "sqlserver":
+			if sqlCol != nil {
+				appResults, _, appErr = sqlCol.ExecuteRule(ruleCtx, rule.ApplicabilitySQL)
+			}
+		}
+		if appErr == nil && len(appResults) == 0 {
+			// Rule is not applicable to this instance/database
+			payload.Status = "N/A"
+			payload.CurrentValue = "Not Applicable"
+			resultsChan <- payload
+			return
+		}
+	}
 
 	detectionSQL := rule.DetectionSQL
 	if rule.TargetDBType == "postgres" && rule.DetectionSQLPG != "" {

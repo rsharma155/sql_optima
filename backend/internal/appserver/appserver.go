@@ -59,6 +59,14 @@ func initErrorLogger() {
 		log.Fatalf("Failed to create log directory: %v", err)
 	}
 	errorLogPath := filepath.Join(logDir, "error.log")
+
+	// Basic log rotation: if file exists and is > 10MB, truncate it.
+	if info, err := os.Stat(errorLogPath); err == nil {
+		if info.Size() > 10*1024*1024 {
+			_ = os.Truncate(errorLogPath, 0)
+		}
+	}
+
 	var err error
 	errorFile, err = os.OpenFile(errorLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -137,7 +145,7 @@ func Main() {
 	var usingEnvTimescale bool
 	var kms servers.KeyManagementService
 	var usingLocalKMS bool
-	tsHotStorage, usingEnvTimescale, err = config.ConnectMetricsTimescale(configPath, jwtSecret)
+	tsHotStorage, usingEnvTimescale, err = hot.ConnectMetricsTimescale(configPath, jwtSecret)
 	if err != nil {
 		errMsg := fmt.Sprintf("TimescaleDB (env fallback): %v", err)
 		log.Printf("[WARNING] %s", errMsg)
@@ -189,6 +197,9 @@ func Main() {
 	// collectors are enabled. Start this adaptive watcher whenever Timescale is connected.
 	go metricsSvc.StartPgLocksBlockingCollector(ctx)
 
+	// Always start background collector; it handles table-driven frequency checks
+	go metricsSvc.StartBackgroundCollector(ctx)
+
 	redisAddr := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
 	var asynqSch *asynq.Scheduler
 	if redisAddr != "" {
@@ -202,10 +213,11 @@ func Main() {
 				log.Printf("[asynq] server: %v", err)
 			}
 		}()
-		log.Println("[asynq] Redis-backed collector queue enabled (live/historical); in-process ticker disabled")
-	} else {
-		go metricsSvc.StartBackgroundCollector(ctx)
+		log.Println("[asynq] Redis-backed collector queue enabled (tasks can be offloaded); StartBackgroundCollector will coordinate ticks")
 	}
+
+	// SQL Server locks/blocking incidents
+	go metricsSvc.StartMsLocksBlockingCollector(ctx)
 
 	go metricsSvc.StartQueryStoreCollector(ctx)
 	go metricsSvc.StartEnterpriseCollector(ctx)
@@ -272,6 +284,17 @@ func Main() {
 		cfg.Instances = loaded
 		metricsSvc.ReplaceInstanceRepositories(repository.NewPgRepository(cfg), repository.NewSqlServerRepository(cfg))
 		log.Printf("[config] registry reload: %d instance(s)", len(cfg.Instances))
+
+		// Immediately trigger a one-time collection for new instances across all workers
+		go func() {
+			tctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			// Core metrics (CPU, Memory, Historical Log)
+			metricsSvc.RunLiveCollectorOnce(tctx)
+			metricsSvc.RunHistoricalCollectorOnce(tctx)
+			// Enterprise and Query Store metrics
+			metricsSvc.TriggerBackgroundCollectorsOnce()
+		}()
 	}
 	metricsSvc.RegistryReload = reloadFromRegistry
 	api.RegisterSetupRoutes(r, middleware.NewSetupRateLimiter(parseEnvInt("SETUP_RATE_LIMIT_PER_MIN", 12), time.Minute), &handlers.SetupDeps{
@@ -429,24 +452,6 @@ func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.
 	mssqlApps := make(map[string]*application.CollectorApp)
 	pgApps := make(map[string]*application.CollectorApp)
 
-	for _, inst := range cfg.Instances {
-		db, err := config.ConnectToInstance(inst)
-		if err != nil {
-			log.Printf("[collector-v2] failed to connect to instance %s: %v", inst.Name, err)
-			continue
-		}
-
-		if inst.Type == "sqlserver" {
-			repo := sqlserver.NewSQLServerSnapshotRepository(db)
-			app := application.NewCollectorApp(jobScheduler, repo, nil, writer, filter)
-			mssqlApps[inst.Name] = app
-		} else if inst.Type == "postgres" {
-			repo := postgres.NewPGSnapshotRepository(db)
-			app := application.NewCollectorApp(jobScheduler, nil, repo, writer, filter)
-			pgApps[inst.Name] = app
-		}
-	}
-
 	ticker := time.NewTicker(5 * time.Second)
 	go func() {
 		for {
@@ -454,7 +459,29 @@ func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				// Refresh configs? Maybe every N cycles.
+				// Ensure all current instances from cfg have a collector app
+				for _, inst := range cfg.Instances {
+					if inst.Type == "sqlserver" {
+						if _, ok := mssqlApps[inst.Name]; !ok {
+							db, err := config.ConnectToInstance(inst)
+							if err == nil {
+								repo := sqlserver.NewSQLServerSnapshotRepository(db)
+								mssqlApps[inst.Name] = application.NewCollectorApp(jobScheduler, repo, nil, writer, filter)
+								log.Printf("[collector-v2] Dynamic start: SQL Server collector for %s", inst.Name)
+							}
+						}
+					} else if inst.Type == "postgres" {
+						if _, ok := pgApps[inst.Name]; !ok {
+							db, err := config.ConnectToInstance(inst)
+							if err == nil {
+								repo := postgres.NewPGSnapshotRepository(db)
+								pgApps[inst.Name] = application.NewCollectorApp(jobScheduler, nil, repo, writer, filter)
+								log.Printf("[collector-v2] Dynamic start: Postgres collector for %s", inst.Name)
+							}
+						}
+					}
+				}
+
 				for name, app := range mssqlApps {
 					app.RunCycle(ctx, name)
 				}

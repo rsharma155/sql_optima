@@ -1,0 +1,161 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Styles for SQL Server Health Dashboard v2 (Instant Triage).
+ * Metadata:
+ *   - Version: 1.4 (Compact & High Density)
+ *   - Grid: 3-row rigid layout for 1920x1080 and 1366x768.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+
+.dash-v2-grid {
+    display: grid;
+    grid-template-rows: 100px 1fr 1fr; /* Explicit height for KPI row, others share remaining space */
+    grid-template-columns: repeat(12, 1fr);
+    gap: 8px;
+    padding: 5px 10px;
+    height: calc(100vh - 65px); /* Maximized height */
+    overflow: hidden;
+    background: var(--bg-base);
+}
+
+/* Row 1: KPI Strip */
+.kpi-strip {
+    grid-row: 1;
+    grid-column: 1 / span 12;
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    gap: 6px;
+}
+
+.kpi-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    overflow: hidden;
+}
+
+.kpi-card .kpi-main {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    z-index: 2;
+}
+
+.kpi-card .kpi-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--text-primary);
+}
+
+.kpi-card .kpi-label {
+    font-size: 0.55rem;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-weight: 700;
+    margin-top: 2px;
+}
+
+/* Sparkline container inside KPI */
+.kpi-sparkline {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40%;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.6;
+}
+
+.kpi-card .info-btn {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    cursor: help;
+    z-index: 3;
+}
+
+/* Row 2 & 3: Tighter containers */
+.bottleneck-row, .supporting-row {
+    grid-column: 1 / span 12;
+    display: grid;
+    gap: 8px;
+    min-height: 0;
+}
+
+.bottleneck-row {
+    grid-row: 2;
+    grid-template-columns: 8fr 4fr;
+}
+
+.supporting-row {
+    grid-row: 3;
+    grid-template-columns: 4fr 4fr 4fr;
+}
+
+.chart-container {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.chart-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 3px;
+}
+
+.chart-canvas-wrap {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+}
+
+/* Status Highlights */
+.status-healthy { border-left: 3px solid var(--success); }
+.status-warning { border-left: 3px solid var(--warning); }
+.status-critical { border-left: 3px solid var(--danger); }
+
+/* Laptop optimization */
+@media (max-width: 1400px) {
+    .dash-v2-grid {
+        grid-template-rows: 80px 1fr 1fr;
+        gap: 6px;
+    }
+    .kpi-strip { gap: 4px; }
+    .kpi-card .kpi-value { font-size: 1.1rem; }
+}
+
+/* Mobile/Tablet Fallback (Allows Scroll) */
+@media (max-width: 1024px) {
+    .dash-v2-grid {
+        grid-template-rows: auto;
+        height: auto;
+        overflow-y: auto;
+    }
+    .kpi-strip { grid-template-columns: repeat(5, 1fr); }
+    .bottleneck-row, .supporting-row { grid-template-columns: 1fr; }
+}

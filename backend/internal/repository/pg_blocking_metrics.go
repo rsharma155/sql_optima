@@ -16,6 +16,18 @@ import (
 	"time"
 )
 
+// buildINClause constructs a SQL "IN ($1,$2,...)" placeholder string and args slice
+// for a slice of int PIDs starting at offset (1-based).
+func buildINClause(pids []int, offset int) (string, []any) {
+	ph := make([]string, len(pids))
+	args := make([]any, len(pids))
+	for i, pid := range pids {
+		ph[i] = fmt.Sprintf("$%d", offset+i)
+		args[i] = pid
+	}
+	return strings.Join(ph, ","), args
+}
+
 // PgLock represents a PostgreSQL lock with metadata.
 type PgLock struct {
 	PID        int    `json:"pid"`
@@ -29,7 +41,7 @@ type PgLock struct {
 // GetLocks returns all current locks with waiting time for ungranted locks.
 func (c *PgRepository) GetLocks(instanceName string) ([]PgLock, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -83,21 +95,28 @@ func (c *PgRepository) GetLocks(instanceName string) ([]PgLock, error) {
 
 // PgBlockingNode represents a node in the blocking tree visualization.
 type PgBlockingNode struct {
-	PID        int              `json:"pid"`
-	User       string           `json:"user,omitempty"`
-	Database   string           `json:"database,omitempty"`
-	State      string           `json:"state"`
-	QueryStart *time.Time       `json:"query_start,omitempty"`
-	Duration   string           `json:"duration"`
-	WaitEvent  string           `json:"wait_event"`
-	Query      string           `json:"query"`
-	BlockedBy  []PgBlockingNode `json:"blocked_by"`
+	PID               int              `json:"pid"`
+	User              string           `json:"user,omitempty"`
+	Database          string           `json:"database,omitempty"`
+	ApplicationName   string           `json:"application_name,omitempty"`
+	ClientAddr        string           `json:"client_addr,omitempty"`
+	State             string           `json:"state"`
+	IsIdleInTxn       bool             `json:"is_idle_in_txn"`
+	QueryStart        *time.Time       `json:"query_start,omitempty"`
+	XactStart         *time.Time       `json:"xact_start,omitempty"`
+	Duration          string           `json:"duration"`
+	WaitEventType     string           `json:"wait_event_type,omitempty"`
+	WaitEvent         string           `json:"wait_event"`
+	Query             string           `json:"query"`
+	LockModes         []string         `json:"lock_modes,omitempty"`
+	AffectedRelations []string         `json:"affected_relations,omitempty"`
+	BlockedBy         []PgBlockingNode `json:"blocked_by"`
 }
 
 // GetBlockingTree returns hierarchical blocking relationships between sessions.
 func (c *PgRepository) GetBlockingTree(instanceName string) ([]PgBlockingNode, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -246,7 +265,7 @@ func (c *PgRepository) GetBlockingTree(instanceName string) ([]PgBlockingNode, e
 // the incident collector (monitor.pg_blocking_pairs). This is typically more consistent for "live" UI.
 func (c *PgRepository) GetBlockingTreeFast(instanceName string) ([]PgBlockingNode, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
@@ -287,26 +306,25 @@ func (c *PgRepository) GetBlockingTreeFast(instanceName string) ([]PgBlockingNod
 	for pid := range pidSet {
 		pidList = append(pidList, pid)
 	}
-	args := make([]any, 0, len(pidList))
-	ph := make([]string, 0, len(pidList))
-	for i, pid := range pidList {
-		args = append(args, pid)
-		ph = append(ph, fmt.Sprintf("$%d", i+1))
-	}
 
+	inClause, args := buildINClause(pidList, 1)
 	actQ := fmt.Sprintf(`
-		/* SQL_OPTIMA */ SELECT   
+		/* SQL_OPTIMA */ SELECT
 			a.pid,
 			COALESCE(a.usename,''),
 			COALESCE(a.datname,''),
+			COALESCE(a.application_name,''),
+			COALESCE(a.client_addr::text,''),
 			COALESCE(a.state,''),
+			a.xact_start,
 			a.query_start,
-			EXTRACT(EPOCH FROM (now() - a.state_change)) as duration_seconds,
-			COALESCE(a.wait_event_type || ':' || a.wait_event, '') as wait_event,
-			LEFT(a.query, 400) as query
+			a.state_change,
+			COALESCE(a.wait_event_type,'') AS wait_event_type,
+			COALESCE(a.wait_event,'') AS wait_event,
+			COALESCE(a.query,'') AS query
 		FROM pg_stat_activity a
 		WHERE a.pid IN (%s)
-	`, strings.Join(ph, ","))
+	`, inClause)
 
 	actRows, err := db.Query(actQ, args...)
 	if err != nil {
@@ -317,15 +335,79 @@ func (c *PgRepository) GetBlockingTreeFast(instanceName string) ([]PgBlockingNod
 	sessionMap := make(map[int]PgBlockingNode)
 	for actRows.Next() {
 		var node PgBlockingNode
-		var durationSeconds float64
-		if err := actRows.Scan(&node.PID, &node.User, &node.Database, &node.State, &node.QueryStart, &durationSeconds, &node.WaitEvent, &node.Query); err != nil {
+		var sc *time.Time
+		if err := actRows.Scan(
+			&node.PID, &node.User, &node.Database, &node.ApplicationName, &node.ClientAddr,
+			&node.State, &node.XactStart, &node.QueryStart, &sc,
+			&node.WaitEventType, &node.WaitEvent, &node.Query,
+		); err != nil {
 			continue
 		}
-		duration := time.Duration(durationSeconds) * time.Second
-		minutes := int(duration.Minutes())
-		seconds := int(duration.Seconds()) % 60
-		node.Duration = fmt.Sprintf("%dm %ds", minutes, seconds)
+		if node.WaitEventType != "" && node.WaitEvent != "" {
+			node.WaitEvent = node.WaitEventType + ":" + node.WaitEvent
+		} else if node.WaitEventType != "" {
+			node.WaitEvent = node.WaitEventType
+		}
+		node.IsIdleInTxn = strings.Contains(strings.ToLower(node.State), "idle in transaction")
+		if sc != nil {
+			sec := int(time.Since(*sc).Seconds())
+			if sec < 0 {
+				sec = 0
+			}
+			node.Duration = fmt.Sprintf("%dm %ds", sec/60, sec%60)
+		} else {
+			node.Duration = "-"
+		}
 		sessionMap[node.PID] = node
+	}
+
+	// Fetch lock modes and relations per PID from pg_locks.
+	lockInClause, lockArgs := buildINClause(pidList, 1)
+	lockQ := fmt.Sprintf(`
+		/* SQL_OPTIMA */ SELECT l.pid, COALESCE(l.mode,''), COALESCE(r.relname,'virtual')
+		FROM pg_locks l
+		LEFT JOIN pg_class r ON l.relation = r.oid
+		WHERE l.pid IN (%s)
+	`, lockInClause)
+	lockRows, lockErr := db.Query(lockQ, lockArgs...)
+	if lockErr == nil {
+		defer lockRows.Close()
+		modeSets := make(map[int]map[string]struct{})
+		relSets := make(map[int]map[string]struct{})
+		for lockRows.Next() {
+			var pid int
+			var mode, rel string
+			if err := lockRows.Scan(&pid, &mode, &rel); err != nil {
+				continue
+			}
+			if modeSets[pid] == nil {
+				modeSets[pid] = make(map[string]struct{})
+			}
+			if relSets[pid] == nil {
+				relSets[pid] = make(map[string]struct{})
+			}
+			if mode != "" {
+				modeSets[pid][mode] = struct{}{}
+			}
+			if rel != "" && rel != "virtual" {
+				relSets[pid][rel] = struct{}{}
+			}
+		}
+		for pid, node := range sessionMap {
+			if ms := modeSets[pid]; len(ms) > 0 {
+				for m := range ms {
+					node.LockModes = append(node.LockModes, m)
+				}
+				sort.Strings(node.LockModes)
+			}
+			if rs := relSets[pid]; len(rs) > 0 {
+				for r := range rs {
+					node.AffectedRelations = append(node.AffectedRelations, r)
+				}
+				sort.Strings(node.AffectedRelations)
+			}
+			sessionMap[pid] = node
+		}
 	}
 
 	for pid := range pidSet {

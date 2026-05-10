@@ -47,17 +47,30 @@ func (s *MetricsService) FetchInterval(ctx context.Context, name string, default
 }
 
 func (s *MetricsService) StartBackgroundCollector(ctx context.Context) {
-	msHistInterval := s.FetchInterval(ctx, "SQL Server CPU and Memory", 60*time.Second)
+	// Wait 20 seconds before starting initial collection to allow system to stabilize
+	log.Printf("[Collector] Background daemon standby... (waiting 20s for system stabilization)")
+	select {
+	case <-time.After(20 * time.Second):
+	case <-ctx.Done():
+		return
+	}
+
+	msHistInterval := s.FetchInterval(ctx, "SQL Server System Metrics", 60*time.Second)
 	pgHistInterval := s.FetchInterval(ctx, "Postgres CPU and Memory", 60*time.Second)
 
 	log.Printf("[Collector] Split-Speed Background Daemon starting...")
 	log.Printf("[Collector]   - SQLServer Historical ticker: every %v", msHistInterval)
 	log.Printf("[Collector]   - Postgres Historical ticker: every %v", pgHistInterval)
-	log.Printf("[Collector]   - Live Diagnostics ticker: DISABLED (RTD is on-demand only)")
+	log.Printf("[Collector]   - Live Diagnostics ticker: Adaptive (respects table configuration)")
 	log.Printf("[Collector]   - PG Locks/Blocking incidents: adaptive 15s/5s (configurable)")
 
 	s.dashboardCache = make(map[string]models.DashboardMetrics)
 	s.pgDashboardCache = make(map[string]models.PgCoreDashboardCache)
+
+	// Run one initial scrape of everything to ensure data is present on startup
+	log.Printf("[Collector] Performing initial background collection...")
+	s.runLiveDiagnosticsWithContext(ctx)
+	s.runHistoricalStorageWithContext(ctx)
 
 	// We use a dynamic base ticker for the loop, default 15s
 	tickerInterval := s.FetchInterval(ctx, "Base Collector Ticker", 15*time.Second)
@@ -67,21 +80,15 @@ func (s *MetricsService) StartBackgroundCollector(ctx context.Context) {
 	msLiveInterval := s.FetchInterval(ctx, "SQL Server Active Queries", 15*time.Second)
 	pgLiveInterval := s.FetchInterval(ctx, "Postgres Active Queries", 60*time.Second)
 
-	var lastMsHist time.Time
-	var lastPgHist time.Time
-	var lastMsLive time.Time
-	var lastPgLive time.Time
-	var lastIdentityUpsert time.Time
-
-	// Run one live scrape on startup only (warm cache)
-	s.runLiveDiagnosticsWithContext(ctx)
-	lastMsLive = time.Now()
-	lastPgLive = time.Now()
-	lastMsHist = time.Now()
-	lastPgHist = time.Now()
+	var lastMsHist time.Time = time.Now()
+	var lastPgHist time.Time = time.Now()
+	var lastMsLive time.Time = time.Now()
+	var lastPgLive time.Time = time.Now()
+	var lastIdentityUpsert time.Time = time.Now()
 
 	// Start stateful incident monitoring in the background
 	go s.StartPgLocksBlockingCollector(ctx)
+	go s.StartMsLocksBlockingCollector(ctx)
 
 	for {
 		select {
@@ -140,7 +147,8 @@ func (s *MetricsService) StartBackgroundCollector(ctx context.Context) {
 			}
 
 			// Refresh all intervals for next iteration
-			msHistInterval = s.FetchInterval(ctx, "SQL Server CPU and Memory", 60*time.Second)
+			msHistInterval = s.FetchInterval(ctx, "SQL Server System Metrics", 60*time.Second)
+			pgHistInterval = s.FetchInterval(ctx, "Postgres CPU and Memory", 60*time.Second)
 			msLiveInterval = s.FetchInterval(ctx, "SQL Server Active Queries", 15*time.Second)
 			pgLiveInterval = s.FetchInterval(ctx, "Postgres Active Queries", 60*time.Second)
 
@@ -175,46 +183,50 @@ func (s *MetricsService) runLiveDiagnosticsWithContext(ctx context.Context) {
 			s.cacheMutex.RUnlock()
 
 			if instanceType == "sqlserver" {
-				currentMs := s.MsRepo.FetchLiveTelemetry(instanceName, prevMsTick)
-				currentMs.Timestamp = time.Now().Format("15:04:05")
+				s.EnqueueCollection(instanceName, func() {
+					currentMs := s.MsRepo.FetchLiveTelemetry(instanceName, prevMsTick)
+					currentMs.Timestamp = time.Now().Format("15:04:05")
 
-				// Persist session snapshots if Timescale is connected
-				if s.tsLogger != nil && len(currentMs.SessionSnapshots) > 0 {
-					// Add instance ID to snapshots
-					for i := range currentMs.SessionSnapshots {
-						currentMs.SessionSnapshots[i].InstanceID = instanceName
+					// Persist session snapshots if Timescale is connected
+					if s.tsLogger != nil && len(currentMs.SessionSnapshots) > 0 {
+						// Add instance ID to snapshots
+						for i := range currentMs.SessionSnapshots {
+							currentMs.SessionSnapshots[i].InstanceID = instanceName
+						}
+						if err := s.tsLogger.LogSQLServerSessionSnapshots(ctx, currentMs.SessionSnapshots); err != nil {
+							log.Printf("[Collector] ERROR: LogSQLServerSessionSnapshots failed for %s: %v", instanceName, err)
+						}
 					}
-					if err := s.tsLogger.LogSQLServerSessionSnapshots(ctx, currentMs.SessionSnapshots); err != nil {
-						log.Printf("[Collector] ERROR: LogSQLServerSessionSnapshots failed for %s: %v", instanceName, err)
-					}
-				}
 
-				s.cacheMutex.Lock()
-				s.dashboardCache[instanceName] = currentMs
-				s.cacheMutex.Unlock()
+					s.cacheMutex.Lock()
+					s.dashboardCache[instanceName] = currentMs
+					s.cacheMutex.Unlock()
 
-				slog.Info("collector_live_scrape",
-					"instance", instanceName,
-					"engine", instanceType,
-					"duration_ms", time.Since(t0).Milliseconds(),
-				)
+					slog.Info("collector_live_scrape",
+						"instance", instanceName,
+						"engine", instanceType,
+						"duration_ms", time.Since(t0).Milliseconds(),
+					)
+				})
 			} else if instanceType == "postgres" {
-				s.cacheMutex.RLock()
-				prevPgTick := s.pgDashboardCache[instanceName]
-				s.cacheMutex.RUnlock()
+				s.EnqueueCollection(instanceName, func() {
+					s.cacheMutex.RLock()
+					prevPgTick := s.pgDashboardCache[instanceName]
+					s.cacheMutex.RUnlock()
 
-				currentPg := s.PgRepo.FetchPgCoreThroughputTelemetry(instanceName, prevPgTick)
-				currentPg.Timestamp = time.Now().Format("15:04:05")
+					currentPg := s.PgRepo.FetchPgCoreThroughputTelemetry(instanceName, prevPgTick)
+					currentPg.Timestamp = time.Now().Format("15:04:05")
 
-				s.cacheMutex.Lock()
-				s.pgDashboardCache[instanceName] = currentPg
-				s.cacheMutex.Unlock()
+					s.cacheMutex.Lock()
+					s.pgDashboardCache[instanceName] = currentPg
+					s.cacheMutex.Unlock()
 
-				slog.Info("collector_live_scrape",
-					"instance", instanceName,
-					"engine", instanceType,
-					"duration_ms", time.Since(t0).Milliseconds(),
-				)
+					slog.Info("collector_live_scrape",
+						"instance", instanceName,
+						"engine", instanceType,
+						"duration_ms", time.Since(t0).Milliseconds(),
+					)
+				})
 			}
 		}(inst.Name, inst.Type)
 	}
@@ -225,7 +237,7 @@ func (s *MetricsService) runLiveDiagnosticsWithContext(ctx context.Context) {
 func (s *MetricsService) runLiveDiagnosticsForInstance(ctx context.Context, instanceName string) {
 	var instanceType string
 	for _, inst := range s.Config.Instances {
-		if inst.Name == instanceName {
+		if strings.ToUpper(inst.Name) == strings.ToUpper(instanceName) {
 			instanceType = inst.Type
 			break
 		}
@@ -252,7 +264,7 @@ func (s *MetricsService) runLiveDiagnosticsForInstance(ctx context.Context, inst
 
 		// Populate Top Queries from TimescaleDB (sqlserver_query_metrics_v2) instead of direct DMV
 		if s.tsLogger != nil {
-			top, err := s.tsLogger.GetSqlServerTopQueriesFromInterval(ctx, instanceName, "cpu", 20, 1)
+			top, err := s.tsLogger.GetSqlServerTopQueriesFromInterval(ctx, instanceName, "cpu", 20, 1, true)
 			if err == nil {
 				for _, r := range top {
 					currentMs.TopQueries = append(currentMs.TopQueries, models.QueryStat{
@@ -316,49 +328,51 @@ func (s *MetricsService) runHistoricalStorageWithContext(ctx context.Context) {
 			}
 
 			if instanceType == "sqlserver" {
-				if s.tsLogger != nil {
-					if err := s.logSQLServerHistoricalToTimescaleWithContext(ctx, instanceName); err != nil {
-						log.Printf("[Collector] ERROR: Failed to log SQLServer historical metrics for %s: %v", instanceName, err)
+				s.EnqueueCollection(instanceName, func() {
+					if s.tsLogger != nil {
+						if err := s.logSQLServerHistoricalToTimescaleWithContext(ctx, instanceName); err != nil {
+							log.Printf("[Collector] ERROR: Failed to log SQLServer historical metrics for %s: %v", instanceName, err)
+						} else {
+							log.Printf("[Collector] Successfully logged SQLServer historical metrics for %s to TimescaleDB", instanceName)
+						}
 					} else {
-						log.Printf("[Collector] Successfully logged SQLServer historical metrics for %s to TimescaleDB", instanceName)
+						log.Printf("[Collector] WARNING: tsLogger is nil, TimescaleDB logging disabled for %s", instanceName)
 					}
-				} else {
-					log.Printf("[Collector] WARNING: tsLogger is nil, TimescaleDB logging disabled for %s", instanceName)
-				}
 
-				if s.tsLogger != nil {
-					if err := s.fetchAndLogLongRunningQueriesWithContext(ctx, instanceName, 30); err != nil {
-						log.Printf("[Collector] ERROR: Failed to fetch Long Running Queries for %s: %v", instanceName, err)
+					if s.tsLogger != nil {
+						if err := s.fetchAndLogLongRunningQueriesWithContext(ctx, instanceName, 30); err != nil {
+							log.Printf("[Collector] ERROR: Failed to fetch Long Running Queries for %s: %v", instanceName, err)
+						}
 					}
-				}
 
-				if s.tsLogger != nil {
-					if err := s.fetchAndLogAGHealthStatsWithContext(ctx, instanceName); err != nil {
-						log.Printf("[Collector] ERROR: Failed to fetch AG Health stats for %s: %v", instanceName, err)
+					if s.tsLogger != nil {
+						if err := s.fetchAndLogAGHealthStatsWithContext(ctx, instanceName); err != nil {
+							log.Printf("[Collector] ERROR: Failed to fetch AG Health stats for %s: %v", instanceName, err)
+						}
 					}
-				}
 
-				if s.tsLogger != nil {
-					if err := s.fetchAndLogAgentJobsMetricsWithContext(ctx, instanceName); err != nil {
-						log.Printf("[Collector] ERROR: Failed to fetch Agent Jobs metrics for %s: %v", instanceName, err)
+					if s.tsLogger != nil {
+						if err := s.fetchAndLogAgentJobsMetricsWithContext(ctx, instanceName); err != nil {
+							log.Printf("[Collector] ERROR: Failed to fetch Agent Jobs metrics for %s: %v", instanceName, err)
+						}
 					}
-				}
 
-				if s.tsLogger != nil {
-					if err := s.fetchAndLogCPUSchedulerStatsWithContext(ctx, instanceName); err != nil {
-						log.Printf("[Collector] ERROR: Failed to fetch CPU Scheduler stats for %s: %v", instanceName, err)
-					} else {
-						log.Printf("[Collector] Successfully logged CPU Scheduler stats for %s to TimescaleDB", instanceName)
+					if s.tsLogger != nil {
+						if err := s.fetchAndLogCPUSchedulerStatsWithContext(ctx, instanceName); err != nil {
+							log.Printf("[Collector] ERROR: Failed to fetch CPU Scheduler stats for %s: %v", instanceName, err)
+						} else {
+							log.Printf("[Collector] Successfully logged CPU Scheduler stats for %s to TimescaleDB", instanceName)
+						}
 					}
-				}
 
-				if s.tsLogger != nil {
-					if err := s.fetchAndLogServerPropertiesWithContext(ctx, instanceName); err != nil {
-						log.Printf("[Collector] ERROR: Failed to fetch Server Properties for %s: %v", instanceName, err)
-					} else {
-						log.Printf("[Collector] Successfully logged Server Properties for %s to TimescaleDB", instanceName)
+					if s.tsLogger != nil {
+						if err := s.fetchAndLogServerPropertiesWithContext(ctx, instanceName); err != nil {
+							log.Printf("[Collector] ERROR: Failed to fetch Server Properties for %s: %v", instanceName, err)
+						} else {
+							log.Printf("[Collector] Successfully logged Server Properties for %s to TimescaleDB", instanceName)
+						}
 					}
-				}
+				})
 
 				slog.Info("collector_historical_scrape",
 					"instance", instanceName,
@@ -366,22 +380,24 @@ func (s *MetricsService) runHistoricalStorageWithContext(ctx context.Context) {
 					"duration_ms", time.Since(t0).Milliseconds(),
 				)
 			} else if instanceType == "postgres" {
-				if s.tsLogger != nil {
-					s.cacheMutex.RLock()
-					pgCache := s.pgDashboardCache[instanceName]
-					s.cacheMutex.RUnlock()
+				s.EnqueueCollection(instanceName, func() {
+					if s.tsLogger != nil {
+						s.cacheMutex.RLock()
+						pgCache := s.pgDashboardCache[instanceName]
+						s.cacheMutex.RUnlock()
 
-					if err := s.logPostgresMetricsToTimescaleWithContext(ctx, instanceName, pgCache); err != nil {
-						log.Printf("[Collector] ERROR: Failed to log Postgres metrics to TimescaleDB for %s: %v", instanceName, err)
-					} else {
-						log.Printf("[Collector] Successfully logged Postgres metrics for %s to TimescaleDB", instanceName)
-					}
+						if err := s.logPostgresMetricsToTimescaleWithContext(ctx, instanceName, pgCache); err != nil {
+							log.Printf("[Collector] ERROR: Failed to log Postgres metrics to TimescaleDB for %s: %v", instanceName, err)
+						} else {
+							log.Printf("[Collector] Successfully logged Postgres metrics for %s to TimescaleDB", instanceName)
+						}
 
-					// Enhanced Memory Intelligence collection
-					if err := s.CollectAndLogPgMemory(ctx, instanceName); err != nil {
-						log.Printf("[Collector] ERROR: Enhanced PgMemory collection failed for %s: %v", instanceName, err)
+						// Enhanced Memory Intelligence collection
+						if err := s.CollectAndLogPgMemory(ctx, instanceName); err != nil {
+							log.Printf("[Collector] ERROR: Enhanced PgMemory collection failed for %s: %v", instanceName, err)
+						}
 					}
-				}
+				})
 
 				slog.Info("collector_historical_scrape",
 					"instance", instanceName,
@@ -418,14 +434,23 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 		return fmt.Errorf("LogSQLServerMetrics: %w", err)
 	}
 
+	// Log PLE to history table
+	if currentMs.PLE >= 0 {
+		_ = s.tsLogger.LogSQLServerMemoryHistory(ctx, instanceName, currentMs.PLE)
+	}
+
+	// Collect Database Throughput more frequently (every 60s) for accurate TPS
+	s.collectDatabaseThroughputForInstance(instanceName)
+
 	if len(currentMs.CPUHistory) > 0 {
-		tick := currentMs.CPUHistory[len(currentMs.CPUHistory)-1]
-		cpuTicks := []map[string]interface{}{
-			{
+		cpuTicks := make([]map[string]interface{}, len(currentMs.CPUHistory))
+		for i, tick := range currentMs.CPUHistory {
+			cpuTicks[i] = map[string]interface{}{
 				"sql_process":   tick.SQLProcess,
 				"system_idle":   tick.SystemIdle,
 				"other_process": tick.OtherProcess,
-			},
+				"event_time":    tick.EventTime,
+			}
 		}
 		if err := s.tsLogger.LogSQLServerCPUHistory(ctx, instanceName, cpuTicks); err != nil {
 			log.Printf("[Collector] WARNING: LogSQLServerCPUHistory failed: %v", err)
@@ -506,7 +531,7 @@ func (s *MetricsService) logSQLServerHistoricalToTimescaleWithContext(ctx contex
 		// We intentionally scope to configured DB list to avoid accidental access to system DBs.
 		var dbs []string
 		for _, inst := range s.Config.Instances {
-			if inst.Name == instanceName && inst.Type == "sqlserver" {
+			if strings.ToUpper(inst.Name) == strings.ToUpper(instanceName) && inst.Type == "sqlserver" {
 				dbs = inst.Databases
 				break
 			}
@@ -801,6 +826,8 @@ func (s *MetricsService) fetchAndLogAGHealthStatsWithContext(ctx context.Context
 			ReplicaServerName:  ag.ReplicaServerName,
 			DatabaseName:       ag.DatabaseName,
 			ReplicaRole:        ag.ReplicaRole,
+			OperationalState:   ag.OperationalState,
+			ConnectedState:     ag.ConnectedState,
 			SyncState:          ag.SynchronizationState,
 			SyncStateDesc:      ag.SyncStateDesc,
 			IsPrimaryReplica:   ag.IsPrimaryReplica,

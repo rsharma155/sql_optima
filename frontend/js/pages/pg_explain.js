@@ -24,8 +24,8 @@ window.PgExplainView = function PgExplainView() {
         <div class="page-view active dashboard-sky-theme pg-explain-page">
             <div class="page-title flex-between dashboard-page-title-compact">
                 <div class="dashboard-title-line" style="flex:1; min-width:0;">
-                    <h1><i class="fa-solid fa-diagram-project text-accent"></i> EXPLAIN Plan Analyzer</h1>
-                    <span class="subtitle">Instance: <span class="text-accent">${esc(inst.name)}</span> — paste a JSON plan and SQL for analysis, optimization report, and optional <strong>index advisor</strong> (HypoPG when the server can reach your DB).</span>
+                    <h1><i class="fa-solid fa-diagram-project text-accent"></i> EXPLAIN Plan Analyzer <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="EXPLAIN Plan Analyzer" title="Learn more about this dashboard"></i></h1>
+                    <span class="subtitle">Instance: <span class="text-accent">${esc(inst.name)}</span> — paste a JSON plan and SQL for analysis, optimization report, and optional <strong>index advisor</strong></span>
                 </div>
                 <div class="flex-between dashboard-page-title-actions" style="gap:0.5rem; flex-wrap:wrap;">
                     <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="pg-queries"><i class="fa-solid fa-bolt"></i> Query Performance</button>
@@ -36,12 +36,12 @@ window.PgExplainView = function PgExplainView() {
             <div class="glass-panel mt-3" style="padding:1rem 1.1rem;">
                 <div class="pg-explain-layout">
                     <div class="pg-explain-field">
-                        <label class="pg-explain-field-label pg-explain-field-label--wrap" for="pgExplainQuery"><span class="pg-explain-field-label-strong">Optional: original SQL (strongly recommended)</span><span class="pg-explain-field-hint-inline text-muted"> Required for <strong>Index advisor &amp; rewrites</strong>. Also enables SQL line excerpts and heuristic index hints. Not executed on the server.</span></label>
+                        <label class="pg-explain-field-label pg-explain-field-label--wrap" for="pgExplainQuery"><span class="pg-explain-field-label-strong">Optional: original SQL (strongly recommended) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="EXPLAIN Plan Analyzer" data-metric="Optimization Report"></i></span><span class="pg-explain-field-hint-inline text-muted"> Required for <strong>Index advisor &amp; rewrites</strong>.</span></label>
                         <textarea id="pgExplainQuery" class="pg-explain-textarea pg-explain-textarea--sql" rows="4" spellcheck="false" placeholder="SELECT u.id, u.name FROM users u WHERE u.status = 'active';"></textarea>
                     </div>
 
                     <div class="pg-explain-field">
-                        <label class="pg-explain-field-label pg-explain-field-label--wrap" for="pgExplainPlan"><span class="pg-explain-field-label-strong">Execution plan <span class="badge badge-danger" style="font-size:0.65rem; vertical-align:middle;">Required</span></span><span class="pg-explain-field-hint-inline text-muted"> <strong>Note:</strong> Run <code>EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) …</code> in your database client (JSON is required for this page). Max ~512 KB. Must be valid JSON (tree + metrics + SQL insights are driven from the JSON plan).</span></label>
+                        <label class="pg-explain-field-label pg-explain-field-label--wrap" for="pgExplainPlan"><span class="pg-explain-field-label-strong">Execution plan <span class="badge badge-danger" style="font-size:0.65rem; vertical-align:middle;">Required</span> <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="EXPLAIN Plan Analyzer" data-metric="Plan Map"></i></span><span class="pg-explain-field-hint-inline text-muted"> <strong>Note:</strong> Run <code>EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) …</code> in your database client.</span></label>
                         <textarea id="pgExplainPlan" class="pg-explain-textarea pg-explain-textarea--plan" rows="12" spellcheck="false" placeholder='Example: [ { &quot;Plan&quot;: { &quot;Node Type&quot;: &quot;Seq Scan&quot;, ... }, &quot;Planning Time&quot;: 0.1, &quot;Execution Time&quot;: 2.3 } ]'></textarea>
                     </div>
 

@@ -4,6 +4,8 @@ A dual-engine (PostgreSQL & SQL Server) database monitoring platform with a sing
 
 Features include PostgreSQL EXPLAIN plan analysis with optimization and index advisor workflows, live SQL Server diagnostics, TimescaleDB-backed historical dashboards, an **enhanced rules engine** for context-aware best-practice checks, **push-based OS metrics** for host-level telemetry, and a **cross-engine alert engine** with fingerprint-based deduplication, maintenance windows, and audit history.
 
+*Upcoming features currently in development include a **Query V2 Pipeline** with hash-based delta tracking, detailed **SQL Server Locks Dashboard**, **Data Export (CSV)** capabilities, and a **PostgreSQL Incident Feed**.*
+
 ---
 
 ## UI Preview

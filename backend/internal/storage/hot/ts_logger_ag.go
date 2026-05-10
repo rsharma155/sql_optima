@@ -25,15 +25,15 @@ func (tl *TimescaleLogger) LogAGHealth(ctx context.Context, instanceName string,
 	query := `
 		INSERT INTO sqlserver_ag_health (
 			capture_timestamp, server_instance_name, ag_name, replica_server_name, database_name,
-			replica_role, synchronization_state, synchronization_state_desc, is_primary_replica,
+			replica_role, operational_state, connected_state, synchronization_state, synchronization_state_desc, is_primary_replica,
 			log_send_queue_kb, redo_queue_kb, log_send_rate_kb, redo_rate_kb,
 			last_sent_time, last_received_time, last_hardened_time, last_redone_time, secondary_lag_seconds
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`
 
 	for _, r := range agStats {
 		batch.Queue(query,
 			r.CaptureTimestamp, r.ServerInstanceName, r.AGName, r.ReplicaServerName, r.DatabaseName,
-			r.ReplicaRole, r.SynchronizationState, r.SyncStateDesc, r.IsPrimaryReplica,
+			r.ReplicaRole, r.OperationalState, r.ConnectedState, r.SynchronizationState, r.SyncStateDesc, r.IsPrimaryReplica,
 			r.LogSendQueueKB, r.RedoQueueKB, r.LogSendRateKB, r.RedoRateKB,
 			r.LastSentTime, r.LastReceivedTime, r.LastHardenedTime, r.LastRedoneTime, r.SecondaryLagSecs)
 	}
@@ -65,17 +65,20 @@ func (tl *TimescaleLogger) GetAGHealthSummary(ctx context.Context, instanceName 
 			replica_server_name,
 			database_name,
 			replica_role,
+			COALESCE(operational_state, 'UNKNOWN'),
+			COALESCE(connected_state, 'UNKNOWN'),
 			synchronization_state,
 			is_primary_replica,
 			AVG(log_send_queue_kb) AS avg_log_send_queue_kb,
 			AVG(redo_queue_kb) AS avg_redo_queue_kb,
 			MAX(log_send_queue_kb) AS max_log_send_queue_kb,
 			MAX(redo_queue_kb) AS max_redo_queue_kb,
+			MAX(secondary_lag_seconds) AS max_secondary_lag_secs,
 			COUNT(*) AS sample_count
 		FROM sqlserver_ag_health
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
-		GROUP BY ag_name, replica_server_name, database_name, replica_role, synchronization_state, is_primary_replica
+		GROUP BY ag_name, replica_server_name, database_name, replica_role, operational_state, connected_state, synchronization_state, is_primary_replica
 		ORDER BY MAX(log_send_queue_kb) DESC, MAX(redo_queue_kb) DESC
 		LIMIT $4
 	`
@@ -88,13 +91,13 @@ func (tl *TimescaleLogger) GetAGHealthSummary(ctx context.Context, instanceName 
 
 	var results []map[string]interface{}
 	for rows.Next() {
-		var agName, replicaServer, dbName, replicaRole, syncState string
+		var agName, replicaServer, dbName, replicaRole, opState, connState, syncState string
 		var isPrimary bool
-		var avgLogSend, avgRedo, maxLogSend, maxRedo float64
+		var avgLogSend, avgRedo, maxLogSend, maxRedo, maxLagSecs float64
 		var sampleCount int
 
-		if err := rows.Scan(&agName, &replicaServer, &dbName, &replicaRole, &syncState, &isPrimary,
-			&avgLogSend, &avgRedo, &maxLogSend, &maxRedo, &sampleCount); err != nil {
+		if err := rows.Scan(&agName, &replicaServer, &dbName, &replicaRole, &opState, &connState, &syncState, &isPrimary,
+			&avgLogSend, &avgRedo, &maxLogSend, &maxRedo, &maxLagSecs, &sampleCount); err != nil {
 			continue
 		}
 
@@ -103,12 +106,15 @@ func (tl *TimescaleLogger) GetAGHealthSummary(ctx context.Context, instanceName 
 			"replica_server_name":   replicaServer,
 			"database_name":         dbName,
 			"replica_role":          replicaRole,
+			"operational_state":     opState,
+			"connected_state":       connState,
 			"synchronization_state": syncState,
 			"is_primary_replica":    isPrimary,
 			"avg_log_send_queue_kb": avgLogSend,
 			"avg_redo_queue_kb":     avgRedo,
 			"max_log_send_queue_kb": maxLogSend,
 			"max_redo_queue_kb":     maxRedo,
+			"secondary_lag_secs":    maxLagSecs,
 			"sample_count":          sampleCount,
 		})
 	}
@@ -124,15 +130,13 @@ func (tl *TimescaleLogger) GetAGHealthTimeSeries(ctx context.Context, instanceNa
 	query := `
 		SELECT 
 			time_bucket('5 minutes', capture_timestamp) AS bucket,
-			replica_role,
-			synchronization_state,
 			AVG(log_send_queue_kb) AS avg_log_send_queue_kb,
 			AVG(redo_queue_kb) AS avg_redo_queue_kb,
 			MAX(secondary_lag_seconds) AS max_lag_sec
 		FROM sqlserver_ag_health
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
-		GROUP BY bucket, replica_role, synchronization_state
+		GROUP BY bucket
 		ORDER BY bucket ASC
 	`
 	rows, err := tl.pool.Query(ctx, query, instanceName, start, end)
@@ -144,15 +148,12 @@ func (tl *TimescaleLogger) GetAGHealthTimeSeries(ctx context.Context, instanceNa
 	var results []map[string]interface{}
 	for rows.Next() {
 		var bucket time.Time
-		var role, state string
 		var avgLog, avgRedo, maxLag float64
-		if err := rows.Scan(&bucket, &role, &state, &avgLog, &avgRedo, &maxLag); err != nil {
+		if err := rows.Scan(&bucket, &avgLog, &avgRedo, &maxLag); err != nil {
 			continue
 		}
 		results = append(results, map[string]interface{}{
 			"timestamp":             bucket,
-			"replica_role":          role,
-			"synchronization_state": state,
 			"avg_log_send_queue_kb": avgLog,
 			"avg_redo_queue_kb":     avgRedo,
 			"max_lag_sec":           maxLag,

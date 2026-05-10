@@ -9,6 +9,49 @@ package entities
 
 import "time"
 
+// PGBackupDRSnapshot represents a unified snapshot of Backup & DR metrics.
+type PGBackupDRSnapshot struct {
+	CollectedAt           time.Time  `json:"collected_at"`
+	InstanceID            string     `json:"instance_id"`
+	WALBytesTotal         int64      `json:"wal_bytes_total"`
+	WALRecordsTotal       int64      `json:"wal_records_total"`
+	WALFPITotal           int64      `json:"wal_fpi_total"`
+	ArchivedCount         int64      `json:"archived_count"`
+	ArchiveFailedCount    int64      `json:"archive_failed_count"`
+	LastArchivedTime      *time.Time `json:"last_archived_time"`
+	LastFailedTime        *time.Time `json:"last_failed_time"`
+	CheckpointsTimed      int64      `json:"checkpoints_timed"`
+	CheckpointsReq        int64      `json:"checkpoints_req"`
+	CheckpointWriteTimeMs float64    `json:"checkpoint_write_time_ms"`
+	CheckpointSyncTimeMs  float64    `json:"checkpoint_sync_time_ms"`
+	IsInRecovery          bool       `json:"is_in_recovery"`
+}
+
+// PGReplicationSnapshot represents a snapshot of a replication node.
+type PGReplicationSnapshot struct {
+	CollectedAt     time.Time `json:"collected_at"`
+	InstanceID      string    `json:"instance_id"`
+	ApplicationName string    `json:"application_name"`
+	ClientAddr      string    `json:"client_addr"`
+	State           string    `json:"state"`
+	SyncState       string    `json:"sync_state"`
+	WriteLag        string    `json:"write_lag"`
+	FlushLag        string    `json:"flush_lag"`
+	ReplayLag       string    `json:"replay_lag"`
+	SlotName        string    `json:"slot_name"`
+	RetainedBytes   int64     `json:"retained_bytes"`
+}
+
+// ArchiveErrorLog represents an entry in the archiver error audit.
+type ArchiveErrorLog struct {
+	CollectedAt    time.Time `json:"collected_at"`
+	InstanceID     string    `json:"instance_id"`
+	FailedCount    int64     `json:"failed_count"`
+	LastFailedTime time.Time `json:"last_failed_time"`
+}
+
+// Deprecated entities (kept for backward compatibility during transition if needed, but we should eventually remove)
+
 // BackupArchiverStats represents pg_stat_archiver metrics.
 type BackupArchiverStats struct {
 	TS               time.Time `json:"ts"`

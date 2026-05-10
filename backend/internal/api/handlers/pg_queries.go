@@ -60,14 +60,14 @@ func (h *PostgresHandlers) Queries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	queries, meta, err := h.metricsSvc.GetPostgresQueriesForAPI(r.Context(), instance, fromT, toT)
-	enabled := err == nil
+	
+	// Check if pg_stat_statements is actually enabled on the instance
+	enabled := h.metricsSvc.PgRepo.GetPgssSupported(instance)
+
 	if queries == nil {
 		queries = []repository.PgQueryStat{}
 	}
 	if err != nil {
-		if strings.Contains(err.Error(), "pg_stat_statements") {
-			enabled = false
-		}
 		log.Printf("[API] PG queries error for %s: %v", instance, err)
 	}
 

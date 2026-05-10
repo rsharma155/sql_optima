@@ -61,6 +61,8 @@ window.HADashboardView = function() {
 
             <div id="haContent" class="mt-3">
                 <div id="haTab-ag" class="tab-panel">
+                    <div id="agClusterContainer" class="mt-2 mb-3"></div>
+
                     <div class="grid-2 mt-2">
                         <div class="glass-panel" style="padding:1rem;">
                             <div class="card-header"><h3 style="font-size:0.85rem;margin:0;">AG Queue Trend (Avg KB)</h3></div>
@@ -119,13 +121,61 @@ async function loadHAData(instanceName) {
     const from = window.appState.haFrom || '';
     const to = window.appState.haTo || '';
     
-    // AG Health & History
+    // AG Cluster & Health
+    fetchClusterData(instanceName);
     fetchAGData(instanceName, from, to);
     // Replication
     fetchReplData(instanceName);
     // Log Shipping
     fetchLSData(instanceName);
 }
+
+async function fetchClusterData(instanceName) {
+    const container = document.getElementById('agClusterContainer');
+    try {
+        const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/ag-cluster?instance=${encodeURIComponent(instanceName)}`);
+        const data = await resp.json();
+        renderClusterInfo(data);
+    } catch(err) {
+        console.error('Cluster fetch failed', err);
+    }
+}
+
+function renderClusterInfo(data) {
+    const container = document.getElementById('agClusterContainer');
+    if (!data || !data.hadr_cluster) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const c = data.hadr_cluster;
+    const members = data.members || [];
+    const quorumOk = c.quorum_state_desc === 'NORMAL_QUORUM';
+
+    container.innerHTML = `
+        <div class="glass-panel" style="padding:1rem;">
+            <div class="flex-between">
+                <div>
+                    <h3 style="font-size:0.9rem; margin:0;">
+                        <i class="fa-solid fa-network-wired text-accent"></i> Cluster: <strong>${window.escapeHtml(c.cluster_name)}</strong>
+                    </h3>
+                    <p class="text-muted small" style="margin:4px 0 0 0;">
+                        Quorum: <span class="badge ${quorumOk ? 'badge-success' : 'badge-danger'}">${c.quorum_state_desc}</span> | Type: ${c.quorum_type_desc}
+                    </p>
+                </div>
+                <div class="flex" style="gap:1rem;">
+                    ${members.map(m => `
+                        <div class="text-center">
+                            <div class="small text-muted" style="font-size:0.65rem;">${window.escapeHtml(m.member_name)}</div>
+                            <span class="badge ${m.member_state === 'UP' ? 'badge-outline' : 'badge-danger'}" style="font-size:0.6rem; padding:1px 4px;">${m.member_state}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
 
 async function fetchAGData(instanceName, from, to) {
     const grid = document.getElementById('agStatusGrid');
@@ -156,22 +206,33 @@ function renderAGGrid(stats) {
         <table class="data-table">
             <thead>
                 <tr>
-                    <th>AG Name</th><th>Database</th><th>Role</th><th>Sync State</th>
+                    <th>AG Name</th><th>Database</th><th>Role</th><th>Status</th><th>Sync State</th>
                     <th>Log Send (KB)</th><th>Redo Queue (KB)</th><th>Lag (s)</th>
                 </tr>
             </thead>
             <tbody>
-                ${stats.map(s => `
+                ${stats.map(s => {
+                    const opState = s.operational_state || 'UNKNOWN';
+                    const connState = s.connected_state || 'UNKNOWN';
+                    const isHealthy = opState === 'ONLINE' && connState === 'CONNECTED';
+                    const statusClass = isHealthy ? 'badge-success' : (opState === 'OFFLINE' ? 'badge-danger' : 'badge-warning');
+                    
+                    return `
                     <tr>
                         <td><strong>${window.escapeHtml(s.ag_name)}</strong></td>
                         <td>${window.escapeHtml(s.database_name)}</td>
                         <td><span class="badge ${s.is_primary_replica ? 'badge-primary' : 'badge-info'}">${s.replica_role || (s.is_primary_replica ? 'PRIMARY' : 'SECONDARY')}</span></td>
+                        <td>
+                            <span class="badge ${statusClass}" title="Conn: ${connState}">${opState}</span>
+                            ${connState !== 'CONNECTED' ? `<i class="fa-solid fa-circle-exclamation text-danger ms-1" title="${connState}"></i>` : ''}
+                        </td>
                         <td><span class="text-${s.synchronization_state === 'SYNCHRONIZED' ? 'success' : 'warning'}">${window.escapeHtml(s.synchronization_state)}</span></td>
                         <td>${Number(s.avg_log_send_queue_kb || s.log_send_queue_kb || 0).toLocaleString()}</td>
                         <td>${Number(s.avg_redo_queue_kb || s.redo_queue_kb || 0).toLocaleString()}</td>
                         <td class="${(s.secondary_lag_secs || 0) > 30 ? 'text-danger' : ''}">${s.secondary_lag_secs || 0}</td>
                     </tr>
-                `).join('')}
+                    `;
+                }).join('')}
             </tbody>
         </table>
     `;
@@ -210,8 +271,8 @@ function renderAGCharts(history) {
         data: {
             labels: labels,
             datasets: [
-                { label: 'Log Send', data: logData, borderColor: '#38bdf8', tension: 0.3, fill: false },
-                { label: 'Redo Queue', data: redoData, borderColor: '#fbbf24', tension: 0.3, fill: false }
+                { label: 'Log Send', data: logData, borderColor: '#38bdf8', tension: 0.3, fill: false, pointRadius: 4, pointHoverRadius: 6 },
+                { label: 'Redo Queue', data: redoData, borderColor: '#fbbf24', tension: 0.3, fill: false, pointRadius: 4, pointHoverRadius: 6 }
             ]
         },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, font: { size: 10 } } } } }
@@ -221,7 +282,7 @@ function renderAGCharts(history) {
         type: 'line',
         data: {
             labels: labels,
-            datasets: [{ label: 'Secondary Lag (s)', data: lagData, borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.1)', fill: true, tension: 0.3 }]
+            datasets: [{ label: 'Secondary Lag (s)', data: lagData, borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.1)', fill: true, tension: 0.3, pointRadius: 4, pointHoverRadius: 6 }]
         },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
     });

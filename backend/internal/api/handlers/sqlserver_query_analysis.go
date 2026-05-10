@@ -39,12 +39,12 @@ func (h *SqlServerQueryAnalysisHandlers) Summary(w http.ResponseWriter, r *http.
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
-	if !instanceType(h.cfg, instance, "sqlserver") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "sqlserver") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
 		return
@@ -54,7 +54,10 @@ func (h *SqlServerQueryAnalysisHandlers) Summary(w http.ResponseWriter, r *http.
 	if h, err2 := strconv.Atoi(r.URL.Query().Get("hours")); err2 == nil && h > 0 && h <= 168 {
 		hours = h
 	}
-	summary, err := h.metricsSvc.GetSqlServerQueryAnalysisSummary(r.Context(), instance, hours)
+
+	excludeSystem := r.URL.Query().Get("exclude_system") == "true"
+
+	summary, err := h.metricsSvc.GetSqlServerQueryAnalysisSummary(r.Context(), instance, hours, excludeSystem)
 	if err != nil {
 		slog.Error("sqlserver_query_analysis_summary", "instance", instance, "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -73,7 +76,7 @@ func (h *SqlServerQueryAnalysisHandlers) Regressions(w http.ResponseWriter, r *h
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -104,7 +107,7 @@ func (h *SqlServerQueryAnalysisHandlers) PlanInstability(w http.ResponseWriter, 
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -135,7 +138,7 @@ func (h *SqlServerQueryAnalysisHandlers) TopQueries(w http.ResponseWriter, r *ht
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -151,9 +154,11 @@ func (h *SqlServerQueryAnalysisHandlers) TopQueries(w http.ResponseWriter, r *ht
 		hours = h
 	}
 
-	rows, err := h.metricsSvc.GetSqlServerTopQueriesAnalysis(r.Context(), instance, sortBy, limit, hours)
+	excludeSystem := r.URL.Query().Get("exclude_system") == "true"
+
+	rows, err := h.metricsSvc.GetSqlServerTopQueriesAnalysis(r.Context(), instance, sortBy, limit, hours, excludeSystem)
 	if err != nil {
-		slog.Error("sqlserver_top_queries", "instance", instance, "error", err)
+		slog.Error("sqlserver_query_analysis", "instance", instance, "error", err)
 		rows = nil
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -171,7 +176,7 @@ func (h *SqlServerQueryAnalysisHandlers) QueryPlans(w http.ResponseWriter, r *ht
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -205,7 +210,7 @@ func (h *SqlServerQueryAnalysisHandlers) QueryWaitStats(w http.ResponseWriter, r
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return

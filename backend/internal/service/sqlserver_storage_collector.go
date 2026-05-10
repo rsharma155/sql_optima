@@ -109,7 +109,7 @@ func (s *MetricsService) RunSqlServerStorageSnapshotCollection(ctx context.Conte
 						IndexMB:      m["index_mb"].(float64),
 					})
 				}
-				_ = s.tsLogger.LogTableSizeHistory(ctx, rows)
+				_ = s.tsLogger.LogTableSizeHistoryWithChangeDetection(ctx, inst.Name, rows)
 			}
 
 			// B: Table Structure Risks
@@ -130,6 +130,7 @@ func (s *MetricsService) RunSqlServerStorageSnapshotCollection(ctx context.Conte
 				}
 				_ = s.tsLogger.LogTableStructureHistoryWithChangeDetection(ctx, inst.Name, rows)
 			}
+
 
 			// C: Index Usage Stats (Deltas for SIH charts)
 			idxRows, ierr := collectors.CollectSQLServerIndexUsage(ctx, s.MsRepo.AsQueryer(inst.Name, db))

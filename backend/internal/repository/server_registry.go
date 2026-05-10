@@ -103,12 +103,14 @@ func (r *ServerRegistryRepository) GetByName(ctx context.Context, name string) (
 	var s servers.Server
 	var id uuid.UUID
 	var dbType, authType, sslMode string
+	var createdBy string
+	var lastTest sql.NullTime
 	err := r.pool.QueryRow(ctx, `
-		SELECT  id, name, db_type, host, port, username, auth_type, ssl_mode, is_active, created_at, updated_at
+		SELECT  id, name, db_type, host, port, username, auth_type, ssl_mode, is_active, created_at, updated_at, COALESCE(created_by,''), last_test_at
 		FROM optima_servers
-		WHERE name = $1 AND is_active = TRUE
+		WHERE UPPER(name) = UPPER($1) AND is_active = TRUE
 		LIMIT 1
-	`, strings.TrimSpace(name)).Scan(&id, &s.Name, &dbType, &s.Host, &s.Port, &s.Username, &authType, &sslMode, &s.IsActive, &s.CreatedAt, &s.UpdatedAt)
+	`, strings.TrimSpace(name)).Scan(&id, &s.Name, &dbType, &s.Host, &s.Port, &s.Username, &authType, &sslMode, &s.IsActive, &s.CreatedAt, &s.UpdatedAt, &createdBy, &lastTest)
 	if err != nil {
 		return servers.Server{}, err
 	}
@@ -116,6 +118,11 @@ func (r *ServerRegistryRepository) GetByName(ctx context.Context, name string) (
 	s.DBType = servers.DBType(dbType)
 	s.AuthType = servers.AuthType(authType)
 	s.SSLMode = servers.SSLMode(sslMode)
+	s.CreatedBy = createdBy
+	if lastTest.Valid {
+		t := lastTest.Time.UTC()
+		s.LastTestAt = &t
+	}
 	return s, nil
 }
 
@@ -132,11 +139,12 @@ func (r *ServerRegistryRepository) GetEncrypted(ctx context.Context, id string) 
 	var dbType, authType, sslMode string
 	var encSecret, encDEK []byte
 	var createdBy string
+	var lastTest sql.NullTime
 	err = r.pool.QueryRow(ctx, `
-		SELECT  name, db_type, host, port, username, auth_type, encrypted_secret, encrypted_dek, ssl_mode, is_active, created_at, updated_at, COALESCE(created_by,'')
+		SELECT  name, db_type, host, port, username, auth_type, encrypted_secret, encrypted_dek, ssl_mode, is_active, created_at, updated_at, COALESCE(created_by,''), last_test_at
 		FROM optima_servers
 		WHERE id = $1
-	`, uid).Scan(&s.Name, &dbType, &s.Host, &s.Port, &s.Username, &authType, &encSecret, &encDEK, &sslMode, &s.IsActive, &s.CreatedAt, &s.UpdatedAt, &createdBy)
+	`, uid).Scan(&s.Name, &dbType, &s.Host, &s.Port, &s.Username, &authType, &encSecret, &encDEK, &sslMode, &s.IsActive, &s.CreatedAt, &s.UpdatedAt, &createdBy, &lastTest)
 	if err != nil {
 		return servers.Server{}, nil, nil, err
 	}
@@ -145,6 +153,10 @@ func (r *ServerRegistryRepository) GetEncrypted(ctx context.Context, id string) 
 	s.AuthType = servers.AuthType(authType)
 	s.SSLMode = servers.SSLMode(sslMode)
 	s.CreatedBy = createdBy
+	if lastTest.Valid {
+		t := lastTest.Time.UTC()
+		s.LastTestAt = &t
+	}
 	return s, encSecret, encDEK, nil
 }
 
@@ -229,4 +241,39 @@ func (r *ServerRegistryRepository) TouchLastTest(ctx context.Context, id string,
 	}
 	_, err = r.pool.Exec(ctx, `UPDATE optima_servers SET last_test_at=$2, updated_at=now() WHERE id=$1`, uid, at.UTC())
 	return err
+}
+
+func (r *ServerRegistryRepository) CheckDuplicate(ctx context.Context, excludeID string, name, host string, port int) (string, error) {
+	if r == nil || r.pool == nil {
+		return "", fmt.Errorf("timescale not configured")
+	}
+
+	var excludeUUID uuid.UUID
+	if excludeID != "" {
+		excludeUUID, _ = uuid.Parse(excludeID)
+	}
+
+	// Check by Name
+	var foundName string
+	err := r.pool.QueryRow(ctx, `
+		SELECT name FROM optima_servers 
+		WHERE LOWER(name) = LOWER($1) AND is_active = TRUE AND id != $2 
+		LIMIT 1
+	`, strings.TrimSpace(name), excludeUUID).Scan(&foundName)
+	if err == nil {
+		return fmt.Sprintf("server with name '%s' already exists", foundName), nil
+	}
+
+	// Check by Host and Port
+	var foundHost string
+	err = r.pool.QueryRow(ctx, `
+		SELECT host FROM optima_servers 
+		WHERE host = $1 AND port = $2 AND is_active = TRUE AND id != $3 
+		LIMIT 1
+	`, strings.TrimSpace(host), port, excludeUUID).Scan(&foundHost)
+	if err == nil {
+		return fmt.Sprintf("server with host '%s' and port %d already exists", foundHost, port), nil
+	}
+
+	return "", nil
 }

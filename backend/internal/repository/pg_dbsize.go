@@ -9,6 +9,7 @@ package repository
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 )
 
@@ -33,7 +34,7 @@ func (c *PgRepository) GetDatabaseSizeStats(instanceName string) PgDatabaseSizeS
 	}
 
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		out.Error = "connection not found"
@@ -70,10 +71,11 @@ func (c *PgRepository) GetDatabaseSizeStats(instanceName string) PgDatabaseSizeS
 
 	// Growth estimate from last sample.
 	c.mutex.Lock()
-	prevBytes, hadPrev := c.lastDbSizeBytes[instanceName]
-	prevAt, hadAt := c.lastDbSizeAt[instanceName]
-	c.lastDbSizeBytes[instanceName] = total
-	c.lastDbSizeAt[instanceName] = time.Now()
+	upperName := strings.ToUpper(instanceName)
+	prevBytes, hadPrev := c.lastDbSizeBytes[upperName]
+	prevAt, hadAt := c.lastDbSizeAt[upperName]
+	c.lastDbSizeBytes[upperName] = total
+	c.lastDbSizeAt[upperName] = time.Now()
 	c.mutex.Unlock()
 
 	if hadPrev && hadAt {

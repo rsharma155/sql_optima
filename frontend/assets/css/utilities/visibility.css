@@ -8,4 +8,19 @@
  * SPDX-License-Identifier: MIT
  */
 .hidden { display: none !important; }
+
+.cursor-pointer { cursor: pointer; }
+
+.info-icon-sm {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-left: 0.35rem;
+    cursor: pointer;
+    transition: color 0.2s;
+    vertical-align: middle;
+}
+
+.info-icon-sm:hover {
+    color: var(--accent-blue);
+}
 .text-center { text-align: center; }

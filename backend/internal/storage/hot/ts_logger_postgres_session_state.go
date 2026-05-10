@@ -56,7 +56,7 @@ func (tl *TimescaleLogger) GetPostgresSessionStateCountsHistory(ctx context.Cont
 		SELECT capture_timestamp, server_instance_name,
 		       active_count, idle_count, idle_in_txn_count, waiting_count, total_count
 		FROM postgres_session_state_counts
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`

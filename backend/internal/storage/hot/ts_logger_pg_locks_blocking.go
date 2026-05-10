@@ -66,6 +66,21 @@ func (tl *TimescaleLogger) LogPgSessionSnapshot(ctx context.Context, rows []PgSe
 	if len(rows) == 0 {
 		return nil
 	}
+
+	// Dedup: if current batch hash matches previous for this instance, skip.
+	// We use a subset of fields for the signature to allow for small timestamp jitters while catching identical session states.
+	sig := pgFnv64(rows[0].ServerID, len(rows))
+	for _, r := range rows {
+		sig = pgFnv64(sig, r.PID, r.State, r.WaitEvent, r.Query)
+	}
+	tl.mu.Lock()
+	if prev, ok := tl.prevPgSessionHash[rows[0].ServerID]; ok && prev == sig {
+		tl.mu.Unlock()
+		return nil
+	}
+	tl.prevPgSessionHash[rows[0].ServerID] = sig
+	tl.mu.Unlock()
+
 	q := `
 		INSERT INTO monitor.pg_session_snapshot (
 			collected_at, server_id, pid, usename, datname, application_name, client_addr,
@@ -501,7 +516,7 @@ func (tl *TimescaleLogger) EnsurePgLocksBlockingSchema(ctx context.Context) erro
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("monitor.pg_blocking_incident not found (run infrastructure/sql_scripts/00_timescale_schema.sql)")
+		return fmt.Errorf("monitor.pg_blocking_incident not found (run infrastructure/sql_scripts/01_timescale_schema.sql)")
 	}
 	return nil
 }
@@ -520,15 +535,46 @@ type PgBlockingSessionAt struct {
 
 // PgBlockingNodeAt mirrors repository.PgBlockingNode but is generated from Timescale snapshots.
 type PgBlockingNodeAt struct {
-	PID        int                `json:"pid"`
-	User       string             `json:"user,omitempty"`
-	Database   string             `json:"database,omitempty"`
-	State      string             `json:"state"`
-	QueryStart *time.Time         `json:"query_start,omitempty"`
-	Duration   string             `json:"duration"`
-	WaitEvent  string             `json:"wait_event"`
-	Query      string             `json:"query"`
-	BlockedBy  []PgBlockingNodeAt `json:"blocked_by"`
+	PID               int                `json:"pid"`
+	User              string             `json:"user,omitempty"`
+	Database          string             `json:"database,omitempty"`
+	ApplicationName   string             `json:"application_name,omitempty"`
+	ClientAddr        string             `json:"client_addr,omitempty"`
+	State             string             `json:"state"`
+	IsIdleInTxn       bool               `json:"is_idle_in_txn"`
+	QueryStart        *time.Time         `json:"query_start,omitempty"`
+	XactStart         *time.Time         `json:"xact_start,omitempty"`
+	Duration          string             `json:"duration"`
+	WaitEventType     string             `json:"wait_event_type,omitempty"`
+	WaitEvent         string             `json:"wait_event"`
+	Query             string             `json:"query"`
+	LockModes         []string           `json:"lock_modes,omitempty"`
+	AffectedRelations []string           `json:"affected_relations,omitempty"`
+	BlockedBy         []PgBlockingNodeAt `json:"blocked_by"`
+}
+
+// PgBlockingIncidentSummary represents an incident with computed duration for the UI.
+type PgBlockingIncidentSummary struct {
+	IncidentID          int64      `json:"incident_id"`
+	ServerID            string     `json:"server_id"`
+	StartedAt           time.Time  `json:"started_at"`
+	EndedAt             *time.Time `json:"ended_at,omitempty"`
+	DurationSeconds     float64    `json:"duration_seconds"`
+	RootBlockerPID      *int       `json:"root_blocker_pid,omitempty"`
+	RootBlockerQuery    string     `json:"root_blocker_query,omitempty"`
+	PeakBlockedSessions int        `json:"peak_blocked_sessions"`
+	Status              string     `json:"status"`
+}
+
+// PgChronicBlockerRow aggregates chronic root-blocker query statistics.
+type PgChronicBlockerRow struct {
+	QueryFingerprint  string   `json:"query_fingerprint"`
+	QuerySample       string   `json:"query_sample"`
+	RootBlockerCount  int      `json:"root_blocker_count"`
+	TotalVictims      int      `json:"total_victims"`
+	AvgDurationSec    float64  `json:"avg_duration_sec"`
+	MaxDurationSec    float64  `json:"max_duration_sec"`
+	AffectedRelations []string `json:"affected_relations"`
 }
 
 type PgBlockingDetailsResponse struct {
@@ -598,10 +644,11 @@ func (tl *TimescaleLogger) GetPgBlockingDetailsInRange(ctx context.Context, serv
 
 	// Fetch session snapshots for involved pids at same collected_at.
 	sRows, err := tl.pool.Query(ctx, `
-		SELECT pid, COALESCE(usename,''), COALESCE(datname,''), COALESCE(state,''),
-		       query_start, state_change,
+		SELECT pid,
+		       COALESCE(usename,''), COALESCE(datname,''), COALESCE(application_name,''), COALESCE(client_addr::text,''),
+		       COALESCE(state,''), xact_start, query_start, state_change,
 		       COALESCE(wait_event_type,''), COALESCE(wait_event,''),
-		       COALESCE(LEFT(query,400),'')
+		       COALESCE(query,'')
 		FROM monitor.pg_session_snapshot
 		WHERE server_id = $1 AND collected_at = $2 AND pid = ANY($3)
 		  AND (usename IS NULL OR usename <> 'dbmonitor_user')
@@ -615,21 +662,18 @@ func (tl *TimescaleLogger) GetPgBlockingDetailsInRange(ctx context.Context, serv
 	nodeMap := make(map[int]PgBlockingNodeAt, len(pidSet))
 	for sRows.Next() {
 		var pid int
-		var us, dn, st, wet, we, q string
-		var qs *time.Time
-		var sc *time.Time
-		if err := sRows.Scan(&pid, &us, &dn, &st, &qs, &sc, &wet, &we, &q); err != nil {
+		var us, dn, app, addr, st, wet, we, q string
+		var qs, xs, sc *time.Time
+		if err := sRows.Scan(&pid, &us, &dn, &app, &addr, &st, &xs, &qs, &sc, &wet, &we, &q); err != nil {
 			continue
 		}
 		wait := ""
-		if wet != "" || we != "" {
-			if wet != "" && we != "" {
-				wait = wet + ":" + we
-			} else if wet != "" {
-				wait = wet
-			} else {
-				wait = we
-			}
+		if wet != "" && we != "" {
+			wait = wet + ":" + we
+		} else if wet != "" {
+			wait = wet
+		} else {
+			wait = we
 		}
 		dur := "-"
 		if sc != nil {
@@ -637,21 +681,52 @@ func (tl *TimescaleLogger) GetPgBlockingDetailsInRange(ctx context.Context, serv
 			if sec < 0 {
 				sec = 0
 			}
-			m := sec / 60
-			s := sec % 60
-			dur = fmt.Sprintf("%dm %ds", m, s)
+			dur = fmt.Sprintf("%dm %ds", sec/60, sec%60)
 		}
 		nodeMap[pid] = PgBlockingNodeAt{
-			PID:        pid,
-			User:       us,
-			Database:   dn,
-			State:      st,
-			QueryStart: qs,
-			Duration:   dur,
-			WaitEvent:  wait,
-			Query:      q,
+			PID:             pid,
+			User:            us,
+			Database:        dn,
+			ApplicationName: app,
+			ClientAddr:      addr,
+			State:           st,
+			IsIdleInTxn:     containsIdle(st),
+			XactStart:       xs,
+			QueryStart:      qs,
+			Duration:        dur,
+			WaitEventType:   wet,
+			WaitEvent:       wait,
+			Query:           q,
 		}
 	}
+
+	// Fetch lock modes and affected relations from pg_lock_snapshot for the same capture window.
+	lkRows, lkErr := tl.pool.Query(ctx, `
+		SELECT pid,
+		       array_agg(DISTINCT mode ORDER BY mode) AS lock_modes,
+		       array_agg(DISTINCT relation_name ORDER BY relation_name) AS relations
+		FROM monitor.pg_lock_snapshot
+		WHERE server_id = $1
+		  AND collected_at BETWEEN $2 AND $3
+		  AND pid = ANY($4)
+		GROUP BY pid
+	`, serverID, at.Add(-30*time.Second), at.Add(30*time.Second), intSliceKeys(pidSet))
+	if lkErr == nil {
+		defer lkRows.Close()
+		for lkRows.Next() {
+			var pid int
+			var modes, rels []string
+			if err := lkRows.Scan(&pid, &modes, &rels); err != nil {
+				continue
+			}
+			if node, ok := nodeMap[pid]; ok {
+				node.LockModes = filterStrings(modes, "")
+				node.AffectedRelations = filterStrings(rels, "virtual")
+				nodeMap[pid] = node
+			}
+		}
+	}
+
 	// Add placeholders for pids missing in snapshot (race/permissions).
 	for pid := range pidSet {
 		if _, ok := nodeMap[pid]; ok {
@@ -711,4 +786,122 @@ func intSliceKeys(m map[int]struct{}) []int {
 		out = append(out, k)
 	}
 	return out
+}
+
+func containsIdle(state string) bool {
+	s := state
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 'A' && s[i] <= 'Z' {
+			s = s[:i] + string(s[i]+32) + s[i+1:]
+		}
+	}
+	return len(s) >= 15 && s[:15] == "idle in transac"
+}
+
+func filterStrings(ss []string, exclude string) []string {
+	var out []string
+	for _, s := range ss {
+		if s != "" && s != exclude {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// GetPgBlockingIncidents returns recent blocking incidents with computed duration, ordered newest first.
+func (tl *TimescaleLogger) GetPgBlockingIncidents(ctx context.Context, serverID string, windowHours, limit int) ([]PgBlockingIncidentSummary, error) {
+	if windowHours <= 0 {
+		windowHours = 168
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	q := `
+		SELECT incident_id, server_id, started_at, ended_at,
+		       root_blocker_pid, COALESCE(root_blocker_query,''),
+		       COALESCE(peak_blocked_sessions,0), COALESCE(status,''),
+		       EXTRACT(EPOCH FROM (COALESCE(ended_at, now()) - started_at)) AS duration_seconds
+		FROM monitor.pg_blocking_incident
+		WHERE server_id = $1
+		  AND started_at >= now() - ($2 * INTERVAL '1 hour')
+		  AND COALESCE(root_blocker_query,'') NOT LIKE '%/* SQL_OPTIMA */%'
+		ORDER BY started_at DESC
+		LIMIT $3
+	`
+	rows, err := tl.pool.Query(ctx, q, serverID, windowHours, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PgBlockingIncidentSummary
+	for rows.Next() {
+		var r PgBlockingIncidentSummary
+		var rootPID *int
+		var ended *time.Time
+		if err := rows.Scan(&r.IncidentID, &r.ServerID, &r.StartedAt, &ended, &rootPID, &r.RootBlockerQuery, &r.PeakBlockedSessions, &r.Status, &r.DurationSeconds); err != nil {
+			continue
+		}
+		r.EndedAt = ended
+		r.RootBlockerPID = rootPID
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// GetPgChronicBlockers returns top root-blocker query fingerprints aggregated over the given time window.
+func (tl *TimescaleLogger) GetPgChronicBlockers(ctx context.Context, serverID string, from, to time.Time, limit int) ([]PgChronicBlockerRow, error) {
+	if limit <= 0 {
+		limit = 15
+	}
+	if from.IsZero() || to.IsZero() {
+		return nil, fmt.Errorf("from/to required")
+	}
+	q := `
+		WITH incidents AS (
+		    SELECT incident_id, root_blocker_pid, root_blocker_query, started_at, ended_at
+		    FROM monitor.pg_blocking_incident
+		    WHERE server_id = $1
+		      AND started_at BETWEEN $2 AND $3
+		      AND root_blocker_query IS NOT NULL
+		      AND root_blocker_query NOT LIKE '%/* SQL_OPTIMA */%'
+		),
+		enriched AS (
+		    SELECT
+		        md5(regexp_replace(i.root_blocker_query, '\$\d+|\d+', '?', 'g')) AS fingerprint,
+		        i.root_blocker_query                                              AS query_sample,
+		        COUNT(*)::int                                                     AS root_count,
+		        SUM(p.victim_count)::int                                          AS total_victims,
+		        AVG(EXTRACT(EPOCH FROM (COALESCE(i.ended_at, now()) - i.started_at))) AS avg_dur,
+		        MAX(EXTRACT(EPOCH FROM (COALESCE(i.ended_at, now()) - i.started_at))) AS max_dur
+		    FROM incidents i
+		    LEFT JOIN LATERAL (
+		        SELECT COUNT(DISTINCT blocked_pid) AS victim_count
+		        FROM monitor.pg_blocking_pairs p
+		        WHERE p.server_id = $1
+		          AND p.blocking_pid = i.root_blocker_pid
+		          AND p.collected_at BETWEEN i.started_at AND COALESCE(i.ended_at, now())
+		    ) p ON true
+		    GROUP BY fingerprint, i.root_blocker_query
+		)
+		SELECT fingerprint, query_sample,
+		       root_count, COALESCE(total_victims,0) AS total_victims,
+		       COALESCE(avg_dur,0) AS avg_dur, COALESCE(max_dur,0) AS max_dur
+		FROM enriched
+		ORDER BY root_count DESC, total_victims DESC
+		LIMIT $4
+	`
+	rows, err := tl.pool.Query(ctx, q, serverID, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PgChronicBlockerRow
+	for rows.Next() {
+		var r PgChronicBlockerRow
+		if err := rows.Scan(&r.QueryFingerprint, &r.QuerySample, &r.RootBlockerCount, &r.TotalVictims, &r.AvgDurationSec, &r.MaxDurationSec); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }

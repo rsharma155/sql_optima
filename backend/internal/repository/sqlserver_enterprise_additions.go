@@ -26,9 +26,8 @@ func (c *SqlServerRepository) CollectPlanCacheHealth(db *sql.DB) (map[string]int
 	// Cache sizes are pages*8KB; convert to MB.
 	// single-use pressure is a common DBA signal for "Optimize for ad hoc workloads" / parameterization.
 	q := `
-		/* SQL_OPTIMA */
 		;WITH plans AS (
-			SELECT  
+			SELECT  /* SQL_OPTIMA */
 				objtype,
 				usecounts,
 				size_in_bytes
@@ -78,7 +77,7 @@ func (c *SqlServerRepository) FetchMemoryGrantWaiters(instanceName string) ([]ma
 func (c *SqlServerRepository) CollectMemoryGrantWaiters(db *sql.DB) ([]map[string]interface{}, error) {
 	// User databases only (database_id > 4), user sessions, exclude typical system sp_/xp_ batches.
 	q := `
-		/* SQL_OPTIMA */ SELECT   TOP 20
+		SELECT  /* SQL_OPTIMA */  TOP 20
 			mg.session_id,
 			mg.request_id,
 			DB_NAME(ISNULL(r.database_id, s.database_id)) AS database_name,
@@ -99,8 +98,8 @@ func (c *SqlServerRepository) CollectMemoryGrantWaiters(db *sql.DB) ([]map[strin
 		  AND s.is_user_process = 1
 		  AND ISNULL(r.database_id, s.database_id) > 4
 		  AND DB_NAME(ISNULL(r.database_id, s.database_id)) <> N'distribution'
-		  AND ISNULL(s.login_name,'') NOT IN ('dbmonitor_user','go-mssqldb')
-		  AND ISNULL(s.program_name,'') NOT IN ('dbmonitor_user','go-mssqldb')
+		  AND ISNULL(s.login_name,'') NOT IN ('dbmonitor_user','sql-optima')
+		  AND ISNULL(s.program_name,'') NOT IN ('dbmonitor_user','sql-optima')
 		  AND (
 			txt.text IS NULL OR (
 				LTRIM(txt.text) NOT LIKE N'sp\_%' ESCAPE '\'
@@ -154,7 +153,7 @@ func (c *SqlServerRepository) CollectTempdbTopConsumers(db *sql.DB) ([]map[strin
 		/* SQL_OPTIMA */ 
 		;WITH temp_usage AS
 		(
-			SELECT
+			SELECT /* SQL_OPTIMA */
 				ssu.session_id,
 				SUM(ssu.user_objects_alloc_page_count - ssu.user_objects_dealloc_page_count) AS user_pages,
 				SUM(ssu.internal_objects_alloc_page_count - ssu.internal_objects_dealloc_page_count) AS internal_pages
@@ -197,8 +196,8 @@ func (c *SqlServerRepository) CollectTempdbTopConsumers(db *sql.DB) ([]map[strin
 			AND si.is_user_process = 1
 			AND si.database_id > 4
 			AND DB_NAME(si.database_id) <> N'distribution'
-			AND ISNULL(si.login_name,'') NOT IN ('dbmonitor_user','go-mssqldb')
-			AND ISNULL(si.program_name,'') NOT IN ('dbmonitor_user','go-mssqldb')
+			AND ISNULL(si.login_name,'') NOT IN ('dbmonitor_user','sql-optima')
+			AND ISNULL(si.program_name,'') NOT IN ('dbmonitor_user','sql-optima')
 		ORDER BY tempdb_mb DESC;
 	`
 	rows, err := db.Query(q)

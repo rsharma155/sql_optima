@@ -23,5 +23,5 @@ func isMissingRelation(err error) bool {
 }
 
 func schemaMissingErr(rel string) error {
-	return fmt.Errorf("timescale schema missing (%s). Apply `infrastructure/sql_scripts/00_timescale_schema.sql` to your TimescaleDB", rel)
+	return fmt.Errorf("timescale schema missing (%s). Apply `infrastructure/sql_scripts/01_timescale_schema.sql` to your TimescaleDB", rel)
 }

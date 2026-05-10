@@ -62,7 +62,7 @@ func (tl *TimescaleLogger) GetLatchWaits(ctx context.Context, instanceName strin
 	q := `
 		SELECT wait_type, waiting_tasks_count, wait_time_ms, signal_wait_time_ms
 		FROM sqlserver_latch_waits
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
@@ -124,7 +124,7 @@ func (tl *TimescaleLogger) GetWaitingTasks(ctx context.Context, instanceName str
 	q := `
 		SELECT wait_type, resource_description, waiting_tasks_count, wait_duration_ms
 		FROM sqlserver_waiting_tasks
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
@@ -191,7 +191,7 @@ func (tl *TimescaleLogger) GetMemoryGrants(ctx context.Context, instanceName str
 	q := `
 		SELECT session_id, database_name, login_name, granted_memory_kb, used_memory_kb, dop, query_duration_sec
 		FROM sqlserver_memory_grants
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND (login_name IS NULL OR login_name <> 'dbmonitor_user')
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
@@ -272,7 +272,7 @@ func (tl *TimescaleLogger) GetProcedureStats(ctx context.Context, instanceName s
 	q := `
 		SELECT database_name, schema_name, object_name, execution_count, total_worker_time_ms, total_elapsed_time_ms, total_logical_reads
 		FROM sqlserver_procedure_stats
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
@@ -344,7 +344,7 @@ func (tl *TimescaleLogger) GetFileIOLatency(ctx context.Context, instanceName st
 	q := `
 		SELECT database_name, file_name, file_type, read_latency_ms, write_latency_ms
 		FROM sqlserver_file_io
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
@@ -371,25 +371,51 @@ func (tl *TimescaleLogger) GetFileIOLatency(ctx context.Context, instanceName st
 	return out, rows.Err()
 }
 
-// GetFileIOLatencyTrend returns 1-minute bucketed avg read/write latency (ms) across files.
-func (tl *TimescaleLogger) GetFileIOLatencyTrend(ctx context.Context, instanceName string, minutes int) ([]map[string]interface{}, error) {
-	if minutes <= 0 {
-		minutes = 60
-	}
+// GetFileIOLatencyTrend returns bucketed avg read/write latency (ms) for the last N minutes or a specific range.
+func (tl *TimescaleLogger) GetFileIOLatencyTrend(ctx context.Context, instanceName string, minutes int, from, to string) ([]map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	q := `
-		SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
-		       AVG(read_latency_ms) AS read_latency_ms,
-		       AVG(write_latency_ms) AS write_latency_ms
-		FROM sqlserver_file_io
-		WHERE server_instance_name = $1
-		  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
-		GROUP BY bucket
-		ORDER BY bucket ASC
-	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, minutes)
+	var start, end time.Time
+	var err error
+	useRange := false
+	if from != "" && to != "" {
+		start, end, err = parseTimeRangeRFC3339(from, to)
+		if err == nil {
+			useRange = true
+		}
+	}
+
+	var q string
+	var rows pgx.Rows
+	if useRange {
+		q = `
+			SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
+			       AVG(read_latency_ms) AS read_latency_ms,
+			       AVG(write_latency_ms) AS write_latency_ms
+			FROM sqlserver_file_io
+			WHERE UPPER(server_instance_name) = UPPER($1)
+			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
+			GROUP BY bucket
+			ORDER BY bucket ASC
+		`
+		rows, err = tl.pool.Query(ctx, q, instanceName, start, end)
+	} else {
+		if minutes <= 0 {
+			minutes = 60
+		}
+		q = `
+			SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
+			       AVG(read_latency_ms) AS read_latency_ms,
+			       AVG(write_latency_ms) AS write_latency_ms
+			FROM sqlserver_file_io
+			WHERE UPPER(server_instance_name) = UPPER($1)
+			  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
+			GROUP BY bucket
+			ORDER BY bucket ASC
+		`
+		rows, err = tl.pool.Query(ctx, q, instanceName, minutes)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -453,7 +479,7 @@ func (tl *TimescaleLogger) GetSpinlockStats(ctx context.Context, instanceName st
 	q := `
 		SELECT spinlock_type, collisions, spins, sleep_time_ms
 		FROM sqlserver_spinlock_stats
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
@@ -524,7 +550,7 @@ func (tl *TimescaleLogger) GetMemoryClerks(ctx context.Context, instanceName str
 	q := `
 		SELECT capture_timestamp, clerk_name, memory_node, pages_mb, virtual_memory_reserved_mb, virtual_memory_committed_mb, awe_memory_mb
 		FROM sqlserver_memory_clerks
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
@@ -604,7 +630,7 @@ func (tl *TimescaleLogger) GetTempdbFiles(ctx context.Context, instanceName stri
 	q := `
 		SELECT database_name, file_name, file_type, allocated_mb, used_mb, free_mb, max_size_mb, growth_mb, used_percent
 		FROM sqlserver_tempdb_files
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
@@ -671,7 +697,7 @@ func (tl *TimescaleLogger) GetSchedulerWG(ctx context.Context, instanceName stri
 	q := `
 		SELECT pool_name, group_name, active_requests, queued_requests, cpu_usage_percent
 		FROM sqlserver_scheduler_wg
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`

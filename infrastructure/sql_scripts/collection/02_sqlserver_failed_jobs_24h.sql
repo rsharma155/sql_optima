@@ -5,4 +5,4 @@
 
 SELECT /* SQL_OPTIMA */   COUNT(*) FROM msdb.dbo.sysjobhistory h WITH (NOLOCK)
 JOIN msdb.dbo.sysjobs j WITH (NOLOCK) ON h.job_id = j.job_id
-WHERE h.run_status = 0 AND h.run_date >= CAST(CONVERT(VARCHAR(8), GETDATE()-1, 112) AS INT) AND h.step_id = 0;
+WHERE h.run_status = 0 AND h.run_date >= CAST(CONVERT(VARCHAR(8), GETUTCDATE()-1, 112) AS INT) AND h.step_id = 0;

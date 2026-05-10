@@ -1,5 +1,5 @@
 /*
- * SQL Optima — Waits, Bottlenecks & Sessions (Merged)
+ * SQL Optima — Waits, Bottlenecks & Sessions
  */
 (function() {
     window.PgWaitsView = function() {
@@ -10,125 +10,137 @@
         
         window.routerOutlet.innerHTML = `
             <div class="page-view active dashboard-sky-theme">
+                <!-- ROW 0: HEADER -->
                 <div class="page-title flex-between dashboard-page-title-compact">
                     <div class="dashboard-title-line">
-                        <h1><i class="fa-solid fa-clock-rotate-left"></i> Waits & Sessions</h1>
-                        <span class="subtitle">Real-time bottleneck detection and session analysis</span>
+                        <h1><i class="fa-solid fa-clock-rotate-left text-accent"></i> Waits & Sessions</h1>
+                        <span class="subtitle">Real-time AAS load, wait forensics, and deep session analysis</span>
                     </div>
-                    <div class="flex-center">
+                    <div class="flex-center dashboard-page-title-actions" style="gap: 0.75rem;">
                         <div id="time-picker-insertion-point"></div>
+                        <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgWaitsView"><i class="fa-solid fa-refresh"></i> Refresh</button>
                     </div>
                 </div>
 
-                <!-- ROW 1: Compact Metric Strip -->
-                <div class="metrics-row-compact">
-                    <div class="glass-panel metric-card-compact">
+                <!-- ROW 1: KPI STRIP -->
+                <div class="kpi-row">
+                    <div class="glass-panel metric-card-compact h-kpi" title="Average Active Sessions: The number of sessions either using CPU or waiting for a resource at this moment.">
                         <div class="metric-label">Avg Active</div>
-                        <div class="metric-value text-success" id="kpi-avg-active">--</div>
+                        <div class="metric-value" id="kpi-avg-active">--</div>
+                        <span style="font-size:0.6rem; color:var(--text-muted);">AAS (Current)</span>
                     </div>
-                    <div class="glass-panel metric-card-compact">
+                    <div class="glass-panel metric-card-compact h-kpi" title="Average Waiting Sessions: Number of sessions blocked or waiting for I/O, locks, or other resources.">
                         <div class="metric-label">Avg Waiting</div>
-                        <div class="metric-value text-warning" id="kpi-avg-waiting">--</div>
+                        <div class="metric-value" id="kpi-avg-waiting">--</div>
+                        <span style="font-size:0.6rem; color:var(--text-muted);">Queued Tasks</span>
                     </div>
-                    <div class="glass-panel metric-card-compact">
-                        <div class="metric-label">Avg Idle In Txn</div>
-                        <div class="metric-value" id="kpi-avg-idle">--</div>
-                    </div>
-                    <div class="glass-panel metric-card-compact">
-                        <div class="metric-label">Max Conn</div>
-                        <div class="metric-value" id="kpi-max-conn">--</div>
-                    </div>
-                    <!-- Placeholders to fulfill 8-column layout if needed, or just use 4 -->
-                    <div class="glass-panel metric-card-compact">
+                    <div class="glass-panel metric-card-compact h-kpi" title="CPU Load: Average number of sessions actively using CPU. Value above CPU core count indicates saturation.">
                         <div class="metric-label">CPU Load</div>
-                        <div class="metric-value" id="kpi-cpu-load">--</div>
+                        <div class="metric-value text-accent" id="kpi-cpu-load">--</div>
+                        <span style="font-size:0.6rem; color:var(--text-muted);">Normalized Load</span>
                     </div>
-                    <div class="glass-panel metric-card-compact">
+                    <div class="glass-panel metric-card-compact h-kpi" title="IO Wait: Average sessions waiting for disk or network I/O operations.">
                         <div class="metric-label">IO Wait</div>
-                        <div class="metric-value" id="kpi-io-wait">--</div>
+                        <div class="metric-value text-warning" id="kpi-io-wait">--</div>
+                        <span style="font-size:0.6rem; color:var(--text-muted);">Disk Latency Impact</span>
                     </div>
-                    <div class="glass-panel metric-card-compact">
+                    <div class="glass-panel metric-card-compact h-kpi" title="Lock Wait: Average sessions waiting for row-level or table-level locks. High value indicates application contention.">
                         <div class="metric-label">Lock Wait</div>
-                        <div class="metric-value" id="kpi-lock-wait">--</div>
+                        <div class="metric-value text-danger" id="kpi-lock-wait">--</div>
+                        <span style="font-size:0.6rem; color:var(--text-muted);">Contention Load</span>
                     </div>
-                    <div class="glass-panel metric-card-compact">
-                        <div class="metric-label">Temp Files</div>
-                        <div class="metric-value" id="kpi-temp-files">--</div>
-                    </div>
-                </div>
-
-                <!-- ROW 2: Database Load & Wait Category Trend -->
-                <div class="chart-row-compact" style="grid-template-columns: 1fr 1fr;">
-                    <div class="card glass-panel">
-                        <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Database Load (AAS)</h3></div>
-                        <div class="chart-container chart-container-compact">
-                            <canvas id="pg-load-chart"></canvas>
-                        </div>
-                    </div>
-                    <div class="card glass-panel">
-                        <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Wait Category Trend</h3></div>
-                        <div class="chart-container chart-container-compact">
-                            <canvas id="pg-wait-trend-chart"></canvas>
-                        </div>
+                    <div class="glass-panel metric-card-compact h-kpi" title="Idle In Txn: Number of sessions that have an open transaction but are not currently executing a query.">
+                        <div class="metric-label">Idle In Txn</div>
+                        <div class="metric-value text-muted" id="kpi-avg-idle">--</div>
+                        <span style="font-size:0.6rem; color:var(--text-muted);">Zombie Sessions</span>
                     </div>
                 </div>
 
-                <!-- ROW 3: Wait Distribution & Connections -->
-                <div class="chart-row-compact" style="grid-template-columns: 1fr 1fr 1fr;">
-                    <div class="card glass-panel">
-                        <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Wait Distribution</h3></div>
-                        <div class="chart-container chart-container-compact">
-                            <canvas id="pg-wait-dist-chart"></canvas>
+                <!-- ROW 2: DATABASE LOAD ANALYSIS -->
+                <div class="grid-container mt-3">
+                    <div class="col-8 col-laptop-8 col-tablet-6">
+                        <div class="card glass-panel h-chart-md">
+                            <div class="card-header flex-between">
+                                <h3 style="font-size:0.8rem; margin:0;">Database Load (AAS Timeline)</h3>
+                                <span class="badge badge-outline">Active vs Waiting</span>
+                            </div>
+                            <div class="chart-container" style="height: 230px;">
+                                <canvas id="pg-load-chart"></canvas>
+                            </div>
                         </div>
                     </div>
-                    <div class="card glass-panel">
-                        <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Connections by App</h3></div>
-                        <div class="chart-container chart-container-compact" style="height:150px !important;">
-                            <canvas id="pg-app-conn-chart"></canvas>
-                        </div>
-                    </div>
-                    <div class="card glass-panel">
-                        <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Session State Trend</h3></div>
-                        <div class="chart-container chart-container-compact" style="height:150px !important;">
-                            <canvas id="pg-session-state-chart"></canvas>
+                    <div class="col-4 col-laptop-4 col-tablet-6">
+                        <div class="card glass-panel h-chart-md">
+                            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Wait Category Trend</h3></div>
+                            <div class="chart-container" style="height: 230px;">
+                                <canvas id="pg-wait-trend-chart"></canvas>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- ROW 4: Long Running Sessions -->
-                <div class="card glass-panel" style="margin-bottom: 1rem;">
-                    <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Long Running Sessions</h3></div>
-                    <div class="table-container-compact" style="height:150px !important;">
-                        <table class="modern-table modern-table-compact" id="pg-long-sessions-table">
-                            <thead>
-                                <tr><th>PID</th><th>Time</th><th>App</th><th>User</th><th>State/Wait</th><th>Query</th></tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- ROW 5: Top Queries -->
-                <div class="card glass-panel">
-                    <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Top Queries by Total Time</h3></div>
-                    <div class="table-container-compact" style="height:150px !important;">
-                        <table class="modern-table modern-table-compact" id="pg-top-queries-waits-table">
-                            <thead>
-                                <tr><th>Query ID</th><th>User</th><th>Calls</th><th>Total(ms)</th><th>Mean(ms)</th><th>Query</th></tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Query Details Modal -->
-                <div id="pg-query-modal" class="modal" style="display:none; position:fixed; z-index:9999; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.7); display:none; align-items:center; justify-content:center;">
-                    <div class="modal-content glass-panel" style="width: 80%; max-width: 800px; padding: 20px; border-radius: 8px;">
-                        <div class="flex-between" style="margin-bottom: 15px;">
-                            <h3 style="margin: 0;">Query Details</h3>
-                            <button id="pg-query-modal-close" style="background: none; border: none; color: #fff; font-size: 1.5rem; cursor: pointer;">&times;</button>
+                <!-- ROW 3: DEEP ANALYSIS -->
+                <div class="grid-container mt-3">
+                    <div class="col-4 col-laptop-4 col-tablet-6">
+                        <div class="card glass-panel h-chart-md">
+                            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Wait Distribution</h3></div>
+                            <div class="chart-container" style="height: 210px;"><canvas id="pg-wait-dist-chart"></canvas></div>
                         </div>
-                        <pre id="pg-query-modal-text" style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; max-height: 400px; overflow-y: auto; color: #e5e7eb; font-family: monospace;"></pre>
+                    </div>
+                    <div class="col-4 col-laptop-4 col-tablet-6">
+                        <div class="card glass-panel h-chart-md">
+                            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Conns by App</h3></div>
+                            <div class="chart-container" style="height: 210px;"><canvas id="pg-app-conn-chart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="col-4 col-laptop-8 col-tablet-6">
+                        <div class="card glass-panel h-chart-md">
+                            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Session State Trend</h3></div>
+                            <div class="chart-container" style="height: 210px;"><canvas id="pg-session-state-chart"></canvas></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ROW 4: INCIDENT INVESTIGATION -->
+                <div class="grid-container mt-3">
+                    <div class="col-12">
+                        <div class="card glass-panel">
+                            <div class="card-header flex-between">
+                                <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-triangle-exclamation text-danger"></i> Long Running Sessions</h3>
+                                <span class="text-muted" style="font-size:0.65rem;">Active sessions sorted by duration</span>
+                            </div>
+                            <div class="table-container-compact h-table-md">
+                                <table class="modern-table modern-table-compact" id="pg-long-sessions-table">
+                                    <thead><tr><th>PID</th><th>Time</th><th>App</th><th>User</th><th>State/Wait</th><th>Query Snippet</th></tr></thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12 mt-3">
+                        <div class="card glass-panel">
+                            <div class="card-header flex-between">
+                                <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-bolt text-warning"></i> Top Resource-Consuming Queries</h3>
+                                <span class="text-muted" style="font-size:0.65rem;">Aggregated by total execution time in range</span>
+                            </div>
+                            <div class="table-container-compact h-table-md">
+                                <table class="modern-table modern-table-compact" id="pg-top-queries-waits-table">
+                                    <thead><tr><th>Timestamp</th><th>User</th><th>Calls</th><th>Total MS</th><th>Mean MS</th><th>Query Snippet</th></tr></thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal remained unchanged logic-wise -->
+                <div id="pg-query-modal" class="modal" style="display:none; position:fixed; z-index:9999; inset:0; background:rgba(0,0,0,0.7); align-items:center; justify-content:center;">
+                    <div class="modal-content glass-panel" style="width: 85%; max-width: 900px; padding: 1.5rem; border-radius: 12px;">
+                        <div class="flex-between mb-3">
+                            <h3 style="margin: 0; font-size: 1rem;">Query Trace Detail</h3>
+                            <button id="pg-query-modal-close" class="btn btn-icon btn-sm">&times;</button>
+                        </div>
+                        <pre id="pg-query-modal-text" style="background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word; max-height: 50vh; overflow-y: auto; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; border: 1px solid var(--border-color);"></pre>
                     </div>
                 </div>
             </div>
@@ -144,35 +156,16 @@
     async function fetchData(instance) {
         let from = window.appState.fromTs;
         let to = window.appState.toTs;
-        
-        // Convert to ISO if it's a datetime-local string
         if (from && from.includes('T') && !from.endsWith('Z')) from = new Date(from).toISOString();
         if (to && to.includes('T') && !to.endsWith('Z')) to = new Date(to).toISOString();
-
-        // Show loading state
-        ['pg-load-chart', 'pg-wait-trend-chart', 'pg-wait-dist-chart', 'pg-app-conn-chart', 'pg-session-state-chart'].forEach(id => {
-            window.setChartOverlayState(id, 'loading');
-        });
 
         try {
             let url = `/api/pg/observability/dashboard?instance=${encodeURIComponent(instance)}`;
             if (from) url += `&from=${encodeURIComponent(from)}`;
             if (to) url += `&to=${encodeURIComponent(to)}`;
-            
             const resp = await window.apiClient.authenticatedFetch(url);
-            if (!resp.ok) {
-                const msg = resp.status === 503 ? "TimescaleDB Disconnected" : "Failed to fetch dashboard data";
-                ['pg-load-chart', 'pg-wait-trend-chart', 'pg-wait-dist-chart', 'pg-app-conn-chart', 'pg-session-state-chart'].forEach(id => {
-                    window.setChartOverlayState(id, 'empty', msg);
-                });
-                return;
-            }
+            if (!resp.ok) return;
             const data = await resp.json();
-            
-            ['pg-load-chart', 'pg-wait-trend-chart', 'pg-wait-dist-chart', 'pg-app-conn-chart', 'pg-session-state-chart'].forEach(id => {
-                window.clearChartOverlay(id);
-            });
-
             renderKPIs(data.kpis, data.wait_distribution);
             renderLoadChart(data.load_trend);
             renderWaitTrend(data.wait_trend);
@@ -181,43 +174,20 @@
             renderSessionStateTrend(data.session_state_trend);
             renderLongSessions(data.long_running_sessions);
             renderTopQueries(data.top_queries);
-        } catch (err) { 
-            console.error(err); 
-            ['pg-load-chart', 'pg-wait-trend-chart', 'pg-wait-dist-chart', 'pg-app-conn-chart', 'pg-session-state-chart'].forEach(id => {
-                window.setChartOverlayState(id, 'empty', "Error loading data");
-            });
-        }
+        } catch (err) { console.error(err); }
     }
 
     function renderKPIs(kpis, waits) {
         if (!kpis) return;
-        const avgActive = document.getElementById('kpi-avg-active');
-        avgActive.textContent = kpis.avg_active || '0';
-        avgActive.className = 'metric-value ' + (kpis.avg_active > 50 ? 'text-danger' : (kpis.avg_active > 20 ? 'text-warning' : 'text-success'));
-        
-        const avgWait = document.getElementById('kpi-avg-waiting');
-        avgWait.textContent = kpis.avg_waiting || '0';
-        avgWait.className = 'metric-value ' + (kpis.avg_waiting > 10 ? 'text-danger' : (kpis.avg_waiting > 5 ? 'text-warning' : 'text-success'));
-        
-        document.getElementById('kpi-avg-idle').textContent = kpis.avg_idle || '0';
-        document.getElementById('kpi-max-conn').textContent = kpis.max_conn || '0';
-        
+        const setT = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        setT('kpi-avg-active', (kpis.avg_active || 0).toFixed(1));
+        setT('kpi-avg-waiting', (kpis.avg_waiting || 0).toFixed(1));
+        setT('kpi-avg-idle', (kpis.avg_idle || 0).toFixed(1));
+        setT('kpi-max-conn', kpis.max_conn || '0');
         if (waits) {
-            const cpu = waits.find(w => w.wait_event_type === 'CPU')?.avg_sessions || 0;
-            const io = waits.find(w => w.wait_event_type === 'IO')?.avg_sessions || 0;
-            const lock = waits.find(w => w.wait_event_type === 'Lock')?.avg_sessions || 0;
-            
-            const cpuEl = document.getElementById('kpi-cpu-load');
-            cpuEl.textContent = cpu.toFixed(2);
-            cpuEl.className = 'metric-value ' + (cpu > 10 ? 'text-danger' : (cpu > 5 ? 'text-warning' : ''));
-            
-            const ioEl = document.getElementById('kpi-io-wait');
-            ioEl.textContent = io.toFixed(2);
-            ioEl.className = 'metric-value ' + (io > 5 ? 'text-danger' : (io > 2 ? 'text-warning' : ''));
-            
-            const lockEl = document.getElementById('kpi-lock-wait');
-            lockEl.textContent = lock.toFixed(2);
-            lockEl.className = 'metric-value ' + (lock > 5 ? 'text-danger' : (lock > 1 ? 'text-warning' : ''));
+            setT('kpi-cpu-load', (waits.find(w => w.wait_event_type === 'CPU')?.avg_sessions || 0).toFixed(2));
+            setT('kpi-io-wait', (waits.find(w => w.wait_event_type === 'IO')?.avg_sessions || 0).toFixed(2));
+            setT('kpi-lock-wait', (waits.find(w => w.wait_event_type === 'Lock')?.avg_sessions || 0).toFixed(2));
         }
     }
 
@@ -229,18 +199,18 @@
             data: {
                 labels: trend.map(t => new Date(t.ts)),
                 datasets: [
-                    { label: 'Active', data: trend.map(t => t.active_sessions), backgroundColor: 'rgba(16, 185, 129, 0.2)', borderColor: '#10b981', fill: true, stack: 'stack1' },
-                    { label: 'Waiting', data: trend.map(t => t.waiting_sessions), backgroundColor: 'rgba(245, 158, 11, 0.2)', borderColor: '#f59e0b', fill: true, stack: 'stack1' },
-                    { label: 'Idle in Txn', data: trend.map(t => t.idle_in_txn), backgroundColor: 'rgba(59, 130, 246, 0.2)', borderColor: '#3b82f6', fill: true, stack: 'stack1' }
+                    { label: 'Active', data: trend.map(t => t.active_sessions), backgroundColor: 'rgba(16, 185, 129, 0.15)', borderColor: '#10b981', fill: true, pointRadius: 0, tension: 0.3 },
+                    { label: 'Waiting', data: trend.map(t => t.waiting_sessions), backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: '#f59e0b', fill: true, pointRadius: 0, tension: 0.3 }
                 ]
             },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: false, 
+                plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, font: { size: 9 }, color: '#94a3b8' } } }, 
                 scales: { 
-                    x: { type: 'time', time: { unit: 'minute' }, display: true, title: { display: true, text: 'Time' } }, 
-                    y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Sessions (AAS)' } } 
-                }
+                    x: { type: 'time', display: true, title: { display: true, text: 'Time', color: '#64748b', font: { size: 10 } }, ticks: { color: '#64748b', font: { size: 8 } } }, 
+                    y: { beginAtZero: true, title: { display: true, text: 'Sessions (AAS)', color: '#64748b', font: { size: 10 } }, ticks: { color: '#64748b', font: { size: 8 } } } 
+                } 
             }
         });
     }
@@ -250,21 +220,23 @@
         if (!trend || trend.length === 0) return;
         const types = [...new Set(trend.map(t => t.wait_event_type))];
         const labels = [...new Set(trend.map(t => t.bucket))].sort();
-        const datasets = types.map(type => ({
+        const colors = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
+        const datasets = types.map((type, i) => ({
             label: type,
-            data: labels.map(l => {
-                const item = trend.find(t => t.bucket === l && t.wait_event_type === type);
-                return item ? item.sessions : 0;
-            }),
-            fill: true, stack: 'stack1'
+            data: labels.map(l => trend.find(t => t.bucket === l && t.wait_event_type === type)?.sessions || 0),
+            backgroundColor: colors[i % colors.length] + '44', borderColor: colors[i % colors.length], fill: true, pointRadius: 0, tension: 0.3
         }));
         new Chart(ctx, {
             type: 'line',
-            data: { labels: labels.map(l => new Date(l)), datasets: datasets },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: { x: { type: 'time', time: { unit: 'minute' }, display: false }, y: { stacked: true, beginAtZero: true } }
+            data: { labels: labels.map(l => new Date(l)), datasets },
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: false, 
+                plugins: { legend: { display: false } }, 
+                scales: { 
+                    x: { type: 'time', display: true, title: { display: true, text: 'Time', color: '#64748b', font: { size: 10 } }, ticks: { color: '#64748b', font: { size: 8 } } }, 
+                    y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Sessions', color: '#64748b', font: { size: 10 } }, ticks: { color: '#64748b', font: { size: 8 } } } 
+                } 
             }
         });
     }
@@ -273,12 +245,9 @@
         const ctx = document.getElementById('pg-wait-dist-chart').getContext('2d');
         if (!dist || dist.length === 0) return;
         new Chart(ctx, {
-            type: 'pie',
-            data: {
-                labels: dist.map(d => d.wait_event_type),
-                datasets: [{ data: dist.map(d => d.avg_sessions), backgroundColor: ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'] }]
-            },
-            options: { responsive: true, maintainAspectRatio: false }
+            type: 'doughnut',
+            data: { labels: dist.map(d => d.wait_event_type), datasets: [{ data: dist.map(d => d.avg_sessions), backgroundColor: ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'], borderWidth:0 }] },
+            options: { responsive: true, maintainAspectRatio: false, cutout:'70%', plugins:{legend:{position:'right', labels:{boxWidth:10, font:{size:9}}}} }
         });
     }
 
@@ -287,11 +256,8 @@
         if (!apps || apps.length === 0) return;
         new Chart(ctx, {
             type: 'bar',
-            data: {
-                labels: apps.map(a => a.application_name || 'unknown'),
-                datasets: [{ data: apps.map(a => a.count), backgroundColor: '#3b82f6' }]
-            },
-            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+            data: { labels: apps.map(a => a.application_name || 'unknown'), datasets: [{ data: apps.map(a => a.count), backgroundColor: '#3b82f6', borderRadius:4 }] },
+            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true }, y: { ticks: { font: { size: 9 } } } } }
         });
     }
 
@@ -300,76 +266,74 @@
         if (!trend || trend.length === 0) return;
         const states = [...new Set(trend.map(t => t.state))];
         const labels = [...new Set(trend.map(t => t.bucket))].sort();
-        const datasets = states.map(state => ({
+        const datasets = states.map((state, i) => ({
             label: state || 'unknown',
-            data: labels.map(l => {
-                const item = trend.find(t => t.bucket === l && t.state === state);
-                return item ? item.count : 0;
-            }),
-            fill: true, stack: 'stack1'
+            data: labels.map(l => trend.find(t => t.bucket === l && t.state === state)?.count || 0),
+            borderColor: ['#10b981','#3b82f6','#f59e0b','#ef4444'][i % 4], pointRadius: 0, tension: 0.3
         }));
         new Chart(ctx, {
             type: 'line',
-            data: { labels: labels.map(l => new Date(l)), datasets: datasets },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: { x: { type: 'time', time: { unit: 'minute' }, display: false }, y: { stacked: true, beginAtZero: true } }
-            }
+            data: { labels: labels.map(l => new Date(l)), datasets },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { type: 'time', display: false }, y: { beginAtZero: true } } }
         });
     }
 
     function renderLongSessions(sessions) {
         const tbody = document.querySelector('#pg-long-sessions-table tbody');
-        if (!sessions || sessions.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">None</td></tr>';
-            return;
-        }
-        window.showQueryModal = function(q) {
-            document.getElementById('pg-query-modal-text').textContent = decodeURIComponent(q);
-            document.getElementById('pg-query-modal').style.display = 'flex';
+        if (!tbody) return;
+        if (!sessions || sessions.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No data</td></tr>'; return; }
+        window.showQueryModal = (q) => { 
+            let sql = decodeURIComponent(q);
+            try {
+                if (sql.includes('%20') || sql.includes('%0A')) {
+                    sql = decodeURIComponent(sql);
+                }
+            } catch(e) {}
+            document.getElementById('pg-query-modal-text').textContent = sql.replace(/\+/g, ' '); 
+            document.getElementById('pg-query-modal').style.display = 'flex'; 
         };
-        tbody.innerHTML = sessions.slice(0, 5).map(s => `
-            <tr style="cursor:pointer;" class="clickable-query-row" data-query="${encodeURIComponent(s.query || '')}">
-                <td>${s.pid}</td>
+        tbody.innerHTML = sessions.slice(0, 10).map(s => {
+            const decodedQuery = pgssSmartDecode(s.query || '');
+            return `
+            <tr style="cursor:pointer;" data-action="call" data-fn="showQueryModal" data-arg="${encodeURIComponent(decodedQuery)}">
+                <td><span class="badge badge-outline">${s.pid}</span></td>
                 <td>${s.duration || ''}</td>
                 <td>${window.escapeHtml(s.application_name || 'unknown')}</td>
                 <td>${window.escapeHtml(s.usename || '')}</td>
-                <td>${window.escapeHtml(s.wait_event || s.state || 'CPU')}</td>
-                <td><code title="${window.escapeHtml(s.query || '')}">${window.truncate(s.query || '', 20)}</code></td>
+                <td class="text-warning">${window.escapeHtml(s.wait_event || s.state || 'CPU')}</td>
+                <td class="small text-muted"><code>${window.escapeHtml(decodedQuery.substring(0, 40))}...</code></td>
             </tr>
-        `).join('');
-
-        tbody.onclick = function(e) {
-            const tr = e.target.closest('.clickable-query-row');
-            if (tr) {
-                window.showQueryModal(tr.getAttribute('data-query'));
-            }
-        };
+        `; }).join('');
     }
 
     function renderTopQueries(queries) {
         const tbody = document.querySelector('#pg-top-queries-waits-table tbody');
-        if (!queries || queries.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">None</td></tr>';
-            return;
-        }
-        tbody.innerHTML = queries.slice(0, 5).map(q => `
-            <tr style="cursor:pointer;" class="clickable-query-row" data-query="${encodeURIComponent(q.query || '')}">
-                <td>${q.queryid}</td>
+        if (!tbody) return;
+        if (!queries || queries.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No data</td></tr>'; return; }
+        const grouped = {};
+        queries.forEach(q => { if (!grouped[q.query] || new Date(q.ts) > new Date(grouped[q.query].ts)) grouped[q.query] = q; });
+        const top = Object.values(grouped).sort((a,b) => b.total_exec_time - a.total_exec_time).slice(0, 10);
+        tbody.innerHTML = top.map(q => {
+            const decodedQuery = pgssSmartDecode(q.query || '');
+            return `
+            <tr style="cursor:pointer;" data-action="call" data-fn="showQueryModal" data-arg="${encodeURIComponent(decodedQuery)}">
+                <td class="small text-muted">${q.ts ? new Date(q.ts).toLocaleTimeString() : ''}</td>
                 <td>${window.escapeHtml(q.usename || 'unknown')}</td>
-                <td>${q.calls}</td>
-                <td>${q.total_exec_time ? q.total_exec_time.toFixed(1) : '0'}</td>
-                <td>${q.mean_exec_time ? q.mean_exec_time.toFixed(1) : '0'}</td>
-                <td><code title="${window.escapeHtml(q.query || '')}">${window.truncate(q.query || '', 30)}</code></td>
+                <td class="text-center">${Number(q.calls || 0).toLocaleString()}</td>
+                <td class="text-right font-bold">${(q.total_exec_time || 0).toFixed(1)}</td>
+                <td class="text-right">${(q.mean_exec_time || 0).toFixed(1)}</td>
+                <td class="small"><code>${window.escapeHtml(decodedQuery.substring(0, 50))}...</code></td>
             </tr>
-        `).join('');
+        `; }).join('');
+    }
 
-        tbody.onclick = function(e) {
-            const tr = e.target.closest('.clickable-query-row');
-            if (tr && typeof window.showQueryModal === 'function') {
-                window.showQueryModal(tr.getAttribute('data-query'));
+    function pgssSmartDecode(s) {
+        if (!s) return '';
+        try {
+            if (s.indexOf('%20') !== -1 || s.indexOf('%0A') !== -1) {
+                return decodeURIComponent(s).replace(/\+/g, ' ');
             }
-        };
+        } catch (e) {}
+        return s;
     }
 })();

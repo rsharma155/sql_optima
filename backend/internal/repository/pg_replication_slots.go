@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -31,12 +32,12 @@ type PgReplicationSlotStat struct {
 // It uses pg_wal_lsn_diff to estimate WAL retention for the slot.
 func (c *PgRepository) GetReplicationSlotStats(instanceName string) ([]PgReplicationSlotStat, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}

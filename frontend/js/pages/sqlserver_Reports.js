@@ -437,14 +437,18 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
         anomalies.critical.push({
             title: 'Critical Memory Usage',
             description: `Memory utilization at ${memoryUsage.toFixed(1)}% - risk of out-of-memory errors`,
-            timestamp: now
+            timestamp: now,
+            route: 'drilldown-memory',
+            actionText: 'Investigate Memory'
         });
         anomalies.healthScore -= 25;
     } else if (memoryUsage > 80) {
         anomalies.warning.push({
             title: 'High Memory Usage',
             description: `Memory utilization at ${memoryUsage.toFixed(1)}% - monitor closely`,
-            timestamp: now
+            timestamp: now,
+            route: 'drilldown-memory',
+            actionText: 'Investigate Memory'
         });
         anomalies.healthScore -= 10;
     }
@@ -523,35 +527,49 @@ window.updateSqlDashboardAlertBanner = function() {
     }
 
     const border = nCrit > 0 ? 'var(--danger)' : (nWarn > 0 ? 'var(--warning)' : 'var(--info)');
-    const parts = [];
-    if (nCrit) parts.push(nCrit + ' critical');
-    if (nWarn) parts.push(nWarn + ' warning' + (nWarn === 1 ? '' : 's'));
-    if (nInfo) parts.push(nInfo + ' insight' + (nInfo === 1 ? '' : 's'));
+    
+    const messages = [];
+    anomalies.critical.forEach(a => messages.push(`<span class="text-danger"><i class="fa-solid fa-circle-exclamation"></i> ${a.title}</span>`));
+    anomalies.warning.forEach(a => messages.push(`<span class="text-warning"><i class="fa-solid fa-triangle-exclamation"></i> ${a.title}</span>`));
+    
+    // Determine the best target route. If only 1 anomaly exists and it has a route, go there.
+    const allAnomalies = [...anomalies.critical, ...anomalies.warning, ...anomalies.info];
+    let targetRoute = 'alerts';
+    let actionText = 'View Incident Details';
+    
+    if (total === 1 && allAnomalies[0].route) {
+        targetRoute = allAnomalies[0].route;
+        actionText = allAnomalies[0].actionText || 'Investigate';
+    }
 
     el.style.display = 'block';
     el.innerHTML = `
-        <div class="glass-panel" style="border-left:4px solid ${border}; padding:0.75rem 1rem; margin:0 0 0.75rem 0; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:0.75rem;">
-            <div style="display:flex; align-items:flex-start; gap:0.75rem; flex:1; min-width:220px;">
-                <i class="fa-solid fa-bell" style="margin-top:0.2rem; color:${border};"></i>
-                <div>
-                    <strong>${total} active alert${total === 1 ? '' : 's'}</strong>
-                    <div class="text-muted" style="font-size:0.78rem; margin-top:0.25rem;">${window.escapeHtml(parts.join(' · '))}</div>
+        <div class="glass-panel" style="border-left:4px solid ${border}; padding:0.75rem 1rem; margin:0 0 0.75rem 0; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:1rem;">
+            <div style="display:flex; align-items:center; gap:1rem; flex:1; min-width:300px;">
+                <i class="fa-solid fa-bell" style="font-size:1.25rem; color:${border};"></i>
+                <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                    <strong style="font-size:0.9rem;">${total} Performance Anomaly Detected</strong>
+                    <div style="display:flex; flex-wrap:wrap; gap:0.75rem; font-size:0.75rem;">
+                        ${messages.slice(0, 3).join(' · ')}${messages.length > 3 ? ' · ...' : ''}
+                    </div>
                 </div>
             </div>
-            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-                <button type="button" class="btn btn-sm btn-accent" data-action="navigate" data-route="alerts"><i class="fa-solid fa-arrow-right"></i> Open alerts</button>
-                <button type="button" class="btn btn-sm btn-outline" data-action="call" data-fn="dismissSqlDashboardAlertBanner" data-arg="1" title="Hide this banner for 1 hour">Dismiss 1h</button>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+                <button type="button" class="btn btn-sm btn-accent" data-action="navigate" data-route="${targetRoute}" style="padding:0.4rem 0.8rem;"><i class="fa-solid fa-eye"></i> ${actionText}</button>
+                <button type="button" class="btn btn-sm btn-outline" data-action="call" data-fn="dismissSqlDashboardAlertBanner" data-arg="1" title="Hide this banner for 1 hour">Dismiss</button>
             </div>
         </div>`;
 };
 
 function getHealthColor(score) {
+    if (score <= 0) return '#94a3b8'; // Grey for no data
     if (score >= 80) return 'var(--success)';
     if (score >= 60) return 'var(--warning)';
     return 'var(--danger)';
 }
 
 function getHealthStatus(score) {
+    if (score <= 0) return 'No Data';
     if (score >= 80) return 'Excellent';
     if (score >= 60) return 'Good';
     if (score >= 40) return 'Fair';
@@ -772,8 +790,11 @@ window.BestPracticesView = async function() {
                         <h1><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices & Guardrails</h1>
                         <p class="subtitle">Instance: ${window.escapeHtml(inst.name)}</p>
                     </div>
-                    <div class="flex-between" style="align-items:center; gap: 1rem;">
+                    <div class="flex-between" style="align-items:center; gap: 0.75rem;">
                         <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="bpLastRefreshTime">${new Date().toLocaleTimeString()}</span></span>
+                        <button class="btn btn-sm btn-outline" style="color:#22c55e; border-color:#22c55e;" data-action="call" data-fn="exportSqlServerBestPracticesCSV">
+                            <i class="fa-solid fa-file-csv"></i> Export Report
+                        </button>
                         <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshBestPractices">
                             <i class="fa-solid fa-refresh"></i> Refresh Audit
                         </button>
@@ -1186,4 +1207,16 @@ ALTER RESOURCE GOVERNOR RECONFIGURE;
 -- Or create workload groups for resource isolation`;
     }
     return '';
+};
+
+window.exportSqlServerBestPracticesCSV = function() {
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+    if (!inst) return;
+    window.location.href = `/api/sqlserver/best-practices/export?instance=${encodeURIComponent(inst.name)}`;
+};
+
+window.exportSqlServerGuardrailsCSV = function() {
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+    if (!inst) return;
+    window.location.href = `/api/sqlserver/guardrails/export?instance=${encodeURIComponent(inst.name)}`;
 };

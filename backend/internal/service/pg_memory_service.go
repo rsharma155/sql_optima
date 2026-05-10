@@ -38,6 +38,8 @@ func (s *MetricsService) CollectAndLogPgMemory(ctx context.Context, instanceName
 	} else {
 		if err := s.tsLogger.LogPgMemoryStats(ctx, pgSnap); err != nil {
 			log.Printf("[PgMemoryService] Failed to log PG memory stats for %s: %v", instanceName, err)
+		} else {
+			log.Printf("[PgMemoryService] Successfully persisted PG memory stats for %s at %v", instanceName, pgSnap.Timestamp)
 		}
 	}
 
@@ -67,6 +69,34 @@ func (s *MetricsService) GetPgMemoryDashboardData(ctx context.Context, instanceN
 	data, err := s.tsLogger.GetPgMemoryTimeSeries(ctx, instanceName, from, to)
 	if err != nil {
 		return nil, err
+	}
+
+	// On-demand collection if data is missing or very old
+	series, ok := data["time_series"].([]map[string]interface{})
+	if !ok || len(series) == 0 {
+		log.Printf("[PgMemoryService] No time-series data for %s in range [%v - %v], triggering on-demand collection", instanceName, from, to)
+		if cerr := s.CollectAndLogPgMemory(ctx, instanceName); cerr != nil {
+			log.Printf("[PgMemoryService] On-demand collection failed for %s: %v", instanceName, cerr)
+			return nil, fmt.Errorf("on-demand collection failed: %w", cerr)
+		}
+		
+		// Re-fetch once after on-demand collection. 
+		// Use a much wider window for the re-fetch to ensure that even if there's clock/timezone skew,
+		// the user sees the data they just triggered.
+		nowUTC := time.Now().UTC()
+		wideTo := nowUTC.Add(5 * time.Minute)
+		wideFrom := from.Add(-1 * time.Hour)
+		
+		// If the requested 'from' was in the future (due to timezone skew), 
+		// ensure wideFrom covers 'now'.
+		if wideFrom.After(nowUTC) {
+			wideFrom = nowUTC.Add(-1 * time.Hour)
+		}
+		
+		data, err = s.tsLogger.GetPgMemoryTimeSeries(ctx, instanceName, wideFrom, wideTo)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Check if OS collector is configured

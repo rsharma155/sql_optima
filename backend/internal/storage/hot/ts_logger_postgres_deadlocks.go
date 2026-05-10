@@ -103,7 +103,7 @@ func (tl *TimescaleLogger) GetPostgresDeadlocksHistory(ctx context.Context, inst
 		SELECT capture_timestamp, server_instance_name, database_name,
 		       deadlocks_total, deadlocks_delta
 		FROM postgres_deadlock_stats
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= NOW() - ($2::text || ' minutes')::interval
 		ORDER BY capture_timestamp DESC
 		LIMIT $3

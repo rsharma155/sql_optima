@@ -34,7 +34,6 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadSummary(ctx context.Context, inst
 		WHERE qh.instance_id = $1
 		  AND qh.ts >= $2
 		  AND qh.ts <= $3
-		  AND COALESCE(class.classification, 'UNKNOWN') <> 'SYSTEM'
 	`
 
 	var s domain.SqlServerWorkloadSummary
@@ -78,13 +77,9 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadTrends(ctx context.Context, insta
 			SUM(qh.cpu_delta_ms) / NULLIF(SUM(qh.exec_delta), 0)::float AS avg_cpu,
 			SUM(qh.rows_delta) / NULLIF(SUM(qh.exec_delta), 0)::float AS avg_rows
 		FROM sqlserver_query_stats_history qh
-		LEFT JOIN sqlserver_query_classification_dim class
-		  ON class.instance_id = qh.instance_id
-		 AND class.query_hash = qh.query_hash
 		WHERE qh.instance_id = $1
 		  AND qh.ts >= $2
 		  AND qh.ts <= $3
-		  AND COALESCE(class.classification, 'UNKNOWN') <> 'SYSTEM'
 		GROUP BY bucket
 		ORDER BY bucket ASC
 	`, bucketSize)
@@ -145,7 +140,7 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadTopOffenders(ctx context.Context,
 			GROUP BY qh.query_hash
 		)
 		SELECT
-			encode(h.query_hash, 'hex'),
+			h.query_hash,
 			COALESCE(MAX(s.statement_text), 'Plan Evicted'),
 			COALESCE(MAX(s.database_name), 'unknown'),
 			COALESCE(MAX(dim.login_name), 'unknown'),
@@ -162,6 +157,25 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadTopOffenders(ctx context.Context,
 		LEFT JOIN sqlserver_query_identity_dim dim
 		  ON dim.instance_id = $1
 		 AND dim.query_hash = h.query_hash
+		WHERE s.query_text_raw NOT LIKE '/* SQL_OPTIMA */%'
+		  AND s.query_text_raw NOT LIKE '%sys.dm_%'
+		  AND s.query_text_raw NOT LIKE '%sys.partitions%'
+		  AND s.query_text_raw NOT LIKE '%sys.plan_%'
+		  AND s.query_text_raw NOT LIKE '%backup%'
+		  AND s.query_text_raw NOT LIKE '%restore%'
+		  AND s.query_text_raw NOT LIKE '%is_ms_shipped%'
+		  AND UPPER(s.query_text_raw) NOT LIKE 'FETCH NEXT FROM %'
+		  AND UPPER(s.query_text_raw) NOT LIKE 'SET %'
+		  AND UPPER(s.query_text_raw) NOT LIKE 'DECLARE %'
+		  AND UPPER(s.query_text_raw) NOT LIKE '(@%'
+		  AND UPPER(s.query_text_raw) NOT LIKE 'CREATE %'
+		  AND UPPER(s.query_text_raw) NOT LIKE 'ALTER %'
+		  AND UPPER(s.query_text_raw) NOT LIKE 'CHECKPOINT%'
+		  AND UPPER(s.query_text_raw) NOT LIKE 'DBCC %'
+		  AND COALESCE(dim.login_name, '') <> 'dbmonitor_user'
+		  AND COALESCE(dim.program_name, '') NOT IN ('sql-optima', 'SQLServerMS', 'SQL Server Profiler', 'SQLAgent - TSQL JobStep')
+		  AND COALESCE(dim.program_name, '') NOT LIKE 'Microsoft SQL Server Management Studio%'
+		  AND COALESCE(dim.program_name, '') NOT LIKE 'SQLAgent%'
 		GROUP BY h.query_hash, h.total_cpu, h.total_exec, h.total_reads, h.total_rows, h.last_seen
 		ORDER BY h.total_cpu DESC
 		LIMIT $4
@@ -176,8 +190,9 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadTopOffenders(ctx context.Context,
 	var offenders []domain.SqlServerWorkloadTopQuery
 	for rows.Next() {
 		var q domain.SqlServerWorkloadTopQuery
+		var qh int64
 		err := rows.Scan(
-			&q.QueryHash, &q.QueryText, &q.DatabaseName, &q.LoginName, &q.ProgramName,
+			&qh, &q.QueryText, &q.DatabaseName, &q.LoginName, &q.ProgramName,
 			&q.TotalCPUms, &q.TotalExecutions, &q.TotalReads, &q.TotalRows,
 			&q.LastSeen,
 		)
@@ -185,7 +200,7 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadTopOffenders(ctx context.Context,
 			log.Printf("[TSLogger] GetSqlServerWorkloadTopOffenders scan error: %v", err)
 			continue
 		}
-		q.QueryHash = "0x" + q.QueryHash
+		q.QueryHash = fmt.Sprintf("0x%X", uint64(qh))
 		if q.TotalExecutions > 0 {
 			q.AvgCPUms = float64(q.TotalCPUms) / float64(q.TotalExecutions)
 		}

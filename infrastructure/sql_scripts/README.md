@@ -6,8 +6,8 @@ This directory is the **single source** for SQL Optima database scripts (merged 
 
 | File | Description |
 |------|-------------|
-| `00_timescale_schema.sql` | Main TimescaleDB schema: hypertables, indexes, compression |
-| `01_seed_data.sql` | Default users, widgets, and collection schedules |
+| `01_timescale_schema.sql` | Main TimescaleDB schema: hypertables, indexes, compression |
+| `06_seed_data.sql` | Default users, widgets, and collection schedules |
 | `03_additional_pg_rules.sql` | Additional PostgreSQL-specific rules for the rule engine |
 | `04_alert_engine.sql` | **Canonical** alert engine schema |
 | `05_os_metrics_collector.sql` | Schema for host-level OS metrics collector (agent data) |
@@ -22,7 +22,7 @@ This directory is the **single source** for SQL Optima database scripts (merged 
 |-----------|-------------|
 | `collection/` | **~70** parameterized queries used by collectors against SQL Server and PostgreSQL (metrics, waits, jobs, PG stats, etc.) |
 | `timescaledb_fetch/` | **~48** read/insert templates for TimescaleDB (historical series, summaries, hypertable helpers) |
-| `migrations/` | Ordered **incremental** migrations for existing deployments (run after `00_timescale_schema.sql` when upgrading) |
+| `migrations/` | Ordered **incremental** migrations for existing deployments (run after `01_timescale_schema.sql` when upgrading) |
 | `postgres/` | Scripts to run **on monitored PostgreSQL** instances (e.g. optional materialized views), not on TimescaleDB |
 
 ### Migrations (`migrations/`)
@@ -50,11 +50,11 @@ Apply in numeric order when upgrading an existing database. `009_postgres_system
 1. Connect to TimescaleDB (e.g. `dbmonitor_metrics`).
 2. Run the main schema:
    ```sql
-   \i 00_timescale_schema.sql
+   \i 01_timescale_schema.sql
    ```
 3. Run seed data:
    ```sql
-   \i 01_seed_data.sql
+   \i 06_seed_data.sql
    ```
 4. Optional: `\i 02_rule_engine.sql` if you use the rule engine.
 
@@ -82,7 +82,7 @@ Run only the migration files you have not applied yet, in order (e.g. `\i migrat
 
 ### SQL Server metrics
 
-Core and enterprise hypertables: metrics, CPU/memory/wait history, connections, locks, disks, throughput, query store, AG health, jobs, and extended performance objects as defined in `00_timescale_schema.sql` and migrations.
+Core and enterprise hypertables: metrics, CPU/memory/wait history, connections, locks, disks, throughput, query store, AG health, jobs, and extended performance objects as defined in `01_timescale_schema.sql` and migrations.
 
 ### PostgreSQL metrics
 
@@ -107,7 +107,7 @@ Change these in production.
 
 ## Compression
 
-Hypertables typically use compression for chunks older than 7 days. See `00_timescale_schema.sql` for policies.
+Hypertables typically use compression for chunks older than 7 days. See `01_timescale_schema.sql` for policies.
 
 ## PostgreSQL Recommended Configuration
 

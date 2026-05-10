@@ -30,6 +30,7 @@ type ServerStore interface {
 	UpdateMetadata(ctx context.Context, id string, name, host string, port int, username, sslMode string) error
 	UpdateCredentials(ctx context.Context, id string, encryptedSecret, encryptedDEK []byte) error
 	TouchLastTest(ctx context.Context, id string, at time.Time) error
+	CheckDuplicate(ctx context.Context, excludeID string, name, host string, port int) (string, error)
 }
 
 type AuditLogger interface {

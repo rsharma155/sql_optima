@@ -12,13 +12,17 @@ package repository
 import (
 	"fmt"
 	"log"
+	"strings"
 )
 
 // PgQueryStat represents query performance statistics from pg_stat_statements.
 type PgQueryStat struct {
 	QueryID           int64   `json:"query_id"`
+	UserID            int64   `json:"user_id"`
+	DbID              int64   `json:"db_id"`
+	DbName            string  `json:"db_name"`
+	UserName          string  `json:"username"`
 	Query             string  `json:"query"`
-	UserName          string  `json:"user,omitempty"`
 	Calls             int64   `json:"calls"`
 	TotalTime         float64 `json:"total_time"`
 	MeanTime          float64 `json:"mean_time"`
@@ -39,58 +43,88 @@ type PgQueryStat struct {
 	Plans             int64   `json:"plans,omitempty"`
 }
 
-// GetQueryStats returns top queries by total execution time from pg_stat_statements.
-// Stats are cumulative since the last pg_stat_statements_reset() (not a time window).
-// Requires pg_stat_statements extension to be installed.
-func (c *PgRepository) GetQueryStats(instanceName string) ([]PgQueryStat, error) {
-	return c.GetQueryStatsWithLimit(instanceName, 50)
-}
-
-// GetQueryStatsWithLimit is like GetQueryStats but allows a higher LIMIT for Timescale snapshots (delta windows).
-func (c *PgRepository) GetQueryStatsWithLimit(instanceName string, limit int) ([]PgQueryStat, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	if limit > 5000 {
-		limit = 5000
-	}
-
+// FetchQuerySnapshot returns a raw snapshot of pg_stat_statements.
+func (c *PgRepository) FetchQuerySnapshot(instanceName string) ([]PgQueryStat, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
+	supported := c.pgssSupported[instanceName]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
-		return nil, fmt.Errorf("connection not found")
+		return nil, fmt.Errorf("connection not found for instance: %s", instanceName)
 	}
 
-	// Check if pg_stat_statements is available
-	var exists bool
-	err := db.QueryRow("SELECT /* SQL_OPTIMA */   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists)
-	if err != nil || !exists {
-		return nil, fmt.Errorf("pg_stat_statements extension not available")
+	if !supported {
+		return nil, fmt.Errorf("pg_stat_statements not supported or enabled on %s", instanceName)
 	}
 
-	query := `SELECT /* SQL_OPTIMA */   
-			s.queryid,
-			LEFT(s.query, 400) as query,
-			COALESCE(r.rolname, '') as user_name,
-			s.calls,
-			s.total_exec_time,
-			s.mean_exec_time,
-			s.rows,
-			s.temp_blks_read,
-			s.temp_blks_written,
-			s.blk_read_time,
-			s.blk_write_time,
-			s.shared_blks_read,
-			s.shared_blks_hit,
-			COALESCE(s.wal_bytes,0)
-		FROM pg_stat_statements s
-		LEFT JOIN pg_roles r ON r.oid = s.userid
-		WHERE ` + buildPgStatStatementsFilters() + fmt.Sprintf(`
-		ORDER BY s.total_exec_time DESC
-		LIMIT %d
-	`, limit)
+	version := c.GetPgVersion(instanceName)
+
+	var query string
+	if version >= 130000 {
+		query = `/* SQL_OPTIMA */
+			SELECT
+				s.queryid,
+				s.userid,
+				s.dbid,
+				d.datname                               AS db_name,
+				COALESCE(r.rolname, s.userid::text)     AS username,
+				LEFT(s.query, 500),
+				s.calls,
+				s.total_exec_time,
+				s.rows,
+				s.temp_blks_read,
+				s.temp_blks_written,
+				s.blk_read_time,
+				s.blk_write_time,
+				s.shared_blks_read,
+				s.shared_blks_hit,
+				COALESCE(s.shared_blks_dirtied,0),
+				COALESCE(s.shared_blks_written,0),
+				COALESCE(s.wal_bytes,0),
+				COALESCE(s.wal_records,0),
+				COALESCE(s.wal_fpi,0),
+				COALESCE(s.total_plan_time,0),
+				COALESCE(s.plans,0)
+			FROM pg_stat_statements s
+			JOIN  pg_database d ON d.oid = s.dbid
+			LEFT JOIN pg_roles  r ON r.oid = s.userid
+			WHERE s.query NOT LIKE '%/* SQL_OPTIMA */%'
+			  AND d.datname NOT IN ('template0', 'template1')
+		`
+	} else {
+		query = `/* SQL_OPTIMA */
+			SELECT
+				s.queryid,
+				s.userid,
+				s.dbid,
+				d.datname                               AS db_name,
+				COALESCE(r.rolname, s.userid::text)     AS username,
+				LEFT(s.query, 500),
+				s.calls,
+				s.total_time,
+				s.rows,
+				s.temp_blks_read,
+				s.temp_blks_written,
+				s.blk_read_time,
+				s.blk_write_time,
+				s.shared_blks_read,
+				s.shared_blks_hit,
+				COALESCE(s.shared_blks_dirtied,0),
+				COALESCE(s.shared_blks_written,0),
+				0 as wal_bytes,
+				0 as wal_records,
+				0 as wal_fpi,
+				0 as total_plan_time,
+				0 as plans
+			FROM pg_stat_statements s
+			JOIN  pg_database d ON d.oid = s.dbid
+			LEFT JOIN pg_roles  r ON r.oid = s.userid
+			WHERE s.query NOT LIKE '%/* SQL_OPTIMA */%'
+			  AND d.datname NOT IN ('template0', 'template1')
+		`
+	}
+
 	rows, err := db.Query(query)
 	if err != nil {
 		return nil, err
@@ -100,73 +134,14 @@ func (c *PgRepository) GetQueryStatsWithLimit(instanceName string, limit int) ([
 	var stats []PgQueryStat
 	for rows.Next() {
 		var s PgQueryStat
-		err := rows.Scan(&s.QueryID, &s.Query, &s.UserName, &s.Calls, &s.TotalTime, &s.MeanTime, &s.Rows, &s.TempBlksRead, &s.TempBlksWritten, &s.BlkReadTime, &s.BlkWriteTime, &s.SharedBlksRead, &s.SharedBlksHit, &s.WalBytes)
-		if err != nil {
-			continue
-		}
-		stats = append(stats, s)
-	}
-
-	return stats, nil
-}
-
-// GetQueryStatsForSnapshot returns all matching pg_stat_statements rows (no LIMIT) for Timescale delta snapshots.
-func (c *PgRepository) GetQueryStatsForSnapshot(instanceName string) ([]PgQueryStat, error) {
-	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
-	c.mutex.RUnlock()
-
-	if !ok || db == nil {
-		return nil, fmt.Errorf("connection not found")
-	}
-
-	var exists bool
-	err := db.QueryRow("SELECT /* SQL_OPTIMA */   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists)
-	if err != nil || !exists {
-		return nil, fmt.Errorf("pg_stat_statements extension not available")
-	}
-
-	query := `/* SQL_OPTIMA */ SELECT   
-			s.queryid,
-			LEFT(s.query, 400) as query,
-			COALESCE(r.rolname, '') as user_name,
-			s.calls,
-			s.total_exec_time,
-			s.mean_exec_time,
-			s.rows,
-			s.temp_blks_read,
-			s.temp_blks_written,
-			s.blk_read_time,
-			s.blk_write_time,
-			s.shared_blks_read,
-			s.shared_blks_hit,
-			COALESCE(s.shared_blks_dirtied,0),
-			COALESCE(s.shared_blks_written,0),
-			COALESCE(s.wal_bytes,0),
-			COALESCE(s.wal_records,0),
-			COALESCE(s.wal_fpi,0),
-			COALESCE(s.total_plan_time,0),
-			COALESCE(s.mean_plan_time,0),
-			COALESCE(s.plans,0)
-		FROM pg_stat_statements s
-		LEFT JOIN pg_roles r ON r.oid = s.userid
-		WHERE ` + buildPgStatStatementsFilters() + `
-		ORDER BY s.queryid
-	`
-	rows, err := db.Query(query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var stats []PgQueryStat
-	for rows.Next() {
-		var s PgQueryStat
-		err := rows.Scan(&s.QueryID, &s.Query, &s.UserName, &s.Calls, &s.TotalTime, &s.MeanTime, &s.Rows,
+		err := rows.Scan(
+			&s.QueryID, &s.UserID, &s.DbID, &s.DbName, &s.UserName,
+			&s.Query, &s.Calls, &s.TotalTime, &s.Rows,
 			&s.TempBlksRead, &s.TempBlksWritten, &s.BlkReadTime, &s.BlkWriteTime,
 			&s.SharedBlksRead, &s.SharedBlksHit, &s.SharedBlksDirtied, &s.SharedBlksWritten,
 			&s.WalBytes, &s.WalRecords, &s.WalFpi,
-			&s.TotalPlanTime, &s.MeanPlanTime, &s.Plans)
+			&s.TotalPlanTime, &s.Plans,
+		)
 		if err != nil {
 			continue
 		}
@@ -174,6 +149,49 @@ func (c *PgRepository) GetQueryStatsForSnapshot(instanceName string) ([]PgQueryS
 	}
 
 	return stats, rows.Err()
+}
+
+// ComputeDelta calculates the difference between current and previous snapshots.
+// Returns the delta row and a boolean indicating if a meaningful change exists.
+// If a reset is detected (counters decreased), it returns (current, false).
+func ComputeDelta(current, previous PgQueryStat) (PgQueryStat, bool) {
+	// Detect pg_stat_statements reset
+	if current.Calls < previous.Calls || current.TotalTime < previous.TotalTime {
+		return current, false
+	}
+
+	delta := current
+	delta.Calls = current.Calls - previous.Calls
+	delta.TotalTime = current.TotalTime - previous.TotalTime
+	delta.Rows = current.Rows - previous.Rows
+	delta.TempBlksRead = current.TempBlksRead - previous.TempBlksRead
+	delta.TempBlksWritten = current.TempBlksWritten - previous.TempBlksWritten
+	delta.BlkReadTime = current.BlkReadTime - previous.BlkReadTime
+	delta.BlkWriteTime = current.BlkWriteTime - previous.BlkWriteTime
+	delta.SharedBlksRead = current.SharedBlksRead - previous.SharedBlksRead
+	delta.SharedBlksHit = current.SharedBlksHit - previous.SharedBlksHit
+	delta.SharedBlksDirtied = current.SharedBlksDirtied - previous.SharedBlksDirtied
+	delta.SharedBlksWritten = current.SharedBlksWritten - previous.SharedBlksWritten
+	delta.WalBytes = current.WalBytes - previous.WalBytes
+	delta.WalRecords = current.WalRecords - previous.WalRecords
+	delta.WalFpi = current.WalFpi - previous.WalFpi
+	delta.TotalPlanTime = current.TotalPlanTime - previous.TotalPlanTime
+	delta.Plans = current.Plans - previous.Plans
+
+	// If no calls occurred, no meaningful change
+	if delta.Calls <= 0 {
+		return delta, false
+	}
+
+	// Recompute means
+	if delta.Calls > 0 {
+		delta.MeanTime = delta.TotalTime / float64(delta.Calls)
+	}
+	if delta.Plans > 0 {
+		delta.MeanPlanTime = delta.TotalPlanTime / float64(delta.Plans)
+	}
+
+	return delta, true
 }
 
 // NormalizedQueryStat represents normalized query statistics with query ID.
@@ -190,33 +208,38 @@ type NormalizedQueryStat struct {
 // Returns query ID, text, and execution metrics. Requires pg_stat_statements extension.
 func (c *PgRepository) FetchNormalizedQueryStats(instanceName string) ([]NormalizedQueryStat, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
 
-	// Check if pg_stat_statements is available
-	var exists bool
-	err := db.QueryRow("/* SQL_OPTIMA */ SELECT   EXISTS (SELECT   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists)
-	if err != nil || !exists {
+	if !c.GetPgssSupported(instanceName) {
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
-	query := `/* SQL_OPTIMA */ SELECT   
+	version := c.GetPgVersion(instanceName)
+	timeCol := "total_exec_time"
+	meanCol := "mean_exec_time"
+	if version < 130000 {
+		timeCol = "total_time"
+		meanCol = "total_time / NULLIF(calls, 0)"
+	}
+
+	query := fmt.Sprintf(`/* SQL_OPTIMA */ SELECT   
 			s.queryid,
 			s.query,
 			s.calls,
-			s.total_exec_time,
-			s.mean_exec_time,
+			s.%s,
+			%s,
 			s.rows
 		FROM pg_stat_statements s
 		LEFT JOIN pg_roles r ON r.oid = s.userid
-		WHERE ` + buildPgStatStatementsFilters() + `
-		ORDER BY s.total_exec_time DESC
+		WHERE %s
+		ORDER BY s.%s DESC
 		LIMIT 100
-	`
+	`, timeCol, meanCol, buildPgStatStatementsFilters(), timeCol)
 
 	rows, err := db.Query(query)
 	if err != nil {
@@ -239,7 +262,7 @@ func (c *PgRepository) FetchNormalizedQueryStats(instanceName string) ([]Normali
 // ResetQueryStats resets pg_stat_statements statistics.
 func (c *PgRepository) ResetQueryStats(instanceName string) error {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {

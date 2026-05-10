@@ -22,6 +22,7 @@ import (
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/security"
 	"github.com/rsharma155/sql_optima/internal/service"
+	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
 func main() {
@@ -44,7 +45,7 @@ func main() {
 		log.Printf("[worker/auth] JWT_SECRET not set; using persisted local secret from data/")
 	}
 
-	tsHotStorage, usingEnvTimescale, err := config.ConnectMetricsTimescale(configPath, jwtSecret)
+	tsHotStorage, usingEnvTimescale, err := hot.ConnectMetricsTimescale(configPath, jwtSecret)
 	if err != nil {
 		log.Printf("[worker] Timescale: %v", err)
 		tsHotStorage = nil

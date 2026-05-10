@@ -22,7 +22,6 @@ type MSSQLQuerySnapshot struct {
 	MaxDOP             int32
 	MaxGrantKB         int64
 	MaxRows            int64
-	QueryText          string
 	StatementText      string
 	QueryTextRaw       string
 	QueryPlanHash      []byte
@@ -36,6 +35,7 @@ type MSSQLSessionEnrichment struct {
 	LoginName       string
 	ApplicationName string
 	DatabaseName    string
+	IsUserWorkload  int
 }
 
 // PGQuerySnapshot represents a row from pg_stat_statements
@@ -83,6 +83,7 @@ type MSSQLCombinedMetric struct {
 	StatementText      string
 	QueryTextRaw       string
 	LastExecutionTime  time.Time
+	IsUserWorkload     int
 }
 
 // PGCombinedMetric is the enriched and ready-to-store metric

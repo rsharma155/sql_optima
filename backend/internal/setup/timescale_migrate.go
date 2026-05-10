@@ -20,8 +20,8 @@ import (
 
 // Ordered migration files under infrastructure/sql_scripts (or SQL_OPTIMA_SQL_SCRIPTS_DIR).
 var migrationScriptFiles = []string{
-	"00_timescale_schema.sql",
-	"01_seed_data.sql",
+	"01_timescale_schema.sql",
+	"06_seed_data.sql",
 	"02_rule_engine.sql",
 	"03_additional_pg_rules.sql",
 	"04_alert_engine.sql",
@@ -37,7 +37,7 @@ func MigrationScriptName(step int) (string, error) {
 	return migrationScriptFiles[step], nil
 }
 
-// ResolveMigrationsDir returns the directory containing 00_timescale_schema.sql.
+// ResolveMigrationsDir returns the directory containing 01_timescale_schema.sql.
 func ResolveMigrationsDir() (string, error) {
 	if d := strings.TrimSpace(os.Getenv("SQL_OPTIMA_SQL_SCRIPTS_DIR")); d != "" {
 		if ok, err := hasMigrationMarker(d); err == nil && ok {
@@ -65,7 +65,7 @@ func ResolveMigrationsDir() (string, error) {
 			return filepath.Clean(c), nil
 		}
 	}
-	return "", errors.New("could not locate infrastructure/sql_scripts (set SQL_OPTIMA_SQL_SCRIPTS_DIR to the directory containing 00_timescale_schema.sql)")
+	return "", errors.New("could not locate infrastructure/sql_scripts (set SQL_OPTIMA_SQL_SCRIPTS_DIR to the directory containing 01_timescale_schema.sql)")
 }
 
 func hasMigrationMarker(dir string) (bool, error) {

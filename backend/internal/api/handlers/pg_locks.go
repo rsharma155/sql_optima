@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
@@ -412,20 +413,132 @@ func (h *PostgresHandlers) Locks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	locks, err := h.metricsSvc.GetLatestPostgresLocks(r.Context(), instance)
+	locks, err := h.metricsSvc.PgRepo.GetLocks(instance)
 	if err != nil {
-		log.Printf("[API] PG locks (timescale) error for %s: %v", instance, err)
-		json.NewEncoder(w).Encode(map[string]interface{}{"locks": []interface{}{}, "error": err.Error()})
+		log.Printf("[API] PG locks (live) error for %s: %v", instance, err)
+		json.NewEncoder(w).Encode(map[string]interface{}{"locks": []interface{}{}})
 		return
 	}
+	if locks == nil {
+		locks = []repository.PgLock{}
+	}
 
-	w.Header().Set("X-Data-Source", "timescale")
+	w.Header().Set("X-Data-Source", "live")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"instance": instance,
 		"locks":    locks,
 	})
 }
 
+
+// IncidentList returns the N most recent blocking incidents for an instance within a rolling window.
+func (h *PostgresHandlers) IncidentList(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+	if !h.metricsSvc.IsTimescaleConnected() {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"instance": instance, "incidents": []interface{}{}, "source": "none"})
+		return
+	}
+	windowHours := 168
+	if s := r.URL.Query().Get("window_hours"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 720 {
+			windowHours = n
+		}
+	}
+	limit := 50
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	incidents, err := h.metricsSvc.GetPgBlockingIncidents(r.Context(), instance, windowHours, limit)
+	if err != nil {
+		log.Printf("[API] PG incident list error for %s: %v", instance, err)
+		incidents = nil
+	}
+	if incidents == nil {
+		incidents = []hot.PgBlockingIncidentSummary{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance":  instance,
+		"incidents": incidents,
+		"source":    "timescale",
+	})
+}
+
+// ChronicBlockers returns the top chronic root-blocker queries over a time range.
+func (h *PostgresHandlers) ChronicBlockers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+	if !h.metricsSvc.IsTimescaleConnected() {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"instance": instance, "blockers": []interface{}{}, "source": "none"})
+		return
+	}
+
+	q := r.URL.Query()
+	fromStr := strings.TrimSpace(q.Get("from"))
+	toStr := strings.TrimSpace(q.Get("to"))
+	limit := 15
+	if s := q.Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+
+	var fromT, toT time.Time
+	if fromStr != "" && toStr != "" {
+		var err error
+		fromT, err = time.Parse(time.RFC3339, fromStr)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid from (use RFC3339)"})
+			return
+		}
+		toT, err = time.Parse(time.RFC3339, toStr)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid to (use RFC3339)"})
+			return
+		}
+	} else {
+		toT = time.Now().UTC()
+		fromT = toT.Add(-24 * time.Hour)
+	}
+
+	blockers, err := h.metricsSvc.GetPgChronicBlockers(r.Context(), instance, fromT, toT, limit)
+	if err != nil {
+		log.Printf("[API] PG chronic blockers error for %s: %v", instance, err)
+		blockers = nil
+	}
+	if blockers == nil {
+		blockers = []hot.PgChronicBlockerRow{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance": instance,
+		"blockers": blockers,
+		"source":   "timescale",
+	})
+}
 
 func (h *PostgresHandlers) BlockingTree(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

@@ -57,12 +57,19 @@
             <div class="table-card glass-panel" style="padding:0;">
                 <div class="qa-tab-bar">
                     <button class="qa-tab-btn active" data-wq-tab="plans"><i class="fa-solid fa-sitemap"></i> Execution Plans</button>
+                    <button class="qa-tab-btn" data-wq-tab="plan-analysis"><i class="fa-solid fa-microchip"></i> Plan Analysis</button>
                     <button class="qa-tab-btn" data-wq-tab="waits"><i class="fa-solid fa-hourglass-half"></i> Wait Statistics</button>
                     <button class="qa-tab-btn" data-wq-tab="sql"><i class="fa-solid fa-code"></i> SQL Text</button>
                 </div>
 
                 <div id="wq-tab-plans" class="wq-tab-panel" style="display:block; padding:1.25rem;">
                     <div id="wqPlansBody"></div>
+                </div>
+
+                <div id="wq-tab-plan-analysis" class="wq-tab-panel" style="display:none; padding:1.25rem;">
+                    <div id="wqPlanAnalysisBody">
+                        <div class="text-muted text-center p-4">Select a specific snapshot from the execution plans list to analyze its execution plan.</div>
+                    </div>
                 </div>
 
                 <div id="wq-tab-waits" class="wq-tab-panel" style="display:none; padding:1.25rem;">

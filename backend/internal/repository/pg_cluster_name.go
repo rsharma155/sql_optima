@@ -9,11 +9,12 @@ package repository
 
 import (
 	"fmt"
+	"strings"
 )
 
 func (c *PgRepository) FetchClusterName(instanceName string) (string, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		return "", fmt.Errorf("connection not found")

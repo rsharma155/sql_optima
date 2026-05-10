@@ -105,23 +105,26 @@ func (c *PgTimescaleCollector) collectStatStatementsDeltas(ctx context.Context, 
 			continue
 		}
 
-		deltaRows = append(deltaRows, hot.PostgresStatStatementsDeltaRow{
-			QueryID:           curr.QueryID,
-			DatabaseName:      curr.DatabaseName,
-			UserName:          curr.UserName,
-			Calls:             curr.Calls - p.Calls,
-			TotalTimeMs:       curr.TotalTime - p.TotalTime,
-			Rows:              curr.Rows - p.Rows,
-			SharedBlksHit:     curr.SharedBlksHit - p.SharedBlksHit,
-			SharedBlksRead:    curr.SharedBlksRead - p.SharedBlksRead,
-			SharedBlksDirtied: curr.SharedBlksDirtied - p.SharedBlksDirtied,
-			SharedBlksWritten: curr.SharedBlksWritten - p.SharedBlksWritten,
-			TempBlksRead:      curr.TempBlksRead - p.TempBlksRead,
-			TempBlksWritten:   curr.TempBlksWritten - p.TempBlksWritten,
-			BlkReadTimeMs:     curr.BlkReadTime - p.BlkReadTime,
-			BlkWriteTimeMs:    curr.BlkWriteTime - p.BlkWriteTime,
-			WalBytes:          curr.WalBytes - p.WalBytes,
-		})
+		// Only log if there was activity (calls > 0)
+		if curr.Calls > p.Calls {
+			deltaRows = append(deltaRows, hot.PostgresStatStatementsDeltaRow{
+				QueryID:           curr.QueryID,
+				DatabaseName:      curr.DatabaseName,
+				UserName:          curr.UserName,
+				Calls:             curr.Calls - p.Calls,
+				TotalTimeMs:       curr.TotalTime - p.TotalTime,
+				Rows:              curr.Rows - p.Rows,
+				SharedBlksHit:     curr.SharedBlksHit - p.SharedBlksHit,
+				SharedBlksRead:    curr.SharedBlksRead - p.SharedBlksRead,
+				SharedBlksDirtied: curr.SharedBlksDirtied - p.SharedBlksDirtied,
+				SharedBlksWritten: curr.SharedBlksWritten - p.SharedBlksWritten,
+				TempBlksRead:      curr.TempBlksRead - p.TempBlksRead,
+				TempBlksWritten:   curr.TempBlksWritten - p.TempBlksWritten,
+				BlkReadTimeMs:     curr.BlkReadTime - p.BlkReadTime,
+				BlkWriteTimeMs:    curr.BlkWriteTime - p.BlkWriteTime,
+				WalBytes:          curr.WalBytes - p.WalBytes,
+			})
+		}
 		prev[curr.QueryID] = curr
 	}
 
@@ -197,4 +200,11 @@ func (c *PgTimescaleCollector) collectInstanceSnapshot(ctx context.Context, inst
 	if err := c.tsLogger.LogPGInstanceSnapshot(ctx, instanceName, ts, row); err != nil {
 		slog.Warn("pg_ts_instance_snap_log_error", "instance", instanceName, "error", err)
 	}
+
+	// Also log to pg_ts_metrics for the legacy/overview charts to prevent blank graphs
+	_ = c.tsLogger.LogPGMetric(ctx, instanceName, ts, "active_sessions_ts", float64(active))
+	_ = c.tsLogger.LogPGMetric(ctx, instanceName, ts, "waiting_load", float64(waiting))
+	_ = c.tsLogger.LogPGMetric(ctx, instanceName, ts, "tps", tps)
+	_ = c.tsLogger.LogPGMetric(ctx, instanceName, ts, "replica_lag_sec", replicaLag)
+	_ = c.tsLogger.LogPGMetric(ctx, instanceName, ts, "health_score", float64(healthScore))
 }

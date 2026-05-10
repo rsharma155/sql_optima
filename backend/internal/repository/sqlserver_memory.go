@@ -15,7 +15,7 @@ import (
 // CollectMemoryMetrics fetches memory statistics from sys.dm_os_performance_counters and sys.dm_os_sys_memory
 func (c *SqlServerRepository) CollectMemoryMetrics(db *sql.DB) (float64, error) {
 	// Page Life Expectancy (PLE)
-	pleQuery := `/* SQL_OPTIMA */ SELECT   cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Page life expectancy'`
+	pleQuery := `/* SQL_OPTIMA */ SELECT   cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Page life expectancy' AND object_name LIKE '%Buffer Manager%'`
 	var ple float64
 	if err := db.QueryRow(pleQuery).Scan(&ple); err != nil {
 		log.Printf("[SQLSERVER] PLE Query Error: %v", err)
@@ -116,8 +116,8 @@ func (c *SqlServerRepository) CollectMemoryGrants(db *sql.DB) ([]map[string]inte
 		  AND s.is_user_process = 1
 		  AND ISNULL(r.database_id, s.database_id) > 4
 		  AND LOWER(ISNULL(DB_NAME(ISNULL(r.database_id, s.database_id)), N'')) <> N'distribution'
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		  AND (
 			txt.text IS NULL OR (
 				LTRIM(txt.text) NOT LIKE N'sp\_%' ESCAPE '\'

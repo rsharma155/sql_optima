@@ -614,6 +614,21 @@ func (tl *TimescaleLogger) LogTableStructureHistory(ctx context.Context, rows []
 	return nil
 }
 
+func (tl *TimescaleLogger) LogTableSizeHistoryWithChangeDetection(ctx context.Context, instanceName string, rows []TableSizeHistoryRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	sig := tl.FingerprintTableSizeRows(instanceName, rows)
+	if tl.EnterpriseSnapshotUnchanged(instanceName, enterpriseKindTableSize, sig) {
+		return nil
+	}
+	err := tl.LogTableSizeHistory(ctx, rows)
+	if err == nil {
+		tl.RememberEnterpriseSnapshot(instanceName, enterpriseKindTableSize, sig)
+	}
+	return err
+}
+
 func (tl *TimescaleLogger) LogTableSizeHistory(ctx context.Context, rows []TableSizeHistoryRow) error {
 	if len(rows) == 0 {
 		return nil

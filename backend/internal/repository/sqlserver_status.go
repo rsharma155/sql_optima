@@ -7,10 +7,12 @@
 // SPDX-License-Identifier: MIT
 package repository
 
+import "strings"
+
 func (c *SqlServerRepository) GetInstanceStatus(instanceName string) string {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	if status, ok := c.status[instanceName]; ok {
+	if status, ok := c.status[strings.ToUpper(instanceName)]; ok {
 		return status
 	}
 	return "unknown"
@@ -27,20 +29,21 @@ func (c *SqlServerRepository) GetAllInstanceStatuses() map[string]string {
 }
 
 func (c *SqlServerRepository) UpdateInstanceStatus(instanceName string) {
+	upperName := strings.ToUpper(instanceName)
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[upperName]
 	c.mutex.RUnlock()
 
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if !ok || db == nil {
-		c.status[instanceName] = "offline"
+		c.status[upperName] = "offline"
 		return
 	}
 
 	if err := db.Ping(); err != nil {
-		c.status[instanceName] = "offline"
+		c.status[upperName] = "offline"
 	} else {
-		c.status[instanceName] = "online"
+		c.status[upperName] = "online"
 	}
 }

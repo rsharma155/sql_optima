@@ -34,7 +34,7 @@ func (h *LiveHandlers) KPIs(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "instance not found"})
 		return
@@ -56,7 +56,7 @@ func (h *LiveHandlers) RunningQueries(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "instance not found"})
 		return
@@ -82,7 +82,7 @@ func (h *LiveHandlers) Blocking(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "instance not found"})
 		return
@@ -105,7 +105,7 @@ func (h *LiveHandlers) IOLatency(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "instance not found"})
 		return
@@ -126,7 +126,7 @@ func (h *LiveHandlers) TempDB(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "instance not found"})
 		return
@@ -148,7 +148,7 @@ func (h *LiveHandlers) Waits(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "instance not found"})
 		return
@@ -170,7 +170,7 @@ func (h *LiveHandlers) Connections(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "instance not found"})
 		return

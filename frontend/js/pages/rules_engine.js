@@ -104,8 +104,9 @@ function renderBestPracticesDashboard(inst, data) {
                     <h1><i class="fa-solid fa-list-check text-accent"></i> Best Practices Dashboard</h1>
                     <p class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Dynamic Rule Engine</p>
                 </div>
-                <div style="display:flex; align-items:center; gap:1rem;">
+                <div style="display:flex; align-items:center; gap:0.75rem;">
                     ${window.renderStatusStrip({ lastUpdateId: 'bpLastRefreshTime', sourceBadgeId: 'bpDataSourceBadge', includeHealth: false, includeFreshness: false, autoRefreshText: '' })}
+                    ${inst && inst.type === 'postgres' ? `<button class="btn btn-sm btn-outline" style="color:#22c55e; border-color:#22c55e;" data-action="call" data-fn="exportPgBestPracticesCSV"><i class="fa-solid fa-file-csv"></i> Export CSV</button>` : `<button class="btn btn-sm btn-outline" style="color:#22c55e; border-color:#22c55e;" data-action="call" data-fn="exportSqlServerBestPracticesCSV"><i class="fa-solid fa-file-csv"></i> Export CSV</button>`}
                     <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="${inst && inst.type === 'postgres' && typeof window.PgBestPracticesView === 'function' ? 'PgBestPracticesView' : 'RulesEngineView'}"><i class="fa-solid fa-refresh"></i> Refresh</button>
                 </div>
             </div>

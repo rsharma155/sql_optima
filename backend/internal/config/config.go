@@ -80,7 +80,8 @@ func ConnectToInstance(inst Instance) (*sql.DB, error) {
 }
 
 type Config struct {
-	Instances []Instance `yaml:"instances" json:"instances"`
+	Instances    []Instance        `yaml:"instances" json:"instances"`
+	FeatureFlags map[string]bool   `yaml:"feature_flags" json:"feature_flags"`
 }
 
 type Instance struct {

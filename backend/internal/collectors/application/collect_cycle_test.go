@@ -52,6 +52,16 @@ func (m *MockWriter) WriteMSSQLMetrics(ctx context.Context, metrics []domain.MSS
 	return args.Error(0)
 }
 
+func (m *MockWriter) WriteMSSQLSessionEnrichment(ctx context.Context, instanceID string, enrichments []domain.MSSQLSessionEnrichment) error {
+	args := m.Called(ctx, instanceID, enrichments)
+	return args.Error(0)
+}
+
+func (m *MockWriter) ReadMSSQLPlanEnrichment(ctx context.Context, instanceID string) ([]domain.MSSQLSessionEnrichment, error) {
+	args := m.Called(ctx, instanceID)
+	return args.Get(0).([]domain.MSSQLSessionEnrichment), args.Error(1)
+}
+
 func (m *MockWriter) WritePGMetrics(ctx context.Context, metrics []domain.PGCombinedMetric) error {
 	args := m.Called(ctx, metrics)
 	return args.Error(0)
@@ -86,11 +96,37 @@ func TestCollectMSSQL_Workflow(t *testing.T) {
 	mockWriter := new(MockWriter)
 	mockWriter.On("GetInstanceState", mock.Anything, instanceID).Return(lastPoll, startTime, nil)
 	mockWriter.On("SaveMetrics", mock.Anything, instanceID, snapshots, mock.Anything, startTime).Return(nil)
+	// Enrichment now comes from the table, not a fresh DMV fetch.
+	mockWriter.On("ReadMSSQLPlanEnrichment", mock.Anything, instanceID).Return([]domain.MSSQLSessionEnrichment{}, nil)
+	mockWriter.On("WriteMSSQLMetrics", mock.Anything, mock.Anything).Return(nil)
 
 	app.mssqlRepo = mockMSSQL
 	app.writer = mockWriter
 
-	app.collectMSSQL(context.Background(), instanceID)
+	app.collectMSSQLQuerySnapshot(context.Background(), instanceID)
+
+	mockMSSQL.AssertExpectations(t)
+	mockWriter.AssertExpectations(t)
+}
+
+func TestCollectMSSQLSessionEnrichment(t *testing.T) {
+	app := NewCollectorApp(nil, nil, nil, nil, nil)
+	instanceID := "test-instance"
+
+	enrichments := []domain.MSSQLSessionEnrichment{
+		{PlanHandle: []byte("handle1"), LoginName: "user1"},
+	}
+
+	mockMSSQL := new(MockMSSQLRepo)
+	mockMSSQL.On("FetchSessionEnrichment", mock.Anything).Return(enrichments, nil)
+
+	mockWriter := new(MockWriter)
+	mockWriter.On("WriteMSSQLSessionEnrichment", mock.Anything, instanceID, enrichments).Return(nil)
+
+	app.mssqlRepo = mockMSSQL
+	app.writer = mockWriter
+
+	app.collectMSSQLSessionEnrichment(context.Background(), instanceID)
 
 	mockMSSQL.AssertExpectations(t)
 	mockWriter.AssertExpectations(t)
@@ -117,11 +153,13 @@ func TestCollectMSSQL_RestartDetection(t *testing.T) {
 	mockWriter := new(MockWriter)
 	mockWriter.On("GetInstanceState", mock.Anything, instanceID).Return(lastPoll, prevStartTime, nil)
 	mockWriter.On("SaveMetrics", mock.Anything, instanceID, snapshots, mock.Anything, currStartTime).Return(nil)
+	mockWriter.On("ReadMSSQLPlanEnrichment", mock.Anything, instanceID).Return([]domain.MSSQLSessionEnrichment{}, nil)
+	mockWriter.On("WriteMSSQLMetrics", mock.Anything, mock.Anything).Return(nil)
 
 	app.mssqlRepo = mockMSSQL
 	app.writer = mockWriter
 
-	app.collectMSSQL(context.Background(), instanceID)
+	app.collectMSSQLQuerySnapshot(context.Background(), instanceID)
 
 	mockMSSQL.AssertExpectations(t)
 	mockWriter.AssertExpectations(t)

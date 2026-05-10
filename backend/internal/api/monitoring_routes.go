@@ -26,10 +26,13 @@ type monitoringHandlers struct {
 	Health                 *handlers.HealthHandlers
 	Dashboard              *handlers.DashboardHandlers
 	Query                  *handlers.QueryHandlers
-	SIH                    *handlers.StorageIndexHealthTimescaleHandlers
+	PgSIH                  *handlers.PgStorageIndexHealthHandlers
+	SqlServerSIH           *handlers.SqlServerStorageIndexHealthHandlers
+	UnifiedSIH             *handlers.StorageIndexHealthTimescaleHandlers
 	SqlServerQueryAnalysis *handlers.SqlServerQueryAnalysisHandlers
 	SqlServerWatchedQuery  *handlers.SqlServerWatchedQueryHandlers
 	SqlServerWorkload      *handlers.SqlServerWorkloadHandlers
+	SqlServerPlanAnalyzer  *handlers.SqlServerPlanAnalyzerHandlers
 
 	// New Postgres Domain Handlers
 	PgObservability *pg_obs_api.PostgresObservabilityHandler
@@ -45,10 +48,13 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	ts := h.Timescale
 	he := h.Health
 	q := h.Query
-	sih := h.SIH
+	pgSih := h.PgSIH
+	msSih := h.SqlServerSIH
+	uSih := h.UnifiedSIH
 	wld := h.SqlServerWorkload
 
 	sr.HandleFunc("/sqlserver/dashboard", m.Dashboard).Methods("GET")
+	sr.HandleFunc("/sqlserver/health-v2", m.HealthV2).Methods("GET")
 	sr.HandleFunc("/sqlserver/dashboard/v2", m.DashboardV2).Methods("GET")
 	sr.HandleFunc("/sqlserver/enterprise-dashboard/v2", m.EnterpriseDashboardV2).Methods("GET")
 	sr.HandleFunc("/sqlserver/dashboard/timeseries", m.DashboardTimeSeries).Methods("GET")
@@ -80,6 +86,7 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/postgres/databases", p.Databases).Methods("GET")
 	sr.HandleFunc("/postgres/config", p.Config).Methods("GET")
 	sr.HandleFunc("/postgres/best-practices", p.BestPractices).Methods("GET")
+	sr.HandleFunc("/postgres/best-practices/export", p.ExportBestPracticesCSV).Methods("GET")
 	sr.HandleFunc("/postgres/storage", p.Storage).Methods("GET")
 	sr.HandleFunc("/postgres/database-size", p.DatabaseSize).Methods("GET")
 	sr.HandleFunc("/postgres/vacuum/progress", p.VacuumProgress).Methods("GET")
@@ -95,18 +102,26 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/postgres/locks-blocking/timeline", p.LocksBlockingTimeline).Methods("GET")
 	sr.HandleFunc("/postgres/locks-blocking/top-locked-tables", p.LocksBlockingTopLockedTables).Methods("GET")
 	sr.HandleFunc("/postgres/locks-blocking/details", p.LocksBlockingDetails).Methods("GET")
+	sr.HandleFunc("/postgres/locks-blocking/incidents", p.IncidentList).Methods("GET")
+	sr.HandleFunc("/postgres/locks-blocking/chronic-blockers", p.ChronicBlockers).Methods("GET")
 	sr.HandleFunc("/postgres/replication", p.Replication).Methods("GET")
 	sr.HandleFunc("/postgres/sessions", p.Sessions).Methods("GET")
 	sr.HandleFunc("/postgres/locks", p.Locks).Methods("GET")
 	sr.HandleFunc("/postgres/blocking-tree", p.BlockingTree).Methods("GET")
 	sr.HandleFunc("/postgres/queries", p.Queries).Methods("GET")
 	sr.HandleFunc("/postgres/alerts", p.Alerts).Methods("GET")
+	sr.HandleFunc("/postgres/wait-summary", p.WaitSummary).Methods("GET")
 	sr.HandleFunc("/postgres/control-center", p.ControlCenter).Methods("GET")
 	sr.HandleFunc("/postgres/control-center/history", p.ControlCenterHistory).Methods("GET")
 	sr.HandleFunc("/postgres/metrics/timeseries", p.TimeseriesMetrics).Methods("GET")
 	sr.HandleFunc("/postgres/replication-lag/history", p.ReplicationLagHistory).Methods("GET")
 	sr.HandleFunc("/postgres/replication-slots", p.ReplicationSlots).Methods("GET")
 	sr.HandleFunc("/postgres/disk", p.Disk).Methods("GET")
+
+	// Control Center v2 new routes
+	sr.HandleFunc("/postgres/incident-feed", p.IncidentFeed).Methods("GET")
+	sr.HandleFunc("/postgres/checkpoint-health/history", p.CheckpointHealthHistory).Methods("GET")
+	sr.HandleFunc("/postgres/connection-utilization", p.ConnectionUtilizationHistory).Methods("GET")
 
 	// New Postgres Domain Routes
 	sr.HandleFunc("/pg/observability/dashboard", h.PgObservability.GetDashboardData).Methods("GET")
@@ -130,18 +145,33 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/postgres/pgss/top", p.PgssTop).Methods("GET")
 	sr.HandleFunc("/postgres/pgss/regressions", p.PgssRegressions).Methods("GET")
 	sr.HandleFunc("/postgres/pgss/summary", p.PgssSummary).Methods("GET")
+	sr.HandleFunc("/postgres/pgss/filters", p.PgssFilters).Methods("GET")
+	sr.HandleFunc("/postgres/pgss/by-database", p.PgssDbBreakdown).Methods("GET")
+	sr.HandleFunc("/postgres/pgss/by-user", p.PgssUserBreakdown).Methods("GET")
 	sr.HandleFunc("/sqlserver/cpu-drilldown", m.CPUDrilldown).Methods("GET")
 	sr.HandleFunc("/sqlserver/cpu-scheduler-stats", m.CPUSchedulerStats).Methods("GET")
 	sr.HandleFunc("/sqlserver/server-properties", m.ServerProperties).Methods("GET")
 	sr.HandleFunc("/sqlserver/ag-health", m.AGHealth).Methods("GET")
 	sr.HandleFunc("/sqlserver/ag-health/history", m.AGHealthTimeSeries).Methods("GET")
+	sr.HandleFunc("/sqlserver/ag-cluster", m.AGClusterStatus).Methods("GET")
 	sr.HandleFunc("/sqlserver/replication-status", m.ReplicationStatus).Methods("GET")
 	sr.HandleFunc("/sqlserver/log-shipping", m.LogShipping).Methods("GET")
 	sr.HandleFunc("/sqlserver/db-throughput", m.DBThroughput).Methods("GET")
 	sr.HandleFunc("/sqlserver/best-practices", m.BestPractices).Methods("GET")
+	sr.HandleFunc("/sqlserver/best-practices/export", m.ExportBestPracticesCSV).Methods("GET")
 	sr.HandleFunc("/sqlserver/guardrails", m.Guardrails).Methods("GET")
+	sr.HandleFunc("/sqlserver/guardrails/export", m.ExportGuardrailsCSV).Methods("GET")
 	sr.HandleFunc("/sqlserver/jobs", m.Jobs).Methods("GET")
 	sr.HandleFunc("/sqlserver/overview", m.Overview).Methods("GET")
+	sr.HandleFunc("/sqlserver/blocking/kpis", m.BlockingKPIs).Methods("GET")
+	sr.HandleFunc("/sqlserver/blocking/timeline", m.BlockingTimeline).Methods("GET")
+	sr.HandleFunc("/sqlserver/blocking/details", m.BlockingDetails).Methods("GET")
+	sr.HandleFunc("/sqlserver/blocking/locks", m.BlockingLocks).Methods("GET")
+	sr.HandleFunc("/sqlserver/blocking/most-blocked-databases", m.MostBlockedDatabases).Methods("GET")
+	sr.HandleFunc("/sqlserver/blocking/most-blocked-objects", m.MostBlockedObjects).Methods("GET")
+	sr.HandleFunc("/sqlserver/blocking/recurrence", m.BlockingRecurrence).Methods("GET")
+	sr.HandleFunc("/sqlserver/blocking/top-queries", m.TopBlockingQueries).Methods("GET")
+	sr.HandleFunc("/sqlserver/deadlocks/history", m.DeadlockHistory).Methods("GET")
 	sr.HandleFunc("/sqlserver/latch-stats", m.LatchStats).Methods("GET")
 	sr.HandleFunc("/sqlserver/waiting-tasks", m.WaitingTasks).Methods("GET")
 	sr.HandleFunc("/sqlserver/memory-grants", m.MemoryGrants).Methods("GET")
@@ -165,13 +195,29 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/timescale/sqlserver/long-running-queries", ts.SqlServerLongRunningQueries).Methods("GET")
 	sr.HandleFunc("/timescale/postgres/throughput", ts.PostgresThroughput).Methods("GET")
 	sr.HandleFunc("/timescale/postgres/connections", ts.PostgresConnections).Methods("GET")
-	if sih != nil {
-		sr.HandleFunc("/timescale/storage-index-health/index-usage", sih.IndexUsage).Methods("GET")
-		sr.HandleFunc("/timescale/storage-index-health/table-usage", sih.TableUsage).Methods("GET")
-		sr.HandleFunc("/timescale/storage-index-health/growth", sih.Growth).Methods("GET")
-		sr.HandleFunc("/timescale/storage-index-health/dashboard", sih.Dashboard).Methods("GET")
-		sr.HandleFunc("/timescale/storage-index-health/filters", sih.Filters).Methods("GET")
-		sr.HandleFunc("/timescale/storage-index-health/index-definition", sih.IndexDefinition).Methods("GET")
+	if pgSih != nil {
+		sr.HandleFunc("/timescale/postgres/storage-index-health/index-usage", pgSih.IndexUsage).Methods("GET")
+		sr.HandleFunc("/timescale/postgres/storage-index-health/table-usage", pgSih.TableUsage).Methods("GET")
+		sr.HandleFunc("/timescale/postgres/storage-index-health/growth", pgSih.Growth).Methods("GET")
+		sr.HandleFunc("/timescale/postgres/storage-index-health/dashboard", pgSih.Dashboard).Methods("GET")
+		sr.HandleFunc("/timescale/postgres/storage-index-health/filters", pgSih.Filters).Methods("GET")
+		sr.HandleFunc("/timescale/postgres/storage-index-health/index-definition", pgSih.IndexDefinition).Methods("GET")
+	}
+	if msSih != nil {
+		sr.HandleFunc("/timescale/sqlserver/storage-index-health/index-usage", msSih.IndexUsage).Methods("GET")
+		sr.HandleFunc("/timescale/sqlserver/storage-index-health/table-usage", msSih.TableUsage).Methods("GET")
+		sr.HandleFunc("/timescale/sqlserver/storage-index-health/growth", msSih.Growth).Methods("GET")
+		sr.HandleFunc("/timescale/sqlserver/storage-index-health/dashboard", msSih.Dashboard).Methods("GET")
+		sr.HandleFunc("/timescale/sqlserver/storage-index-health/filters", msSih.Filters).Methods("GET")
+		sr.HandleFunc("/timescale/sqlserver/storage-index-health/index-definition", msSih.IndexDefinition).Methods("GET")
+	}
+	if uSih != nil {
+		sr.HandleFunc("/timescale/storage-index-health/index-usage", uSih.IndexUsage).Methods("GET")
+		sr.HandleFunc("/timescale/storage-index-health/table-usage", uSih.TableUsage).Methods("GET")
+		sr.HandleFunc("/timescale/storage-index-health/growth", uSih.Growth).Methods("GET")
+		sr.HandleFunc("/timescale/storage-index-health/dashboard", uSih.Dashboard).Methods("GET")
+		sr.HandleFunc("/timescale/storage-index-health/filters", uSih.Filters).Methods("GET")
+		sr.HandleFunc("/timescale/storage-index-health/index-definition", uSih.IndexDefinition).Methods("GET")
 	}
 	sr.HandleFunc("/live/kpis", l.KPIs).Methods("GET")
 	sr.HandleFunc("/live/running-queries", l.RunningQueries).Methods("GET")
@@ -208,6 +254,12 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 		sr.HandleFunc("/sqlserver/watched-queries/detail", wq.Detail).Methods("GET")
 		sr.HandleFunc("/sqlserver/watched-queries/event", wq.AddEvent).Methods("POST")
 	}
+
+	// SQL Server Plan Analyzer
+	if pa := h.SqlServerPlanAnalyzer; pa != nil {
+		sr.HandleFunc("/sqlserver/plan/analyze", pa.Analyze).Methods("POST")
+		sr.HandleFunc("/sqlserver/watched-queries/plan-analysis", pa.WatchedQueryPlanAnalysis).Methods("GET")
+	}
 }
 
 // registerMonitoringElevatedRoutes attaches diagnostics that should be limited to dba or admin.
@@ -224,6 +276,8 @@ func registerPostgresDBAMutations(sr *mux.Router, p *handlers.PostgresHandlers) 
 	sr.HandleFunc("/postgres/reset-queries", p.ResetQueries).Methods("POST")
 	sr.HandleFunc("/postgres/backups/report", p.BackupReport).Methods("POST")
 	sr.HandleFunc("/postgres/logs/report", p.LogsReport).Methods("POST")
+	sr.HandleFunc("/postgres/session/cancel", p.CancelBackend).Methods("POST")
+	sr.HandleFunc("/postgres/session/terminate", p.TerminateBackend).Methods("POST")
 }
 
 // registerDashboardWidgetRoutes attaches widget list and (future) query execute for authenticated users.

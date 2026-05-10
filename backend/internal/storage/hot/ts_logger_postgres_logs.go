@@ -104,7 +104,7 @@ func (tl *TimescaleLogger) GetPostgresLogSummary(ctx context.Context, instanceNa
 		WITH w AS (
 			SELECT *
 			FROM postgres_log_events
-			WHERE server_instance_name = $1
+			WHERE UPPER(server_instance_name) = UPPER($1)
 			  AND capture_timestamp >= NOW() - ($2 * INTERVAL '1 minute')
 		)
 		SELECT
@@ -142,7 +142,7 @@ func (tl *TimescaleLogger) GetPostgresLogEvents(ctx context.Context, instanceNam
 		       COALESCE(user_name,''), COALESCE(database_name,''), COALESCE(application_name,''), COALESCE(client_addr,''),
 		       COALESCE(pid,0), COALESCE(context,''), COALESCE(detail,''), COALESCE(hint,''), raw
 		FROM postgres_log_events
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 	`
 	args := []any{instanceName}
 	if sev != "" && sev != "all" {

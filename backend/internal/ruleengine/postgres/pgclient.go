@@ -61,7 +61,7 @@ func (c *PGClient) GetEnabledRules(ctx context.Context, instanceType string) ([]
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	query := "SELECT rule_id, rule_name, category, description, detection_sql, detection_sql_pg, fix_script, fix_script_pg, comparison_type, threshold_value, is_enabled, priority, target_db_type FROM ruleengine.rules WHERE is_enabled = true AND target_db_type = $1;"
+	query := "SELECT rule_id, rule_name, category, description, detection_sql, detection_sql_pg, fix_script, fix_script_pg, expected_calc, evaluation_logic, comparison_type, threshold_value, is_enabled, priority, target_db_type, applicability_sql, context_tags, confidence FROM ruleengine.rules WHERE is_enabled = true AND target_db_type = $1;"
 
 	rows, err := c.pool.Query(ctx, query, instanceType)
 	if err != nil {
@@ -73,7 +73,7 @@ func (c *PGClient) GetEnabledRules(ctx context.Context, instanceType string) ([]
 	for rows.Next() {
 		var r models.Rule
 		var thresh json.RawMessage
-		if err := rows.Scan(&r.RuleID, &r.RuleName, &r.Category, &r.Description, &r.DetectionSQL, &r.DetectionSQLPG, &r.FixScript, &r.FixScriptPG, &r.ExpectedCalc, &r.EvaluationLogic, &r.ComparisonType, &thresh, &r.IsEnabled, &r.Priority, &r.TargetDBType); err != nil {
+		if err := rows.Scan(&r.RuleID, &r.RuleName, &r.Category, &r.Description, &r.DetectionSQL, &r.DetectionSQLPG, &r.FixScript, &r.FixScriptPG, &r.ExpectedCalc, &r.EvaluationLogic, &r.ComparisonType, &thresh, &r.IsEnabled, &r.Priority, &r.TargetDBType, &r.ApplicabilitySQL, &r.ContextTags, &r.Confidence); err != nil {
 			return nil, fmt.Errorf("failed to scan rule: %w", err)
 		}
 		r.ThresholdValue = thresh
@@ -121,7 +121,7 @@ func (c *PGClient) EvaluateRun(ctx context.Context, runID int) error {
 }
 
 func (c *PGClient) GetDashboardView(ctx context.Context, serverID int) ([]models.DashboardEntry, error) {
-	query := `SELECT rule_id, rule_name, category, status, current_value, recommended_value, description, fix_script, last_check FROM ruleengine.v_best_practices_dashboard WHERE server_id = $1 ORDER BY category, rule_name;`
+	query := `SELECT rule_id, rule_name, category, status, current_value, recommended_value, description, fix_script, context_tags, confidence, evaluated_at FROM ruleengine.v_best_practices_dashboard WHERE server_id = $1 ORDER BY category, rule_name;`
 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -135,7 +135,7 @@ func (c *PGClient) GetDashboardView(ctx context.Context, serverID int) ([]models
 	var entries []models.DashboardEntry
 	for rows.Next() {
 		var e models.DashboardEntry
-		if err := rows.Scan(&e.RuleID, &e.RuleName, &e.Category, &e.Status, &e.CurrentValue, &e.RecommendedValue, &e.Description, &e.FixScript, &e.LastCheck); err != nil {
+		if err := rows.Scan(&e.RuleID, &e.RuleName, &e.Category, &e.Status, &e.CurrentValue, &e.RecommendedValue, &e.Description, &e.FixScript, &e.ContextTags, &e.Confidence, &e.LastCheck); err != nil {
 			return nil, fmt.Errorf("failed to scan dashboard entry: %w", err)
 		}
 		entries = append(entries, e)

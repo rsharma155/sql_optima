@@ -35,8 +35,8 @@ func (c *PgRepository) CollectPgMemoryStats(ctx context.Context, instanceName st
 	// 1. Connections
 	connQuery := `
 			/* SQL_OPTIMA */ SELECT 
-			COUNT(*) FILTER (WHERE state = 'active') AS active_connections,
-			COUNT(*) FILTER (WHERE state = 'idle')   AS idle_connections,
+			COUNT(*) FILTER (WHERE state = 'active')::bigint AS active_connections,
+			COUNT(*) FILTER (WHERE state = 'idle')::bigint   AS idle_connections,
 			COUNT(*) AS total_connections
 		FROM pg_stat_activity`
 	if err := db.QueryRowContext(ctx, connQuery).Scan(&snap.ActiveConnections, &snap.IdleConnections, &snap.TotalConnections); err != nil {
@@ -44,24 +44,47 @@ func (c *PgRepository) CollectPgMemoryStats(ctx context.Context, instanceName st
 	}
 
 	// 2. Cache Stats & Temp Spill Stats
+	// Handle PostgreSQL version differences: temp_files/temp_bytes were added in PG 12,
+	// pg_stat_checkpointer (replacing buffers_checkpoint in pg_stat_bgwriter) in PG 17.
+	// SHOW returns text; current_setting()::integer avoids a scan-type mismatch.
+	var versionNum int
+	if err := db.QueryRowContext(ctx, "SELECT current_setting('server_version_num')::integer").Scan(&versionNum); err != nil {
+		log.Printf("[POSTGRES] CollectPgMemoryStats version check error: %v", err)
+		versionNum = 120000 // assume modern if check fails
+	}
+
 	dbQuery := `
 		/* SQL_OPTIMA */ SELECT  
-			SUM(blks_hit)  AS blks_hit,
-			SUM(blks_read) AS blks_read,
-			SUM(temp_files) AS temp_files,
-			SUM(temp_bytes) AS temp_bytes
-		FROM pg_stat_database`
+			COALESCE(SUM(blks_hit)::bigint, 0)  AS blks_hit,
+			COALESCE(SUM(blks_read)::bigint, 0) AS blks_read`
+	if versionNum >= 120000 {
+		dbQuery += `,
+			COALESCE(SUM(temp_files)::bigint, 0) AS temp_files,
+			COALESCE(SUM(temp_bytes)::bigint, 0) AS temp_bytes`
+	} else {
+		dbQuery += `, 0, 0`
+	}
+	dbQuery += ` FROM pg_stat_database`
+
 	if err := db.QueryRowContext(ctx, dbQuery).Scan(&snap.BlksHit, &snap.BlksRead, &snap.TempFiles, &snap.TempBytes); err != nil {
 		log.Printf("[POSTGRES] CollectPgMemoryStats database stats error: %v", err)
 	}
 
-	// 3. BGWriter
-	bgQuery := `
-		/* SQL_OPTIMA */ SELECT  
-			buffers_checkpoint,
-			buffers_clean,
-			buffers_backend
-		FROM pg_stat_bgwriter`
+	// 3. BGWriter — PG 17 moved checkpoint counters out of pg_stat_bgwriter.
+	var bgQuery string
+	if versionNum >= 170000 {
+		bgQuery = `/* SQL_OPTIMA */ SELECT
+			COALESCE((SELECT buffers_written FROM pg_stat_checkpointer), 0),
+			COALESCE(buffers_clean, 0),
+			0
+			FROM pg_stat_bgwriter`
+	} else {
+		bgQuery = `/* SQL_OPTIMA */ SELECT
+			COALESCE(buffers_checkpoint, 0)::bigint,
+			COALESCE(buffers_clean, 0)::bigint,
+			COALESCE(buffers_backend, 0)::bigint
+			FROM pg_stat_bgwriter`
+	}
 	if err := db.QueryRowContext(ctx, bgQuery).Scan(&snap.BuffersCheckpoint, &snap.BuffersClean, &snap.BuffersBackend); err != nil {
 		log.Printf("[POSTGRES] CollectPgMemoryStats bgwriter error: %v", err)
 	}
@@ -83,6 +106,7 @@ func (c *PgRepository) CollectPgMemoryStats(ctx context.Context, instanceName st
 			log.Printf("[POSTGRES] CollectPgMemoryStats shared_buffers scan error: %v", err)
 		}
 		snap.PostgresRSSMB = int64(float64(sharedBuffers) * 1.2) // very rough estimate
+		snap.PostgresVSZMB = int64(float64(sharedBuffers) * 2.5) // very rough estimate for VSZ
 	}
 
 	return snap, nil

@@ -244,7 +244,7 @@ func TestPgssPipeline_Integration(t *testing.T) {
 	}
 
 	// ── Step 4: Read top queries ──
-	top, err := tl.GetPgssTopQueries(ctx, instance, from, to, "total_time", 50)
+	top, err := tl.GetPgssTopQueries(ctx, instance, from, to, "total_time", 50, "", "", "", "", false)
 	if err != nil {
 		t.Fatalf("GetPgssTopQueries: %v", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/config"
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
@@ -195,7 +196,7 @@ func (h *SqlServerHandlers) Overview(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -219,7 +220,7 @@ func (h *SqlServerHandlers) Dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -289,7 +290,7 @@ func (h *SqlServerHandlers) DashboardV2(w http.ResponseWriter, r *http.Request) 
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -299,21 +300,13 @@ func (h *SqlServerHandlers) DashboardV2(w http.ResponseWriter, r *http.Request) 
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
 		return
 	}
-	// On-demand refresh: live dashboard cache is updated only at startup by default.
-	// Refreshing here ensures charts like PLE and Disk I/O Latency are not blank when users load the page.
-	{
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		h.metricsSvc.RunLiveCollectorForInstance(ctx, instance)
-		cancel()
-	}
-	// Disk I/O Latency chart reads sqlserver_file_io_latency; record one snapshot per dashboard load
-	// so the trend is not empty when the Enterprise metrics interval has not fired yet.
-	if h.metricsSvc.IsTimescaleConnected() {
-		ctxIO, cancelIO := context.WithTimeout(context.Background(), 5*time.Second)
-		h.metricsSvc.WarmFileIOLatencyToTimescale(ctxIO, instance)
-		cancelIO()
-	}
-	out, src := h.metricsSvc.GetDashboardHomepageV2WithSource(instance)
+	// On-demand refresh disabled to strictly enforce data from TimescaleDB/background collector.
+	// This ensures dashboard loads are fast and only serve persisted data.
+	
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
+	out, src := h.metricsSvc.GetDashboardHomepageV2WithSource(instance, from, to)
 	w.Header().Set("X-Data-Source", src)
 	json.NewEncoder(w).Encode(out)
 }
@@ -327,7 +320,7 @@ func (h *SqlServerHandlers) PerformanceDebt(w http.ResponseWriter, r *http.Reque
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -378,7 +371,7 @@ func (h *SqlServerHandlers) Jobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -420,7 +413,7 @@ func (h *SqlServerHandlers) LogShipping(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -457,7 +450,7 @@ func (h *SqlServerHandlers) XEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -484,7 +477,7 @@ func (h *SqlServerHandlers) BestPractices(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -504,7 +497,7 @@ func (h *SqlServerHandlers) Guardrails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -532,7 +525,7 @@ func (h *SqlServerHandlers) CPUDrilldown(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -618,7 +611,7 @@ func (h *SqlServerHandlers) AGHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -697,6 +690,32 @@ func (h *SqlServerHandlers) AGHealthTimeSeries(w http.ResponseWriter, r *http.Re
 	json.NewEncoder(w).Encode(map[string]interface{}{"history": history})
 }
 
+func (h *SqlServerHandlers) AGClusterStatus(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	if instance == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance required"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	status, err := h.metricsSvc.MsRepo.FetchAGClusterStatus(instance)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"hadr_cluster": nil})
+		return
+	}
+
+	members, err := h.metricsSvc.MsRepo.FetchAGClusterMembers(instance)
+	if err != nil {
+		members = []repository.AGClusterMember{}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"hadr_cluster": status,
+		"members":      members,
+	})
+}
+
 func (h *SqlServerHandlers) ReplicationStatus(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if instance == "" {
@@ -712,9 +731,10 @@ func (h *SqlServerHandlers) ReplicationStatus(w http.ResponseWriter, r *http.Req
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-
 	json.NewEncoder(w).Encode(map[string]interface{}{"replication": stats})
 }
+
+
 
 func (h *SqlServerHandlers) DBThroughput(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
@@ -725,7 +745,7 @@ func (h *SqlServerHandlers) DBThroughput(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -777,7 +797,7 @@ func (h *SqlServerHandlers) LatchStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -826,7 +846,7 @@ func (h *SqlServerHandlers) WaitingTasks(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -875,7 +895,7 @@ func (h *SqlServerHandlers) MemoryGrants(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -924,7 +944,7 @@ func (h *SqlServerHandlers) SchedulerWorkers(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -990,7 +1010,7 @@ func (h *SqlServerHandlers) ProcedureStats(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1039,7 +1059,7 @@ func (h *SqlServerHandlers) FileIOLatency(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1088,7 +1108,7 @@ func (h *SqlServerHandlers) SpinlockStats(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1137,7 +1157,7 @@ func (h *SqlServerHandlers) MemoryClerks(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1186,7 +1206,7 @@ func (h *SqlServerHandlers) TempdbStats(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1233,7 +1253,7 @@ func (h *SqlServerHandlers) PlanCacheHealth(w http.ResponseWriter, r *http.Reque
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1271,7 +1291,7 @@ func (h *SqlServerHandlers) MemoryGrantWaiters(w http.ResponseWriter, r *http.Re
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1309,7 +1329,7 @@ func (h *SqlServerHandlers) TempdbTopConsumers(w http.ResponseWriter, r *http.Re
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1347,7 +1367,7 @@ func (h *SqlServerHandlers) WaitCategories(w http.ResponseWriter, r *http.Reques
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1361,7 +1381,9 @@ func (h *SqlServerHandlers) WaitCategories(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if h.metricsSvc.IsTimescaleConnected() {
-		if rows, err := h.metricsSvc.GetTimescaleWaitCategoryAgg(r.Context(), instance, 15); err == nil {
+		from := r.URL.Query().Get("from")
+		to := r.URL.Query().Get("to")
+		if rows, err := h.metricsSvc.GetTimescaleWaitCategoryAgg(r.Context(), instance, 15, from, to); err == nil {
 			w.Header().Set("X-Data-Source", "timescale")
 			json.NewEncoder(w).Encode(map[string]any{"wait_categories_15m": rows})
 			return
@@ -1380,7 +1402,7 @@ func (h *SqlServerHandlers) CPUSchedulerStats(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1409,7 +1431,7 @@ func (h *SqlServerHandlers) ServerProperties(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -1427,4 +1449,41 @@ func (h *SqlServerHandlers) ServerProperties(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Data-Source", "timescale")
 	json.NewEncoder(w).Encode(map[string]interface{}{"server_properties": props})
+}
+
+// HealthV2 returns the unified SQL Server Health Dashboard v2 data.
+func (h *SqlServerHandlers) HealthV2(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	if instance == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name required"})
+		return
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	now := time.Now().UTC()
+	from := now.Add(-15 * time.Minute) // Default to last 15 mins for V2 Triage
+	to := now
+
+	if fromStr != "" {
+		if t, err := time.Parse(time.RFC3339, fromStr); err == nil {
+			from = t.UTC()
+		}
+	}
+	if toStr != "" {
+		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
+			to = t.UTC()
+		}
+	}
+
+	data, err := h.metricsSvc.GetHealthV2DashboardData(r.Context(), instance, from, to)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
 }

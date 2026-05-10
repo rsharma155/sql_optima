@@ -96,7 +96,7 @@ func (tl *TimescaleLogger) GetPostgresTableMaintenanceHistory(ctx context.Contex
 		       seq_scans, idx_scans,
 		       last_vacuum, last_autovacuum, last_analyze, last_autoanalyze
 		FROM postgres_table_maintenance_stats
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND database_name = $2
 		  AND schema_name = $3
 		  AND table_name = $4
@@ -139,7 +139,7 @@ func (tl *TimescaleLogger) GetLatestPostgresTableMaintenance(ctx context.Context
 			       seq_scans, idx_scans,
 			       last_vacuum, last_autovacuum, last_analyze, last_autoanalyze
 			FROM postgres_table_maintenance_stats
-			WHERE server_instance_name = $1
+			WHERE UPPER(server_instance_name) = UPPER($1)
 			ORDER BY database_name, schema_name, table_name, capture_timestamp DESC
 		)
 		SELECT *

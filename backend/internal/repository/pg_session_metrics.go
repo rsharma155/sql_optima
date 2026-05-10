@@ -23,14 +23,14 @@ import (
 // Used for connection pool monitoring and capacity planning.
 func (c *PgRepository) GetConnectionStats(instanceName string) (active int, idle int, total int, err error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
 		log.Printf("[POSTGRES] GetConnectionStats: connection not found for %s, attempting reconnect", instanceName)
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 			if !ok || db == nil {
 				return 0, 0, 0, fmt.Errorf("connection not found after reconnect")
@@ -56,7 +56,7 @@ func (c *PgRepository) GetConnectionStats(instanceName string) (active int, idle
 // Used to identify problematic long-running queries.
 func (c *PgRepository) GetLongRunningQueries(instanceName string, minDurationSeconds int) ([]models.PgSession, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -129,7 +129,7 @@ func (c *PgRepository) GetLongRunningQueries(instanceName string, minDurationSec
 // GetActiveQueries returns all currently active queries.
 func (c *PgRepository) GetActiveQueries(instanceName string) ([]models.PgSession, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -215,7 +215,7 @@ type PgSession struct {
 // GetSessions returns active sessions with blocking information.
 func (c *PgRepository) GetSessions(instanceName string) ([]PgSession, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -282,7 +282,7 @@ func (c *PgRepository) GetSessions(instanceName string) ([]PgSession, error) {
 // TerminateSession kills a PostgreSQL backend process by PID.
 func (c *PgRepository) TerminateSession(instanceName string, pid int) error {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -296,4 +296,86 @@ func (c *PgRepository) TerminateSession(instanceName string, pid int) error {
 
 	log.Printf("[POSTGRES] Terminated session PID %d on %s", pid, instanceName)
 	return nil
+}
+
+// GetWaitEventSummary returns a summary of wait events by category for active sessions.
+func (c *PgRepository) GetWaitEventSummary(instanceName string) (map[string]int, error) {
+	c.mutex.RLock()
+	db, ok := c.conns[strings.ToUpper(instanceName)]
+	c.mutex.RUnlock()
+
+	if !ok || db == nil {
+		return nil, fmt.Errorf("connection not found")
+	}
+
+	query := `
+		/* SQL_OPTIMA */ SELECT   
+			COALESCE(wait_event_type, 'CPU') as wait_type, 
+			COUNT(*) as count 
+		FROM pg_stat_activity 
+		WHERE state = 'active' 
+		GROUP BY wait_event_type
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	summary := make(map[string]int)
+	for rows.Next() {
+		var waitType string
+		var count int
+		if err := rows.Scan(&waitType, &count); err != nil {
+			continue
+		}
+		summary[waitType] = count
+	}
+
+	return summary, nil
+}
+
+// GetTopWaitEvents returns the top wait events across all sessions.
+func (c *PgRepository) GetTopWaitEvents(instanceName string, limit int) (map[string]int, error) {
+	c.mutex.RLock()
+	db, ok := c.conns[strings.ToUpper(instanceName)]
+	c.mutex.RUnlock()
+
+	if !ok || db == nil {
+		return nil, fmt.Errorf("connection not found")
+	}
+
+	if limit <= 0 {
+		limit = 10
+	}
+
+	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */ SELECT   
+			wait_event, 
+			COUNT(*) as count 
+		FROM pg_stat_activity 
+		WHERE wait_event IS NOT NULL 
+		GROUP BY wait_event 
+		ORDER BY count DESC 
+		LIMIT %d
+	`, limit)
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events := make(map[string]int)
+	for rows.Next() {
+		var event string
+		var count int
+		if err := rows.Scan(&event, &count); err != nil {
+			continue
+		}
+		events[event] = count
+	}
+
+	return events, nil
 }

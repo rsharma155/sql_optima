@@ -41,13 +41,24 @@ func (h *PostgresHandlers) Databases(w http.ResponseWriter, r *http.Request) {
 	}
 
 	databases, err := h.metricsSvc.GetTimescalePostgresDatabases(r.Context(), instance)
-	if err != nil {
-		log.Printf("[API] PG databases (timescale) error for %s: %v", instance, err)
-		json.NewEncoder(w).Encode(map[string]interface{}{"databases": []string{}})
-		return
+	if err != nil || len(databases) == 0 {
+		if err != nil {
+			log.Printf("[API] PG databases (timescale) error for %s: %v — falling back to live discovery", instance, err)
+		}
+		// Fallback to direct instance query
+		liveDbs, liveErr := h.metricsSvc.PgRepo.GetDatabases(instance)
+		if liveErr != nil {
+			log.Printf("[API] PG databases (live fallback) error for %s: %v", instance, liveErr)
+			w.Header().Set("X-Data-Source", "error")
+			json.NewEncoder(w).Encode(map[string]interface{}{"instance": instance, "databases": []string{}})
+			return
+		}
+		databases = liveDbs
+		w.Header().Set("X-Data-Source", "live")
+	} else {
+		w.Header().Set("X-Data-Source", "timescale")
 	}
 
-	w.Header().Set("X-Data-Source", "timescale")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"instance":  instance,
 		"databases": databases,

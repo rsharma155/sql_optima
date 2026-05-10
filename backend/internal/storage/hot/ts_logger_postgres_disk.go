@@ -77,7 +77,7 @@ func (tl *TimescaleLogger) GetPostgresDiskStats(ctx context.Context, instanceNam
 		SELECT capture_timestamp, server_instance_name, mount_name, path,
 		       total_bytes, free_bytes, avail_bytes, used_pct
 		FROM postgres_disk_stats
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC, mount_name
 		LIMIT $2
 	`

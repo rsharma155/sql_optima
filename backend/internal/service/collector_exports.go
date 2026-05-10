@@ -23,3 +23,11 @@ func (s *MetricsService) RunLiveCollectorForInstance(ctx context.Context, instan
 func (s *MetricsService) RunHistoricalCollectorOnce(ctx context.Context) {
 	s.runHistoricalStorageWithContext(ctx)
 }
+
+// TriggerBackgroundCollectorsOnce runs one cycle of all independent background collectors
+// (Query Store, Enterprise, and Advanced metrics).
+func (s *MetricsService) TriggerBackgroundCollectorsOnce() {
+	s.collectQueryStoreData()
+	s.collectEnterpriseMetrics()
+	s.collectAdvancedEnterpriseMetrics()
+}

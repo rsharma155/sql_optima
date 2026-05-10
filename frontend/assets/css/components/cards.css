@@ -63,18 +63,26 @@
 }
 
 .glass-panel.metric-card-compact {
-    padding: 0.4rem;
+    padding: 0.3rem 0.5rem;
     text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
 }
 .metric-card-compact .metric-label {
-    font-size: 0.6rem;
+    font-size: 0.58rem;
     color: var(--text-secondary);
     text-transform: uppercase;
-    margin-bottom: 2px;
+    margin-bottom: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .metric-card-compact .metric-value {
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     font-weight: 700;
+    line-height: 1.2;
 }
 
 .avatar { width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--border-color); }
@@ -122,7 +130,10 @@
 .practice-value { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem; }
 .practice-message { font-size: 0.85rem; margin-bottom: 0.75rem; line-height: 1.4; }
 .practice-category { font-size: 0.75rem; }
-.border-success { border-left-color: var(--success); background: linear-gradient(90deg, rgba(16, 185, 129, 0.05) 0%, transparent 100%); }
+.border-success { border-left: 4px solid var(--success) !important; background: linear-gradient(90deg, rgba(16, 185, 129, 0.05) 0%, transparent 100%); }
+.border-warning { border-left: 4px solid var(--warning) !important; background: linear-gradient(90deg, rgba(245, 158, 11, 0.05) 0%, transparent 100%); }
+.border-danger { border-left: 4px solid var(--danger) !important; background: linear-gradient(90deg, rgba(239, 68, 68, 0.05) 0%, transparent 100%); }
+.border-unknown { border-left: 4px solid #94a3b8 !important; background: linear-gradient(90deg, rgba(148, 163, 184, 0.05) 0%, transparent 100%); }
 .alert-list { list-style: none; } .alert-list li { padding: 0.75rem 0; border-bottom: 1px dashed var(--border-color); display: flex; justify-content: space-between; font-size:0.9rem;}
 .time-ago { color: var(--text-muted); font-size: 0.85rem; white-space: nowrap; }
 

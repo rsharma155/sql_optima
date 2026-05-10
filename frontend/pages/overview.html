@@ -1,215 +1,218 @@
 <!--
- * SQL Optima — https://github.com/rsharma155/sql_optima
- *
- * Purpose: The PostgreSQL Control Center Revamp (V2); Observability Dashboard.
- *
- * Author: Ravi Sharma
- * Copyright (c) 2026 Ravi Sharma
- * SPDX-License-Identifier: MIT
+ * SQL Optima — PostgreSQL Control Center (Overview)
+ * Mission Control Revamp Template v2 (2026-05-07)
 -->
 <div class="page-view active dashboard-sky-theme">
-    <!-- Header -->
+    <!-- ROW 0: HEADER -->
     <div class="page-title flex-between dashboard-page-title-compact">
-        <div class="dashboard-title-line" style="flex:1; min-width:0;">
-            <h1>PostgreSQL Control Center</h1>
-            <span class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></span>
+        <div class="dashboard-title-line">
+            <h1><i class="fa-solid fa-gauge-high"></i> Control Center <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Control Center" title="Learn more about this dashboard"></i></h1>
+            <span class="subtitle">Real-time health, throughput, and operational diagnostics</span>
         </div>
-        <div class="dashboard-page-title-actions dashboard-pg-header-actions">
-            <!-- Dynamic Time Picker Injected Here -->
-        </div>
-    </div>
-
-    <!-- ROW 0: INSTANCE HEALTH STRIP (Redesign) -->
-    <div class="glass-panel dashboard-strip-panel mt-2">
-        <div class="dashboard-strip-header">
-            <h4>
-                <span class="dashboard-strip-header-icons" aria-hidden="true">
-                    <i class="fa-solid fa-heart-pulse" title="Health"></i>
-                    <i class="fa-solid fa-bolt" title="Throughput"></i>
-                    <i class="fa-solid fa-shield-halved" title="Reliability"></i>
-                </span>
-                PostgreSQL Engine Snapshot
-                <span class="dashboard-strip-header-tooltip" title="Health, Throughput, and Reliability metrics for this PostgreSQL instance."><i class="fa-solid fa-circle-info"></i></span>
-            </h4>
-        </div>
-        <div class="dashboard-strip-metrics-row--6">
-            <!-- Section A: Overall Health -->
-            <div class="strip-metric-cell" id="card-health" title="Health Score">
-                <div class="strip-metric-label">Health</div>
-                <div class="strip-metric-value text-success" id="stat-health-score">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-active" title="Active Sessions">
-                <div class="strip-metric-label">Active</div>
-                <div class="strip-metric-value" id="stat-active-sessions">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-waiting" title="Waiting Sessions">
-                <div class="strip-metric-label">Waiting</div>
-                <div class="strip-metric-value" id="stat-waiting-sessions">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-blocked" title="Blocked Queries">
-                <div class="strip-metric-label">Blocked</div>
-                <div class="strip-metric-value" id="stat-blocked-sessions">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-tps" title="Transactions Per Second">
-                <div class="strip-metric-label">TPS</div>
-                <div class="strip-metric-value" id="stat-tps">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-rw-ratio" title="Read / Write Ratio">
-                <div class="strip-metric-label">R/W Ratio</div>
-                <div class="strip-metric-value" id="stat-rw-ratio">--</div>
-            </div>
-        </div>
-        <div class="dashboard-strip-metrics-row--6">
-            <div class="strip-metric-cell" id="card-latency" title="Average Query Latency">
-                <div class="strip-metric-label">Avg Latency</div>
-                <div class="strip-metric-value" id="stat-latency">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-connections" title="Total Connections">
-                <div class="strip-metric-label">Connections</div>
-                <div class="strip-metric-value" id="stat-connections">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-repl-lag" title="Replica Lag">
-                <div class="strip-metric-label">Replica Lag</div>
-                <div class="strip-metric-value" id="stat-repl-lag">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-wal-rate" title="WAL Rate">
-                <div class="strip-metric-label">WAL Rate</div>
-                <div class="strip-metric-value" id="stat-wal-rate">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-ckpt-time" title="Avg Checkpoint Write Time">
-                <div class="strip-metric-label">Checkpoint Time</div>
-                <div class="strip-metric-value" id="stat-ckpt-time">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-xid-age" title="XID Age">
-                <div class="strip-metric-label">XID Age</div>
-                <div class="strip-metric-value" id="stat-xid-age">--</div>
-            </div>
+        <div class="flex-center dashboard-page-title-actions">
+            <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgDashboardView"><i class="fa-solid fa-refresh"></i> Refresh</button>
         </div>
     </div>
 
-    <!-- ROW 1: HERO SECTION - DATABASE LOAD -->
-    <div class="section-title" style="margin-top:1rem; margin-bottom:0.25rem;">
-        <h2 style="font-size:0.85rem; margin:0; color:var(--text-color); border-bottom:1px solid var(--border-color); padding-bottom:0.2rem;">Database Pressure</h2>
-    </div>
-    <div class="grid-row" style="display:grid; grid-template-columns: 8fr 4fr; gap:0.5rem;">
-        <div class="chart-card glass-panel" style="padding:0.5rem;">
-            <div class="card-header flex-between">
-                <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-server text-accent"></i> Database Load (Active vs Waiting)</h3>
-                <div class="mini-stats" style="font-size:0.65rem; color:var(--text-muted);">Max Load: <span id="load-peak">--</span> AAS</div>
-            </div>
-            <div class="chart-container" style="height:180px;"><canvas id="pgDbLoadChart"></canvas></div>
+    <!-- ROW 1: MISSION CONTROL KPIs (10 Cards) -->
+    <div class="kpi-row">
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Health Score <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Health Score"></i></div>
+            <div class="metric-value" id="stat-health-score">--</div>
+            <span class="metric-subtitle">9-signal model</span>
         </div>
-        <div class="chart-card glass-panel" style="padding:0.5rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-chart-pie text-accent"></i> Wait Categories</h3></div>
-            <div class="chart-container" style="height:180px;"><canvas id="pgWaitCategoryChart"></canvas></div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Active Sessions <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Active Sessions"></i></div>
+            <div class="metric-value text-accent" id="stat-active-sessions">--</div>
+            <span class="metric-subtitle">Client backends</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi" id="kpi-card-waiting" style="cursor:pointer;" data-action="navigate" data-route="pg-waits">
+            <div class="metric-label">Waiting <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Waiting Sessions"></i></div>
+            <div class="metric-value" id="stat-waiting-sessions">--</div>
+            <span class="metric-subtitle">Lock/IO/Wait</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi" id="kpi-card-blocked" style="cursor:pointer;" data-action="navigate" data-route="pg-locks">
+            <div class="metric-label">Blocked <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Blocked Sessions"></i></div>
+            <div class="metric-value" id="stat-blocked-sessions">--</div>
+            <span class="metric-subtitle">Exclusive locks</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">TPS (Current) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="TPS"></i></div>
+            <div class="metric-value text-success" id="stat-tps">--</div>
+            <span class="metric-subtitle">Transactions/sec</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Connections %</div>
+            <div class="metric-value" id="stat-conn-pct">--</div>
+            <span class="metric-subtitle">Saturation</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Cache Hit % <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Cache Hit Ratio"></i></div>
+            <div class="metric-value" id="stat-cache-hit">--</div>
+            <span class="metric-subtitle">Buffer pool efficiency</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Replica Lag</div>
+            <div class="metric-value" id="stat-repl-lag">--</div>
+            <span class="metric-subtitle">Max replay lag</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">WAL MB/min</div>
+            <div class="metric-value" id="stat-wal-rate" style="color: #a855f7;">--</div>
+            <span class="metric-subtitle">Write intensity</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Deadlocks/min</div>
+            <div class="metric-value" id="stat-deadlocks">--</div>
+            <span class="metric-subtitle">Concurrency failures</span>
         </div>
     </div>
 
-    <!-- ROW 2: SESSIONS & WORKLOAD -->
-    <div class="section-title" style="margin-top:1rem; margin-bottom:0.25rem;">
-        <h2 style="font-size:0.85rem; margin:0; color:var(--text-color); border-bottom:1px solid var(--border-color); padding-bottom:0.2rem;">Workload & Sessions</h2>
-    </div>
-    <div class="grid-row" style="display:grid; grid-template-columns: 6fr 6fr; gap:0.5rem;">
-        <div class="chart-card glass-panel" style="padding:0.5rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-network-wired text-accent"></i> Connections Over Time</h3></div>
-            <div class="chart-container" style="height:150px;"><canvas id="pgConnTrendChart"></canvas></div>
-        </div>
-        <div class="chart-card glass-panel" style="padding:0.5rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-users text-accent"></i> Session States</h3></div>
-            <div class="chart-container" style="height:150px;"><canvas id="pgSessionStatesChart"></canvas></div>
-        </div>
-    </div>
-
-    <!-- ROW 3: QUERY HEALTH -->
-    <div class="section-title" style="margin-top:1rem; margin-bottom:0.25rem;">
-        <h2 style="font-size:0.85rem; margin:0; color:var(--text-color); border-bottom:1px solid var(--border-color); padding-bottom:0.2rem;">Query Performance</h2>
-    </div>
-    <div class="grid-row" style="display:grid; grid-template-columns: 6fr 6fr; gap:0.5rem;">
-        <div class="chart-card glass-panel" style="padding:0.5rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-hand text-accent"></i> Top Wait Events</h3></div>
-            <div class="chart-container" style="height:180px;"><canvas id="pgTopWaitEventsChart"></canvas></div>
-        </div>
-        <div class="chart-card glass-panel" style="padding:0.5rem; display:flex; flex-direction:column;">
-            <div class="card-header flex-between" style="margin-bottom:0.5rem;">
-                <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-clock text-accent"></i> Long Running Queries</h3>
-                <button class="btn btn-xs btn-outline" data-action="navigate" data-route="pg-queries">View All</button>
+    <!-- ROW 2: LOAD, WAITS & SESSION DISTRIBUTION -->
+    <div class="grid-container">
+        <!-- Database Load Chart (4-layer AAS) -->
+        <div class="col-5 col-laptop-5 col-tablet-6">
+            <div class="card glass-panel h-chart-md">
+                <div class="card-header flex-between">
+                    <h3 style="font-size:0.8rem; margin:0;"><i class="fa-solid fa-chart-area text-accent"></i> Database Load (AAS 4-Way)</h3>
+                    <label class="flex-center" style="font-size:0.7rem; gap:0.4rem; cursor:pointer;">
+                        <input type="checkbox" id="pgLoadHideBgWorkers" checked> Hide BG Workers
+                    </label>
+                </div>
+                <div class="chart-container" style="height: 230px;">
+                    <canvas id="pgDbLoadChart"></canvas>
+                </div>
             </div>
-            <div style="flex:1; overflow:auto; max-height:180px;">
-                <table class="table table-sm" style="font-size:0.7rem; width:100%;">
-                    <thead>
-                        <tr>
-                            <th>PID</th>
-                            <th>Duration</th>
-                            <th>State</th>
-                            <th>Query</th>
-                        </tr>
-                    </thead>
-                    <tbody id="pgLongRunningQueriesTbody">
-                        <tr><td colspan="4" class="text-center text-muted">Loading...</td></tr>
-                    </tbody>
-                </table>
+        </div>
+
+        <!-- Top Wait Categories Chart (Horizontal Bar) -->
+        <div class="col-3 col-laptop-3 col-tablet-6">
+            <div class="card glass-panel h-chart-md">
+                <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Wait Categories <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Waiting Sessions"></i></h3></div>
+                <div class="chart-container" style="height: 230px;">
+                    <canvas id="pgWaitCategoryChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Session State Distribution Chart -->
+        <div class="col-4 col-laptop-4 col-tablet-6">
+            <div class="card glass-panel h-chart-md">
+                <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Session State Distribution <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Active Sessions"></i></h3></div>
+                <div class="chart-container" style="height: 230px;">
+                    <canvas id="pgSessionStatesChart"></canvas>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- ROW 4: STORAGE & MEMORY HEALTH -->
-    <div class="section-title" style="margin-top:1rem; margin-bottom:0.25rem;">
-        <h2 style="font-size:0.85rem; margin:0; color:var(--text-color); border-bottom:1px solid var(--border-color); padding-bottom:0.2rem;">Memory, Cache & Storage Health</h2>
-    </div>
-    <div class="grid-row" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:0.5rem;">
-        <div class="chart-card glass-panel" style="padding:0.5rem;">
-            <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Cache Hit Ratio (%)</h3></div>
-            <div class="chart-container" style="height:120px;"><canvas id="pgCacheHitTrendChart"></canvas></div>
+    <!-- ROW 3: HOST RESOURCE & OPERATIONAL TRENDS -->
+    <div class="grid-container mt-3">
+        <div class="col-6 col-laptop-6 col-tablet-12">
+            <div class="card glass-panel" style="height: 220px;">
+                <div class="card-header flex-between">
+                    <h3 style="font-size:0.8rem; margin:0;"><i class="fa-solid fa-microchip text-accent"></i> Host Resources (CPU/Mem)</h3>
+                    <div id="host-resource-kpis" style="font-size: 0.7rem; display: flex; gap: 0.8rem;">
+                        <span id="current-cpu-val">CPU: --%</span>
+                        <span id="current-mem-val">Mem: --%</span>
+                    </div>
+                </div>
+                <div class="chart-container" style="height: 160px;">
+                    <canvas id="pgHostResourceChart"></canvas>
+                </div>
+            </div>
         </div>
-        <div class="chart-card glass-panel" style="padding:0.5rem;">
-            <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Dead Tuples (%)</h3></div>
-            <div class="chart-container" style="height:120px;"><canvas id="pgDeadTuplesTrendChart"></canvas></div>
+        <div class="col-3 col-laptop-3 col-tablet-6">
+            <div class="card glass-panel" style="height: 220px; padding: 0.75rem;">
+                <div class="card-header" style="padding: 0 0 0.5rem 0;"><h4 style="font-size:0.75rem; margin:0;">Cache Hit Ratio %</h4></div>
+                <div class="chart-container" style="height: 160px;"><canvas id="pgCacheHitTrendChart"></canvas></div>
+            </div>
         </div>
-        <div class="chart-card glass-panel" style="padding:0.5rem;">
-            <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Storage Growth (GB)</h3></div>
-            <div class="chart-container" style="height:120px;"><canvas id="pgStorageGrowthChart"></canvas></div>
-        </div>
-    </div>
-
-    <!-- ROW 5: WAL & REPLICATION -->
-    <div class="section-title" style="margin-top:1rem; margin-bottom:0.25rem;">
-        <h2 style="font-size:0.85rem; margin:0; color:var(--text-color); border-bottom:1px solid var(--border-color); padding-bottom:0.2rem;">Storage & Reliability</h2>
-    </div>
-    <div class="grid-row" style="display:grid; grid-template-columns: 6fr 6fr; gap:0.5rem;">
-        <div class="chart-card glass-panel" style="padding:0.5rem;">
-            <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">WAL Generation (MB/min)</h3></div>
-            <div class="chart-container" style="height:120px;"><canvas id="pgWalRateTrendChart"></canvas></div>
-        </div>
-        <div class="chart-card glass-panel" style="padding:0.5rem;">
-            <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Replica Lag (sec)</h3></div>
-            <div class="chart-container" style="height:120px;"><canvas id="pgReplicaLagTrendChart"></canvas></div>
+        <div class="col-3 col-laptop-3 col-tablet-6">
+            <div class="card glass-panel" style="height: 220px; padding: 0.75rem;">
+                <div class="card-header" style="padding: 0 0 0.5rem 0;"><h4 style="font-size:0.75rem; margin:0;">WAL Generation (MB/min)</h4></div>
+                <div class="chart-container" style="height: 160px;"><canvas id="pgWalRateTrendChart"></canvas></div>
+            </div>
         </div>
     </div>
 
-    <!-- ROW 6: INCIDENT FEED -->
-    <div class="section-title" style="margin-top:1rem; margin-bottom:0.25rem;">
-        <h2 style="font-size:0.85rem; margin:0; color:var(--text-color); border-bottom:1px solid var(--border-color); padding-bottom:0.2rem;">Incidents</h2>
-    </div>
-    <div class="incident-card glass-panel" style="padding:0.5rem; margin-bottom:1rem;">
-        <div class="card-header flex-between" style="margin-bottom:0.5rem;">
-            <h4 style="font-size:0.85rem; margin:0; color:var(--danger);"><i class="fa-solid fa-triangle-exclamation"></i> Active Incidents Feed</h4>
+    <!-- ROW 4: OPERATIONAL INSIGHTS (v2 Operational Row) -->
+    <div class="grid-container mt-3">
+        <div class="col-6 col-laptop-6 col-tablet-12">
+            <div class="card glass-panel" style="height: 220px; padding: 0.75rem;">
+                <div class="card-header flex-between" style="padding: 0 0 0.5rem 0;">
+                    <h4 style="font-size:0.8rem; margin:0;">Checkpoint Health (Write &amp; Sync Time)</h4>
+                    <span id="stat-checkpoint-ratio" style="font-size:0.75rem;">Req Ratio: --</span>
+                </div>
+                <div class="chart-container" style="height: 160px;"><canvas id="pgCheckpointHealthChart"></canvas></div>
+            </div>
         </div>
-        <div style="max-height:200px; overflow:auto;">
-            <table class="table table-sm table-striped" style="font-size:0.75rem; width:100%;">
-                <thead>
-                    <tr>
-                        <th style="width:10%;">Type</th>
-                        <th style="width:15%;">Start Time</th>
-                        <th style="width:10%;">Duration</th>
-                        <th style="width:10%;">User</th>
-                        <th style="width:55%;">Query Snippet</th>
-                    </tr>
-                </thead>
-                <tbody id="pgIncidentsFeedTbody">
-                    <tr><td colspan="5" class="text-center text-muted">No active incidents detected.</td></tr>
-                </tbody>
-            </table>
+        <div class="col-6 col-laptop-6 col-tablet-12">
+            <div class="card glass-panel" style="height: 220px; padding: 0.75rem;">
+                <div class="card-header flex-between" style="padding: 0 0 0.5rem 0;">
+                    <h4 style="font-size:0.8rem; margin:0;">Connections Saturation Trend</h4>
+                    <span id="stat-conn-summary" style="font-size:0.75rem;">--/--</span>
+                </div>
+                <div class="chart-container" style="height: 160px;"><canvas id="pgConnSaturationChart"></canvas></div>
+            </div>
         </div>
     </div>
 
+    <!-- ROW 5: INCIDENT MANAGEMENT -->
+    <div class="grid-container mt-3">
+        <div class="col-12">
+            <div class="card glass-panel">
+                <div class="card-header flex-between">
+                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-triangle-exclamation text-danger"></i> Unified Incident Feed (TimescaleDB Backed)</h3>
+                    <span class="badge badge-outline">Last 24 Hours</span>
+                </div>
+                <div class="table-container-compact h-table-md">
+                    <table class="modern-table modern-table-compact">
+                        <thead>
+                            <tr>
+                                <th>Type</th>
+                                <th>Timestamp</th>
+                                <th>Duration</th>
+                                <th>User</th>
+                                <th>Database</th>
+                                <th>Query Snippet</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pgIncidentsFeedTbody">
+                            <tr><td colspan="6" class="text-center text-muted">No recent incidents detected.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROW 6: REPLICA DETAIL GRID -->
+    <div class="grid-container mt-3" id="pg-replication-grid-container">
+        <div class="col-12">
+            <div class="card glass-panel">
+                <div class="card-header flex-between">
+                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-server text-accent"></i> Streaming Replication Detail</h3>
+                </div>
+                <div class="table-container-compact">
+                    <table class="modern-table modern-table-compact">
+                        <thead>
+                            <tr>
+                                <th>Replica Name</th>
+                                <th>Write Lag</th>
+                                <th>Flush Lag</th>
+                                <th>Replay Lag</th>
+                                <th>Sync Mode</th>
+                                <th>Retained MB</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pgReplicaDetailTbody">
+                            <tr><td colspan="7" class="text-center text-muted">No replicas detected.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>

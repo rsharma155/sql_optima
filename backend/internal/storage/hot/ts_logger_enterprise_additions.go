@@ -45,7 +45,7 @@ func (tl *TimescaleLogger) GetPlanCacheHealth(ctx context.Context, instanceName 
 		SELECT capture_timestamp, total_cache_mb, single_use_cache_mb, single_use_cache_pct,
 		       adhoc_cache_mb, prepared_cache_mb, proc_cache_mb
 		FROM sqlserver_plan_cache
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
@@ -118,7 +118,7 @@ func (tl *TimescaleLogger) GetMemoryGrantWaiters(ctx context.Context, instanceNa
 		SELECT session_id, request_id, database_name, login_name,
 		       requested_memory_kb, granted_memory_kb, required_memory_kb, wait_time_ms, dop, query_text
 		FROM sqlserver_memory_grant_waiters
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
@@ -195,7 +195,7 @@ func (tl *TimescaleLogger) GetTempdbTopConsumers(ctx context.Context, instanceNa
 		SELECT session_id, database_name, login_name, host_name, program_name,
 		       tempdb_mb, user_objects_mb, internal_objects_mb, query_text
 		FROM sqlserver_tempdb_top_consumers
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`

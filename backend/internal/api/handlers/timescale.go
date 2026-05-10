@@ -13,9 +13,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/service"
+	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
 type TimescaleHandlers struct {
@@ -44,13 +46,45 @@ func (h *TimescaleHandlers) SqlServerMetrics(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
 
-	metrics, err := h.metricsSvc.GetTimescaleSQLServerMetrics(instance, 100)
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
+	var metrics []map[string]interface{}
+	var err error
+
+	if from != "" && to != "" {
+		metrics, err = h.metricsSvc.GetTimescaleSQLServerMetricsRange(instance, from, to, 2000)
+	} else {
+		// Existing behavior: latest 100
+		var rows []hot.SQLServerMetricRow
+		rows, err = h.metricsSvc.GetTimescaleSQLServerMetrics(instance, 100)
+		// Convert to slice of maps for consistency if needed, but the original code encoded them directly.
+		// Wait, GetTimescaleSQLServerMetrics returns []hot.SQLServerMetricRow.
+		// If I use GetTimescaleSQLServerMetricsRange, it returns []map[string]interface{}.
+		// I should probably make them consistent.
+		metrics = make([]map[string]interface{}, len(rows))
+		for i, r := range rows {
+			metrics[i] = map[string]interface{}{
+				"capture_timestamp": r.CaptureTimestamp,
+				"server_name":       r.ServerName,
+				"avg_cpu_load":      r.AvgCpuLoad,
+				"memory_usage":      r.MemoryUsage,
+				"active_users":      r.ActiveUsers,
+				"total_locks":       r.TotalLocks,
+				"deadlocks":         r.Deadlocks,
+				"data_disk_mb":      r.DataDiskMB,
+				"log_disk_mb":       r.LogDiskMB,
+				"free_disk_mb":      r.FreeDiskMB,
+			}
+		}
+	}
+
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -68,7 +102,7 @@ func (h *TimescaleHandlers) PostgresThroughput(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -92,7 +126,7 @@ func (h *TimescaleHandlers) PostgresConnections(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -117,7 +151,7 @@ func (h *TimescaleHandlers) SqlServerTopQueries(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -127,7 +161,14 @@ func (h *TimescaleHandlers) SqlServerTopQueries(w http.ResponseWriter, r *http.R
 	to := r.URL.Query().Get("to")
 	dbFilter := strings.TrimSpace(r.URL.Query().Get("database"))
 
-	queries, err := h.metricsSvc.GetTimescaleSQLServerTopQueries(instance, 100, from, to, dbFilter)
+	var queries []map[string]interface{}
+	var err error
+	if from != "" && to != "" {
+		queries, err = h.metricsSvc.GetTimescaleSQLServerTopQueries(instance, 100, from, to, dbFilter)
+	} else {
+		// Default behavior: no explicit range, uses last hour in underlying repo if not provided
+		queries, err = h.metricsSvc.GetTimescaleSQLServerTopQueries(instance, 100, "", "", dbFilter)
+	}
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -145,7 +186,7 @@ func (h *TimescaleHandlers) SqlServerQueryStatsDashboard(w http.ResponseWriter, 
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -204,7 +245,7 @@ func (h *TimescaleHandlers) SqlServerCPUHistory(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -252,13 +293,13 @@ func (h *TimescaleHandlers) SqlServerMemoryDrilldown(w http.ResponseWriter, r *h
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
 
-	if !instanceType(h.cfg, instance, "sqlserver") {
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "sqlserver") {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
 		return
@@ -302,23 +343,30 @@ func (h *TimescaleHandlers) SqlServerQueryStatsTimeSeries(w http.ResponseWriter,
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
 
 	metric := r.URL.Query().Get("metric")
-	timeRange := r.URL.Query().Get("time_range")
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
 
 	if metric == "" {
 		metric = "cpu"
 	}
-	if timeRange == "" {
-		timeRange = "1h"
+	
+	// If from/to not provided, default to last 1 hour
+	if from == "" || to == "" {
+		now := time.Now().UTC()
+		to = now.Format(time.RFC3339)
+		from = now.Add(-1 * time.Hour).Format(time.RFC3339)
 	}
 
-	results, err := h.metricsSvc.GetQueryStatsTimeSeries(instance, metric, timeRange)
+	dbName := r.URL.Query().Get("database")
+
+	results, err := h.metricsSvc.GetQueryStatsTimeSeries(instance, metric, from, to, dbName)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -327,10 +375,11 @@ func (h *TimescaleHandlers) SqlServerQueryStatsTimeSeries(w http.ResponseWriter,
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"timeseries": results,
-		"instance":   instance,
-		"metric":     metric,
-		"time_range": timeRange,
+		"series":   results,
+		"instance": instance,
+		"metric":   metric,
+		"from":     from,
+		"to":       to,
 	})
 }
 

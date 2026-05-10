@@ -85,15 +85,17 @@ func (c *SqlServerRepository) FetchDatabaseThroughput(instanceName string) ([]Da
 		results = append(results, s)
 	}
 
-	// Secondary Query: Transaction Throughput (TPS)
+	// Secondary Query: Cumulative Transaction Count (for TPS rate calculation)
+	// We use sys.dm_os_performance_counters 'Transactions/sec' which is a cumulative bulk count.
 	tpsQuery := `
 		/* SQL_OPTIMA */
 		SELECT
-			DB_NAME(database_id) AS database_name,
-			SUM(database_transaction_begin_count) AS tps_count
-		FROM sys.dm_tran_database_transactions
-		WHERE database_id > 4
-		GROUP BY database_id
+			RTRIM(instance_name) AS database_name,
+			cntr_value AS tps_count
+		FROM sys.dm_os_performance_counters
+		WHERE counter_name = 'Transactions/sec'
+		  AND object_name LIKE '%:Databases%'
+		  AND RTRIM(instance_name) NOT IN ('master', 'model', 'msdb', 'tempdb', 'mssqlsystemresource')
 	`
 	tpsRows, tpsErr := db.Query(tpsQuery)
 	if tpsErr == nil {

@@ -1,0 +1,170 @@
+<!--
+ * SQL Optima — SQL Server Blocking & Deadlock Analysis template
+-->
+<div class="page-view active dashboard-sky-theme sqlserver-locks-page">
+    <!-- ROW 0: HEADER -->
+    <div class="page-title flex-between dashboard-page-title-compact">
+        <div class="dashboard-title-line">
+            <h1><i class="fa-solid fa-lock text-warning"></i> Blocking Monitor <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Blocking Monitor" title="Learn more about this dashboard"></i></h1>
+            <span class="subtitle" id="wlInstanceName">Live chains, deadlocks, and lock-wait forensics</span>
+        </div>
+        <div class="flex-center dashboard-page-title-actions" style="gap: 0.75rem;">
+            <span id="msLiveBlockingBadge" class="badge badge-danger" style="display:none; padding: 0.4rem 0.8rem;"><i class="fa-solid fa-radiation fa-spin mr-1"></i> LIVE BLOCKING</span>
+            <div id="time-picker-insertion-point"></div>
+            <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshMsLocksDashboard"><i class="fa-solid fa-refresh"></i> Refresh</button>
+        </div>
+    </div>
+
+    <!-- ROW 1: MISSION CONTROL KPIs -->
+    <div class="kpi-row">
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Active Blocked <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Blocking Monitor" data-metric="Active Blocked Sessions"></i></div>
+            <div class="metric-value text-danger" id="msKpiActiveBlocked">--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">Current Sessions</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Root Blockers <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Health" data-metric="Blocked Sessions"></i></div>
+            <div class="metric-value text-accent" id="msKpiRootBlockers">--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">Chain Heads</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Longest Wait <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Health" data-metric="Blocked Sessions"></i></div>
+            <div class="metric-value" id="msKpiLongestWait">--:--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">MM:SS</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Open Trans. <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Blocking Monitor" data-metric="Active Blocked Sessions"></i></div>
+            <div class="metric-value text-warning" id="msKpiOpenTransactions">--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">>1 min duration</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Deadlocks <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Blocking Monitor" data-metric="Deadlock Count"></i></div>
+            <div class="metric-value text-critical" id="msKpiDeadlocks">--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">Last 24h</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Total Incidents <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Blocking Monitor" data-metric="Active Blocked Sessions"></i></div>
+            <div class="metric-value text-info" id="msKpiIncidents24h">--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">Last 24h</span>
+        </div>
+    </div>
+
+    <!-- ROW 2: HIGH-FREQUENCY BLOCKING ANALYSIS -->
+    <div class="grid-container mt-3">
+        <div class="col-8 col-laptop-8 col-tablet-6">
+            <div class="card glass-panel h-chart-md">
+                <div class="card-header flex-between">
+                    <h3 style="font-size:0.8rem; margin:0;">Blocking Timeline Trends</h3>
+                    <div class="btn-group-pill">
+                        <button class="btn btn-xs js-timeline-toggle active" data-metric="incidents">Victims</button>
+                        <button class="btn btn-xs js-timeline-toggle" data-metric="duration">Wait (s)</button>
+                    </div>
+                </div>
+                <div class="chart-container" style="height: 220px;">
+                    <canvas id="msBlockingTimelineChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-4 col-laptop-4 col-tablet-6">
+            <div class="card glass-panel h-chart-md">
+                <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Blocked Object Distribution</h3></div>
+                <div class="table-container-compact" style="height: 220px; overflow-y:auto;">
+                    <table class="modern-table modern-table-compact" id="msMiniBlockedObjectsTable">
+                        <thead><tr><th>Object</th><th>Type</th><th>Wait</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROW 3: BLOCKING INVESTIGATION WORKSPACE -->
+    <div class="grid-container mt-3">
+        <div class="col-12">
+            <div class="card glass-panel">
+                <div class="card-header flex-between">
+                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-sitemap text-accent"></i> Blocking Hierarchy & Investigation</h3>
+                    <div style="display:flex;align-items:center;gap:0.5rem;">
+                        <span class="badge badge-outline" id="msChainCountBadge" style="display:none;"></span>
+                        <span id="msBlockingLastUpdated" style="font-size:0.6rem;color:var(--text-muted);"></span>
+                    </div>
+                </div>
+                <div class="grid-container" style="padding: 1rem;">
+                    <!-- LEFT: TREE VIEW -->
+                    <div class="col-8 col-laptop-8 col-tablet-6" style="border-right: 1px solid var(--border-color);">
+                        <div style="height: 350px; overflow: auto;">
+                            <ul class="ms-tree-root" id="msBlockingTree"></ul>
+                        </div>
+                    </div>
+                    <!-- RIGHT: DETAIL PANEL -->
+                    <div class="col-4 col-laptop-4 col-tablet-6">
+                        <div id="msTreeDetailPanel" style="height: 350px; overflow-y: auto; padding: 0.5rem;">
+                            <div class="text-center text-muted mt-5">Select a node in the tree to investigate</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROW 4: HISTORICAL ANALYSIS & FORENSICS -->
+    <div class="grid-container mt-3">
+        <div class="col-7 col-laptop-8 col-tablet-6">
+            <div class="card glass-panel">
+                <div class="card-header flex-between">
+                    <h3 style="font-size:0.8rem; margin:0;">Top Blocking Queries (Normalized)</h3>
+                </div>
+                <div class="table-container-compact h-table-md">
+                    <table class="modern-table modern-table-compact" id="msTopBlockingQueriesTable">
+                        <thead><tr><th>Hash</th><th>Wait</th><th>Hits</th><th>Avg</th><th>Snippet</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <div class="col-5 col-laptop-4 col-tablet-6">
+            <div class="card glass-panel">
+                <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Deadlock History</h3></div>
+                <div class="table-container-compact h-table-md">
+                    <table class="modern-table modern-table-compact" id="msDeadlockHistoryTable">
+                        <thead><tr><th>Time</th><th>DB</th><th>Victim</th><th>XML</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Local Styles for Blocking Tree */
+    .ms-tree-root { list-style: none; padding: 0; margin: 0; }
+    .ms-tree-root ul { list-style: none; padding-left: 24px; border-left: 1px dashed rgba(255,255,255,0.1); margin-top: 4px; }
+    .ms-tree-node { 
+        background: var(--bg-tertiary); 
+        border: 1px solid var(--border-color); 
+        border-radius: 6px; 
+        padding: 0.5rem; 
+        margin-bottom: 0.5rem; 
+        width: 240px; 
+        position: relative;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .ms-tree-node:hover { border-color: var(--accent); transform: translateX(2px); }
+    .ms-tree-node.active { border-color: var(--accent); background: rgba(56,189,248,0.05); }
+    
+    .ms-node-hdr { display: flex; justify-content: space-between; font-size: 0.65rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .hdr-blocker { color: var(--danger); }
+    .hdr-victim { color: var(--warning); }
+    
+    .ms-node-body { font-size: 0.65rem; }
+    .ms-node-wait-row { display: flex; justify-content: space-between; margin-top: 2px; }
+    .ms-node-wait-type { font-size: 0.55rem; color: var(--text-muted); }
+    
+    .ms-node-bar-wrap { height: 3px; background: rgba(0,0,0,0.2); border-radius: 2px; margin-top: 4px; width: 100%; overflow: hidden; }
+    .ms-node-bar { height: 100%; }
+
+    .iso-badge { font-size: 0.55rem; font-weight: 700; padding: 1px 4px; border-radius: 3px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); }
+    .iso-rc { color: #34d399; } .iso-ser { color: #f87171; }
+</style>

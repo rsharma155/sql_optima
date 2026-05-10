@@ -12,8 +12,40 @@ window.PgQueriesView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || { name: 'Loading...', type: 'postgres' };
     const dbName = window.appState.currentDatabase || 'all';
 
+    window.appState.activeViewId = 'pg-queries';
+
     window.routerOutlet.innerHTML = await window.loadTemplate('/pages/queries.html', { inst, dbName });
     
+    // Tab switching logic for Query Monitor
+    setTimeout(() => {
+        const tabs = document.querySelectorAll('.qa-tab-btn');
+        tabs.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const container = btn.closest('.card');
+                if (!container) return;
+                
+                // Toggle active state on buttons
+                container.querySelectorAll('.qa-tab-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                
+                // Toggle active state on panes
+                const target = btn.dataset.tab;
+                container.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+                const targetPane = container.querySelector('#tab-' + target);
+                if (targetPane) {
+                    targetPane.classList.add('active');
+                    // Force resize charts in the pane
+                    targetPane.querySelectorAll('canvas').forEach(canvas => {
+                        if (window.currentCharts && window.currentCharts[canvas.id]) {
+                            window.currentCharts[canvas.id].resize();
+                        }
+                    });
+                }
+            });
+        });
+    }, 100);
+
+    window.initPageTimePicker();
     await initPgQueries();
 
     // Set Refresh Interval
@@ -46,9 +78,6 @@ async function updatePgQueriesHeader(instName) {
         }
     } catch (e) { console.error("PG Queries header fetch failed:", e); }
 }
-
-// Redirect legacy pg-stat-statements route to the merged page
-window.PgStatStatementsView = window.PgQueriesView;
 
 function pgQueriesFormatLocal(dt) {
     const pad = n => String(n).padStart(2, '0');
@@ -121,6 +150,9 @@ async function initPgQueries() {
 
     // Initialize pgss time-series section (merged from pg_stat_statements page)
     initPgssSection(inst.name);
+
+    // Trigger initial data load
+    loadPgQueriesPageData();
 }
 
 async function loadPgQueriesPageData() {
@@ -348,7 +380,7 @@ function renderQueriesTable(queries, sortBy) {
 
         const fingerprint = query.query_id !== undefined ? String(query.query_id) : '-';
         const user = query.user || '';
-        const fullSql = query.query || '';
+        const fullSql = pgssSmartDecode(query.query || '');
         const sqlPreview = fullSql.substring(0, 60) + (fullSql.length > 60 ? '...' : '');
         const escPreview = window.escapeHtml(sqlPreview);
         const escUser = window.escapeHtml(user || '-');
@@ -807,7 +839,7 @@ function pgssRenderTopRows(queries) {
             <div>${i + 1}</div>
             <div style="justify-content:center;">${flags || '<span class="text-muted">—</span>'}</div>
             <div class="pgss-grid-cell-query" data-action="call" data-fn="pgssOpenQuery" data-arg="${qid}" title="Click to view full SQL">
-                ${pgssEscapeHtml(pgssTrancate(q.query, 80))}
+                ${pgssEscapeHtml(pgssTrancate(pgssSmartDecode(q.query), 80))}
             </div>
             <div class="pgss-grid-cell-stat">${pgssFmtMs(q.total_time_ms)}</div>
             <div class="pgss-grid-cell-stat">${q.pct_db_time != null ? q.pct_db_time.toFixed(1) + '%' : '-'}</div>
@@ -846,15 +878,18 @@ async function loadPgssRegressions() {
             tbody.innerHTML = '<tr><td colspan="5" class="text-muted">No regressions detected</td></tr>';
             return;
         }
-        tbody.innerHTML = regs.map(r => `
+        tbody.innerHTML = regs.map(r => {
+            const decodedSql = pgssSmartDecode(r.query || '');
+            return `
             <tr>
-                <td style="max-width:420px; cursor:pointer; text-decoration:underline; text-underline-offset:2px;" title="Click to view full query" data-action="call" data-fn="pgssOpenRegressionQuery" data-arg="${pgssEscapeHtml(r.query || '')}">${pgssEscapeHtml(pgssTrancate(r.query, 80))}</td>
+                <td style="max-width:420px; cursor:pointer; text-decoration:underline; text-underline-offset:2px;" title="Click to view full query" data-action="call" data-fn="pgssOpenRegressionQuery" data-arg="${pgssEscapeHtml(decodedSql)}">${pgssEscapeHtml(pgssTrancate(decodedSql, 80))}</td>
                 <td>${pgssFmtMs(r.prev_avg_ms)}</td>
                 <td>${pgssFmtMs(r.curr_avg_ms)}</td>
                 <td class="${r.change_pct > 50 ? 'text-danger' : r.change_pct > 20 ? 'text-warning' : ''}">+${r.change_pct.toFixed(0)}%</td>
                 <td><span class="badge ${r.status === 'Degraded' ? 'badge-danger' : 'badge-warning'}">${r.status}</span></td>
+                <td>${r.detected_at ? new Date(r.detected_at).toLocaleTimeString() : '-'}</td>
             </tr>
-        `).join('');
+        `; }).join('');
     } catch (_) { tbody.innerHTML = '<tr><td colspan="5">Error</td></tr>'; }
 }
 
@@ -875,7 +910,11 @@ function pgssRenderLineChart(canvasId, labels, datasets, dualAxis) {
             interaction: { mode: 'index', intersect: false },
             plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
             scales: {
-                x: { ticks: { color: '#64748b', maxTicksLimit: 12 }, grid: { color: 'rgba(100,116,139,0.15)' } },
+                x: { 
+                    title: { display: true, text: 'Time (Last 60 Minutes)', color: '#64748b', font: { size: 10 } },
+                    ticks: { color: '#64748b', maxTicksLimit: 12 }, 
+                    grid: { color: 'rgba(100,116,139,0.15)' } 
+                },
                 y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } }
             }
         }
@@ -897,7 +936,12 @@ function pgssRenderStackedArea(canvasId, labels, datasets) {
             responsive: true, maintainAspectRatio: false,
             plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
             scales: {
-                x: { stacked: true, ticks: { color: '#64748b', maxTicksLimit: 12 }, grid: { color: 'rgba(100,116,139,0.15)' } },
+                x: { 
+                    title: { display: true, text: 'Time (Last 60 Minutes)', color: '#64748b', font: { size: 10 } },
+                    stacked: true, 
+                    ticks: { color: '#64748b', maxTicksLimit: 12 }, 
+                    grid: { color: 'rgba(100,116,139,0.15)' } 
+                },
                 y: { stacked: true, max: 100, ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } }
             }
         }
@@ -928,4 +972,13 @@ function pgssFmtMs(ms) {
 function pgssFmtNum(n) {
     if (n == null) return '-';
     return n.toLocaleString();
+}
+function pgssSmartDecode(s) {
+    if (!s) return '';
+    try {
+        if (s.indexOf('%20') !== -1 || s.indexOf('%0A') !== -1) {
+            return decodeURIComponent(s).replace(/\+/g, ' ');
+        }
+    } catch (e) {}
+    return s;
 }

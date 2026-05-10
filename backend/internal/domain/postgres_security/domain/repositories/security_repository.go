@@ -164,6 +164,38 @@ func (r *PostgresSecurityRepository) GetElevatedRoles(ctx context.Context, insta
 	return results, nil
 }
 
+func (r *PostgresSecurityRepository) GetAllRoles(ctx context.Context, instance string) ([]map[string]interface{}, error) {
+	query := `
+		SELECT rolname, rolsuper, rolcreaterole, rolreplication, rolcanlogin, rolcreatedb
+		FROM monitor.pg_roles_snapshot
+		WHERE instance_id = $1 
+		AND ts = (SELECT max(ts) FROM monitor.pg_roles_snapshot WHERE instance_id = $1)`
+	
+	rows, err := r.pool.Query(ctx, query, instance)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var name string
+		var super, createrole, repl, canlogin, createdb bool
+		if err := rows.Scan(&name, &super, &createrole, &repl, &canlogin, &createdb); err != nil {
+			return nil, err
+		}
+		results = append(results, map[string]interface{}{
+			"rolname":        name,
+			"rolsuper":       super,
+			"rolcreaterole":  createrole,
+			"rolreplication": repl,
+			"rolcanlogin":    canlogin,
+			"rolcreatedb":    createdb,
+		})
+	}
+	return results, nil
+}
+
 func (r *PostgresSecurityRepository) GetDMLActivityTrend(ctx context.Context, instance string, from, to string) ([]map[string]interface{}, error) {
 	query := `
 		SELECT time_bucket('10 min', ts) AS bucket,
@@ -232,7 +264,7 @@ func (r *PostgresSecurityRepository) GetConnectionOrigins(ctx context.Context, i
 
 func (r *PostgresSecurityRepository) GetRoleModificationsTrend(ctx context.Context, instance string, from, to string) ([]map[string]interface{}, error) {
 	query := `
-		SELECT time_bucket('1 day', ts) AS bucket, count(distinct rolname) as total_roles
+		SELECT time_bucket('1 hour', ts) AS bucket, count(distinct rolname) as total_roles
 		FROM monitor.pg_roles_snapshot
 		WHERE ts BETWEEN $1 AND $2 AND instance_id = $3
 		GROUP BY bucket ORDER BY bucket ASC`

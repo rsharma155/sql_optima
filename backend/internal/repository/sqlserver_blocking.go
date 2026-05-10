@@ -1,6 +1,11 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: SQL Server blocking chain detection and lock analysis.
+// File: sqlserver_blocking.go
+// Purpose: SQL Server blocking chain detection and lock analysis (Redesigned).
+// Metadata:
+//   - Version: 1.1
+//   - Package: repository
+//   - Logic: DMVs (sys.dm_os_waiting_tasks, sys.dm_exec_requests)
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -9,12 +14,340 @@ package repository
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"strings"
+
+	"github.com/rsharma155/sql_optima/internal/models"
 )
 
+// FetchBlockingSnapshots returns a detailed list of blocked and blocking sessions.
+func (c *SqlServerRepository) FetchBlockingSnapshots(db *sql.DB) ([]models.SQLServerBlockingSnapshot, error) {
+	query := `
+		/* SQL_OPTIMA */
+		;WITH waiting_agg_raw AS (
+			-- Combine sys.dm_os_waiting_tasks and sys.dm_exec_requests for robust blocking detection
+			SELECT 
+				session_id, 
+				blocking_session_id, 
+				wait_type, 
+				wait_duration_ms,
+				resource_description
+			FROM (
+				SELECT 
+					wt.session_id, 
+					wt.blocking_session_id, 
+					wt.wait_type, 
+					wt.wait_duration_ms,
+					wt.resource_description,
+					ROW_NUMBER() OVER(PARTITION BY wt.session_id ORDER BY wt.wait_duration_ms DESC) as rn
+				FROM sys.dm_os_waiting_tasks wt
+				WHERE wt.blocking_session_id IS NOT NULL AND wt.blocking_session_id > 0
+			) t WHERE rn = 1
+			UNION ALL
+			SELECT 
+				r.session_id, 
+				r.blocking_session_id, 
+				r.wait_type, 
+				r.wait_time as wait_duration_ms,
+				'' as resource_description
+			FROM sys.dm_exec_requests r
+			WHERE r.blocking_session_id IS NOT NULL AND r.blocking_session_id > 0
+			AND NOT EXISTS (SELECT 1 FROM sys.dm_os_waiting_tasks wt WHERE wt.session_id = r.session_id)
+		),
+		waiting_agg AS (
+			SELECT session_id, blocking_session_id, wait_type, wait_duration_ms, resource_description
+			FROM (
+				SELECT *, ROW_NUMBER() OVER(PARTITION BY session_id ORDER BY wait_duration_ms DESC) as rn
+				FROM waiting_agg_raw
+			) t WHERE rn = 1
+		),
+		requests AS (
+			SELECT
+				r.session_id,
+				r.status,
+				r.command,
+				r.database_id,
+				r.cpu_time,
+				r.total_elapsed_time,
+				r.reads,
+				r.writes,
+				r.logical_reads,
+				r.sql_handle,
+				r.plan_handle,
+				r.wait_resource,
+				r.percent_complete,
+				CONVERT(VARCHAR(64), r.sql_handle, 1) AS sql_hash,
+				CONVERT(VARCHAR(64), r.plan_handle, 1) AS plan_hash
+			FROM sys.dm_exec_requests r
+		),
+		sessions AS (
+			SELECT
+				s.session_id,
+				s.login_name,
+				s.host_name,
+				s.program_name,
+				s.open_transaction_count,
+				s.status,
+				s.memory_usage,
+				CASE s.transaction_isolation_level 
+					WHEN 0 THEN 'Unspecified' 
+					WHEN 1 THEN 'ReadUncommitted' 
+					WHEN 2 THEN 'ReadCommitted' 
+					WHEN 3 THEN 'Repeatable' 
+					WHEN 4 THEN 'Serializable' 
+					WHEN 5 THEN 'Snapshot' 
+					ELSE 'Unknown'
+				END AS isolation_level
+			FROM sys.dm_exec_sessions s
+			WHERE s.is_user_process = 1
+			   OR s.session_id IN (SELECT blocking_session_id FROM waiting_agg)
+		),
+		transactions AS (
+			SELECT 
+				st.session_id, 
+				MIN(at.transaction_begin_time) as begin_time,
+				SUM(dt.database_transaction_log_bytes_used) as log_bytes_used,
+				SUM(dt.database_transaction_log_bytes_reserved) as log_bytes_reserved
+			FROM sys.dm_tran_session_transactions st
+			JOIN sys.dm_tran_active_transactions at ON st.transaction_id = at.transaction_id
+			LEFT JOIN sys.dm_tran_database_transactions dt ON at.transaction_id = dt.transaction_id
+			GROUP BY st.session_id
+		)
+		SELECT DISTINCT
+			SYSUTCDATETIME() AS ts,
+			s.session_id,
+			ISNULL(w.blocking_session_id, 0) AS blocking_session_id,
+			ISNULL(w.wait_type, '') AS wait_type,
+			ISNULL(w.wait_duration_ms, 0) AS wait_duration_ms,
+			ISNULL(DB_NAME(r.database_id), '') AS database_name,
+			ISNULL(s.login_name, 'system') AS login_name,
+			ISNULL(s.host_name, '') AS host_name,
+			ISNULL(s.program_name, '') AS program_name,
+			ISNULL(s.open_transaction_count, 0) AS open_transaction_count,
+			t.begin_time AS transaction_start_time,
+			ISNULL(s.isolation_level, 'Unknown') AS isolation_level,
+			ISNULL(r.cpu_time, 0) AS cpu_time,
+			ISNULL(r.reads, 0) AS reads,
+			ISNULL(r.writes, 0) AS writes,
+			ISNULL(r.logical_reads, 0) AS logical_reads,
+			ISNULL(s.memory_usage, 0) AS memory_usage,
+			ISNULL(t.log_bytes_used, 0) AS log_bytes_used,
+			ISNULL(t.log_bytes_reserved, 0) AS log_bytes_reserved,
+			ISNULL(w.resource_description, ISNULL(r.wait_resource, '')) AS wait_resource,
+			ISNULL(r.percent_complete, 0.0) AS percent_complete,
+			ISNULL(r.sql_hash, '') AS sql_hash,
+			ISNULL(r.plan_hash, '') AS plan_hash,
+			st.text AS query_text,
+			qp.query_plan
+		FROM sessions s
+		LEFT JOIN requests r ON s.session_id = r.session_id
+		LEFT JOIN waiting_agg w ON s.session_id = w.session_id
+		LEFT JOIN transactions t ON s.session_id = t.session_id
+		OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) st
+		OUTER APPLY (
+			SELECT CAST(query_plan AS NVARCHAR(MAX)) AS query_plan 
+			FROM sys.dm_exec_query_plan(r.plan_handle) 
+			WHERE ISNULL(w.wait_duration_ms, 0) > 5000
+		) qp
+		WHERE w.blocking_session_id IS NOT NULL 
+		   OR s.session_id IN (SELECT blocking_session_id FROM waiting_agg);
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		log.Printf("[SQLSERVER] FetchBlockingSnapshots Error: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []models.SQLServerBlockingSnapshot
+	for rows.Next() {
+		var r models.SQLServerBlockingSnapshot
+		var sqlText, queryPlan, waitType, dbName, loginName, hostName, progName, isoLevel, sqlHash, planHash, waitRes sql.NullString
+		var xactStart sql.NullTime
+
+		if err := rows.Scan(
+			&r.Timestamp, &r.SessionID, &r.BlockingSessionID, &waitType, &r.WaitDurationMs,
+			&dbName, &loginName, &hostName, &progName,
+			&r.OpenTransactionCount, &xactStart, &isoLevel,
+			&r.CpuTime, &r.Reads, &r.Writes, &r.LogicalReads,
+			&r.MemoryUsage, &r.TransactionLogBytesUsed, &r.TransactionLogBytesReserved,
+			&waitRes, &r.PercentComplete,
+			&sqlHash, &planHash, &sqlText, &queryPlan,
+		); err != nil {
+			log.Printf("[SQLSERVER] FetchBlockingSnapshots Scan Error: %v", err)
+			continue
+		}
+
+		r.WaitType = waitType.String
+		r.DatabaseName = dbName.String
+		r.LoginName = loginName.String
+		r.HostName = hostName.String
+		r.ProgramName = progName.String
+		r.TransactionIsolationLevel = isoLevel.String
+		r.WaitResource = waitRes.String
+		r.SqlHash = sqlHash.String
+		r.PlanHash = planHash.String
+		r.QueryText = sqlText.String
+		r.QueryPlan = queryPlan.String
+
+		if xactStart.Valid {
+			t := xactStart.Time
+			r.TransactionStartTime = &t
+		}
+
+		results = append(results, r)
+	}
+	return results, nil
+}
+
+// FetchBlockingLocks returns detailed lock information for sessions involved in blocking.
+func (c *SqlServerRepository) FetchBlockingLocks(db *sql.DB) ([]models.SQLServerBlockingLock, error) {
+	query := `
+		/* SQL_OPTIMA */
+		SELECT 
+			SYSUTCDATETIME() AS ts,
+			tl.request_session_id AS session_id,
+			tl.resource_type,
+			tl.request_mode,
+			tl.request_status,
+			COALESCE(
+				CASE 
+					WHEN tl.resource_type = 'OBJECT' THEN OBJECT_NAME(tl.resource_associated_entity_id, tl.resource_database_id)
+					WHEN tl.resource_type IN ('PAGE', 'KEY', 'RID', 'HOBT') THEN 
+						(SELECT OBJECT_NAME(object_id, tl.resource_database_id) FROM sys.partitions WHERE hobt_id = tl.resource_associated_entity_id)
+					ELSE tl.resource_description
+				END, 
+				tl.resource_description,
+				'Unknown Object'
+			) AS resource_description,
+			MAX(ISNULL(wt.wait_duration_ms, 0)) AS wait_duration_ms
+		FROM sys.dm_tran_locks tl
+		LEFT JOIN sys.dm_os_waiting_tasks wt ON tl.request_session_id = wt.session_id
+		WHERE tl.request_session_id IN (
+			SELECT session_id FROM sys.dm_os_waiting_tasks WHERE blocking_session_id IS NOT NULL
+			UNION
+			SELECT blocking_session_id FROM sys.dm_os_waiting_tasks WHERE blocking_session_id IS NOT NULL
+		)
+		GROUP BY tl.request_session_id, tl.resource_type, tl.request_mode, tl.request_status, 
+		         tl.resource_associated_entity_id, tl.resource_database_id, tl.resource_description;
+	`
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []models.SQLServerBlockingLock
+	for rows.Next() {
+		var l models.SQLServerBlockingLock
+		if err := rows.Scan(&l.Timestamp, &l.SessionID, &l.ResourceType, &l.RequestMode, &l.RequestStatus, &l.ResourceDescription, &l.WaitDurationMs); err != nil {
+			continue
+		}
+		results = append(results, l)
+	}
+	return results, nil
+}
+
+// FetchDeadlockEvents reads deadlock events from Extended Events
+func (c *SqlServerRepository) FetchDeadlockEvents(db *sql.DB) ([]models.SQLServerDeadlockEvent, error) {
+	// First, find the actual file path/name from the session target
+	pathQuery := `
+		SELECT CAST(t.target_data AS XML).value('(/EventFileTarget/File/@name)[1]', 'nvarchar(max)')
+		FROM sys.dm_xe_session_targets t
+		JOIN sys.dm_xe_sessions s ON s.address = t.event_session_address
+		WHERE s.name = 'dbamon_deadlocks' AND t.target_name = 'event_file'
+	`
+	var targetPath string
+	err := db.QueryRow(pathQuery).Scan(&targetPath)
+	if err != nil || targetPath == "" {
+		// Fallback to default if we can't find it in dm_xe_session_targets (maybe session is stopped)
+		targetPath = "dbamon_deadlocks*.xel"
+	} else {
+		// The path in target_data often needs a wildcard to find all segments
+		if !strings.Contains(targetPath, "*") {
+			if strings.HasSuffix(targetPath, ".xel") {
+				targetPath = strings.Replace(targetPath, ".xel", "*.xel", 1)
+			} else {
+				targetPath += "*.xel"
+			}
+		}
+	}
+
+	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */
+		SELECT 
+			CAST(event_data AS XML).value('(/event/@timestamp)[1]', 'datetime2') AS ts,
+			ISNULL(CAST(event_data AS XML).value('(/event/data[@name="database_name"]/value)[1]', 'nvarchar(max)'), 'Unknown') AS database_name,
+			ISNULL(CAST(event_data AS XML).value('(/event/data[@name="victim_process_id"]/value)[1]', 'int'), 0) AS victim_session_id,
+			event_data AS deadlock_graph
+		FROM sys.fn_xe_file_target_read_file('%s', NULL, NULL, NULL)
+		WHERE CAST(event_data AS XML).value('(/event/@timestamp)[1]', 'datetime2') > DATEADD(hour, -24, GETUTCDATE());
+	`, targetPath)
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, nil
+	}
+	defer rows.Close()
+
+	var results []models.SQLServerDeadlockEvent
+	for rows.Next() {
+		var e models.SQLServerDeadlockEvent
+		if err := rows.Scan(&e.Timestamp, &e.DatabaseName, &e.VictimSessionID, &e.DeadlockGraph); err != nil {
+			continue
+		}
+		results = append(results, e)
+	}
+	return results, nil
+}
+
+// IsDeadlockXESessionEnabled checks if the deadlock XE session is active
+func (c *SqlServerRepository) IsDeadlockXESessionEnabled(db *sql.DB) (bool, error) {
+	checkQuery := `SELECT COUNT(*) FROM sys.server_event_sessions WHERE name = 'dbamon_deadlocks'`
+	var count int
+	err := db.QueryRow(checkQuery).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// EnsureDeadlockXESession creates the XE session if missing
+func (c *SqlServerRepository) EnsureDeadlockXESession(db *sql.DB) error {
+	checkQuery := `SELECT 1 FROM sys.server_event_sessions WHERE name = 'dbamon_deadlocks'`
+	var exists int
+	err := db.QueryRow(checkQuery).Scan(&exists)
+	if err == sql.ErrNoRows {
+		createSQL := `
+			CREATE EVENT SESSION [dbamon_deadlocks]
+			ON SERVER
+			ADD EVENT sqlserver.xml_deadlock_report
+			ADD TARGET package0.event_file
+			(
+				SET filename = 'dbamon_deadlocks.xel',
+					max_file_size = 50,
+					max_rollover_files = 10
+			)
+			WITH (STARTUP_STATE = ON);
+
+			ALTER EVENT SESSION [dbamon_deadlocks] ON SERVER STATE = START;
+		`
+		_, err = db.Exec(createSQL)
+		if err != nil {
+			log.Printf("[SQLSERVER] Failed to create Deadlock XE session: %v", err)
+			return err
+		}
+	}
+	return nil
+}
+
+// --------------------------------------------------------------------------
+// DEPRECATED / LEGACY METHODS (Kept for backward compatibility)
+// --------------------------------------------------------------------------
+
 // CollectBlockingChains returns aggregated blockers for Real-Time Diagnostics (user databases only; matches UI shape).
-// If database is non-empty, scopes to that DB only.
 func (c *SqlServerRepository) CollectBlockingChains(db *sql.DB, database string) ([]map[string]interface{}, error) {
 	query := `
 		/* SQL_OPTIMA */ 
@@ -30,8 +363,8 @@ func (c *SqlServerRepository) CollectBlockingChains(db *sql.DB, database string)
 			  AND s.database_id > 4
 			  AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
 			  AND (@p1 = '' OR DB_NAME(s.database_id) = @p1)
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		)
 		SELECT   TOP 50
 			b.Blocking_SPID AS Lead_Blocker,

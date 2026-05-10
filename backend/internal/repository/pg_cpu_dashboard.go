@@ -9,6 +9,7 @@ package repository
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -32,25 +33,30 @@ type PgTopCpuQueryRow struct {
 // GetCpuTimeByDatabase returns total_exec_time summed per database (same shape as mv_pg_cpu_by_db).
 func (c *PgRepository) GetCpuTimeByDatabase(instanceName string) ([]PgCpuDbRow, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
 
-	var exists bool
-	if err := db.QueryRow("/* SQL_OPTIMA */ SELECT   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists); err != nil || !exists {
+	if !c.GetPgssSupported(instanceName) {
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
-	q := `SELECT /* SQL_OPTIMA */   d.datname::text AS datname,
-			SUM(s.total_exec_time)::float8 AS total_exec_time_ms
+	version := c.GetPgVersion(instanceName)
+	timeCol := "total_exec_time"
+	if version < 130000 {
+		timeCol = "total_time"
+	}
+
+	q := fmt.Sprintf(`SELECT /* SQL_OPTIMA */   d.datname::text AS datname,
+			SUM(s.%s)::float8 AS total_exec_time_ms
 		FROM pg_stat_statements s
 		JOIN pg_database d ON d.oid = s.dbid
 		LEFT JOIN pg_roles r ON r.oid = s.userid
-		WHERE ` + buildPgStatStatementsFilters() + `
+		WHERE %s
 		GROUP BY d.datname
-		ORDER BY total_exec_time_ms DESC`
+		ORDER BY total_exec_time_ms DESC`, timeCol, buildPgStatStatementsFilters())
 
 	rows, err := db.Query(q)
 	if err != nil {
@@ -79,29 +85,34 @@ func (c *PgRepository) GetTopCpuQueries(instanceName string, limit int) ([]PgTop
 	}
 
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
 
-	var exists bool
-	if err := db.QueryRow("/* SQL_OPTIMA */ SELECT   EXISTS (SELECT /* SQL_OPTIMA */   1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists); err != nil || !exists {
+	if !c.GetPgssSupported(instanceName) {
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
-	q := `/* SQL_OPTIMA */ SELECT   s.queryid,
+	version := c.GetPgVersion(instanceName)
+	timeCol := "total_exec_time"
+	if version < 130000 {
+		timeCol = "total_time"
+	}
+
+	q := fmt.Sprintf(`/* SQL_OPTIMA */ SELECT   s.queryid,
 			now()::timestamptz AS captured_at,
 			COALESCE(r.rolname, '') AS user_name,
 			LEFT(s.query, 400) AS query,
-			s.total_exec_time::float8,
+			s.%s::float8,
 			s.calls::bigint,
-			CASE WHEN s.calls > 0 THEN (s.total_exec_time / s.calls)::float8 ELSE 0 END AS avg_ms
+			CASE WHEN s.calls > 0 THEN (s.%s / s.calls)::float8 ELSE 0 END AS avg_ms
 		FROM pg_stat_statements s
 		LEFT JOIN pg_roles r ON r.oid = s.userid
-		WHERE ` + buildPgStatStatementsFilters() + `
-		ORDER BY s.total_exec_time DESC
-		LIMIT $1`
+		WHERE %s
+		ORDER BY s.%s DESC
+		LIMIT $1`, timeCol, timeCol, buildPgStatStatementsFilters(), timeCol)
 
 	rows, err := db.Query(q, limit)
 	if err != nil {

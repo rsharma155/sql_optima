@@ -63,8 +63,8 @@ func (c *SqlServerRepository) CollectLongRunningQueries(ctx context.Context, db 
 		WHERE r.session_id <> @@SPID AND r.session_id > 50
 		AND r.total_elapsed_time >= %d
 		AND s.is_user_process = 1
-		AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		ORDER BY r.total_elapsed_time DESC`, minDurationMs)
 
 	rows, err := db.QueryContext(ctx, query)
@@ -125,8 +125,8 @@ func (c *SqlServerRepository) CollectLiveRunningQueries(ctx context.Context, db 
 		AND s.database_id > 4
 		AND LOWER(ISNULL(DB_NAME(s.database_id), '')) <> 'distribution'
 		AND (@p1 = '' OR DB_NAME(s.database_id) = @p1)
-		AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
-		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'go-mssqldb')
+		AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
+		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		ORDER BY r.total_elapsed_time DESC`
 
 	rows, err := db.QueryContext(ctx, query, strings.TrimSpace(database))

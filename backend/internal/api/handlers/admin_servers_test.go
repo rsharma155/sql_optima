@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +80,20 @@ func (m *memServerStore) UpdateCredentials(ctx context.Context, id string, encry
 }
 func (m *memServerStore) TouchLastTest(ctx context.Context, id string, at time.Time) error {
 	return nil
+}
+func (m *memServerStore) CheckDuplicate(ctx context.Context, excludeID string, name, host string, port int) (string, error) {
+	for _, s := range m.created {
+		if s.ID == excludeID {
+			continue
+		}
+		if strings.EqualFold(s.Name, name) {
+			return "server with name '" + s.Name + "' already exists", nil
+		}
+		if s.Host == host && s.Port == port {
+			return "server with host '" + s.Host + "' and port " + fmt.Sprint(s.Port) + " already exists", nil
+		}
+	}
+	return "", nil
 }
 
 func TestAdminServers_AddServer_ValidatesAndDoesNotEchoPassword(t *testing.T) {

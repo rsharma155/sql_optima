@@ -51,7 +51,8 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 				instances = append(instances, copyInst)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"instances": instances,
+				"instances":     instances,
+				"feature_flags": cfg.FeatureFlags,
 			})
 		}).Methods("GET")
 	}
@@ -65,13 +66,16 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	postgresH := handlers.NewPostgresHandlers(metricsSvc, cfg)
 	liveH := handlers.NewLiveHandlers(metricsSvc, cfg)
 	timescaleH := handlers.NewTimescaleHandlers(metricsSvc, cfg)
-	sihH := handlers.NewStorageIndexHealthTimescaleHandlers(metricsSvc)
+	pgSihH := handlers.NewPgStorageIndexHealthHandlers(metricsSvc)
+	msSihH := handlers.NewSqlServerStorageIndexHealthHandlers(metricsSvc)
+	unifiedSihH := handlers.NewStorageIndexHealthTimescaleHandlers(metricsSvc)
 	healthH := handlers.NewHealthHandlers(metricsSvc, cfg)
 	dashboardH := handlers.NewDashboardHandlers(metricsSvc, cfg)
 	queryH := handlers.NewQueryHandlers(metricsSvc, cfg)
 	sqlserverQAH := handlers.NewSqlServerQueryAnalysisHandlers(metricsSvc, cfg)
 	sqlserverWQH := handlers.NewSqlServerWatchedQueryHandlers(metricsSvc, cfg)
 	sqlserverWLH := handlers.NewSqlServerWorkloadHandlers(metricsSvc, cfg)
+	sqlserverPAH := handlers.NewSqlServerPlanAnalyzerHandlers(metricsSvc)
 	osMetricsH := handlers.NewOSMetricsHandler(metricsSvc)
 
 	// New Postgres Domain Handlers
@@ -81,9 +85,10 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 
 	mon := &monitoringHandlers{
 		SqlServer: sqlserverH, Postgres: postgresH, Live: liveH, Timescale: timescaleH,
-		Health: healthH, Dashboard: dashboardH, Query: queryH, SIH: sihH,
+		Health: healthH, Dashboard: dashboardH, Query: queryH,
+		PgSIH: pgSihH, SqlServerSIH: msSihH, UnifiedSIH: unifiedSihH,
 		SqlServerQueryAnalysis: sqlserverQAH, SqlServerWatchedQuery: sqlserverWQH,
-		SqlServerWorkload: sqlserverWLH,
+		SqlServerWorkload: sqlserverWLH, SqlServerPlanAnalyzer: sqlserverPAH,
 		PgObservability:   pgObsH,
 		PgBackup:          pgBackupH,
 		PgSecurity:        pgSecurityH,
@@ -91,22 +96,27 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 
 	// ── Alert engine wiring ────────────────────────────────────
 	var alertH *handlers.AlertHandlers
-	if tsPool := metricsSvc.GetTimescaleDBPool(); tsPool != nil {
-		alertRepo := repository.NewAlertRepository(tsPool)
-		maintRepo := repository.NewAlertMaintenanceRepository(tsPool)
+	getAlertH := func() *handlers.AlertHandlers {
+		if alertH == nil {
+			if tsPool := metricsSvc.GetTimescaleDBPool(); tsPool != nil {
+				alertRepo := repository.NewAlertRepository(tsPool)
+				maintRepo := repository.NewAlertMaintenanceRepository(tsPool)
 
-		evaluators := []service.AlertEvaluator{
-			service.NewSqlServerBlockingEvaluator(tsPool),
-			service.NewSqlServerFailedJobsEvaluator(tsPool),
-			service.NewSqlServerDiskSpaceEvaluator(tsPool),
-			service.NewPgReplicationLagEvaluator(tsPool),
-			service.NewPgBlockingEvaluator(tsPool),
-			service.NewPgBackupFreshnessEvaluator(tsPool),
-			service.NewPgDiskSpaceEvaluator(tsPool),
+				evaluators := []service.AlertEvaluator{
+					service.NewSqlServerBlockingEvaluator(tsPool),
+					service.NewSqlServerFailedJobsEvaluator(tsPool),
+					service.NewSqlServerDiskSpaceEvaluator(tsPool),
+					service.NewPgReplicationLagEvaluator(tsPool),
+					service.NewPgBlockingEvaluator(tsPool),
+					service.NewPgBackupFreshnessEvaluator(tsPool),
+					service.NewPgDiskSpaceEvaluator(tsPool),
+				}
+
+				alertSvc := service.NewAlertService(alertRepo, maintRepo, evaluators)
+				alertH = handlers.NewAlertHandlers(alertSvc, alertRepo, maintRepo)
+			}
 		}
-
-		alertSvc := service.NewAlertService(alertRepo, maintRepo, evaluators)
-		alertH = handlers.NewAlertHandlers(alertSvc, alertRepo, maintRepo)
+		return alertH
 	}
 
 	var rulesH *handlers.RulesHandler
@@ -148,8 +158,8 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		registerMonitoringElevatedRoutes(openAPI, sqlserverH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
 		
 		// Always register alert routes to prevent 404s; handlers will check if engine is available.
-		registerAlertReadRoutes(openAPI, alertH)
-		registerAlertMutationRoutes(openAPI, alertH)
+		registerAlertReadRoutes(openAPI, getAlertH)
+		registerAlertMutationRoutes(openAPI, getAlertH)
 		// Legacy: explain was public when auth is not required.
 	}
 
@@ -180,7 +190,8 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 				instances = append(instances, copyInst)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"instances": instances,
+				"instances":     instances,
+				"feature_flags": cfg.FeatureFlags,
 			})
 		}).Methods("GET")
 
@@ -188,7 +199,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		readAPI.Use(middleware.RequireAuth(""))
 		readAPI.Use(middleware.RequireAnyRole("viewer", "dba", "admin"))
 		registerMonitoringReadRoutes(readAPI, mon, rulesBP)
-		registerAlertReadRoutes(readAPI, alertH)
+		registerAlertReadRoutes(readAPI, getAlertH)
 
 		dbaAPI := r.PathPrefix("/api").Subrouter()
 		dbaAPI.Use(middleware.RequireAuth(""))
@@ -197,7 +208,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 		registerMonitoringElevatedRoutes(dbaAPI, sqlserverH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
 		registerPostgresDBAMutations(dbaAPI, postgresH)
 		registerDashboardWidgetRoutes(dbaAPI, dashboardH)
-		registerAlertMutationRoutes(dbaAPI, alertH)
+		registerAlertMutationRoutes(dbaAPI, getAlertH)
 	}
 
 	if !sec.AuthRequired {

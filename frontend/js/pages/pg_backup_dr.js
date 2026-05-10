@@ -143,17 +143,22 @@
 
     function renderKPIs(kpis) {
         if (!kpis) return;
-        document.getElementById('kpi-last-archive').textContent = kpis.last_archive_age || 'N/A';
-        document.getElementById('kpi-wal-rate').textContent = (kpis.wal_mb || 0).toFixed(2);
-        document.getElementById('kpi-archive-fails').textContent = kpis.failed_count || '0';
-        document.getElementById('kpi-avg-checkpoint').textContent = (kpis.avg_checkpoint_time || 0).toFixed(1) + 's';
-        document.getElementById('kpi-is-primary').textContent = 'YES';
-        document.getElementById('kpi-sync-count').textContent = '1';
+        const setVal = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = val;
+        };
+        setVal('kpi-last-archive', kpis.last_archive_age || 'N/A');
+        setVal('kpi-wal-rate', (kpis.wal_mb || 0).toFixed(2));
+        setVal('kpi-archive-fails', kpis.failed_count || '0');
+        setVal('kpi-avg-checkpoint', (kpis.avg_checkpoint_time || 0).toFixed(1) + 's');
+        setVal('kpi-is-primary', 'YES');
+        setVal('kpi-sync-count', '1');
     }
 
     function renderWALTrend(trend) {
-        const ctx = document.getElementById('pg-wal-rate-chart').getContext('2d');
-        if (!trend) return;
+        const el = document.getElementById('pg-wal-rate-chart');
+        if (!el || !trend) return;
+        const ctx = el.getContext('2d');
         new Chart(ctx, {
             type: 'line',
             data: {
@@ -169,8 +174,9 @@
     }
 
     function renderArchiveHealth(health) {
-        const ctx = document.getElementById('pg-archive-status-chart').getContext('2d');
-        if (!health) return;
+        const el = document.getElementById('pg-archive-status-chart');
+        if (!el || !health) return;
+        const ctx = el.getContext('2d');
         new Chart(ctx, {
             type: 'bar',
             data: {
@@ -183,14 +189,18 @@
             options: {
                 responsive: true, maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
-                scales: { x: { stacked: true, type: 'time', time: { unit: 'hour' }, display: false }, y: { stacked: true } }
+                scales: { 
+                    x: { stacked: true, type: 'time', time: { unit: 'hour' }, display: true, title: { display: true, text: 'Timeline', font: { size: 10 } } }, 
+                    y: { stacked: true, title: { display: true, text: 'WAL Files', font: { size: 10 } } } 
+                }
             }
         });
     }
 
     function renderCheckpointTrend(trend) {
-        const ctx = document.getElementById('pg-checkpoint-trend-chart').getContext('2d');
-        if (!trend) return;
+        const el = document.getElementById('pg-checkpoint-trend-chart');
+        if (!el || !trend) return;
+        const ctx = el.getContext('2d');
         new Chart(ctx, {
             type: 'line',
             data: {
@@ -200,13 +210,17 @@
             options: {
                 responsive: true, maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
-                scales: { x: { type: 'time', time: { unit: 'hour' }, display: false } }
+                scales: { 
+                    x: { type: 'time', time: { unit: 'hour' }, display: true, title: { display: true, text: 'Timeline', font: { size: 10 } } },
+                    y: { title: { display: true, text: 'Write Time (s)', font: { size: 10 } } }
+                }
             }
         });
     }
 
     function renderFailedEvents(events) {
         const tbody = document.querySelector('#pg-failed-archives-table tbody');
+        if (!tbody) return;
         if (!events || events.length === 0) {
             tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">None</td></tr>';
             return;

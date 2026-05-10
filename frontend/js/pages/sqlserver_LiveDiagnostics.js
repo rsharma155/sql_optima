@@ -17,7 +17,7 @@ window.LiveDiagnosticsView = async function() {
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between">
                 <div>
-                    <h1>Real-Time Diagnostics (RTD)</h1>
+                    <h1>Real-Time Diagnostics (RTD) <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Real-Time Diagnostics" title="Learn more about this dashboard"></i></h1>
                     <p class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Live DMV Queries</p>
                 </div>
                 <div class="flex-between" style="align-items:center; gap:1rem;">
@@ -30,36 +30,32 @@ window.LiveDiagnosticsView = async function() {
                 </div>
             </div>
 
-            <div class="alert alert-info" style="background:rgba(59,130,246,0.1); border:1px solid var(--accent); margin-bottom:1rem; padding:0.5rem 1rem; font-size:0.8rem;">
-                <i class="fa-solid fa-info-circle"></i> <strong>Live Mode:</strong> Direct DMV queries (10s timeout). Session-oriented panels filter to <strong>user workloads</strong>: <code>is_user_process = 1</code>, current database <code>database_id &gt; 4</code>, and exclude the <strong>distribution</strong> database. Instance-level KPIs (memory, batch requests/sec) are unchanged.
-            </div>
-
             <div class="metrics-grid" style="display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem; margin-bottom:1rem;">
                 <div class="metric-card glass-panel" style="padding:0.75rem; text-align:center;">
                     <div id="kpi-sessions-loader" class="spinner" style="display:none;"></div>
                     <div id="kpi-sessions-content">
-                        <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted);">Active Executing Sessions</div>
+                        <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted);">Active Executing Sessions <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="Active Users"></i></div>
                         <div id="kpi-active-sessions" class="metric-value" style="font-size:1.75rem; color:var(--accent);">--</div>
                     </div>
                 </div>
                 <div class="metric-card glass-panel" style="padding:0.75rem; text-align:center;">
                     <div id="kpi-memory-loader" class="spinner" style="display:none;"></div>
                     <div id="kpi-memory-content">
-                        <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted);">System Memory (Total vs Available)</div>
+                        <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted);">System Memory (Total vs Available) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Memory Analyzer" data-metric="Available Headroom"></i></div>
                         <div id="kpi-memory-value" class="metric-value" style="font-size:1.25rem; color:var(--accent);">--</div>
                     </div>
                 </div>
                 <div class="metric-card glass-panel" style="padding:0.75rem; text-align:center;">
                     <div id="kpi-throughput-loader" class="spinner" style="display:none;"></div>
                     <div id="kpi-throughput-content">
-                        <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted);">Throughput (Batch Requests/sec)</div>
+                        <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted);">Throughput (Batch Requests/sec) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Real-Time Diagnostics" data-metric="Batch Requests/sec"></i></div>
                         <div id="kpi-batch-requests" class="metric-value" style="font-size:1.75rem; color:var(--accent);">--</div>
                     </div>
                 </div>
                 <div class="metric-card glass-panel" style="padding:0.75rem; text-align:center;">
                     <div id="tempdb-loader" class="spinner" style="display:none;"></div>
                     <div id="tempdb-content">
-                        <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted);">TempDB Space (MB)</div>
+                        <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted);">TempDB Space (MB) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="TPS"></i></div>
                         <div id="tempdb-total" class="metric-value" style="font-size:1.75rem; color:var(--accent);">--</div>
                     </div>
                 </div>
@@ -244,26 +240,26 @@ window.loadLiveKPIs = async function(instanceName) {
         const res = await window.apiClient.authenticatedFetch(`/api/live/kpis?instance=${encodeURIComponent(instanceName)}`);
         const data = await res.json();
 
-        loader.style.display = 'none';
-        content.style.display = 'block';
+        if (loader) loader.style.display = 'none';
+        if (content) content.style.display = 'block';
 
         if (!data.success) {
-            sessionsEl.textContent = 'Error';
-            memoryEl.textContent = 'Error';
-            throughputEl.textContent = 'Error';
+            if (sessionsEl) sessionsEl.textContent = 'Error';
+            if (memoryEl) memoryEl.textContent = 'Error';
+            if (throughputEl) throughputEl.textContent = 'Error';
             return;
         }
 
         const kpis = data.data;
-        sessionsEl.textContent = kpis.active_sessions || 0;
-        memoryEl.innerHTML = `<span style="color:var(--success);">${kpis.available_memory_mb || 0}</span> / ${kpis.total_memory_mb || 0} MB`;
-        throughputEl.textContent = (kpis.batch_requests_sec || 0).toLocaleString();
+        if (sessionsEl) sessionsEl.textContent = kpis.active_sessions || 0;
+        if (memoryEl) memoryEl.innerHTML = `<span style="color:var(--success);">${kpis.available_memory_mb || 0}</span> / ${kpis.total_memory_mb || 0} MB`;
+        if (throughputEl) throughputEl.textContent = (kpis.batch_requests_sec || 0).toLocaleString();
     } catch (e) {
-        loader.style.display = 'none';
-        content.style.display = 'block';
-        sessionsEl.textContent = 'Error';
-        memoryEl.textContent = 'Error';
-        throughputEl.textContent = 'Error';
+        if (loader) loader.style.display = 'none';
+        if (content) content.style.display = 'block';
+        if (sessionsEl) sessionsEl.textContent = 'Error';
+        if (memoryEl) memoryEl.textContent = 'Error';
+        if (throughputEl) throughputEl.textContent = 'Error';
     }
 };
 
@@ -276,20 +272,20 @@ window.loadLiveTempDB = async function(instanceName) {
         const res = await window.apiClient.authenticatedFetch(`/api/live/tempdb?instance=${encodeURIComponent(instanceName)}`);
         const data = await res.json();
 
-        loader.style.display = 'none';
-        content.style.display = 'block';
+        if (loader) loader.style.display = 'none';
+        if (content) content.style.display = 'block';
 
         if (!data.success) {
-            totalEl.textContent = 'Error';
+            if (totalEl) totalEl.textContent = 'Error';
             return;
         }
 
         const tempdb = data.data;
-        totalEl.textContent = `${tempdb.total_mb || 0} MB`;
+        if (totalEl) totalEl.textContent = `${tempdb.total_mb || 0} MB`;
     } catch (e) {
-        loader.style.display = 'none';
-        content.style.display = 'block';
-        totalEl.textContent = 'Error';
+        if (loader) loader.style.display = 'none';
+        if (content) content.style.display = 'block';
+        if (totalEl) totalEl.textContent = 'Error';
     }
 };
 
@@ -299,8 +295,8 @@ window.loadLiveRunningQueries = async function(instanceName) {
     const tbody = document.getElementById('runningQueriesBody');
     const countBadge = document.getElementById('running-queries-count');
 
-    loader.style.display = 'flex';
-    errorDiv.style.display = 'none';
+    if (loader) loader.style.display = 'flex';
+    if (errorDiv) errorDiv.style.display = 'none';
 
     try {
         const db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
@@ -308,17 +304,21 @@ window.loadLiveRunningQueries = async function(instanceName) {
         const res = await window.apiClient.authenticatedFetch(`/api/live/running-queries?instance=${encodeURIComponent(instanceName)}${qs}`);
         const data = await res.json();
 
-        loader.style.display = 'none';
+        if (loader) loader.style.display = 'none';
 
         if (!data.success) {
-            errorDiv.textContent = `Error: ${data.error}${data.timeout ? ' (10s timeout)' : ''}`;
-            errorDiv.style.display = 'block';
+            if (errorDiv) {
+                errorDiv.textContent = `Error: ${data.error}${data.timeout ? ' (10s timeout)' : ''}`;
+                errorDiv.style.display = 'block';
+            }
             return;
         }
 
         const queries = data.data || [];
         window.appState.liveDiagnostics.queryTexts = {};
-        countBadge.textContent = queries.length;
+        if (countBadge) countBadge.textContent = queries.length;
+
+        if (!tbody) return;
 
         if (queries.length === 0) {
             tbody.innerHTML = '<tr><td colspan="10" class="text-center text-success"><i class="fa-solid fa-check"></i> No active queries</td></tr>';
@@ -348,9 +348,11 @@ window.loadLiveRunningQueries = async function(instanceName) {
             `;
         }).join('');
     } catch (e) {
-        loader.style.display = 'none';
-        errorDiv.textContent = `Error: ${e.message}`;
-        errorDiv.style.display = 'block';
+        if (loader) loader.style.display = 'none';
+        if (errorDiv) {
+            errorDiv.textContent = `Error: ${e.message}`;
+            errorDiv.style.display = 'block';
+        }
     }
 };
 
@@ -398,12 +400,14 @@ window.loadLiveBlocking = async function(instanceName) {
     const emptyDiv = document.getElementById('blocking-empty');
     const panel = document.getElementById('blocking-panel');
 
-    loader.style.display = 'flex';
-    errorDiv.style.display = 'none';
-    content.style.display = 'block';
-    emptyDiv.style.display = 'none';
-    panel.style.borderColor = 'var(--border-color)';
-    panel.style.borderWidth = '1px';
+    if (loader) loader.style.display = 'flex';
+    if (errorDiv) errorDiv.style.display = 'none';
+    if (content) content.style.display = 'block';
+    if (emptyDiv) emptyDiv.style.display = 'none';
+    if (panel) {
+        panel.style.borderColor = 'var(--border-color)';
+        panel.style.borderWidth = '1px';
+    }
 
     try {
         const db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
@@ -411,36 +415,44 @@ window.loadLiveBlocking = async function(instanceName) {
         const res = await window.apiClient.authenticatedFetch(`/api/live/blocking?instance=${encodeURIComponent(instanceName)}${qs}`);
         const data = await res.json();
 
-        loader.style.display = 'none';
+        if (loader) loader.style.display = 'none';
 
         if (!data.success) {
-            errorDiv.textContent = `Error: ${data.error}${data.timeout ? ' (10s timeout)' : ''}`;
-            errorDiv.style.display = 'block';
+            if (errorDiv) {
+                errorDiv.textContent = `Error: ${data.error}${data.timeout ? ' (10s timeout)' : ''}`;
+                errorDiv.style.display = 'block';
+            }
             return;
         }
 
         const blocking = data.data || [];
 
         if (blocking.length === 0) {
-            emptyDiv.style.display = 'block';
-            tbody.innerHTML = '';
+            if (emptyDiv) emptyDiv.style.display = 'block';
+            if (tbody) tbody.innerHTML = '';
         } else {
-            panel.style.borderColor = 'var(--danger)';
-            panel.style.borderWidth = '2px';
-            tbody.innerHTML = blocking.map(b => `
-                <tr>
-                    <td><span class="badge badge-danger">${b.Lead_Blocker || '-'}</span></td>
-                    <td>${window.escapeHtml(b.Blocker_Login || 'Unknown')}</td>
-                    <td style="max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${window.escapeHtml(b.Blocker_App || 'Unknown')}</td>
-                    <td><span class="badge badge-warning">${b.Total_Victims || 0}</span></td>
-                    <td class="text-danger">${(b.Max_Wait_Time_ms || 0).toLocaleString()}</td>
-                </tr>
-            `).join('');
+            if (panel) {
+                panel.style.borderColor = 'var(--danger)';
+                panel.style.borderWidth = '2px';
+            }
+            if (tbody) {
+                tbody.innerHTML = blocking.map(b => `
+                    <tr>
+                        <td><span class="badge badge-danger">${b.Lead_Blocker || '-'}</span></td>
+                        <td>${window.escapeHtml(b.Blocker_Login || 'Unknown')}</td>
+                        <td style="max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${window.escapeHtml(b.Blocker_App || 'Unknown')}</td>
+                        <td><span class="badge badge-warning">${b.Total_Victims || 0}</span></td>
+                        <td class="text-danger">${(b.Max_Wait_Time_ms || 0).toLocaleString()}</td>
+                    </tr>
+                `).join('');
+            }
         }
     } catch (e) {
-        loader.style.display = 'none';
-        errorDiv.textContent = `Error: ${e.message}`;
-        errorDiv.style.display = 'block';
+        if (loader) loader.style.display = 'none';
+        if (errorDiv) {
+            errorDiv.textContent = `Error: ${e.message}`;
+            errorDiv.style.display = 'block';
+        }
     }
 };
 
@@ -449,22 +461,25 @@ window.loadLiveIOLatency = async function(instanceName) {
     const errorDiv = document.getElementById('io-latency-error');
     const tbody = document.getElementById('ioLatencyBody');
 
-    loader.style.display = 'flex';
-    errorDiv.style.display = 'none';
+    if (loader) loader.style.display = 'flex';
+    if (errorDiv) errorDiv.style.display = 'none';
 
     try {
         const res = await window.apiClient.authenticatedFetch(`/api/live/io-latency?instance=${encodeURIComponent(instanceName)}`);
         const data = await res.json();
 
-        loader.style.display = 'none';
+        if (loader) loader.style.display = 'none';
 
         if (!data.success) {
-            errorDiv.textContent = `Error: ${data.error}${data.timeout ? ' (10s timeout)' : ''}`;
-            errorDiv.style.display = 'block';
+            if (errorDiv) {
+                errorDiv.textContent = `Error: ${data.error}${data.timeout ? ' (10s timeout)' : ''}`;
+                errorDiv.style.display = 'block';
+            }
             return;
         }
 
         const ioLatency = data.data || [];
+        if (!tbody) return;
 
         if (ioLatency.length === 0) {
             tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No I/O data</td></tr>';
@@ -486,9 +501,11 @@ window.loadLiveIOLatency = async function(instanceName) {
             `;
         }).join('');
     } catch (e) {
-        loader.style.display = 'none';
-        errorDiv.textContent = `Error: ${e.message}`;
-        errorDiv.style.display = 'block';
+        if (loader) loader.style.display = 'none';
+        if (errorDiv) {
+            errorDiv.textContent = `Error: ${e.message}`;
+            errorDiv.style.display = 'block';
+        }
     }
 };
 
@@ -497,8 +514,8 @@ window.loadLiveWaits = async function(instanceName) {
     const errorDiv = document.getElementById('waits-error');
     const tbody = document.getElementById('waitsBody');
 
-    loader.style.display = 'flex';
-    errorDiv.style.display = 'none';
+    if (loader) loader.style.display = 'flex';
+    if (errorDiv) errorDiv.style.display = 'none';
 
     try {
         const db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
@@ -506,15 +523,18 @@ window.loadLiveWaits = async function(instanceName) {
         const res = await window.apiClient.authenticatedFetch(`/api/live/waits?instance=${encodeURIComponent(instanceName)}${qs}`);
         const data = await res.json();
 
-        loader.style.display = 'none';
+        if (loader) loader.style.display = 'none';
 
         if (!data.success) {
-            errorDiv.textContent = `Error: ${data.error}${data.timeout ? ' (10s timeout)' : ''}`;
-            errorDiv.style.display = 'block';
+            if (errorDiv) {
+                errorDiv.textContent = `Error: ${data.error}${data.timeout ? ' (10s timeout)' : ''}`;
+                errorDiv.style.display = 'block';
+            }
             return;
         }
 
         const waits = data.data || [];
+        if (!tbody) return;
 
         if (waits.length === 0) {
             tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No wait data</td></tr>';
@@ -529,9 +549,11 @@ window.loadLiveWaits = async function(instanceName) {
             </tr>
         `).join('');
     } catch (e) {
-        loader.style.display = 'none';
-        errorDiv.textContent = `Error: ${e.message}`;
-        errorDiv.style.display = 'block';
+        if (loader) loader.style.display = 'none';
+        if (errorDiv) {
+            errorDiv.textContent = `Error: ${e.message}`;
+            errorDiv.style.display = 'block';
+        }
     }
 };
 
@@ -540,8 +562,8 @@ window.loadLiveConnections = async function(instanceName) {
     const errorDiv = document.getElementById('connections-error');
     const tbody = document.getElementById('connectionsBody');
 
-    loader.style.display = 'flex';
-    errorDiv.style.display = 'none';
+    if (loader) loader.style.display = 'flex';
+    if (errorDiv) errorDiv.style.display = 'none';
 
     try {
         const db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
@@ -549,15 +571,18 @@ window.loadLiveConnections = async function(instanceName) {
         const res = await window.apiClient.authenticatedFetch(`/api/live/connections?instance=${encodeURIComponent(instanceName)}${qs}`);
         const data = await res.json();
 
-        loader.style.display = 'none';
+        if (loader) loader.style.display = 'none';
 
         if (!data.success) {
-            errorDiv.textContent = `Error: ${data.error}${data.timeout ? ' (10s timeout)' : ''}`;
-            errorDiv.style.display = 'block';
+            if (errorDiv) {
+                errorDiv.textContent = `Error: ${data.error}${data.timeout ? ' (10s timeout)' : ''}`;
+                errorDiv.style.display = 'block';
+            }
             return;
         }
 
         const connections = data.data || [];
+        if (!tbody) return;
 
         if (connections.length === 0) {
             tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No connection data</td></tr>';
@@ -572,8 +597,10 @@ window.loadLiveConnections = async function(instanceName) {
             </tr>
         `).join('');
     } catch (e) {
-        loader.style.display = 'none';
-        errorDiv.textContent = `Error: ${e.message}`;
-        errorDiv.style.display = 'block';
+        if (loader) loader.style.display = 'none';
+        if (errorDiv) {
+            errorDiv.textContent = `Error: ${e.message}`;
+            errorDiv.style.display = 'block';
+        }
     }
 };

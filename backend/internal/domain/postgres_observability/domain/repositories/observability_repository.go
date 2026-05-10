@@ -62,9 +62,9 @@ func (r *PostgresObservabilityRepository) SaveWaitEventSummary(ctx context.Conte
 
 func (r *PostgresObservabilityRepository) SaveDBLoad(ctx context.Context, load entities.DBLoad) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO monitor.pg_db_load_ts (ts, instance_id, active_sessions, cpu_sessions, waiting_sessions, idle_in_txn)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		load.TS, load.InstanceID, load.ActiveSessions, load.CPUSessions, load.WaitingSessions, load.IdleInTxn)
+		INSERT INTO monitor.pg_db_load_ts (ts, instance_id, active_sessions, cpu_sessions, waiting_sessions, io_sessions, lock_sessions, idle_in_txn)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		load.TS, load.InstanceID, load.ActiveSessions, load.CPUSessions, load.WaitingSessions, load.IOWaitSessions, load.LockWaitSessions, load.IdleInTxn)
 	return err
 }
 
@@ -108,7 +108,13 @@ func (r *PostgresObservabilityRepository) GetKPIData(ctx context.Context, instan
 
 func (r *PostgresObservabilityRepository) GetLoadTrend(ctx context.Context, instance string, from, to string) ([]map[string]interface{}, error) {
 	query := `
-		SELECT ts, active_sessions, waiting_sessions, idle_in_txn
+		SELECT ts, 
+		       COALESCE(active_sessions, 0), 
+		       COALESCE(cpu_sessions, 0), 
+		       COALESCE(waiting_sessions, 0), 
+		       COALESCE(io_sessions, 0), 
+		       COALESCE(lock_sessions, 0), 
+		       COALESCE(idle_in_txn, 0)
 		FROM monitor.pg_db_load_ts
 		WHERE ts BETWEEN $1 AND $2 AND instance_id = $3
 		ORDER BY ts ASC`
@@ -122,14 +128,17 @@ func (r *PostgresObservabilityRepository) GetLoadTrend(ctx context.Context, inst
 	var results []map[string]interface{}
 	for rows.Next() {
 		var ts time.Time
-		var active, waiting, idle int
-		if err := rows.Scan(&ts, &active, &waiting, &idle); err != nil {
+		var active, cpu, waiting, io, lock, idle int
+		if err := rows.Scan(&ts, &active, &cpu, &waiting, &io, &lock, &idle); err != nil {
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"ts":               ts,
+			"ts":                ts,
 			"active_sessions":  active,
+			"cpu_sessions":     cpu,
 			"waiting_sessions": waiting,
+			"io_sessions":      io,
+			"lock_sessions":    lock,
 			"idle_in_txn":      idle,
 		})
 	}
@@ -265,7 +274,7 @@ func (r *PostgresObservabilityRepository) GetLongRunningSessions(ctx context.Con
 
 func (r *PostgresObservabilityRepository) GetTopQueries(ctx context.Context, instance string, from, to string) ([]map[string]interface{}, error) {
 	query := `
-		SELECT queryid, calls, total_exec_time, mean_exec_time, temp_blks_written, query, usename
+		SELECT ts, queryid, calls, total_exec_time, mean_exec_time, temp_blks_written, query, usename
 		FROM monitor.pg_query_wait_profile_ts
 		WHERE ts BETWEEN $1 AND $2 AND instance_id = $3
 		  AND (usename IS NULL OR usename <> 'dbmonitor_user')
@@ -280,12 +289,13 @@ func (r *PostgresObservabilityRepository) GetTopQueries(ctx context.Context, ins
 
 	var results []map[string]interface{}
 	for rows.Next() {
+		var ts time.Time
 		var qid int64
 		var calls int64
 		var total, mean float64
 		var temp int64
 		var queryStr, usename *string
-		if err := rows.Scan(&qid, &calls, &total, &mean, &temp, &queryStr, &usename); err != nil {
+		if err := rows.Scan(&ts, &qid, &calls, &total, &mean, &temp, &queryStr, &usename); err != nil {
 			return nil, err
 		}
 		
@@ -295,6 +305,7 @@ func (r *PostgresObservabilityRepository) GetTopQueries(ctx context.Context, ins
 		if usename != nil { uVal = *usename }
 
 		results = append(results, map[string]interface{}{
+			"ts":                ts,
 			"queryid":           qid,
 			"calls":             calls,
 			"total_exec_time":   total,

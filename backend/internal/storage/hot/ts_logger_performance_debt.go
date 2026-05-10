@@ -88,7 +88,7 @@ func (tl *TimescaleLogger) GetLatestPerformanceDebtFingerprintHashesByKey(ctx co
 				fix_script,
 				ROW_NUMBER() OVER (PARTITION BY finding_key ORDER BY capture_timestamp DESC) AS rn
 			FROM sqlserver_performance_debt_findings
-			WHERE server_instance_name = $1
+			WHERE UPPER(server_instance_name) = UPPER($1)
 			  AND capture_timestamp >= NOW() - ($2::bigint * INTERVAL '1 second')
 		)
 		SELECT finding_key, database_name, section, finding_type, severity, title, object_name, object_type, details_json, recommendation, fix_script
@@ -182,11 +182,11 @@ func (tl *TimescaleLogger) CleanupPerformanceDebtFindings(ctx context.Context, i
 				finding_key,
 				ROW_NUMBER() OVER (PARTITION BY finding_key ORDER BY capture_timestamp DESC) AS rn
 			FROM sqlserver_performance_debt_findings
-			WHERE server_instance_name = $1
+			WHERE UPPER(server_instance_name) = UPPER($1)
 		)
 		DELETE FROM sqlserver_performance_debt_findings t
 		USING ranked r
-		WHERE t.server_instance_name = $1
+		WHERE UPPER(t.server_instance_name) = UPPER($1)
 		  AND t.finding_key = r.finding_key
 		  AND t.capture_timestamp = r.capture_timestamp
 		  AND (r.rn > $2 OR t.capture_timestamp < NOW() - ($3::bigint * INTERVAL '1 second'))
@@ -211,7 +211,7 @@ func (tl *TimescaleLogger) GetLatestPerformanceDebtFindings(ctx context.Context,
 		       object_name, object_type, finding_key,
 		       details, recommendation, fix_script
 		FROM sqlserver_performance_debt_findings
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= NOW() - ($2::bigint * INTERVAL '1 second')
 		  AND ($3 = '' OR database_name = $3)
 		ORDER BY finding_key, capture_timestamp DESC

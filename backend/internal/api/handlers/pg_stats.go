@@ -12,7 +12,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
@@ -423,17 +422,7 @@ func (h *PostgresHandlers) TimeseriesMetrics(w http.ResponseWriter, r *http.Requ
 
 	fromStr := r.URL.Query().Get("from")
 	toStr := r.URL.Query().Get("to")
-	var from, to time.Time
-	if fromStr != "" && toStr != "" {
-		from, _ = time.Parse(time.RFC3339, fromStr)
-		if from.IsZero() {
-			from, _ = time.Parse("2006-01-02T15:04", fromStr)
-		}
-		to, _ = time.Parse(time.RFC3339, toStr)
-		if to.IsZero() {
-			to, _ = time.Parse("2006-01-02T15:04", toStr)
-		}
-	}
+	from, to := ParseTimeRange(fromStr, toStr)
 
 	data, err := h.metricsSvc.GetPostgresMetricHistory(r.Context(), instance, metric, from, to, limit)
 	if err != nil {
@@ -467,25 +456,7 @@ func (h *PostgresHandlers) PgMemoryIntelligence(w http.ResponseWriter, r *http.R
 
 	fromStr := r.URL.Query().Get("from")
 	toStr := r.URL.Query().Get("to")
-	toT := time.Now().UTC()
-	fromT := toT.Add(-1 * time.Hour)
-	if fromStr != "" && toStr != "" {
-		var perr error
-		fromT, perr = time.Parse(time.RFC3339, fromStr)
-		if perr != nil {
-			fromT, perr = time.Parse("2006-01-02T15:04", fromStr)
-			if perr != nil {
-				log.Printf("[PostgresHandlers] PgMemoryIntelligence: failed to parse from=%s: %v", fromStr, perr)
-			}
-		}
-		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
-			toT = t
-		} else if t, err := time.Parse("2006-01-02T15:04", toStr); err == nil {
-			toT = t
-		} else {
-			log.Printf("[PostgresHandlers] PgMemoryIntelligence: failed to parse to=%s: %v", toStr, err)
-		}
-	}
+	fromT, toT := ParseTimeRange(fromStr, toStr)
 
 	log.Printf("[PostgresHandlers] PgMemoryIntelligence: instance=%s from=%v to=%v", instance, fromT, toT)
 	data, err := h.metricsSvc.GetPgMemoryDashboardData(r.Context(), instance, fromT, toT)

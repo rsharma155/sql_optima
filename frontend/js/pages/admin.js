@@ -87,12 +87,10 @@ window.showAdminTab = async function(tab) {
             <div class="glass-panel" style="padding:1.25rem;border-radius:12px;">
                 <div class="flex-between" style="margin-bottom:1rem;flex-wrap:wrap;gap:0.75rem;">
                     <h2 style="font-size:1rem;margin:0;font-weight:600;"><i class="fa-solid fa-users text-accent"></i> Users</h2>
-                    <button type="button" class="btn btn-sm btn-accent" id="btn-show-create-user"><i class="fa-solid fa-user-plus"></i> New user</button>
                 </div>
                 <div id="admin-user-list"><div class="text-center text-muted" style="padding:2rem;">Loading users…</div></div>
             </div>
         `;
-        document.getElementById('btn-show-create-user').addEventListener('click', () => window.showCreateUserForm());
         window.loadAdminUsers();
     } else if (tab === 'servers') {
         content.innerHTML = `

@@ -11,12 +11,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
 // FetchBlockingSessionsCount returns number of currently blocked requests.
 func (c *SqlServerRepository) FetchBlockingSessionsCount(ctx context.Context, instanceName string) (int, error) {
-	db := c.conns[instanceName]
+	db := c.conns[strings.ToUpper(instanceName)]
 	if db == nil {
 		return 0, fmt.Errorf("no connection for instance %s", instanceName)
 	}
@@ -35,7 +36,7 @@ func (c *SqlServerRepository) FetchBlockingSessionsCount(ctx context.Context, in
 
 // FetchMemoryGrantsPending returns number of pending memory grants.
 func (c *SqlServerRepository) FetchMemoryGrantsPending(ctx context.Context, instanceName string) (int, error) {
-	db := c.conns[instanceName]
+	db := c.conns[strings.ToUpper(instanceName)]
 	if db == nil {
 		return 0, fmt.Errorf("no connection for instance %s", instanceName)
 	}
@@ -53,7 +54,7 @@ func (c *SqlServerRepository) FetchMemoryGrantsPending(ctx context.Context, inst
 
 // FetchMemoryGrantsSummary returns a summary of current memory grant activity.
 func (c *SqlServerRepository) FetchMemoryGrantsSummary(ctx context.Context, instanceName string) (map[string]interface{}, error) {
-	db := c.conns[instanceName]
+	db := c.conns[strings.ToUpper(instanceName)]
 	if db == nil {
 		return nil, fmt.Errorf("no connection for instance %s", instanceName)
 	}
@@ -84,11 +85,12 @@ type PerfCounterSample struct {
 	CounterName  string
 	InstanceName sql.NullString
 	Value        float64
+	CntrType     int
 }
 
 // FetchPerfCounters fetches specific perf counters from sys.dm_os_performance_counters.
 func (c *SqlServerRepository) FetchPerfCounters(ctx context.Context, instanceName string, counterNames []string) (map[string]PerfCounterSample, error) {
-	db := c.conns[instanceName]
+	db := c.conns[strings.ToUpper(instanceName)]
 	if db == nil {
 		return nil, fmt.Errorf("no connection for instance %s", instanceName)
 	}
@@ -110,9 +112,10 @@ func (c *SqlServerRepository) FetchPerfCounters(ctx context.Context, instanceNam
 	}
 
 	q := fmt.Sprintf(`
-		/* SQL_OPTIMA */ SELECT   RTRIM(counter_name) as counter_name, instance_name, CAST(cntr_value AS FLOAT) AS cntr_value
+		/* SQL_OPTIMA */ SELECT   RTRIM(counter_name) as counter_name, RTRIM(instance_name) as instance_name, CAST(cntr_value AS FLOAT) AS cntr_value, cntr_type
 		FROM sys.dm_os_performance_counters
-		WHERE RTRIM(counter_name) IN (%s);
+		WHERE RTRIM(counter_name) IN (%s)
+		AND RTRIM(instance_name) IN ('', '_Total');
 	`, placeholders)
 
 	rows, err := db.QueryContext(ctx, q, args...)
@@ -124,12 +127,19 @@ func (c *SqlServerRepository) FetchPerfCounters(ctx context.Context, instanceNam
 	out := make(map[string]PerfCounterSample)
 	for rows.Next() {
 		var s PerfCounterSample
-		if err := rows.Scan(&s.CounterName, &s.InstanceName, &s.Value); err != nil {
+		if err := rows.Scan(&s.CounterName, &s.InstanceName, &s.Value, &s.CntrType); err != nil {
 			return nil, err
 		}
 		// Keep the first sample per counter_name (many counters have instance variants).
+		// For standardized metrics, we usually want the one with empty instance_name or '_Total'.
 		if _, exists := out[s.CounterName]; !exists {
 			out[s.CounterName] = s
+		} else {
+			// Prefer empty instance name or '_Total' if we find multiple
+			inst := strings.TrimSpace(s.InstanceName.String)
+			if inst == "" || inst == "_Total" {
+				out[s.CounterName] = s
+			}
 		}
 	}
 	return out, rows.Err()
@@ -137,7 +147,7 @@ func (c *SqlServerRepository) FetchPerfCounters(ctx context.Context, instanceNam
 
 // FetchWaitStatsCumulative returns cumulative wait_time_ms per wait_type (filtered).
 func (c *SqlServerRepository) FetchWaitStatsCumulative(ctx context.Context, instanceName string) (map[string]float64, error) {
-	db := c.conns[instanceName]
+	db := c.conns[strings.ToUpper(instanceName)]
 	if db == nil {
 		return nil, fmt.Errorf("no connection for instance %s", instanceName)
 	}
@@ -168,7 +178,7 @@ func (c *SqlServerRepository) FetchWaitStatsCumulative(ctx context.Context, inst
 
 // FetchTempdbUsagePercent estimates TempDB used% (user+internal objects) vs total.
 func (c *SqlServerRepository) FetchTempdbUsagePercent(ctx context.Context, instanceName string) (float64, error) {
-	db := c.conns[instanceName]
+	db := c.conns[strings.ToUpper(instanceName)]
 	if db == nil {
 		return 0, fmt.Errorf("no connection for instance %s", instanceName)
 	}
@@ -203,7 +213,7 @@ type DBLogUsage struct {
 // FetchMaxDBLogUsagePercent loops user DBs and returns the max used% sample.
 // It is intentionally bounded and uses timeouts to avoid harming the instance.
 func (c *SqlServerRepository) FetchMaxDBLogUsagePercent(ctx context.Context, instanceName string) (DBLogUsage, error) {
-	db := c.conns[instanceName]
+	db := c.conns[strings.ToUpper(instanceName)]
 	if db == nil {
 		return DBLogUsage{}, fmt.Errorf("no connection for instance %s", instanceName)
 	}
@@ -265,7 +275,7 @@ func (c *SqlServerRepository) FetchMaxDBLogUsagePercent(ctx context.Context, ins
 // This uses RING_BUFFER_SECURITY_ERROR as a lightweight fallback (works in many environments).
 // If unavailable (permissions / version), it returns 0 with error.
 func (c *SqlServerRepository) FetchFailedLoginsLast5Min(ctx context.Context, instanceName string) (int, error) {
-	db := c.conns[instanceName]
+	db := c.conns[strings.ToUpper(instanceName)]
 	if db == nil {
 		return 0, fmt.Errorf("no connection for instance %s", instanceName)
 	}
@@ -280,14 +290,14 @@ func (c *SqlServerRepository) FetchFailedLoginsLast5Min(ctx context.Context, ins
 		DECLARE @ts_now bigint = (SELECT  cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
 		WITH rb AS (
 			SELECT  
-				DATEADD(ms, -1 * (@ts_now - [timestamp]), GETDATE()) AS event_time,
+				DATEADD(ms, -1 * (@ts_now - [timestamp]), GETUTCDATE()) AS event_time,
 				CONVERT(nvarchar(max), record) AS rec
 			FROM sys.dm_os_ring_buffers WITH (NOLOCK)
 			WHERE ring_buffer_type = N'RING_BUFFER_SECURITY_ERROR'
 		)
 		SELECT   COUNT(*)
 		FROM rb
-		WHERE event_time >= DATEADD(minute, -5, GETDATE())
+		WHERE event_time >= DATEADD(minute, -5, GETUTCDATE())
 		  AND rec LIKE N'%Login failed%';
 	`).Scan(&n)
 	return n, err

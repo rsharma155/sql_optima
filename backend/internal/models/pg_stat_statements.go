@@ -40,6 +40,10 @@ type PgssLatencyPoint struct {
 type PgssTopQuery struct {
 	QueryID      int64    `json:"query_id"`
 	Query        string   `json:"query"`
+	DbName       string   `json:"db_name"`
+	UserName     string   `json:"username"`
+	AppName      string   `json:"app_name"`
+	QueryType    string   `json:"query_type"`
 	TotalTime    float64  `json:"total_time_ms"`
 	PctDBTime    float64  `json:"pct_db_time"`
 	Calls        int64    `json:"calls"`
@@ -53,14 +57,56 @@ type PgssTopQuery struct {
 	Flags        []string `json:"flags"`
 }
 
+// PgssFilterOptions holds distinct dimension values for filter dropdowns.
+type PgssFilterOptions struct {
+	Instance  string   `json:"instance"`
+	Databases []string `json:"databases"`
+	Users     []string `json:"users"`
+	AppNames  []string `json:"app_names"`
+}
+
+// PgssDbBreakdown is a per-database workload summary row.
+type PgssDbBreakdown struct {
+	DbName         string  `json:"db_name"`
+	TotalExecMs    float64 `json:"total_exec_ms"`
+	PctOfServer    float64 `json:"pct_of_server"`
+	TotalCalls     int64   `json:"total_calls"`
+	AvgMs          float64 `json:"avg_ms"`
+	CacheHitPct    float64 `json:"cache_hit_pct"`
+	UniqueQueryIDs int64   `json:"unique_query_ids"`
+}
+
+// PgssUserBreakdown is a per-login workload summary row.
+type PgssUserBreakdown struct {
+	UserName       string  `json:"username"`
+	TotalExecMs    float64 `json:"total_exec_ms"`
+	PctOfServer    float64 `json:"pct_of_server"`
+	TotalCalls     int64   `json:"total_calls"`
+	AvgMs          float64 `json:"avg_ms"`
+	UniqueQueryIDs int64   `json:"unique_query_ids"`
+}
+
+// PgssDbBreakdownResponse is the API response for /api/postgres/pgss/by-database.
+type PgssDbBreakdownResponse struct {
+	Instance string            `json:"instance"`
+	Rows     []PgssDbBreakdown `json:"rows"`
+}
+
+// PgssUserBreakdownResponse is the API response for /api/postgres/pgss/by-user.
+type PgssUserBreakdownResponse struct {
+	Instance string              `json:"instance"`
+	Rows     []PgssUserBreakdown `json:"rows"`
+}
+
 // PgssRegression represents a query that degraded between two time windows.
 type PgssRegression struct {
-	QueryID   int64   `json:"query_id"`
-	Query     string  `json:"query"`
-	PrevAvgMs float64 `json:"prev_avg_ms"`
-	CurrAvgMs float64 `json:"curr_avg_ms"`
-	ChangePct float64 `json:"change_pct"`
-	Status    string  `json:"status"`
+	QueryID   int64     `json:"query_id"`
+	Query     string    `json:"query"`
+	PrevAvgMs float64   `json:"prev_avg_ms"`
+	CurrAvgMs float64   `json:"curr_avg_ms"`
+	ChangePct float64   `json:"change_pct"`
+	Status    string    `json:"status"`
+	DetectedAt time.Time `json:"detected_at"`
 }
 
 // PgssWorkloadResponse is the API response for /api/postgres/pgss/workload.
@@ -107,4 +153,5 @@ type PgssSummaryResponse struct {
 	TempMbSec          float64 `json:"temp_mb_sec"`
 	WalMbSec           float64 `json:"wal_mb_sec"`
 	CpuSaturationMsSec float64 `json:"cpu_saturation_ms_sec"`
+	UniqueQueryCount   int64   `json:"unique_query_count"`
 }

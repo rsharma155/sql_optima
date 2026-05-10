@@ -52,7 +52,16 @@
         switch (action) {
             case 'navigate': {
                 const route = el.dataset.route;
-                if (route && window.appNavigate) window.appNavigate(route);
+                if (route && window.appNavigate) {
+                    if (el.dataset.params) {
+                        try {
+                            window.appState.routeParams = JSON.parse(el.dataset.params);
+                        } catch (e) {
+                            console.error('[Actions] Failed to parse data-params:', el.dataset.params, e);
+                        }
+                    }
+                    window.appNavigate(route);
+                }
                 const also = el.dataset.alsoCall;
                 if (also && typeof window[also] === 'function') window[also]();
                 break;
@@ -225,12 +234,8 @@
                 break;
             }
             case 'sort-pg-queries': {
-                if (window.sortPgQueries) window.sortPgQueries(el, el.dataset.sort);
-                break;
-            }
-            case 'show-create-user': {
-                if (window.showCreateUserForm) window.showCreateUserForm();
-                break;
+               if (window.sortPgQueries) window.sortPgQueries(el, el.dataset.sort);
+               break;
             }
             case 'show-add-server': {
                 if (window.showAddServerForm) window.showAddServerForm();
@@ -269,6 +274,26 @@
             case 'guardrails-modal': {
                 if (window.showGuardrailsModal)
                     window.showGuardrailsModal(el.dataset.category, el.dataset.catid);
+                break;
+            }
+            case 'show-pg-info': {
+                if (window.pgShowInfo)
+                    window.pgShowInfo(el.dataset.section, el.dataset.metric);
+                break;
+            }
+            case 'show-sqlserver-info': {
+                if (window.sqlserverShowInfo)
+                    window.sqlserverShowInfo(el.dataset.section, el.dataset.metric);
+                break;
+            }
+            case 'show-pg-dashboard-detail': {
+                if (window.pgShowDashboardDetail)
+                    window.pgShowDashboardDetail(el.dataset.dashboard);
+                break;
+            }
+            case 'show-sqlserver-dashboard-detail': {
+                if (window.sqlserverShowDashboardDetail)
+                    window.sqlserverShowDashboardDetail(el.dataset.dashboard);
                 break;
             }
             case 'refresh-best-practices': {

@@ -74,7 +74,9 @@ func (s *MetricsService) collectQueryStoreData() {
 		wg.Add(1)
 		go func(instanceName string) {
 			defer wg.Done()
-			s.collectQueryStoreForInstance(instanceName)
+			s.EnqueueCollection(instanceName, func() {
+				s.collectQueryStoreForInstance(instanceName)
+			})
 		}(inst.Name)
 	}
 
@@ -133,11 +135,11 @@ func (s *MetricsService) collectQueryStoreForInstance(instanceName string) {
 }
 
 // GetQueryStoreBottlenecks returns aggregated Query Store statistics for bottlenecks analysis
-func (s *MetricsService) GetQueryStoreBottlenecks(ctx context.Context, instanceName, timeRange string, limit int, database string) ([]map[string]interface{}, error) {
+func (s *MetricsService) GetQueryStoreBottlenecks(ctx context.Context, instanceName, timeRange string, limit int, database string, from, to string) ([]map[string]interface{}, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	return s.tsLogger.GetQueryStoreBottlenecks(ctx, instanceName, timeRange, limit, database)
+	return s.tsLogger.GetQueryStoreBottlenecks(ctx, instanceName, timeRange, limit, database, from, to)
 }
 
 // StartEnterpriseCollector starts the AG Health and Database Throughput collector
@@ -220,10 +222,11 @@ func (s *MetricsService) collectAdvancedEnterpriseMetrics() {
 }
 
 func (s *MetricsService) collectAdvancedEnterpriseMetricsForInstance(instanceName string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	s.EnqueueCollection(instanceName, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // Increased timeout for sequential execution
+		defer cancel()
 
-	// Memory analyzer (Timescale-backed drilldown)
+		// Memory analyzer (Timescale-backed drilldown)
 	if row, err := s.MsRepo.FetchMemoryAnalyzerSnapshot(ctx, instanceName); err == nil {
 		_ = s.tsLogger.LogSQLServerMemoryMetrics(ctx, instanceName, row)
 	}
@@ -290,14 +293,23 @@ func (s *MetricsService) collectAdvancedEnterpriseMetricsForInstance(instanceNam
 		"Buffer cache hit ratio",
 		"Buffer cache hit ratio base",
 	})
-	batch := counters["Batch Requests/sec"].Value
-	comp := counters["SQL Compilations/sec"].Value
-	ple := counters["Page life expectancy"].Value
+	
+	// Compute deltas for cumulative counters
+	rates := s.tsLogger.ComputePerfCounterDeltas(instanceName, counters)
+	
+	batch := rates["Batch Requests/sec"]
+	comp := rates["SQL Compilations/sec"]
+	ple := rates["Page life expectancy"]
 
 	bchr := 0.0
-	base := counters["Buffer cache hit ratio base"].Value
-	if base > 0 {
-		bchr = (counters["Buffer cache hit ratio"].Value / base) * 100.0
+	// Buffer cache hit ratio base is instantaneous (usually), but the ratio itself 
+	// should be calculated from the raw values if we want precision, 
+	// or just take the pre-calculated one if available.
+	// Actually BCHR base is often used with the numerator.
+	rawBase := counters["Buffer cache hit ratio base"].Value
+	rawRatio := counters["Buffer cache hit ratio"].Value
+	if rawBase > 0 {
+		bchr = (rawRatio / rawBase) * 100.0
 	}
 
 	// Max log usage %
@@ -322,6 +334,9 @@ func (s *MetricsService) collectAdvancedEnterpriseMetricsForInstance(instanceNam
 		BatchReqPerSec:      batch,
 		BufferCacheHitPct:   bchr,
 	})
+
+	// Also log to separate history table for charts
+	_ = s.tsLogger.LogSQLServerMemoryHistory(ctx, instanceName, ple)
 
 	// Wait deltas + categorization
 	if currWaits, err := s.MsRepo.FetchWaitStatsCumulative(ctx, instanceName); err == nil {
@@ -393,6 +408,7 @@ func (s *MetricsService) collectAdvancedEnterpriseMetricsForInstance(instanceNam
 	if tdcRows, err := s.MsRepo.FetchTempdbTopConsumers(instanceName); err == nil {
 		_ = s.tsLogger.LogSqlServerTempdbConsumers(ctx, instanceName, tdcRows)
 	}
+	})
 }
 
 func (s *MetricsService) collectEnterpriseMetrics() {
@@ -410,10 +426,12 @@ func (s *MetricsService) collectEnterpriseMetrics() {
 		wg.Add(1)
 		go func(instanceName string) {
 			defer wg.Done()
-			s.collectAGHealthForInstance(instanceName)
-			s.collectDatabaseThroughputForInstance(instanceName)
-			s.collectJobsForInstance(instanceName)
-			s.collectLogShippingForInstance(instanceName)
+			s.EnqueueCollection(instanceName, func() {
+				s.collectAGHealthForInstance(instanceName)
+				s.collectDatabaseThroughputForInstance(instanceName)
+				s.collectJobsForInstance(instanceName)
+				s.collectLogShippingForInstance(instanceName)
+			})
 		}(inst.Name)
 	}
 
@@ -729,6 +747,7 @@ func (s *MetricsService) collectPostgresEnterpriseMetrics() {
 				{"pg_session_state_counts", s.collectPostgresSessionStateCountsForInstance},
 				{"pg_pooler_stats", s.collectPostgresPoolerStatsForInstance},
 				{"pg_deadlocks", s.collectPostgresDeadlocksForInstance},
+				{"pg_incidents", s.CollectPgIncidents},
 			}
 			for _, c := range pgCollectors {
 				safeRunCollector(c.name, instanceName, c.fn)
@@ -847,7 +866,7 @@ func (s *MetricsService) collectPostgresDiskStatsForInstance(instanceName string
 	// Local-only: requires pg_disk_paths configured on the monitoring host.
 	var diskPaths map[string]string
 	for _, inst := range s.Config.Instances {
-		if inst.Name == instanceName {
+		if strings.ToUpper(inst.Name) == strings.ToUpper(instanceName) {
 			diskPaths = inst.PGDiskPaths
 			break
 		}
@@ -950,7 +969,7 @@ func (s *MetricsService) collectPostgresPoolerStatsForInstance(instanceName stri
 	}
 	var dsn string
 	for i := range s.Config.Instances {
-		if s.Config.Instances[i].Name == instanceName {
+		if strings.ToUpper(s.Config.Instances[i].Name) == strings.ToUpper(instanceName) {
 			dsn = s.Config.Instances[i].PGBouncerAdminDSN
 			break
 		}
@@ -1152,6 +1171,28 @@ func (s *MetricsService) ComputePostgresControlCenterRow(instanceName string) (*
 	autovacCnt, _ := s.PgRepo.FetchAutovacuumWorkers(instanceName)
 	deadTuplePct, _ := s.PgRepo.FetchDeadTupleRatioPct(instanceName)
 
+	// v2 additions — 2026-05-07
+
+	// Session state full breakdown (5-way, client backends only)
+	sessState, _ := s.PgRepo.FetchSessionStateFull(instanceName)
+	idleSessions, idleInTxn := 0, 0
+	if sessState != nil {
+		idleSessions = sessState.Idle
+		idleInTxn = sessState.IdleInTxn + sessState.IdleInTxnAborted
+	}
+
+	// Connection utilization (max_connections vs used)
+	connUtil, _ := s.PgRepo.FetchConnectionUtilization(instanceName)
+	connMax, connUsed, connPct := 0, 0, 0.0
+	if connUtil != nil {
+		connMax = connUtil.MaxConnections
+		connUsed = connUtil.UsedConnections
+		connPct = connUtil.UsagePct
+	}
+
+	// Cache hit ratio (already computed via FetchCacheHitRatioPct — store it now)
+	cacheHit, _ := s.PgRepo.FetchCacheHitRatioPct(instanceName)
+
 	now := time.Now().UTC()
 	intervalSec := 60.0
 	if v := strings.TrimSpace(os.Getenv("POSTGRES_CONTROL_CENTER_INTERVAL_SEC")); v != "" {
@@ -1163,6 +1204,15 @@ func (s *MetricsService) ComputePostgresControlCenterRow(instanceName string) (*
 	if s.tsLogger != nil {
 		if r, ok := s.tsLogger.ComputeWalRateMBPerMin(instanceName, walBytes, intervalSec); ok {
 			walRateMBMin = r
+		}
+	}
+
+	// Deadlock rate — delta from cumulative counter across all databases
+	dlTotal, _ := s.PgRepo.FetchDeadlocksTotalAllDBs(instanceName)
+	dlPerMin := 0.0
+	if s.tsLogger != nil {
+		if r, ok := s.tsLogger.ComputePgDeadlockRate(instanceName, dlTotal, intervalSec); ok {
+			dlPerMin = r
 		}
 	}
 
@@ -1183,6 +1233,15 @@ func (s *MetricsService) ComputePostgresControlCenterRow(instanceName string) (*
 		BlockingSessions:   blockingCnt,
 		AutovacuumWorkers:  autovacCnt,
 		DeadTuplePct:       deadTuplePct,
+
+		// v2 additions
+		IdleSessions:        idleSessions,
+		IdleInTxnSessions:   idleInTxn,
+		ConnectionsMax:      connMax,
+		ConnectionsUsed:     connUsed,
+		ConnectionsUsagePct: connPct,
+		CacheHitRatioPct:    cacheHit,
+		DeadlocksPerMin:     dlPerMin,
 	}
 	if repl.WalGenRateMBps > 0 {
 		row.ReplicaLagSec = row.ReplicaLagMB / repl.WalGenRateMBps
@@ -1194,6 +1253,10 @@ func (s *MetricsService) ComputePostgresControlCenterRow(instanceName string) (*
 		CheckpointReqRatio:    row.CheckpointReqRatio,
 		WALRateMBPerMin:       row.WALMBPerMin,
 		BlockingSessions:      row.BlockingSessions,
+		// v2 additions
+		CacheHitRatioPct:    row.CacheHitRatioPct,
+		ConnectionsUsagePct: row.ConnectionsUsagePct,
+		DeadlocksPerMin:     row.DeadlocksPerMin,
 	})
 	return &row, repl, nil
 }
@@ -1207,14 +1270,16 @@ func postgresControlCenterHistoryFromRow(r *hot.PostgresControlCenterRow) *hot.P
 		ts = time.Now().UTC()
 	}
 	return &hot.PostgresControlCenterHistory{
-		Labels:             []string{ts.UTC().Format(time.RFC3339)},
-		WALMBPerMin:        []float64{r.WALMBPerMin},
-		ReplLagSec:         []float64{r.ReplicaLagSec},
-		CheckpointReqRatio: []float64{r.CheckpointReqRatio},
-		Autovacuum:         []int{r.AutovacuumWorkers},
-		DeadTuplePct:       []float64{r.DeadTuplePct},
-		BlockingSessions:   []int{r.BlockingSessions},
-		HealthScore:        []int{r.HealthScore},
+		Labels:              []string{ts.UTC().Format(time.RFC3339)},
+		WALMBPerMin:         []float64{r.WALMBPerMin},
+		ReplLagSec:          []float64{r.ReplicaLagSec},
+		CheckpointReqRatio:  []float64{r.CheckpointReqRatio},
+		Autovacuum:          []int{r.AutovacuumWorkers},
+		DeadTuplePct:        []float64{r.DeadTuplePct},
+		BlockingSessions:    []int{r.BlockingSessions},
+		HealthScore:         []int{r.HealthScore},
+		CacheHitRatioPct:    []float64{r.CacheHitRatioPct},
+		ConnectionsUsagePct: []float64{r.ConnectionsUsagePct},
 	}
 }
 
@@ -1514,6 +1579,53 @@ func (s *MetricsService) GetPostgresControlCenterHistory(ctx context.Context, in
 
 
 func (s *MetricsService) GetPostgresMetricHistory(ctx context.Context, instanceName, metric string, from, to time.Time, limit int) ([]instance_health.MetricDataPoint, error) {
+	// AAS 4-way decomposition metrics redirection
+	if metric == "cpu_load" || metric == "io_wait_load" || metric == "lock_wait_load" || metric == "idle_in_txn_load" {
+		if s.PgObservabilityRepo == nil {
+			return nil, fmt.Errorf("PgObservabilityRepo is nil")
+		}
+		fromStr := from.Format(time.RFC3339)
+		toStr := to.Format(time.RFC3339)
+		if from.IsZero() || to.IsZero() {
+			toStr = time.Now().Format(time.RFC3339)
+			fromStr = time.Now().Add(-time.Hour).Format(time.RFC3339)
+		}
+
+		trend, err := s.PgObservabilityRepo.GetLoadTrend(ctx, instanceName, fromStr, toStr)
+		if err != nil {
+			return nil, err
+		}
+
+		var results []instance_health.MetricDataPoint
+		for _, row := range trend {
+			ts, ok := row["ts"].(time.Time)
+			if !ok {
+				continue
+			}
+			val := 0.0
+			switch metric {
+			case "cpu_load":
+				if v, ok := row["cpu_sessions"].(int); ok { val = float64(v) }
+			case "io_wait_load":
+				if v, ok := row["io_sessions"].(int); ok { val = float64(v) }
+			case "lock_wait_load":
+				if v, ok := row["lock_sessions"].(int); ok { val = float64(v) }
+			case "idle_in_txn_load":
+				if v, ok := row["idle_in_txn"].(int); ok { val = float64(v) }
+			}
+			results = append(results, instance_health.MetricDataPoint{
+				Time:   ts,
+				Metric: metric,
+				Value:  val,
+			})
+		}
+		// Sort by time ascending then take latest limit
+		if len(results) > limit {
+			results = results[len(results)-limit:]
+		}
+		return results, nil
+	}
+
 	if s.PgHealthRepo == nil {
 		return nil, fmt.Errorf("PgHealthRepo is nil")
 	}
@@ -1532,6 +1644,13 @@ func (s *MetricsService) GetPostgresWaitEventsHistory(ctx context.Context, insta
 		return []hot.PostgresWaitEventRow{}, nil
 	}
 	return s.tsLogger.GetPostgresWaitEventsHistory(ctx, instanceName, from, to, limit)
+}
+
+func (s *MetricsService) GetPgIncidentFeed(ctx context.Context, instanceName string, lookbackMins int, limit int) ([]hot.PgIncidentFeedRow, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetPgIncidentFeed(ctx, instanceName, lookbackMins, limit)
 }
 
 func (s *MetricsService) GetPostgresDbIOHistory(ctx context.Context, instanceName string, from, to time.Time, limit int) ([]hot.PostgresDbIORow, error) {

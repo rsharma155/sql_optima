@@ -62,7 +62,7 @@ func (tl *TimescaleLogger) GetLatestPostgresPoolerStats(ctx context.Context, ins
 		       cl_active, cl_waiting, sv_active, sv_idle, sv_used,
 		       maxwait_seconds, total_pools
 		FROM postgres_pooler_stats
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT 1
 	`
@@ -86,7 +86,7 @@ func (tl *TimescaleLogger) GetPostgresPoolerStatsHistory(ctx context.Context, in
 		       cl_active, cl_waiting, sv_active, sv_idle, sv_used,
 		       maxwait_seconds, total_pools
 		FROM postgres_pooler_stats
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`

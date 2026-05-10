@@ -11,6 +11,7 @@ package repository
 
 import (
 	"fmt"
+	"strings"
 )
 
 // PGTimescaleLockInternal is the internal struct for lock data.
@@ -30,7 +31,7 @@ type PGTimescaleLockInternal struct {
 // FetchDetailedLocks returns current locks with detailed metadata for historical logging.
 func (c *PgRepository) FetchDetailedLocks(instanceName string) ([]PGTimescaleLockInternal, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -101,49 +102,69 @@ type PGStatStatementsInternal struct {
 // FetchStatStatements returns a raw snapshot of pg_stat_statements.
 func (c *PgRepository) FetchStatStatements(instanceName string) ([]PGStatStatementsInternal, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
 
-	query := `
-		/* SQL_OPTIMA_PHASE8 */
-		SELECT 
-			queryid, 
-			COALESCE(d.datname, 'unknown') as datname,
-			COALESCE(u.rolname, 'unknown') as username,
-			calls, 
-			total_exec_time + total_plan_time as total_time,
-			rows, 
-			shared_blks_hit, 
-			shared_blks_read, 
-			shared_blks_dirtied, 
-			shared_blks_written, 
-			temp_blks_read, 
-			temp_blks_written, 
-			blk_read_time, 
-			blk_write_time,
-			wal_bytes
-		FROM pg_stat_statements s
-		LEFT JOIN pg_database d ON s.dbid = d.oid
-		LEFT JOIN pg_authid u ON s.userid = u.oid
-		LIMIT 500
-	`
+	version := c.GetPgVersion(instanceName)
+
+	var query string
+	if version >= 130000 {
+		query = `
+			/* SQL_OPTIMA_PHASE8 */
+			SELECT 
+				queryid, 
+				COALESCE(d.datname, 'unknown') as datname,
+				COALESCE(u.rolname, 'unknown') as username,
+				calls, 
+				total_exec_time + total_plan_time as total_time,
+				rows, 
+				shared_blks_hit, 
+				shared_blks_read, 
+				shared_blks_dirtied, 
+				shared_blks_written, 
+				temp_blks_read, 
+				temp_blks_written, 
+				blk_read_time, 
+				blk_write_time,
+				wal_bytes
+			FROM pg_stat_statements s
+			LEFT JOIN pg_database d ON s.dbid = d.oid
+			LEFT JOIN pg_roles u ON s.userid = u.oid
+			LIMIT 500
+		`
+	} else {
+		query = `
+			/* SQL_OPTIMA_PHASE8_LEGACY */
+			SELECT 
+				queryid, 
+				COALESCE(d.datname, 'unknown') as datname,
+				COALESCE(u.rolname, 'unknown') as username,
+				calls, 
+				total_time,
+				rows, 
+				shared_blks_hit, 
+				shared_blks_read, 
+				shared_blks_dirtied, 
+				shared_blks_written, 
+				temp_blks_read, 
+				temp_blks_written, 
+				blk_read_time, 
+				blk_write_time,
+				0 as wal_bytes
+			FROM pg_stat_statements s
+			LEFT JOIN pg_database d ON s.dbid = d.oid
+			LEFT JOIN pg_roles u ON s.userid = u.oid
+			LIMIT 500
+		`
+	}
+
 	rows, err := db.Query(query)
 	if err != nil {
-		// Fallback for older PG or missing columns
-		query = `
-			SELECT queryid, 'unknown', 'unknown', calls, total_time, rows, 
-			shared_blks_hit, shared_blks_read, shared_blks_dirtied, shared_blks_written, 
-			temp_blks_read, temp_blks_written, blk_read_time, blk_write_time, 0
-			FROM pg_stat_statements LIMIT 500
-		`
-		rows, err = db.Query(query)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 	defer rows.Close()
 

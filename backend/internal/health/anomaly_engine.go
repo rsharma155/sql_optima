@@ -146,13 +146,13 @@ func (ae *AnomalyEngine) DetectQueryRegressions(ctx context.Context, serverName 
 	query := `
 		WITH current_15_mins AS (
 			SELECT query_hash,
-			       AVG(exec_time_ms) AS current_avg_duration_ms,
-			       SUM(execution_count) AS total_executions
-			FROM sqlserver_top_queries
-			WHERE server_instance_name = $1
-			  AND capture_timestamp >= NOW() - INTERVAL '15 minutes'
+			       AVG(total_elapsed_ms / NULLIF(total_executions, 0)) AS current_avg_duration_ms,
+			       SUM(total_executions) AS total_executions
+			FROM sqlserver_query_metrics_v2
+			WHERE instance_id = $1
+			  AND ts >= NOW() - INTERVAL '15 minutes'
 			GROUP BY query_hash
-			HAVING SUM(execution_count) >= 5
+			HAVING SUM(total_executions) >= 5
 		),
 		baseline_7days_ago AS (
 			SELECT query_hash,

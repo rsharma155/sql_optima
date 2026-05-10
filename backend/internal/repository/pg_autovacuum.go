@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -92,7 +93,8 @@ func (c *PgRepository) GetBloatEstimates(instanceName string, limit int) ([]PgBl
 		}
 
 		q := `
-			SELECT /* SQL_OPTIMA */  
+			/* SQL_OPTIMA */ 
+			SELECT  
 				$1 as database_name,
 				s.schemaname,
 				s.relname,
@@ -172,12 +174,12 @@ func (c *PgRepository) GetBloatEstimates(instanceName string, limit int) ([]PgBl
 // GetIdleInTransactionSessions returns sessions currently idle in a transaction.
 func (c *PgRepository) GetIdleInTransactionSessions(instanceName string) ([]PgIdleInTransactionSession, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -186,7 +188,8 @@ func (c *PgRepository) GetIdleInTransactionSessions(instanceName string) ([]PgId
 	}
 
 	q := `
-		SELECT /* SQL_OPTIMA */  
+		/* SQL_OPTIMA */ 
+		SELECT 
 			pid,
 			COALESCE(usename, '')         AS user_name,
 			COALESCE(datname, '')         AS database,
@@ -227,12 +230,12 @@ func (c *PgRepository) GetIdleInTransactionSessions(instanceName string) ([]PgId
 // GetXIDWraparoundRisk returns per-database XID freeze risk derived from age(datfrozenxid).
 func (c *PgRepository) GetXIDWraparoundRisk(instanceName string) ([]PgXIDWraparoundRisk, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -242,7 +245,7 @@ func (c *PgRepository) GetXIDWraparoundRisk(instanceName string) ([]PgXIDWraparo
 
 	// wraparound_limit is autovacuum_freeze_max_age (default 200M); we derive it from pg_settings.
 	q := ` /* SQL_OPTIMA */ 
-		WITH limit_val AS (
+		;WITH limit_val AS (
 			SELECT /* SQL_OPTIMA */   COALESCE(setting::bigint, 200000000) AS max_age
 			FROM pg_settings WHERE name = 'autovacuum_freeze_max_age'
 		)
@@ -305,12 +308,12 @@ type PgLongRunningTransaction struct {
 // GetLongRunningTransactions returns active transactions running longer than 1 minute.
 func (c *PgRepository) GetLongRunningTransactions(instanceName string) ([]PgLongRunningTransaction, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -318,8 +321,8 @@ func (c *PgRepository) GetLongRunningTransactions(instanceName string) ([]PgLong
 		return nil, fmt.Errorf("connection not found for %s", instanceName)
 	}
 
-	q := `
-		SELECT /* SQL_OPTIMA */  
+	q := `/* SQL_OPTIMA */ 
+		SELECT  
 			pid,
 			COALESCE(usename, '')           AS user_name,
 			COALESCE(datname, '')           AS database,
@@ -391,8 +394,8 @@ func (c *PgRepository) GetIndexBloat(instanceName string, limit int) ([]PgIndexB
 			continue
 		}
 
-		q := `
-			SELECT /* SQL_OPTIMA */  
+		q := `/* SQL_OPTIMA */ 
+			SELECT  
 				$1 as database_name,
 				i.schemaname,
 				i.relname                                            AS table_name,
@@ -453,12 +456,12 @@ func (c *PgRepository) GetIndexBloat(instanceName string, limit int) ([]PgIndexB
 // GetWALArchiverRisk returns a combined WAL archiver health and slot retention summary.
 func (c *PgRepository) GetWALArchiverRisk(instanceName string) (*PgWALArchiverRisk, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 		}
 	}
@@ -492,8 +495,8 @@ func (c *PgRepository) GetWALArchiverRisk(instanceName string) (*PgWALArchiverRi
 	}
 
 	// Replication slot retention.
-	slotQ := `
-		SELECT /* SQL_OPTIMA */  
+	slotQ := `/* SQL_OPTIMA */ 
+		SELECT 
 			COALESCE(slot_name, '')                                            AS slot_name,
 			COALESCE(
 				(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) / 1048576.0)::float8,

@@ -35,6 +35,15 @@ type PostgresControlCenterRow struct {
 	DeadTuplePct       float64   `json:"dead_tuple_pct"`
 	HealthScore        int       `json:"health_score"`
 	HealthStatus       string    `json:"health_status"`
+
+	// v2 additions — 2026-05-07
+	IdleSessions        int     `json:"idle_sessions"`
+	IdleInTxnSessions   int     `json:"idle_in_txn_sessions"`
+	ConnectionsMax      int     `json:"connections_max"`
+	ConnectionsUsed     int     `json:"connections_used"`
+	ConnectionsUsagePct float64 `json:"connections_usage_pct"`
+	CacheHitRatioPct    float64 `json:"cache_hit_ratio_pct"`
+	DeadlocksPerMin     float64 `json:"deadlocks_per_min"`
 }
 
 type PostgresReplicationLagDetailRow struct {
@@ -49,7 +58,7 @@ type PostgresReplicationLagDetailRow struct {
 func pgControlCenterHash(r PostgresControlCenterRow) uint64 {
 	h := fnv.New64a()
 	// exclude timestamp
-	_, _ = fmt.Fprintf(h, "%s|%g|%g|%g|%g|%g|%d|%g|%g|%d|%d|%d|%d|%d|%g|%d|%s",
+	_, _ = fmt.Fprintf(h, "%s|%g|%g|%g|%g|%g|%d|%g|%g|%d|%d|%d|%d|%d|%g|%d|%s|%d|%d|%d|%d|%g|%g|%g",
 		r.ServerInstanceName,
 		r.WALMBPerMin,
 		r.WALSizeMB,
@@ -67,6 +76,13 @@ func pgControlCenterHash(r PostgresControlCenterRow) uint64 {
 		r.DeadTuplePct,
 		r.HealthScore,
 		r.HealthStatus,
+		r.IdleSessions,
+		r.IdleInTxnSessions,
+		r.ConnectionsMax,
+		r.ConnectionsUsed,
+		r.ConnectionsUsagePct,
+		r.CacheHitRatioPct,
+		r.DeadlocksPerMin,
 	)
 	return h.Sum64()
 }
@@ -91,8 +107,11 @@ func (tl *TimescaleLogger) LogPostgresControlCenterStats(ctx context.Context, ro
 			xid_age, xid_wraparound_pct,
 			tps, active_sessions, waiting_sessions, slow_queries_count,
 			blocking_sessions, autovacuum_workers, dead_tuple_pct,
-			health_score, health_status
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+			health_score, health_status,
+			idle_sessions, idle_in_txn_sessions, connections_max,
+			connections_used, connections_usage_pct, cache_hit_ratio_pct,
+			deadlocks_per_min
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 	`
 	_, err := tl.pool.Exec(ctx, q,
 		row.CaptureTimestamp, row.ServerInstanceName,
@@ -103,6 +122,9 @@ func (tl *TimescaleLogger) LogPostgresControlCenterStats(ctx context.Context, ro
 		row.TPS, row.ActiveSessions, row.WaitingSessions, row.SlowQueriesCount,
 		row.BlockingSessions, row.AutovacuumWorkers, row.DeadTuplePct,
 		row.HealthScore, row.HealthStatus,
+		row.IdleSessions, row.IdleInTxnSessions, row.ConnectionsMax,
+		row.ConnectionsUsed, row.ConnectionsUsagePct, row.CacheHitRatioPct,
+		row.DeadlocksPerMin,
 	)
 	return err
 }
@@ -119,9 +141,12 @@ func (tl *TimescaleLogger) GetLatestPostgresControlCenterStats(ctx context.Conte
 		       xid_age, xid_wraparound_pct,
 		       tps, active_sessions, waiting_sessions, slow_queries_count,
 		       blocking_sessions, autovacuum_workers, dead_tuple_pct,
-		       health_score, COALESCE(health_status,'')
+		       health_score, COALESCE(health_status,''),
+		       COALESCE(idle_sessions, 0), COALESCE(idle_in_txn_sessions, 0), COALESCE(connections_max, 0),
+		       COALESCE(connections_used, 0), COALESCE(connections_usage_pct, 0), COALESCE(cache_hit_ratio_pct, 0),
+		       COALESCE(deadlocks_per_min, 0)
 		FROM postgres_control_center_stats
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT 1
 	`
@@ -135,6 +160,9 @@ func (tl *TimescaleLogger) GetLatestPostgresControlCenterStats(ctx context.Conte
 		&r.TPS, &r.ActiveSessions, &r.WaitingSessions, &r.SlowQueriesCount,
 		&r.BlockingSessions, &r.AutovacuumWorkers, &r.DeadTuplePct,
 		&r.HealthScore, &r.HealthStatus,
+		&r.IdleSessions, &r.IdleInTxnSessions, &r.ConnectionsMax,
+		&r.ConnectionsUsed, &r.ConnectionsUsagePct, &r.CacheHitRatioPct,
+		&r.DeadlocksPerMin,
 	)
 	if err != nil {
 		return nil, err
@@ -167,15 +195,17 @@ func (tl *TimescaleLogger) LogPostgresReplicationLagDetail(ctx context.Context, 
 }
 
 type PostgresControlCenterHistory struct {
-	Labels             []string  `json:"labels"`
-	TPS                []float64 `json:"tps"`
-	WALMBPerMin        []float64 `json:"wal_mb_per_min"`
-	ReplLagSec         []float64 `json:"replica_lag_sec"`
-	CheckpointReqRatio []float64 `json:"checkpoint_req_ratio"`
-	Autovacuum         []int     `json:"autovacuum_workers"`
-	DeadTuplePct       []float64 `json:"dead_tuple_pct"`
-	BlockingSessions   []int     `json:"blocking_sessions"`
-	HealthScore        []int     `json:"health_score"`
+	Labels              []string  `json:"labels"`
+	TPS                 []float64 `json:"tps"`
+	WALMBPerMin         []float64 `json:"wal_mb_per_min"`
+	ReplLagSec          []float64 `json:"replica_lag_sec"`
+	CheckpointReqRatio  []float64 `json:"checkpoint_req_ratio"`
+	Autovacuum          []int     `json:"autovacuum_workers"`
+	DeadTuplePct        []float64 `json:"dead_tuple_pct"`
+	BlockingSessions    []int     `json:"blocking_sessions"`
+	HealthScore         []int     `json:"health_score"`
+	CacheHitRatioPct    []float64 `json:"cache_hit_ratio_pct"`
+	ConnectionsUsagePct []float64 `json:"connections_usage_pct"`
 }
 
 func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, instanceName string, from, to string, limit int) (*PostgresControlCenterHistory, error) {
@@ -185,7 +215,7 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	where := `server_instance_name = $1`
+	where := `UPPER(server_instance_name) = UPPER($1)`
 	args := []interface{}{instanceName}
 	if from != "" && to != "" {
 		where += ` AND capture_timestamp >= $2 AND capture_timestamp <= $3`
@@ -194,14 +224,16 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 
 	query := fmt.Sprintf(`
 		SELECT capture_timestamp,
-		       tps,
-		       wal_mb_per_min,
-		       replica_lag_sec,
-		       checkpoint_req_ratio,
-		       autovacuum_workers,
-		       dead_tuple_pct,
-		       blocking_sessions,
-		       health_score
+		       COALESCE(tps, 0),
+		       COALESCE(wal_mb_per_min, 0),
+		       COALESCE(replica_lag_sec, 0),
+		       COALESCE(checkpoint_req_ratio, 0),
+		       COALESCE(autovacuum_workers, 0),
+		       COALESCE(dead_tuple_pct, 0),
+		       COALESCE(blocking_sessions, 0),
+		       COALESCE(health_score, 0),
+		       COALESCE(cache_hit_ratio_pct, 0),
+		       COALESCE(connections_usage_pct, 0)
 		FROM postgres_control_center_stats
 		WHERE %s
 		ORDER BY capture_timestamp DESC
@@ -211,14 +243,16 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 	if from != "" && to != "" {
 		query = fmt.Sprintf(`
 			SELECT capture_timestamp,
-				tps,
-				wal_mb_per_min,
-				replica_lag_sec,
-				checkpoint_req_ratio,
-				autovacuum_workers,
-				dead_tuple_pct,
-				blocking_sessions,
-				health_score
+				COALESCE(tps, 0),
+				COALESCE(wal_mb_per_min, 0),
+				COALESCE(replica_lag_sec, 0),
+				COALESCE(checkpoint_req_ratio, 0),
+				COALESCE(autovacuum_workers, 0),
+				COALESCE(dead_tuple_pct, 0),
+				COALESCE(blocking_sessions, 0),
+				COALESCE(health_score, 0),
+				COALESCE(cache_hit_ratio_pct, 0),
+				COALESCE(connections_usage_pct, 0)
 			FROM postgres_control_center_stats
 			WHERE %s
 			ORDER BY capture_timestamp DESC
@@ -244,11 +278,13 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 		dead  float64
 		block int
 		score int
+		cache float64
+		conn  float64
 	}
 	var tmp []r0
 	for rows.Next() {
 		var r r0
-		if err := rows.Scan(&r.ts, &r.tps, &r.wal, &r.lagS, &r.cp, &r.auto, &r.dead, &r.block, &r.score); err != nil {
+		if err := rows.Scan(&r.ts, &r.tps, &r.wal, &r.lagS, &r.cp, &r.auto, &r.dead, &r.block, &r.score, &r.cache, &r.conn); err != nil {
 			continue
 		}
 		tmp = append(tmp, r)
@@ -265,6 +301,8 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 		out.DeadTuplePct = append(out.DeadTuplePct, r.dead)
 		out.BlockingSessions = append(out.BlockingSessions, r.block)
 		out.HealthScore = append(out.HealthScore, r.score)
+		out.CacheHitRatioPct = append(out.CacheHitRatioPct, r.cache)
+		out.ConnectionsUsagePct = append(out.ConnectionsUsagePct, r.conn)
 	}
 	return out, nil
 }
@@ -282,7 +320,7 @@ func (tl *TimescaleLogger) GetPostgresReplicationLagDetail(ctx context.Context, 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	where := `server_instance_name = $1`
+	where := `UPPER(server_instance_name) = UPPER($1)`
 	args := []interface{}{instanceName}
 	if from != "" && to != "" {
 		where += ` AND capture_timestamp >= $2 AND capture_timestamp <= $3`

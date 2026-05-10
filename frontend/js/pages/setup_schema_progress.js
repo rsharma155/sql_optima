@@ -35,17 +35,14 @@
             outlet.innerHTML = '<div class="page-view active setup-ref"><div class="setup-ref__inner"><div class="setup-ref-card"><p class="setup-ref-muted">No setup draft found. Return to Initial setup.</p><button type="button" class="btn btn-accent" data-action="navigate" data-route="setup">Back to setup</button></div></div></div>';
             return;
         }
-
-        var steps = [
-            { n: 0, label: '00 · Core schema', file: '00_timescale_schema.sql' },
-            { n: 1, label: '01 · Seed data', file: '01_seed_data.sql' },
-            { n: 2, label: '02 · Rule engine', file: '02_rule_engine.sql' },
-            { n: 3, label: '03 · PG rules', file: '03_additional_pg_rules.sql' },
-            { n: 4, label: '04 · Alert engine', file: '04_alert_engine.sql' },
-            { n: 5, label: '05 · OS metrics', file: '05_os_metrics_collector.sql' },
-            { n: 6, label: '06 · SQL Server V2', file: '06_sqlserver_enterprise_metrics_v2.sql' },
-            { n: 7, label: '07 · PG snapshot', file: '07_pg_instance_snapshot.sql' }
-        ];
+var steps = [
+    { n: 0, label: '01 · Core schema', file: '01_timescale_schema.sql' },
+    { n: 1, label: '02 · Rule engine', file: '02_rule_engine.sql' },
+    { n: 2, label: '03 · PG rules', file: '03_additional_pg_rules.sql' },
+    { n: 3, label: '04 · Alert engine', file: '04_alert_engine.sql' },
+    { n: 4, label: '05 · OS metrics', file: '05_os_metrics_collector.sql' },
+    { n: 5, label: '06 · Seed data', file: '06_seed_data.sql' }
+];
 
         var panels = steps.map(function(s, i) {
             return (

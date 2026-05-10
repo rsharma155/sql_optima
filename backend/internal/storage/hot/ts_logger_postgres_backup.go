@@ -81,7 +81,7 @@ func (tl *TimescaleLogger) GetLatestPostgresBackupRun(ctx context.Context, insta
 		       started_at, finished_at, duration_seconds,
 		       wal_archived_until, COALESCE(repo,''), size_bytes, COALESCE(error_message,''), metadata
 		FROM postgres_backup_runs
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT 1
 	`
@@ -111,7 +111,7 @@ func (tl *TimescaleLogger) GetPostgresBackupRunHistory(ctx context.Context, inst
 		       started_at, finished_at, duration_seconds,
 		       wal_archived_until, COALESCE(repo,''), size_bytes, COALESCE(error_message,''), metadata
 		FROM postgres_backup_runs
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`

@@ -170,11 +170,11 @@ func (h *HealthHandlers) RegressedQueries(w http.ResponseWriter, r *http.Request
 
 	rows, err := pool.Query(r.Context(), `
 		WITH current_15_mins AS (
-			SELECT query_hash, AVG(exec_time_ms) AS current_avg_duration_ms,
-			       SUM(execution_count) AS exec_count, MIN(query_text) AS sample_text
-			FROM sqlserver_top_queries
-			WHERE server_instance_name = $1 AND capture_timestamp >= NOW() - INTERVAL '15 minutes'
-			GROUP BY query_hash HAVING SUM(execution_count) >= 5
+			SELECT query_hash, AVG(total_elapsed_ms / NULLIF(total_executions, 0)) AS current_avg_duration_ms,
+			       SUM(total_executions) AS exec_count, MIN(statement_text) AS sample_text
+			FROM sqlserver_query_metrics_v2
+			WHERE instance_id = $1 AND ts >= NOW() - INTERVAL '15 minutes'
+			GROUP BY query_hash HAVING SUM(total_executions) >= 5
 		),
 		baseline_7days AS (
 			SELECT query_hash, AVG(avg_exec_time_ms) AS baseline_duration_ms

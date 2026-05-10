@@ -40,6 +40,9 @@ type Rule struct {
 	ThresholdValue  json.RawMessage `json:"threshold_value"`
 	TargetDBType    string          `json:"target_db_type"` // "sqlserver" or "postgres"
 	IsEnabled       bool            `json:"is_enabled"`
+	ApplicabilitySQL string         `json:"applicability_sql"`
+	ContextTags     json.RawMessage `json:"context_tags"`
+	Confidence      string          `json:"confidence"`
 	Priority        int             `json:"priority"`
 }
 
@@ -53,6 +56,8 @@ type DetectionPayload struct {
 	CurrentValue     string                   `json:"current_value"`
 	RecommendedValue string                   `json:"recommended_value"`
 	Status           string                   `json:"status"`
+	ContextTags     json.RawMessage          `json:"context_tags,omitempty"`
+	Confidence      string                   `json:"confidence,omitempty"`
 	DetectedAt       time.Time                `json:"detected_at"`
 	Error            string                   `json:"error,omitempty"`
 }
@@ -69,6 +74,8 @@ type RuleResult struct {
 	RecommendedValue string          `json:"recommended_value"`
 	Description      string          `json:"description"`
 	FixScript        string          `json:"fix_script"`
+	ContextTags     json.RawMessage  `json:"context_tags,omitempty"`
+	Confidence      string           `json:"confidence,omitempty"`
 	JSONPayload      json.RawMessage `json:"json_payload"`
 	EvaluatedAt      time.Time       `json:"evaluated_at"`
 }
@@ -92,6 +99,8 @@ type DashboardEntry struct {
 	ImpactDetail     string             `json:"impact_detail,omitempty"`
 	RiskLevel        string             `json:"risk_level,omitempty"`
 	ConfidenceNote   string             `json:"confidence_note,omitempty"`
+	ContextTags      json.RawMessage    `json:"context_tags,omitempty"`
+	Confidence       string             `json:"confidence,omitempty"`
 }
 
 type RuleHistoryPoint struct {

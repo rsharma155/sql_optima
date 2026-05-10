@@ -1,47 +1,38 @@
 /*
- * SQL Optima — https://github.com/rsharma155/sql_optima
- *
- * Purpose: PostgreSQL enterprise metrics dashboard.
- *
- * Author: Ravi Sharma
- * Copyright (c) 2026 Ravi Sharma
- * SPDX-License-Identifier: MIT
+ * SQL Optima — PostgreSQL enterprise metrics dashboard.
  */
 
-/**
- * PostgreSQL Enterprise Dashboard View
- * 
- * This page displays PostgreSQL enterprise metrics collected from TimescaleDB:
- * - BGWriter/Checkpoint statistics
- * - WAL Archiver statistics
- * 
- * Data is collected every 15 minutes by the background collector and stored
- * in TimescaleDB for historical analysis.
- */
 window.PgEnterpriseDashboardView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
     if (!inst) { alert('Select an instance first.'); return; }
     if (inst.type !== 'postgres') { alert('Enterprise monitoring is for PostgreSQL only.'); return; }
     const dbName = window.appState.currentDatabase || 'all';
 
-    // 1. Initial Shell
+    window.appState.activeViewId = 'drilldown-pg-enterprise';
+    
+    // We always reload to ensure fresh bindings
     window.routerOutlet.innerHTML = await window.loadTemplate('/pages/pg_enterprise.html', { inst, dbName });
     window.initPageTimePicker();
 
-    // 2. Load data from TimescaleDB API endpoints
-    const from = window.appState.fromTs;
-    const to = window.appState.toTs;
-    loadBGWriterData(inst.name, from, to);
-    loadArchiverData(inst.name, from, to);
-    loadWaitEvents(inst.name, from, to);
-    loadDbIO(inst.name, from, to);
-    loadConfigDrift(inst.name);
-    loadQueryInternals(inst.name, from, to);
+    if (window.appState.fetchingPgEnterpriseMetrics) return;
+    window.appState.fetchingPgEnterpriseMetrics = true;
 
-    // 3. Update Header Info
-    updateEnterpriseHeader(inst.name);
+    try {
+        const from = window.appState.fromTs;
+        const to = window.appState.toTs;
+        await Promise.all([
+            loadBGWriterData(inst.name, from, to),
+            loadArchiverData(inst.name, from, to),
+            loadWaitEvents(inst.name, from, to),
+            loadDbIO(inst.name, from, to),
+            loadConfigDrift(inst.name),
+            loadQueryInternals(inst.name, from, to),
+            updateEnterpriseHeader(inst.name)
+        ]);
+    } finally {
+        window.appState.fetchingPgEnterpriseMetrics = false;
+    }
 
-    // 4. Set Refresh Interval
     if (window.pgEnterpriseInterval) clearInterval(window.pgEnterpriseInterval);
     window.pgEnterpriseInterval = setInterval(() => {
         if (window.appState.activeViewId === 'drilldown-pg-enterprise') {
@@ -49,7 +40,7 @@ window.PgEnterpriseDashboardView = async function() {
         } else {
             clearInterval(window.pgEnterpriseInterval);
         }
-    }, 60000); // 60s refresh for enterprise metrics
+    }, 30000);
 };
 
 async function updateEnterpriseHeader(instName) {
@@ -60,288 +51,17 @@ async function updateEnterpriseHeader(instName) {
             if (document.getElementById('pg-uptime')) document.getElementById('pg-uptime').textContent = 'Uptime: ' + (s.uptime || 'N/A');
             if (document.getElementById('pg-version')) document.getElementById('pg-version').textContent = (s.version || '').split(',')[0];
             if (document.getElementById('pgLastRefreshTime')) document.getElementById('pgLastRefreshTime').textContent = new Date().toLocaleTimeString();
-            
+
             // Health Score
             const hs = s.health_score || 0;
             const healthColor = hs > 80 ? 'success' : hs > 60 ? 'warning' : 'danger';
             const hBadge = document.getElementById('pgHealthScoreBadge');
             if (hBadge) {
                 hBadge.textContent = hs;
-                hBadge.className = `badge badge-${healthColor}`;
+                hBadge.style.color = `var(--${healthColor})`;
             }
         }
     } catch (e) { console.error("PG enterprise header fetch failed:", e); }
-}
-
-
-function loadWaitEvents(instanceName, from, to) {
-    const section = document.getElementById('waits-section');
-    if (!section) return;
-
-    let url = `/api/postgres/waits/history?instance=${encodeURIComponent(instanceName)}`;
-    if (from && to) {
-        url += `&from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
-    } else {
-        url += `&limit=1200`;
-    }
-
-    window.apiClient.authenticatedFetch(url)
-        .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-        .then(data => {
-            const rows = data.rows || [];
-            if (!Array.isArray(rows) || rows.length === 0) {
-                section.innerHTML = `<div class="alert alert-info"><i class="fa-solid fa-info-circle"></i> No wait-event history yet (collector will populate after next cycle).</div>`;
-                return;
-            }
-
-            // Aggregate by wait_event_type for a simple “contention taxonomy” view.
-            const byTs = new Map(); // ts -> {type -> count}
-            rows.forEach(r => {
-                const ts = r.capture_timestamp || r.timestamp;
-                const t = (r.wait_event_type || 'Other') || 'Other';
-                const c = Number(r.sessions_count || 0);
-                if (!ts) return;
-                if (!byTs.has(ts)) byTs.set(ts, {});
-                byTs.get(ts)[t] = (byTs.get(ts)[t] || 0) + c;
-            });
-            const labels = Array.from(byTs.keys()).sort();
-            const types = new Set();
-            labels.forEach(ts => Object.keys(byTs.get(ts) || {}).forEach(k => types.add(k)));
-            const typeArr = Array.from(types).slice(0, 6); // keep chart readable
-            const palette = ['#3b82f6','#10b981','#f59e0b','#ef4444','#a855f7','#22c55e'];
-            const datasets = typeArr.map((t, idx) => ({
-                label: t,
-                data: labels.map(ts => (byTs.get(ts)?.[t] || 0)),
-                borderColor: palette[idx % palette.length],
-                backgroundColor: palette[idx % palette.length],
-                tension: 0.25,
-                pointRadius: 0
-            }));
-
-            section.innerHTML = `
-                <div class="chart-container" style="height:180px;">
-                    <canvas id="pgWaitsChartAdvanced"></canvas>
-                </div>
-                <div class="table-footer"><small class="text-muted">Aggregated by wait_event_type from pg_stat_activity snapshots.</small></div>
-            `;
-            const ctx = document.getElementById('pgWaitsChartAdvanced');
-            if (ctx && window.Chart) {
-                window.currentCharts = window.currentCharts || {};
-                if (window.currentCharts.pgWaitsAdv) window.currentCharts.pgWaitsAdv.destroy();
-                window.currentCharts.pgWaitsAdv = new Chart(ctx.getContext('2d'), {
-                    type: 'line',
-                    data: { labels: labels.map(l => new Date(l).toLocaleTimeString()), datasets },
-                    options: { responsive:true, maintainAspectRatio:false }
-                });
-            }
-        })
-        .catch(err => {
-            section.innerHTML = `<div class="alert alert-danger"><i class="fa-solid fa-exclamation-circle"></i> Failed to load wait events: ${window.escapeHtml(err.message)}</div>`;
-        });
-}
-
-function loadDbIO(instanceName, from, to) {
-    const section = document.getElementById('io-section');
-    if (!section) return;
-
-    let url = `/api/postgres/io/history?instance=${encodeURIComponent(instanceName)}`;
-    if (from && to) {
-        url += `&from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
-    } else {
-        url += `&limit=2000`;
-    }
-
-    window.apiClient.authenticatedFetch(url)
-        .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-        .then(data => {
-            const rows = data.rows || [];
-            if (!Array.isArray(rows) || rows.length === 0) {
-                section.innerHTML = `<div class="alert alert-info"><i class="fa-solid fa-info-circle"></i> No IO history yet (collector will populate after next cycle).</div>`;
-                return;
-            }
-
-            // Database selector is built from the latest timestamp snapshot.
-            const latestTs = rows[0]?.capture_timestamp;
-            const latestRows = rows.filter(r => r.capture_timestamp === latestTs);
-            const dbs = Array.from(new Set(latestRows.map(r => String(r.database_name || '')).filter(Boolean))).sort();
-            latestRows.sort((a, b) => Number(b.temp_bytes || 0) - Number(a.temp_bytes || 0));
-            const defaultDb = (latestRows[0]?.database_name) || (dbs[0] || rows[0]?.database_name || '');
-
-            window._pgEnterpriseIoRows = rows; // cached for dropdown re-render
-            window._pgEnterpriseIoDefaultDb = defaultDb;
-
-            const renderDb = (dbName) => {
-                const safeDb = String(dbName || '');
-                const all = window._pgEnterpriseIoRows || [];
-                const series = all.filter(r => String(r.database_name || '') === safeDb).slice().reverse();
-                if (!series.length) return;
-
-                const labels = series.map(r => new Date(r.capture_timestamp).toLocaleTimeString());
-                const d = (arr, k) => arr.map((r, i) => i === 0 ? 0 : Math.max(0, Number(r[k] || 0) - Number(arr[i - 1][k] || 0)));
-                const blksReadD = d(series, 'blks_read');
-                const tempBytesD = d(series, 'temp_bytes').map(v => v / 1024 / 1024);
-
-                const ctx = document.getElementById('pgIoChartAdvanced');
-                if (ctx && window.Chart) {
-                    window.currentCharts = window.currentCharts || {};
-                    if (window.currentCharts.pgIoAdv) window.currentCharts.pgIoAdv.destroy();
-                    window.currentCharts.pgIoAdv = new Chart(ctx.getContext('2d'), {
-                        type: 'line',
-                        data: {
-                            labels,
-                            datasets: [
-                                { label: 'blks_read Δ', data: blksReadD, borderColor: '#3b82f6', backgroundColor: '#3b82f6', tension: 0.25, pointRadius: 0 },
-                                { label: 'temp_bytes Δ (MB)', data: tempBytesD, borderColor: '#ef4444', backgroundColor: '#ef4444', tension: 0.25, pointRadius: 0 }
-                            ]
-                        },
-                        options: { responsive: true, maintainAspectRatio: false }
-                    });
-                }
-            };
-
-            section.innerHTML = `
-                <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:0.35rem;">
-                    <div class="text-muted" style="font-size:0.75rem;">Database</div>
-                    <select id="pgIoDbSelectAdvanced" class="form-select" style="padding:0.25rem 0.5rem; font-size:0.75rem; max-width:360px;">
-                        ${(dbs.length ? dbs : [defaultDb]).map(db => `
-                            <option value="${window.escapeHtml(db)}" ${db === defaultDb ? 'selected' : ''}>${window.escapeHtml(db)}</option>
-                        `).join('')}
-                    </select>
-                    <div class="text-muted" style="font-size:0.7rem;">(deltas per snapshot)</div>
-                </div>
-                <div class="chart-container" style="height:180px;">
-                    <canvas id="pgIoChartAdvanced"></canvas>
-                </div>
-                <div class="table-footer"><small class="text-muted">blks_read and temp_bytes are computed as deltas between stored pg_stat_database counters. Temp is MB per interval.</small></div>
-            `;
-
-            const sel = document.getElementById('pgIoDbSelectAdvanced');
-            if (sel) {
-                sel.addEventListener('change', () => renderDb(sel.value));
-            }
-            renderDb(defaultDb);
-        })
-        .catch(err => {
-            section.innerHTML = `<div class="alert alert-danger"><i class="fa-solid fa-exclamation-circle"></i> Failed to load IO stats: ${window.escapeHtml(err.message)}</div>`;
-        });
-}
-
-function loadConfigDrift(instanceName) {
-    const section = document.getElementById('drift-section');
-    if (!section) return;
-    window.apiClient.authenticatedFetch(`/api/postgres/settings/drift?instance=${encodeURIComponent(instanceName)}`)
-        .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-        .then(data => {
-            const changes = data.changes || [];
-            if (!Array.isArray(changes) || changes.length === 0) {
-                section.innerHTML = `<div class="alert alert-info"><i class="fa-solid fa-info-circle"></i> No config drift detected (or only one snapshot exists so far).</div>`;
-                return;
-            }
-            section.innerHTML = `
-                <table class="data-table" style="font-size:0.75rem;">
-                    <thead><tr><th title="The PostgreSQL configuration parameter name (from pg_settings)">Setting</th><th title="Previous value from the older snapshot">Old</th><th title="Current value from the latest snapshot — changed since the previous capture">New</th><th title="Unit of the setting (e.g. kB, ms, s, min)">Unit</th><th title="Source of the setting (e.g. postgresql.conf → ALTER SYSTEM). Shows how the change was applied.">Source</th></tr></thead>
-                    <tbody>
-                        ${changes.map(c => `
-                            <tr>
-                                <td><strong>${window.escapeHtml(c.name)}</strong></td>
-                                <td class="text-muted">${window.escapeHtml(c.old_value || '')}</td>
-                                <td class="text-accent font-bold">${window.escapeHtml(c.new_value || '')}</td>
-                                <td class="text-muted">${window.escapeHtml(c.unit || '')}</td>
-                                <td class="text-muted">${window.escapeHtml((c.old_source || '') + ' → ' + (c.new_source || ''))}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
-        })
-        .catch(err => {
-            section.innerHTML = `<div class="alert alert-danger"><i class="fa-solid fa-exclamation-circle"></i> Failed to load drift: ${window.escapeHtml(err.message)}</div>`;
-        });
-}
-
-function loadQueryInternals(instanceName, from, to) {
-    const section = document.getElementById('qint-section');
-    if (!section) return;
-    
-    let qurl = `/api/postgres/queries?instance=${encodeURIComponent(instanceName)}`;
-    if (from && to) {
-        qurl += `&from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
-    } else {
-        const d_to = new Date();
-        const d_from = new Date(d_to.getTime() - 60 * 60 * 1000);
-        qurl += `&from=${encodeURIComponent(d_from.toISOString())}&to=${encodeURIComponent(d_to.toISOString())}`;
-    }
-    window.apiClient.authenticatedFetch(qurl)
-        .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-        .then(data => {
-            window._pgEnterpriseQueriesMeta = {
-                end_capture: data.end_capture || '',
-                window_from: data.window_from || '',
-                window_to: data.window_to || '',
-                stats_note: data.stats_note || '',
-                baseline_capture: data.baseline_capture || ''
-            };
-            if (data.pg_stat_statements_enabled === false) {
-                section.innerHTML = `<div class="alert alert-warning"><i class="fa-solid fa-triangle-exclamation"></i> pg_stat_statements is not enabled on this instance.</div>`;
-                return;
-            }
-            const qs = data.queries || [];
-            if (!Array.isArray(qs) || qs.length === 0) {
-                section.innerHTML = `<div class="alert alert-info"><i class="fa-solid fa-info-circle"></i> No query stats returned.</div>`;
-                return;
-            }
-            // Avoid embedding SQL directly into onclick (can break on special chars).
-            window._pgEnterpriseSqlById = window._pgEnterpriseSqlById || {};
-            window._pgEnterpriseUserById = window._pgEnterpriseUserById || {};
-            qs.forEach(q => {
-                const id = String(q.query_id || '');
-                if (!id) return;
-                window._pgEnterpriseSqlById[id] = String(q.query || '');
-                window._pgEnterpriseUserById[id] = String(q.user || '');
-            });
-            window.pgEnterpriseOpenSql = window.pgEnterpriseOpenSql || function(queryId) {
-                const id = String(queryId || '');
-                const sql = window._pgEnterpriseSqlById?.[id] || '';
-                const user = window._pgEnterpriseUserById?.[id] || '';
-                if (typeof window.showPgQueryFingerprintDetails === 'function') {
-                    window.showPgQueryFingerprintDetails(id, user, sql);
-                }
-            };
-
-            // Show “internal” columns (IO-ish) that aren’t in the main dashboard.
-            const top = qs.slice().sort((a,b)=>Number(b.temp_blks_written||0)-Number(a.temp_blks_written||0)).slice(0, 20);
-            section.innerHTML = `
-                <table class="data-table" style="font-size:0.72rem;">
-                    <thead>
-                        <tr>
-                            <th title="PostgreSQL user/role that executed the query">User</th><th title="Total number of times this query was executed in the window">Calls</th><th title="Cumulative wall-clock execution time in milliseconds">Total ms</th><th title="Number of temp blocks written — high values indicate sorts/hashes spilling to disk (consider increasing work_mem)">Temp wr</th><th title="Shared buffer blocks read from disk (not cache). High values suggest the working set exceeds shared_buffers.">Shared rd</th><th title="Total WAL bytes generated by this query. High WAL volume may cause replication lag.">WAL bytes</th><th title="Query text from pg_stat_statements (click to view full SQL)">SQL</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${top.map(q => `
-                            <tr>
-                                <td>${window.escapeHtml(q.user || '')}</td>
-                                <td class="text-right">${Number(q.calls||0).toLocaleString()}</td>
-                                <td class="text-right">${Number(q.total_time||0).toFixed(0)}</td>
-                                <td class="text-right ${Number(q.temp_blks_written||0)>0?'text-warning font-bold':''}">${Number(q.temp_blks_written||0).toLocaleString()}</td>
-                                <td class="text-right">${Number(q.shared_blks_read||0).toLocaleString()}</td>
-                                <td class="text-right">${Number(q.wal_bytes||0).toLocaleString()}</td>
-                                <td style="max-width:520px;">
-                                    <div class="code-snippet pg-sql-preview" style="cursor:pointer; text-decoration:underline;"
-                                         data-action="call" data-fn="pgEnterpriseOpenSql" data-arg="${window.escapeHtml(String(q.query_id||''))}">
-                                        ${window.escapeHtml(q.query || '').slice(0, 220)}
-                                    </div>
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-                <div class="table-footer"><small class="text-muted">Sorted by temp_blks_written (spill risk). Click SQL to view.</small></div>
-            `;
-        })
-        .catch(err => {
-            section.innerHTML = `<div class="alert alert-danger"><i class="fa-solid fa-exclamation-circle"></i> Failed to load query internals: ${window.escapeHtml(err.message)}</div>`;
-        });
 }
 
 function loadBGWriterData(instanceName) {
@@ -349,246 +69,231 @@ function loadBGWriterData(instanceName) {
     if (!section) return;
 
     window.apiClient.authenticatedFetch(`/api/postgres/bgwriter?instance=${encodeURIComponent(instanceName)}`)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            const contentType = response.headers.get('content-type') || '';
-            if (!contentType.includes('application/json')) {
-                throw new Error('Server returned non-JSON response');
-            }
-            return response.json();
-        })
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
         .then(data => {
-            if (data.error) {
-                section.innerHTML = `<div class="alert alert-warning"><i class="fa-solid fa-exclamation-triangle"></i> ${window.escapeHtml(data.error)}</div>`;
-                return;
-            }
-
             if (!data.stats || data.stats.length === 0) {
-                section.innerHTML = `
-                    <div class="alert alert-info">
-                        <i class="fa-solid fa-info-circle"></i> No BGWriter data available yet.
-                        <p class="text-sm mt-1">Data will appear after the first collection cycle (15 min).</p>
-                    </div>
-                `;
+                section.innerHTML = '<div class="alert alert-info">No BGWriter data available yet.</div>';
                 return;
             }
 
-            // Update KPIs with latest data
             const latest = data.stats[0];
-            if (document.getElementById('stat-ckpt-timed')) document.getElementById('stat-ckpt-timed').textContent = formatNumber(latest.checkpoints_timed || 0);
-            if (document.getElementById('stat-ckpt-req')) {
-                const req = latest.checkpoints_req || 0;
-                document.getElementById('stat-ckpt-req').textContent = formatNumber(req);
-                const card = document.getElementById('card-ckpt-req');
-                if (card && req > 10) card.classList.add('border-warning');
+            const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+            set('stat-ckpt-timed', formatNumber(latest.checkpoints_timed || 0));
+            set('stat-ckpt-req', formatNumber(latest.checkpoints_req || 0));
+            set('stat-bgw-halts', formatNumber(latest.maxwritten_clean || 0));
+            
+            if (latest.checkpoints_req > latest.checkpoints_timed) {
+                document.getElementById('card-ckpt-req')?.classList.add('border-warning');
             }
 
-            // Delta/dedupe on client as a safety net: keep only the first row for each timestamp.
-            const seenTs = new Set();
-            const stats = (data.stats || []).filter(s => {
-                const t = String(s.timestamp || '');
-                if (!t || seenTs.has(t)) return false;
-                seenTs.add(t);
-                return true;
-            });
+            const stats = data.stats.slice().reverse();
+            const labels = stats.map(s => new Date(s.time || s.timestamp).toLocaleTimeString());
+            const timed = stats.map(s => Number(s.checkpoints_timed || 0));
+            const req = stats.map(s => Number(s.checkpoints_req || 0));
 
-            // Build a compact trend chart + smaller table.
-            const labels = stats.slice().reverse().map(s => {
-                const d = s.timestamp ? new Date(s.timestamp) : null;
-                return d ? d.toLocaleTimeString() : '—';
-            });
-            const timed = stats.slice().reverse().map(s => Number(s.checkpoints_timed || 0));
-            const req = stats.slice().reverse().map(s => Number(s.checkpoints_req || 0));
-            const wms = stats.slice().reverse().map(s => Number(s.checkpoint_write_time || 0));
-
-            let html = `
-                <div style="display:grid; grid-template-columns: 1.1fr 0.9fr; gap:0.75rem; align-items:start;">
-                    <div class="glass-panel" style="padding:0.6rem; border:none; background:rgba(0,0,0,0.1);">
-                        <div class="text-muted" style="font-size:0.75rem; margin-bottom:0.25rem;">Checkpoint trend</div>
-                        <div style="height:170px;"><canvas id="pgBgwriterChart"></canvas></div>
-                    </div>
-                    <div class="table-responsive" style="max-height:220px; overflow:auto;">
-                        <table class="data-table" style="font-size:0.75rem;">
-                            <thead>
-                                <tr>
-                                    <th title="Capture timestamp from the collector snapshot">Time</th>
-                                    <th class="text-right">Timed</th>
-                                    <th class="text-right">Req</th>
-                                    <th class="text-right">Write ms</th>
-                                    <th class="text-right">Bufs ckpt</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-            `;
-
-            stats.forEach(stat => {
-                const timestamp = stat.timestamp ? new Date(stat.timestamp).toLocaleString() : 'N/A';
-                html += `
-                    <tr>
-                        <td>${window.escapeHtml(timestamp)}</td>
-                        <td class="text-right">${formatNumber(stat.checkpoints_timed || 0, 0)}</td>
-                        <td class="text-right">${formatNumber(stat.checkpoints_req || 0, 0)}</td>
-                        <td class="text-right">${formatNumber(stat.checkpoint_write_time || 0, 0)}</td>
-                        <td class="text-right">${formatNumber(stat.buffers_checkpoint || 0, 0)}</td>
-                    </tr>
-                `;
-            });
-
-            html += `
-                            </tbody>
+            section.innerHTML = `
+                <div class="grid-container">
+                    <div class="col-8 col-tablet-6"><div style="height:200px;"><canvas id="pgBgwriterChart"></canvas></div></div>
+                    <div class="col-4 col-tablet-6 table-container-compact" style="height:200px;">
+                        <table class="modern-table modern-table-compact">
+                            <thead><tr><th>Time</th><th>Timed</th><th>Req</th><th>Write ms</th></tr></thead>
+                            <tbody>${stats.slice(-10).reverse().map(s => `<tr><td>${new Date(s.time || s.timestamp).toLocaleTimeString()}</td><td>${s.checkpoints_timed}</td><td>${s.checkpoints_req}</td><td>${s.checkpoint_write_time}</td></tr>`).join('')}</tbody>
                         </table>
-                        <div class="table-footer"><small class="text-muted">Showing ${stats.length} most recent captures (deduped).</small></div>
                     </div>
                 </div>
             `;
 
-            section.innerHTML = html;
-
-            // Render chart
-            try {
-                window.currentCharts = window.currentCharts || {};
-                if (window.currentCharts.pgBgwriterChart) {
-                    window.currentCharts.pgBgwriterChart.destroy();
-                }
-                const c = document.getElementById('pgBgwriterChart');
-                if (c && window.Chart) {
-                    window.currentCharts.pgBgwriterChart = new Chart(c.getContext('2d'), {
-                        type: 'line',
-                        data: {
-                            labels,
-                            datasets: [
-                                { label: 'checkpoints_timed', data: timed, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.12)', tension: 0.25, pointRadius: 0 },
-                                { label: 'checkpoints_req', data: req, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.12)', tension: 0.25, pointRadius: 0 },
-                                { label: 'write_time_ms', data: wms, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.12)', tension: 0.25, pointRadius: 0, yAxisID: 'y2' },
-                            ]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            plugins: { legend: { display: true, labels: { boxWidth: 10, font: { size: 10 } } } },
-                            scales: {
-                                y: { ticks: { font: { size: 10 } }, grid: { color: 'rgba(148,163,184,0.15)' } },
-                                y2: { position: 'right', ticks: { font: { size: 10 } }, grid: { display: false } },
-                                x: { ticks: { font: { size: 10 }, maxTicksLimit: 8 }, grid: { display: false } }
-                            }
-                        }
-                    });
-                }
-            } catch (e) {
-                // non-fatal
-            }
-        })
-        .catch(error => {
-            console.error('Error loading BGWriter data:', error);
-            section.innerHTML = `<div class="alert alert-danger"><i class="fa-solid fa-exclamation-circle"></i> Failed to load BGWriter data: ${window.escapeHtml(error.message)}</div>`;
+            new Chart(document.getElementById('pgBgwriterChart').getContext('2d'), {
+                type: 'line',
+                data: { labels, datasets: [
+                    { label: 'Timed', data: timed, borderColor: '#3b82f6', pointRadius: 0, tension: 0.3 },
+                    { label: 'Req', data: req, borderColor: '#f59e0b', pointRadius: 0, tension: 0.3 }
+                ]},
+                options: { responsive: true, maintainAspectRatio: false }
+            });
         });
 }
 
-/**
- * Loads WAL Archiver statistics from TimescaleDB
- * @param {string} instanceName - The PostgreSQL instance name
- */
 function loadArchiverData(instanceName) {
     const section = document.getElementById('archiver-section');
     if (!section) return;
 
     window.apiClient.authenticatedFetch(`/api/postgres/archiver?instance=${encodeURIComponent(instanceName)}`)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            const contentType = response.headers.get('content-type') || '';
-            if (!contentType.includes('application/json')) {
-                throw new Error('Server returned non-JSON response');
-            }
-            return response.json();
-        })
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
         .then(data => {
-            if (data.error) {
-                section.innerHTML = `<div class="alert alert-warning"><i class="fa-solid fa-exclamation-triangle"></i> ${window.escapeHtml(data.error)}</div>`;
-                return;
-            }
-
             if (!data.stats || data.stats.length === 0) {
-                section.innerHTML = `
-                    <div class="alert alert-info">
-                        <i class="fa-solid fa-info-circle"></i> No Archiver data available yet.
-                        <p class="text-sm mt-1">Data will appear after the first collection cycle (15 min).</p>
-                    </div>
-                `;
+                section.innerHTML = '<div class="alert alert-info">No Archiver data available.</div>';
                 return;
             }
-
-            // Update KPIs with latest data
             const latest = data.stats[0];
-            if (document.getElementById('stat-archived-count')) document.getElementById('stat-archived-count').textContent = formatNumber(latest.total_archived || 0);
-            if (document.getElementById('stat-archiver-failed')) {
-                const failed = latest.total_failed || 0;
-                document.getElementById('stat-archiver-failed').textContent = formatNumber(failed);
-                const card = document.getElementById('card-archiver-failed');
-                if (card && failed > 0) card.classList.add('border-danger', 'animate-pulse');
-                else if (card) card.classList.add('border-success');
+            const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+            set('stat-archived-wals', formatNumber(latest.archived_count || 0));
+            set('stat-archiving-failures', formatNumber(latest.failed_count || 0));
+            
+            if (latest.failed_count > 0) {
+                document.getElementById('card-archiving-failures')?.classList.add('border-danger');
             }
 
-            let html = `
-                <table class="data-table" style="font-size:0.75rem;">
-                    <thead>
-                        <tr>
-                            <th title="Time bucket for the aggregated archiver statistics">Time</th>
-                            <th title="Cumulative count of WAL files successfully archived. Steady growth indicates WAL archiving is healthy.">Total Archived</th>
-                            <th title="Cumulative count of WAL files that failed to archive. Non-zero means archive_command is failing — check disk space or backup target.">Total Failed</th>
-                            <th title="Maximum failed archive count observed in this time bucket.">Max Failed in Period</th>
-                            <th title="Whether any archive failures were detected in this bucket. A 'Yes' badge indicates the archive pipeline needs attention.">Has Failures</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            `;
-
-            data.stats.forEach(stat => {
-                const timestamp = stat.timestamp ? new Date(stat.timestamp).toLocaleString() : 'N/A';
-                const hasFailures = stat.has_failures ? 
-                    '<span class="badge badge-danger">Yes</span>' : 
-                    '<span class="badge badge-success">No</span>';
-                
-                html += `
-                    <tr>
-                        <td>${window.escapeHtml(timestamp)}</td>
-                        <td class="text-right">${formatNumber(stat.total_archived || 0)}</td>
-                        <td class="text-right ${(stat.total_failed || 0) > 0 ? 'text-danger' : ''}">${formatNumber(stat.total_failed || 0)}</td>
-                        <td class="text-right ${(stat.max_failed || 0) > 0 ? 'text-danger' : ''}">${formatNumber(stat.max_failed || 0)}</td>
-                        <td>${hasFailures}</td>
-                    </tr>
-                `;
-            });
-
-            html += `
-                    </tbody>
-                </table>
-                <div class="table-footer">
-                    <small class="text-muted">Showing ${data.stats.length} time buckets | Last 24 hours aggregated data</small>
+            section.innerHTML = `
+                <div class="table-container-compact" style="height:200px;">
+                    <table class="modern-table modern-table-compact">
+                        <thead><tr><th>Time</th><th>Archived</th><th>Failed</th><th>Last Fail WAL</th></tr></thead>
+                        <tbody>${data.stats.slice(0, 10).map(s => `<tr><td>${new Date(s.timestamp).toLocaleTimeString()}</td><td>${s.archived_count}</td><td class="${s.failed_count>0?'text-danger':''}">${s.failed_count}</td><td>${s.last_failed_wal || '-'}</td></tr>`).join('')}</tbody>
+                    </table>
                 </div>
             `;
-
-            section.innerHTML = html;
-        })
-        .catch(error => {
-            console.error('Error loading Archiver data:', error);
-            section.innerHTML = `<div class="alert alert-danger"><i class="fa-solid fa-exclamation-circle"></i> Failed to load Archiver data: ${window.escapeHtml(error.message)}</div>`;
         });
 }
 
-/**
- * Formats a number with optional decimal places
- * @param {number} num - The number to format
- * @param {number} decimals - Number of decimal places (default: 0)
- * @returns {string} Formatted number string
- */
-function formatNumber(num, decimals = 0) {
-    if (num === null || num === undefined) return '0';
-    if (decimals > 0) {
-        return Number(num).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-    }
-    return Number(num).toLocaleString('en-US');
+function loadWaitEvents(instanceName, from, to) {
+    const section = document.getElementById('waits-section');
+    if (!section) return;
+    let url = `/api/postgres/waits/history?instance=${encodeURIComponent(instanceName)}`;
+    if (from && to) url += `&from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
+    
+    window.apiClient.authenticatedFetch(url).then(r => r.json()).then(data => {
+        const rows = data.rows || [];
+        if (!rows.length) { section.innerHTML = '<div class="text-muted p-4">No wait data.</div>'; return; }
+        const byTs = new Map();
+        rows.forEach(r => {
+            const ts = r.capture_timestamp || r.timestamp;
+            if (!byTs.has(ts)) byTs.set(ts, {});
+            byTs.get(ts)[r.wait_event_type || 'Other'] = r.sessions_count;
+        });
+        const labels = Array.from(byTs.keys()).sort();
+        const types = ['CPU', 'IO', 'Lock', 'LWLock', 'BufferPin'];
+        const datasets = types.map((t, idx) => ({
+            label: t, data: labels.map(ts => byTs.get(ts)[t] || 0), borderColor: ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'][idx], tension: 0.3, pointRadius: 0
+        }));
+
+        section.innerHTML = '<div style="height:200px;"><canvas id="pgWaitsChartAdv"></canvas></div>';
+        new Chart(document.getElementById('pgWaitsChartAdv').getContext('2d'), { type: 'line', data: { labels: labels.map(l => new Date(l).toLocaleTimeString()), datasets }, options: { responsive: true, maintainAspectRatio: false } });
+    });
 }
+
+function loadDbIO(instanceName, from, to) {
+    const section = document.getElementById('io-section');
+    if (!section) return;
+    let url = `/api/postgres/io/history?instance=${encodeURIComponent(instanceName)}`;
+    if (from && to) url += `&from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
+    
+    window.apiClient.authenticatedFetch(url).then(r => r.json()).then(data => {
+        const rows = data.rows || [];
+        if (!rows.length) { section.innerHTML = '<div class="text-muted p-4">No IO data.</div>'; return; }
+        const dbs = Array.from(new Set(rows.map(r => r.database_name))).sort();
+        const latestDb = dbs[0];
+
+        section.innerHTML = `
+            <select id="pgIoDbSel" class="form-select mb-2" style="font-size:0.7rem; padding:2px;">${dbs.map(d => `<option value="${d}">${d}</option>`).join('')}</select>
+            <div style="height:170px;"><canvas id="pgIoChartAdv"></canvas></div>
+        `;
+        
+        const render = (db) => {
+            const series = rows.filter(r => r.database_name === db).slice().reverse();
+            const labels = series.map(s => new Date(s.capture_timestamp).toLocaleTimeString());
+            const delta = (arr, k) => arr.map((r, i) => i === 0 ? 0 : Math.max(0, r[k] - arr[i-1][k]));
+            new Chart(document.getElementById('pgIoChartAdv').getContext('2d'), {
+                type: 'line',
+                data: { labels, datasets: [
+                    { label: 'Reads', data: delta(series, 'blks_read'), borderColor: '#3b82f6', tension: 0.3, pointRadius: 0 },
+                    { label: 'Temp (MB)', data: delta(series, 'temp_bytes').map(v => v/1024/1024), borderColor: '#ef4444', tension: 0.3, pointRadius: 0 }
+                ]},
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+        };
+        document.getElementById('pgIoDbSel').onchange = (e) => render(e.target.value);
+        render(latestDb);
+    });
+}
+
+function loadConfigDrift(instanceName) {
+    const section = document.getElementById('drift-section');
+    if (!section) return;
+    window.apiClient.authenticatedFetch(`/api/postgres/settings/drift?instance=${encodeURIComponent(instanceName)}`).then(r => r.json()).then(data => {
+        const changes = data.changes || [];
+        if (!changes.length) { section.innerHTML = '<div class="text-muted p-4 text-center">No recent changes detected.</div>'; return; }
+        section.innerHTML = `
+            <table class="modern-table modern-table-compact" style="font-size:0.7rem;">
+                <thead><tr><th>Setting</th><th>Old</th><th>New</th></tr></thead>
+                <tbody>${changes.map(c => `<tr><td>${c.name}</td><td class="text-muted">${c.old_value}</td><td class="text-accent">${c.new_value}</td></tr>`).join('')}</tbody>
+            </table>
+        `;
+    });
+}
+
+function loadQueryInternals(instanceName, from, to) {
+    const section = document.getElementById('qint-section');
+    if (!section) return;
+    let url = `/api/postgres/queries?instance=${encodeURIComponent(instanceName)}`;
+    if (from && to) url += `&from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
+    
+    window.apiClient.authenticatedFetch(url).then(r => r.json()).then(data => {
+        const qs = data.queries || [];
+        if (!qs.length) { section.innerHTML = '<div class="text-muted p-4">No query internals.</div>'; return; }
+        const top = qs.sort((a,b) => b.temp_blks_written - a.temp_blks_written).slice(0, 10);
+        
+        window.appState.pgInternalQueries = top.map(q => q.query);
+
+        section.innerHTML = `
+            <table class="modern-table modern-table-compact" style="font-size:0.7rem;">
+                <thead><tr><th>User</th><th>Calls</th><th>Total ms</th><th>Temp Write</th><th>SQL</th></tr></thead>
+                <tbody>${top.map((q, idx) => `
+                    <tr>
+                        <td>${q.username}</td>
+                        <td>${q.calls}</td>
+                        <td>${q.total_time.toFixed(0)}</td>
+                        <td class="${q.temp_blks_written>0?'text-warning':''}">${q.temp_blks_written}</td>
+                        <td class="small text-muted" style="cursor:pointer; text-decoration:underline;" data-action="call" data-fn="showPgInternalQueryDetail" data-idx="${idx}">
+                            ${window.escapeHtml(q.query.substring(0,60))}...
+                        </td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>
+        `;
+    });
+}
+
+window.showPgInternalQueryDetail = function(idx) {
+    const message = window.appState.pgInternalQueries[idx];
+    const existingModal = document.getElementById('pg-query-modal');
+    if (existingModal) existingModal.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'pg-query-modal';
+    modal.style.cssText = 'display:flex; position:fixed; z-index:99999; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.8); align-items:center; justify-content:center;';
+    
+    modal.innerHTML = `
+        <div class="glass-panel" style="background:var(--bg-surface); margin:2%; padding:20px; border:1px solid var(--border-color); border-radius:12px; width:95%; max-width:900px; max-height:85vh; display:flex; flex-direction:column; box-shadow:0 4px 50px rgba(0,0,0,0.5);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom:1px solid var(--border-color); padding-bottom:0.75rem;">
+                <h3 style="margin:0; color:var(--accent); font-size:1.1rem;"><i class="fa-solid fa-code"></i> Internal Query Detail</h3>
+                <button style="background:transparent; border:none; color:var(--text); font-size:1.5rem; cursor:pointer;" data-action="close-id" data-target="pg-query-modal">&times;</button>
+            </div>
+            <div style="flex:1; overflow:auto; background:rgba(0,0,0,0.3); padding:1.25rem; border-radius:8px; border:1px solid var(--border-color);">
+                <pre style="margin:0; white-space:pre-wrap; word-wrap:break-word; color:var(--text); font-family:'Fira Code', 'Courier New', monospace; font-size:0.85rem; line-height:1.6;">${window.escapeHtml(message)}</pre>
+            </div>
+            <div style="text-align:right; margin-top:1.25rem;">
+                <button id="copyPgQueryBtn" class="btn btn-sm btn-accent" style="padding: 0.5rem 1.5rem;">
+                    <i class="fa-solid fa-copy"></i> Copy SQL
+                </button>
+                <button class="btn btn-sm btn-outline ml-2" data-action="close-id" data-target="pg-query-modal">Close</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+    
+    document.getElementById('copyPgQueryBtn').addEventListener('click', function() {
+        navigator.clipboard.writeText(message).then(() => {
+            this.innerHTML = '<i class="fa-solid fa-check"></i> Copied!';
+            setTimeout(() => {
+                this.innerHTML = '<i class="fa-solid fa-copy"></i> Copy SQL';
+            }, 1500);
+        });
+    });
+
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+    });
+};
+
+function formatNumber(num) { return Number(num || 0).toLocaleString(); }

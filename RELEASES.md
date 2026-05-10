@@ -5,6 +5,17 @@ Until 1.0, releases may include breaking changes. We still aim to keep changes d
 
 ## Unreleased
 
+### Latest Changes
+- **Query V2 Pipeline**: Implemented hash-based delta tracking for SQL Server and PostgreSQL query metrics, enabled via `ENABLE_QUERY_V2_PIPELINE=true`.
+- **Collector Engine Refactor**: Unified internal collectors into a domain-driven architecture.
+- **PostgreSQL Refactor**: Modularized `pg_stats` to enhance monitoring resilience.
+- **Rule Engine Expansion**: Expanded rule engine logic for improved best-practice coverage and advisory scoring.
+
+- **SQL Server Locks Dashboard**: Added full stack support for SQL Server locks monitoring, including new API endpoints, `sqlserver_blocking_logger`, and detailed UI pages (`sqlserver_locks.html`, `sqlserver_LocksDashboard.js`).
+- **PostgreSQL Incident Feed & Connectivity**: Introduced `pg_incident_feed`, `pg_incident_collector`, and `pg_connection_utilization_handler` for advanced Postgres observability.
+- **Data Export Features**: Added CSV export handlers (`csv_export`, `pg_export`, `sqlserver_export`).
+- **Schema & Migrations Reorganization**: Significant restructure of TimescaleDB setup scripts, dropping older scripts and adding V2 upgrades (`07_ms_blocking_v2_upgrade.sql`, `08_pg_control_center_v2.sql`, `09_pg_locks_blocking_upgrade.sql`).
+- **Storage/Hot Layer Refactoring**: Extensive updates across the Timescale storage logger layer to accommodate new intelligence metrics (memory, blocking, deadlocks).
 ## 0.3.0 (2026-04-22)
 
 - **SQL Server Micro-Architecture**: Massive refactor of the SQL Server repository. Split the monolithic `mssql_stats.go` into 14 domain-specific files (e.g., `sqlserver_query_store.go`, `sqlserver_ag_health.go`) following DDD principles.

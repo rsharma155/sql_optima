@@ -14,10 +14,10 @@ window.SqlServerStorageIndexHealthView = async function() {
         window.appNavigate('pg-dashboard');
         return;
     }
-    if (typeof window.runStorageIndexHealthDashboard !== 'function') {
+    if (typeof window.runSqlServerStorageIndexHealthDashboard !== 'function') {
         window.routerOutlet.innerHTML = '<div class="page-view active"><div class="alert alert-warning">Loading Storage & Index Health scripts…</div></div>';
         setTimeout(() => window.appNavigate('storage-index-health'), 200);
         return;
     }
-    return window.runStorageIndexHealthDashboard();
+    return window.runSqlServerStorageIndexHealthDashboard();
 };

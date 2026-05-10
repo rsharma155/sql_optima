@@ -25,7 +25,7 @@ func (c *SqlServerRepository) FetchBestPractices(instanceName string) models.Bes
 	result.Timestamp = fmt.Sprintf("%d", time.Now().Unix())
 
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -139,15 +139,33 @@ func (c *SqlServerRepository) evaluateServerRules(configs map[string]string) []m
 	if value, exists := configs["max server memory (MB)"]; exists {
 		check := models.ServerConfigCheck{
 			ConfigurationName: "Max Server Memory (MB)",
+			Category:          "Memory",
 			CurrentValue:      value,
 			Status:            "GREEN",
+			Message:           "Memory cap is configured.",
 		}
-
 		if value == "2147483647" {
 			check.Status = "RED"
 			check.Message = "SQL Server memory is uncapped. It will eventually starve the Windows OS. Cap it to leave at least 4GB-8GB for the OS."
+			check.RemediationSQL = "-- Leave 4-8 GB for the OS; adjust the value below to (total_RAM_MB - 4096)\nEXEC sp_configure 'max server memory (MB)', 28672;\nRECONFIGURE;"
 		}
+		checks = append(checks, check)
+	}
 
+	// Max Degree of Parallelism check
+	if value, exists := configs["max degree of parallelism"]; exists {
+		check := models.ServerConfigCheck{
+			ConfigurationName: "Max Degree of Parallelism (MAXDOP)",
+			Category:          "Query Processing",
+			CurrentValue:      value,
+			Status:            "GREEN",
+			Message:           "MAXDOP is configured.",
+		}
+		if value == "0" {
+			check.Status = "YELLOW"
+			check.Message = "MAXDOP=0 allows unlimited parallelism. A single query can consume all CPU cores. Set to half the logical core count (max 8)."
+			check.RemediationSQL = "-- Set to half the logical CPU count, up to a max of 8\nEXEC sp_configure 'max degree of parallelism', 8;\nRECONFIGURE;"
+		}
 		checks = append(checks, check)
 	}
 
@@ -155,15 +173,16 @@ func (c *SqlServerRepository) evaluateServerRules(configs map[string]string) []m
 	if value, exists := configs["cost threshold for parallelism"]; exists {
 		check := models.ServerConfigCheck{
 			ConfigurationName: "Cost Threshold for Parallelism",
+			Category:          "Query Processing",
 			CurrentValue:      value,
 			Status:            "GREEN",
+			Message:           "Cost threshold is configured.",
 		}
-
 		if value == "5" {
 			check.Status = "YELLOW"
 			check.Message = "Default value of 5 is too low for modern workloads. Consider raising to 50 to prevent trivial queries from using multiple CPUs."
+			check.RemediationSQL = "EXEC sp_configure 'cost threshold for parallelism', 50;\nRECONFIGURE;"
 		}
-
 		checks = append(checks, check)
 	}
 
@@ -171,15 +190,16 @@ func (c *SqlServerRepository) evaluateServerRules(configs map[string]string) []m
 	if value, exists := configs["optimize for ad hoc workloads"]; exists {
 		check := models.ServerConfigCheck{
 			ConfigurationName: "Optimize for Ad Hoc Workloads",
+			Category:          "Plan Cache",
 			CurrentValue:      value,
 			Status:            "GREEN",
+			Message:           "Ad hoc workload optimization is enabled.",
 		}
-
 		if value == "0" {
 			check.Status = "YELLOW"
 			check.Message = "Plan cache bloat risk. Enable this to prevent single-use queries from stealing cache memory."
+			check.RemediationSQL = "EXEC sp_configure 'optimize for ad hoc workloads', 1;\nRECONFIGURE;"
 		}
-
 		checks = append(checks, check)
 	}
 
@@ -187,15 +207,16 @@ func (c *SqlServerRepository) evaluateServerRules(configs map[string]string) []m
 	if value, exists := configs["backup compression default"]; exists {
 		check := models.ServerConfigCheck{
 			ConfigurationName: "Backup Compression Default",
+			Category:          "Backup",
 			CurrentValue:      value,
 			Status:            "GREEN",
+			Message:           "Backup compression is enabled.",
 		}
-
 		if value == "0" {
 			check.Status = "YELLOW"
 			check.Message = "Enable backup compression to save disk space and reduce disk I/O during backup windows."
+			check.RemediationSQL = "EXEC sp_configure 'backup compression default', 1;\nRECONFIGURE;"
 		}
-
 		checks = append(checks, check)
 	}
 
@@ -242,7 +263,7 @@ func (c *SqlServerRepository) FetchGuardrails(instanceName string) models.Guardr
 	result.Timestamp = fmt.Sprintf("%d", time.Now().Unix())
 
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
@@ -440,9 +461,9 @@ func (c *SqlServerRepository) queryLogHealth(db *sql.DB) []models.LogHealthInfo 
 func (c *SqlServerRepository) queryLogBackups(db *sql.DB) []models.LogBackupInfo {
 	query := `
 		/* SQL_OPTIMA */  	
-		SELECT  d.name, MAX(b.backup_finish_date), DATEDIFF(MINUTE, MAX(b.backup_finish_date), GETDATE())
-		FROM sys.databases d WITH (NOLOCK)
-		LEFT JOIN msdb.dbo.backupset b ON d.name = b.database_name AND b.type = 'L' AND b.backup_finish_date >= DATEADD(DAY, -7, GETDATE())
+		SELECT  d.name, MAX(b.backup_finish_date), DATEDIFF(MINUTE, MAX(b.backup_finish_date), GETUTCDATE())
+		FROM sys.databases d
+		LEFT JOIN msdb.dbo.backupset b ON d.name = b.database_name AND b.type = 'L' AND b.backup_finish_date >= DATEADD(DAY, -7, GETUTCDATE())
 		WHERE d.database_id > 4 AND d.recovery_model_desc IN ('FULL', 'BULK_LOGGED') AND d.state_desc = 'ONLINE'
 		GROUP BY d.name
 	`

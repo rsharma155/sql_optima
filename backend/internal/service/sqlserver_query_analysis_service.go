@@ -26,21 +26,26 @@ import (
 // ────────────────────────────────────────────────
 
 // GetSqlServerQueryAnalysisSummary returns KPI card data for the query analysis dashboard.
-func (s *MetricsService) GetSqlServerQueryAnalysisSummary(ctx context.Context, instance string, hours int) (*models.SqlServerQueryAnalysisSummary, error) {
+func (s *MetricsService) GetSqlServerQueryAnalysisSummary(ctx context.Context, instance string, hours int, excludeSystem bool) (*models.SqlServerQueryAnalysisSummary, error) {
 	if s.tsLogger == nil {
 		return &models.SqlServerQueryAnalysisSummary{}, nil
 	}
-	row, err := s.tsLogger.GetSqlServerQueryAnalysisSummary(ctx, instance, hours)
+	row, err := s.tsLogger.GetSqlServerQueryAnalysisSummary(ctx, instance, hours, excludeSystem)
 	if err != nil {
 		return nil, err
 	}
 	return &models.SqlServerQueryAnalysisSummary{
-		TotalExecutions: row.TotalExecutions,
-		AvgDuration:     row.AvgDuration,
-		AvgCPU:          row.AvgCPU,
-		AvgReads:        row.AvgReads,
-		Regressions24h:  row.Regressions24h,
-		PlanChanges24h:  row.PlanChanges24h,
+		TotalExecutions:        row.TotalExecutions,
+		AvgDuration:            row.AvgDuration,
+		AvgCPU:                 row.AvgCPU,
+		AvgReads:               row.AvgReads,
+		Regressions24h:         row.Regressions24h,
+		PlanChanges24h:         row.PlanChanges24h,
+		Top10CpuSharePct:       row.Top10CpuSharePct,
+		TotalQueriesInQS:       row.TotalQueriesInQS,
+		QueriesExecutedInRange: row.QueriesExecutedInRange,
+		QueriesWithMultiPlans:  row.QueriesWithMultiPlans,
+		QueriesSingleExecution: row.QueriesSingleExecution,
 	}, nil
 }
 
@@ -108,26 +113,32 @@ func (s *MetricsService) GetSqlServerPlanInstability(ctx context.Context, instan
 // ────────────────────────────────────────────────
 
 // GetSqlServerTopQueriesAnalysis returns top queries from the existing interval table.
-func (s *MetricsService) GetSqlServerTopQueriesAnalysis(ctx context.Context, instance, sortBy string, limit, hours int) ([]models.SqlServerTopQueryRow, error) {
+func (s *MetricsService) GetSqlServerTopQueriesAnalysis(ctx context.Context, instance, sortBy string, limit, hours int, excludeSystem bool) ([]models.SqlServerTopQueryRow, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	rows, err := s.tsLogger.GetSqlServerTopQueriesFromInterval(ctx, instance, sortBy, limit, hours)
+	rows, err := s.tsLogger.GetSqlServerTopQueriesFromInterval(ctx, instance, sortBy, limit, hours, excludeSystem)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]models.SqlServerTopQueryRow, len(rows))
 	for i, r := range rows {
-		out[i] = models.SqlServerTopQueryRow{
-			QueryHash:     r.QueryHash,
-			QueryText:     r.QueryText,
-			DatabaseName:  r.DatabaseName,
-			Executions:    r.Executions,
-			AvgCpuMs:      r.AvgCpuMs,
-			AvgDurationMs: r.AvgDurationMs,
-			AvgReads:      r.AvgReads,
-			TotalCpuMs:    r.TotalCpuMs,
+		row := models.SqlServerTopQueryRow{
+			QueryHash:         r.QueryHash,
+			QueryText:         r.QueryText,
+			DatabaseName:      r.DatabaseName,
+			LoginName:         r.LoginName,
+			ApplicationName:   r.ApplicationName,
+			Executions:        r.Executions,
+			AvgCpuMs:          r.AvgCpuMs,
+			AvgDurationMs:     r.AvgDurationMs,
+			AvgReads:          r.AvgReads,
+			TotalCpuMs:        r.TotalCpuMs,
 		}
+		if r.LastExecutionTime != nil {
+			row.LastExecutionTime = *r.LastExecutionTime
+		}
+		out[i] = row
 	}
 	return out, nil
 }
@@ -178,7 +189,59 @@ func (s *MetricsService) AddSqlServerWatchedQuery(ctx context.Context, instance 
 		Name:         wq.Name,
 		QueryText:    wq.QueryText,
 	}
-	return s.tsLogger.InsertSqlServerWatchedQuery(ctx, row)
+	id, err := s.tsLogger.InsertSqlServerWatchedQuery(ctx, row)
+	if err != nil {
+		return 0, err
+	}
+
+	// Capture initial plan/stats immediately so they are available without waiting for the next collector run
+	go func() {
+		// Create a background context for this async capture
+		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		snap, err := s.MsRepo.FetchWatchedQueryStats(bgCtx, instance, wq.DatabaseName, wq.QueryHash)
+		if err != nil {
+			log.Printf("[SqlServerQueryAnalysis] Immediate capture failed for %s: %v", wq.QueryHash, err)
+			return
+		}
+		if snap == nil {
+			log.Printf("[SqlServerQueryAnalysis] Immediate capture: no stats found in Query Store for %s", wq.QueryHash)
+			return
+		}
+
+		// Update query text if it was missing
+		if wq.QueryText == "" && snap.QueryText != "" {
+			_ = s.tsLogger.UpdateSqlServerWatchedQueryText(bgCtx, id, snap.QueryText)
+		}
+
+		// Fetch wait stats
+		waitStats, _ := s.MsRepo.FetchQueryWaitStats(bgCtx, instance, wq.DatabaseName, wq.QueryHash)
+
+		// Log snapshot
+		snapRows := []hot.SqlServerWatchedSnapshotRow{{
+			SnapshotTime:      time.Now().UTC(),
+			WatchedID:         id,
+			InstanceName:      instance,
+			Executions:        snap.Executions,
+			AvgDurationMs:     snap.AvgDurationMs,
+			AvgCpuMs:          snap.AvgCpuMs,
+			AvgReads:          snap.AvgReads,
+			TotalDurationMs:   snap.TotalDurationMs,
+			TotalCpuMs:        snap.TotalCpuMs,
+			PlanCount:         snap.PlanCount,
+			LastExecutionTime: snap.LastExecutionTime,
+			QueryPlan:         snap.QueryPlan,
+			WaitStats:         waitStats,
+		}}
+		if err := s.tsLogger.LogSqlServerWatchedQuerySnapshot(bgCtx, snapRows); err != nil {
+			log.Printf("[SqlServerQueryAnalysis] Immediate LogSqlServerWatchedQuerySnapshot failed: %v", err)
+		} else {
+			log.Printf("[SqlServerQueryAnalysis] Successfully captured initial plan and stats for watched query ID %d", id)
+		}
+	}()
+
+	return id, nil
 }
 
 // DeleteSqlServerWatchedQuery removes a watched query by ID.

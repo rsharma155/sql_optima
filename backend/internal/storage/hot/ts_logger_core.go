@@ -15,9 +15,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rsharma155/sql_optima/internal/repository"
 )
 
 type TimescaleLogger struct {
@@ -40,11 +42,18 @@ type TimescaleLogger struct {
 	prevPgConnectionStatsHash  map[string]uint64
 	prevPgReplicationSlotsHash map[string]uint64
 	prevPgDeadlocksTotal       map[string]map[string]int64 // instance -> db -> last total
+	prevPgDeadlocksTotalAllDBs  map[string]int64            // instance -> aggregate total
 	prevPgWaitEventsHash       map[string]uint64
 	prevPgDbIOHash             map[string]uint64
 	prevPgSettingsHash         map[string]uint64
+	prevPgQueryStatsHash       map[string]uint64
+	prevPgStatDeltaHash        map[string]uint64
+	prevPgSessionHash          map[string]uint64
 	// SQL Server Memory Analyzer delta state
 	prevSpillByInstance map[string]spillDeltaState
+	// SQL Server Performance Counter delta state
+	prevPerfCounters map[string]map[string]float64
+	prevPerfTime     map[string]time.Time
 }
 
 func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
@@ -66,10 +75,16 @@ func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
 		prevPgConnectionStatsHash:  make(map[string]uint64),
 		prevPgReplicationSlotsHash: make(map[string]uint64),
 		prevPgDeadlocksTotal:       make(map[string]map[string]int64),
+		prevPgDeadlocksTotalAllDBs:  make(map[string]int64),
 		prevPgWaitEventsHash:       make(map[string]uint64),
 		prevPgDbIOHash:             make(map[string]uint64),
 		prevPgSettingsHash:         make(map[string]uint64),
+		prevPgQueryStatsHash:       make(map[string]uint64),
+		prevPgStatDeltaHash:        make(map[string]uint64),
+		prevPgSessionHash:          make(map[string]uint64),
 		prevSpillByInstance:        make(map[string]spillDeltaState),
+		prevPerfCounters:           make(map[string]map[string]float64),
+		prevPerfTime:               make(map[string]time.Time),
 	}
 }
 
@@ -79,6 +94,51 @@ func (tl *TimescaleLogger) GetPrevWaitHistory(instanceName string) map[string]fl
 	return tl.prevWaitHistory[instanceName]
 }
 
+// ComputePerfCounterDeltas calculates the rate (per second) for cumulative counters.
+func (tl *TimescaleLogger) ComputePerfCounterDeltas(instanceName string, current map[string]repository.PerfCounterSample) map[string]float64 {
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+
+	now := time.Now()
+	prev, hasPrev := tl.prevPerfCounters[instanceName]
+	prevTime, hasTime := tl.prevPerfTime[instanceName]
+
+	rates := make(map[string]float64)
+	newPrev := make(map[string]float64)
+
+	var duration float64
+	if hasTime {
+		duration = now.Sub(prevTime).Seconds()
+	}
+
+	for name, sample := range current {
+		newPrev[name] = sample.Value
+
+		// 272696576 = PERF_100NSEC_TIMER (cumulative, needs delta)
+		// 272696320 = PERF_COUNTER_BULK_COUNT (cumulative, needs delta)
+		// 65792 = PERF_COUNTER_RAWCOUNT (instantaneous, should NOT be in isCumulative)
+		isCumulative := (sample.CntrType == 272696576 || sample.CntrType == 272696320)
+
+		if isCumulative && hasPrev && duration > 0 {
+			prevVal := prev[name]
+			if sample.Value >= prevVal {
+				rates[name] = (sample.Value - prevVal) / duration
+			} else {
+				// SQL Restarted?
+				rates[name] = 0
+			}
+		} else {
+			// Instantaneous counter (e.g. Page Life Expectancy, Buffer Cache Hit Ratio)
+			rates[name] = sample.Value
+		}
+	}
+
+	tl.prevPerfCounters[instanceName] = newPrev
+	tl.prevPerfTime[instanceName] = now
+
+	return rates
+}
+
 func (tl *TimescaleLogger) Ping(ctx context.Context) error {
 	return tl.pool.Ping(ctx)
 }
@@ -86,6 +146,18 @@ func (tl *TimescaleLogger) Ping(ctx context.Context) error {
 func (tl *TimescaleLogger) Close() error {
 	tl.pool.Close()
 	return nil
+}
+
+func (tl *TimescaleLogger) ToSafeUTF8(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if r == utf8.RuneError {
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 type SQLServerMetricRow struct {
@@ -215,6 +287,8 @@ type AGHealthRow struct {
 	ReplicaServerName    string       `json:"replica_server_name"`
 	DatabaseName         string       `json:"database_name"`
 	ReplicaRole          string       `json:"replica_role"`
+	OperationalState     string       `json:"operational_state"`
+	ConnectedState       string       `json:"connected_state"`
 	SyncState            string       `json:"sync_state"`
 	SynchronizationState string       `json:"synchronization_state"`
 	SyncStateDesc        string       `json:"sync_state_desc"`
@@ -290,6 +364,9 @@ type PostgresQueryDictionaryRow struct {
 type PostgresQueryStatsSnapRow struct {
 	QueryID           int64
 	QueryText         string
+	DbName            string // database name (pg_database.datname) — new
+	UserName          string // login role name (pg_roles.rolname) — new
+	QueryType         string // single-char code: S/I/U/D/E/O — new
 	Calls             int64
 	TotalTimeMs       float64
 	MeanTimeMs        float64
@@ -314,6 +391,9 @@ type PostgresQueryStatsSnapRow struct {
 type PostgresQueryStatsDelta struct {
 	QueryID           int64
 	QueryText         string
+	DbName            string
+	UserName          string
+	QueryType         string
 	Calls             int64
 	TotalTimeMs       float64
 	MeanTimeMs        float64
@@ -384,7 +464,7 @@ func (tl *TimescaleLogger) GetLatestMetrics(ctx context.Context, instanceName st
 			COALESCE(host_cpu_percent, 0), COALESCE(postgres_cpu_percent, 0),
 			COALESCE(load_1m, 0), COALESCE(load_5m, 0), COALESCE(load_15m, 0), COALESCE(cpu_cores, 0)
 			FROM postgres_system_stats
-			WHERE server_instance_name = $1
+			WHERE UPPER(server_instance_name) = UPPER($1)
 			ORDER BY capture_timestamp DESC LIMIT 1`
 		var ts time.Time
 		var cpu, mem float64
@@ -413,7 +493,7 @@ func (tl *TimescaleLogger) GetLatestMetrics(ctx context.Context, instanceName st
 
 	query := `SELECT capture_timestamp, avg_cpu_load, memory_usage, active_users, total_locks, deadlocks
 		FROM sqlserver_metrics
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC LIMIT 1`
 	var ts time.Time
 	var cpu, mem float64
@@ -519,6 +599,26 @@ type PostgresLockRow struct {
 	WaitDurationMs float64
 }
 
+// PGQueryMetricsDelta represents the delta-based query metrics for PostgreSQL.
+type PGQueryMetricsDelta struct {
+	SampleTime       time.Time `json:"sample_time"`
+	InstanceName     string    `json:"instance_name"`
+	QueryID          int64     `json:"queryid"`
+	DbName           string    `json:"db_name"`    // new
+	UserName         string    `json:"username"`   // new
+	AppName          string    `json:"app_name"`   // new (empty for pgss path)
+	QueryType        string    `json:"query_type"` // new: S/I/U/D/E/O
+	DeltaCalls       int64     `json:"delta_calls"`
+	DeltaExecMs      float64   `json:"delta_exec_ms"`
+	DeltaRows        int64     `json:"delta_rows"`
+	DeltaSharedReads int64     `json:"delta_shared_reads"`
+	DeltaSharedHits  int64     `json:"delta_shared_hits"`
+	DeltaTempWritten int64     `json:"delta_temp_written"`
+	DeltaWalBytes    int64     `json:"delta_wal_bytes"`
+	DeltaPlanTime    float64   `json:"delta_plan_time"` // new
+	MeanExecMs       float64   `json:"mean_exec_ms"`    // new
+}
+
 // PostgresStatStatementsDeltaRow represents differential query metrics for pg_ts_stat_statements_delta.
 type PostgresStatStatementsDeltaRow struct {
 	QueryID           int64
@@ -540,19 +640,19 @@ type PostgresStatStatementsDeltaRow struct {
 
 // PostgresInstanceSnapshotRow represents a health snapshot for pg_ts_instance_snapshot.
 type PostgresInstanceSnapshotRow struct {
-	HealthScore      int
-	TotalConnections int
-	ActiveSessions   int
-	IdleSessions     int
-	WaitingSessions  int
-	BlockedSessions  int
-	LongestActiveMs  float64
-	TPS              float64
-	CacheHitRatio    float64
-	RWRatio          float64
-	AvgQueryLatencyMs float64
-	WalGenRateMbps   float64
-	ReplicaLagSec    float64
-	MaxXidAge        int64
+	HealthScore        int
+	TotalConnections   int
+	ActiveSessions     int
+	IdleSessions       int
+	WaitingSessions    int
+	BlockedSessions    int
+	LongestActiveMs    float64
+	TPS                float64
+	CacheHitRatio      float64
+	RWRatio            float64
+	AvgQueryLatencyMs  float64
+	WalGenRateMbps     float64
+	ReplicaLagSec      float64
+	MaxXidAge          int64
 	CheckpointReqRatio float64
 }

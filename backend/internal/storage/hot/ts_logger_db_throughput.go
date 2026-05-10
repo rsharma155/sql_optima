@@ -102,20 +102,48 @@ func (tl *TimescaleLogger) GetDatabaseThroughputSummary(ctx context.Context, ins
 		limit = 50
 	}
 
+	// We compute deltas over a large window (24h) to ensure we always have a baseline.
+	// We then average the most recent rates (last 1 hour) for the dashboard.
 	query := `
+		WITH raw_stats AS (
+			SELECT 
+				database_name,
+				capture_timestamp,
+				tps AS cumulative_tps,
+				batch_requests_per_sec AS cumulative_batch,
+				total_reads,
+				total_writes,
+				LAG(tps) OVER (PARTITION BY database_name ORDER BY capture_timestamp) as prev_tps,
+				LAG(total_reads) OVER (PARTITION BY database_name ORDER BY capture_timestamp) as prev_reads,
+				LAG(total_writes) OVER (PARTITION BY database_name ORDER BY capture_timestamp) as prev_writes,
+				EXTRACT(EPOCH FROM (capture_timestamp - LAG(capture_timestamp) OVER (PARTITION BY database_name ORDER BY capture_timestamp))) as seconds_diff
+			FROM sqlserver_database_throughput
+			WHERE UPPER(server_instance_name) = UPPER($1)
+			  AND capture_timestamp >= NOW() - INTERVAL '24 hours'
+		),
+		deltas AS (
+			SELECT 
+				database_name,
+				capture_timestamp,
+				CASE WHEN seconds_diff > 0 AND cumulative_tps >= prev_tps THEN (cumulative_tps - prev_tps) / seconds_diff ELSE 0 END as tps_rate,
+				CASE WHEN seconds_diff > 0 AND total_reads >= prev_reads THEN (total_reads - prev_reads) / seconds_diff ELSE 0 END as reads_rate,
+				CASE WHEN seconds_diff > 0 AND total_writes >= prev_writes THEN (total_writes - prev_writes) / seconds_diff ELSE 0 END as writes_rate,
+				cumulative_batch as batch_rate
+			FROM raw_stats
+			WHERE prev_tps IS NOT NULL
+		)
 		SELECT 
 			database_name,
-			AVG(tps) AS avg_tps,
-			AVG(batch_requests_per_sec) AS avg_batch_requests,
-			SUM(total_reads) AS total_reads,
-			SUM(total_writes) AS total_writes,
-			MAX(tps) AS max_tps,
+			AVG(tps_rate) AS avg_tps,
+			AVG(batch_rate) AS avg_batch_requests,
+			SUM(reads_rate) AS total_reads_rate,
+			SUM(writes_rate) AS total_writes_rate,
+			MAX(tps_rate) AS max_tps,
 			COUNT(*) AS sample_count
-		FROM sqlserver_database_throughput
-		WHERE server_instance_name = $1
-		  AND capture_timestamp >= NOW() - INTERVAL '1 hour'
+		FROM deltas
+		WHERE capture_timestamp >= NOW() - INTERVAL '1 hour'
 		GROUP BY database_name
-		ORDER BY AVG(tps) DESC
+		ORDER BY AVG(tps_rate) DESC
 		LIMIT $2
 	`
 
@@ -128,19 +156,20 @@ func (tl *TimescaleLogger) GetDatabaseThroughputSummary(ctx context.Context, ins
 	var results []map[string]interface{}
 	for rows.Next() {
 		var dbName string
-		var avgTps, avgBatch, totalReads, totalWrites, maxTps float64
+		var avgTps, avgBatch, totalReadsRate, totalWritesRate, maxTps float64
 		var sampleCount int
 
-		if err := rows.Scan(&dbName, &avgTps, &avgBatch, &totalReads, &totalWrites, &maxTps, &sampleCount); err != nil {
+		if err := rows.Scan(&dbName, &avgTps, &avgBatch, &totalReadsRate, &totalWritesRate, &maxTps, &sampleCount); err != nil {
 			continue
 		}
 
 		results = append(results, map[string]interface{}{
 			"database_name":      dbName,
 			"avg_tps":            avgTps,
+			"tps":                avgTps,
 			"avg_batch_requests": avgBatch,
-			"total_reads":        int64(totalReads),
-			"total_writes":       int64(totalWrites),
+			"total_reads":        int64(totalReadsRate),
+			"total_writes":       int64(totalWritesRate),
 			"max_tps":            maxTps,
 			"sample_count":       sampleCount,
 		})
@@ -158,7 +187,7 @@ func (tl *TimescaleLogger) GetDatabaseThroughputTimeRange(ctx context.Context, i
 			total_reads,
 			total_writes
 		FROM sqlserver_database_throughput
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC
@@ -193,25 +222,49 @@ func (tl *TimescaleLogger) GetDatabaseThroughputTimeRange(ctx context.Context, i
 	return results, rows.Err()
 }
 
-// GetBatchRequestsTrend returns a 1-minute bucketed time series of batch requests/sec
-// summed across all databases for the instance.
-func (tl *TimescaleLogger) GetBatchRequestsTrend(ctx context.Context, instanceName string, minutes int) ([]map[string]interface{}, error) {
-	if minutes <= 0 {
-		minutes = 60
-	}
+// GetBatchRequestsTrend returns a 1-minute bucketed time series of batch requests/sec or a specific range.
+func (tl *TimescaleLogger) GetBatchRequestsTrend(ctx context.Context, instanceName string, minutes int, from, to string) ([]map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	q := `
-		SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
-		       SUM(batch_requests_per_sec) AS batch_requests_per_sec
-		FROM sqlserver_database_throughput
-		WHERE server_instance_name = $1
-		  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
-		GROUP BY bucket
-		ORDER BY bucket ASC
-	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, minutes)
+	var start, end time.Time
+	var err error
+	useRange := false
+	if from != "" && to != "" {
+		start, end, err = parseTimeRangeRFC3339(from, to)
+		if err == nil {
+			useRange = true
+		}
+	}
+
+	var q string
+	var rows pgx.Rows
+	if useRange {
+		q = `
+			SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
+			       AVG(batch_requests_per_sec) AS batch_requests_per_sec
+			FROM sqlserver_risk_health
+			WHERE UPPER(server_instance_name) = UPPER($1)
+			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
+			GROUP BY bucket
+			ORDER BY bucket ASC
+		`
+		rows, err = tl.pool.Query(ctx, q, instanceName, start, end)
+	} else {
+		if minutes <= 0 {
+			minutes = 60
+		}
+		q = `
+			SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
+			       AVG(batch_requests_per_sec) AS batch_requests_per_sec
+			FROM sqlserver_risk_health
+			WHERE UPPER(server_instance_name) = UPPER($1)
+			  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
+			GROUP BY bucket
+			ORDER BY bucket ASC
+		`
+		rows, err = tl.pool.Query(ctx, q, instanceName, minutes)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -1,425 +1,108 @@
 /*
  * SQL Optima — https://github.com/rsharma155/sql_optima
  *
- * Purpose: Layout structural styles for grid
+ * Purpose: Unified Responsive Grid System
  *
  * Author: Ravi Sharma
  * Copyright (c) 2026 Ravi Sharma
  * SPDX-License-Identifier: MIT
  */
+
 /* =========================================
-   Responsive Breakpoints
+   Universal 12-Column Grid
 ========================================= */
-.table-responsive {
+.grid-container {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 1rem;
     width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+}
+
+/* Column Spans */
+.col-1 { grid-column: span 1; }
+.col-2 { grid-column: span 2; }
+.col-3 { grid-column: span 3; }
+.col-4 { grid-column: span 4; }
+.col-5 { grid-column: span 5; }
+.col-6 { grid-column: span 6; }
+.col-7 { grid-column: span 7; }
+.col-8 { grid-column: span 8; }
+.col-9 { grid-column: span 9; }
+.col-10 { grid-column: span 10; }
+.col-11 { grid-column: span 11; }
+.col-12 { grid-column: span 12; }
+
+/* Responsive Adjustments */
+
+/* Desktop Large (≥ 1400px) - Defaults above */
+
+/* Laptop (1024px - 1399px) */
+@media (max-width: 1399px) {
+    .grid-container {
+        grid-template-columns: repeat(8, 1fr);
+    }
+    /* Remap 12-col spans to 8-col */
+    .col-12, .col-11, .col-10, .col-9 { grid-column: span 8; }
+    .col-8 { grid-column: span 8; }
+    .col-7, .col-6, .col-5 { grid-column: span 4; }
+    .col-4, .col-3 { grid-column: span 2; }
+}
+
+/* Tablet (768px - 1023px) */
+@media (max-width: 1023px) {
+    .grid-container {
+        grid-template-columns: repeat(6, 1fr);
+        gap: 0.75rem;
+    }
+    .col-12, .col-11, .col-10, .col-9, .col-8, .col-7 { grid-column: span 6; }
+    .col-6, .col-5, .col-4 { grid-column: span 3; }
+    .col-3, .col-2 { grid-column: span 2; }
+}
+
+/* Mobile (< 768px) */
+@media (max-width: 767px) {
+    .grid-container {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+    }
+    .grid-container > div {
+        grid-column: span 1 !important;
+    }
+}
+
+/* =========================================
+   Standardized Row Layouts
+========================================= */
+.kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.75rem;
     margin-bottom: 1rem;
 }
 
-@media (max-width: 1400px) {
-    .charts-grid[data-cols="4"] { grid-template-columns: repeat(2, 1fr) !important; }
-    /* Laptop widths: reduce padding and prevent squeeze */
-    .views-container { padding: 1.25rem; }
-    .top-header { padding: 0 1.25rem; }
-    .search-bar { width: 240px; }
-
-    /* Control Center + other PG pages use inline grid columns; override them */
-    .dashboard-sky-theme .top-strips.dashboard-top-strips {
-        grid-template-columns: 1fr !important;
-    }
-    .dashboard-sky-theme .charts-grid {
-        grid-template-columns: repeat(2, 1fr) !important;
-    }
-    /* Common 3-col row (2fr 1fr 1fr) should stack to 2 cols */
-    .dashboard-sky-theme .charts-grid[style*="grid-template-columns:2fr 1fr 1fr"] {
-        grid-template-columns: 1fr 1fr !important;
-    }
+.charts-row {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+    margin-bottom: 1rem;
 }
 
 @media (max-width: 1024px) {
-    .charts-grid[data-cols="4"] { grid-template-columns: repeat(2, 1fr) !important; }
-    .page-title { flex-direction: column; align-items: flex-start; gap: 0.75rem; }
-    .page-title > div:last-child { align-self: flex-end; }
-    .dashboard-page-title-compact { flex-wrap: wrap; gap: 0.75rem; }
-    .dashboard-page-title-actions { width: 100%; justify-content: flex-start; }
-    .dashboard-page-title-actions .filter-group { width: 100%; }
-    .dashboard-sky-theme .charts-grid { grid-template-columns: 1fr !important; }
-    .metrics-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
-    .metrics-row-compact { grid-template-columns: repeat(4, 1fr) !important; }
+    .charts-row {
+        grid-template-columns: 1fr;
+    }
 }
 
-@media (max-width: 768px) {
-    .charts-grid[data-cols="4"] { grid-template-columns: 1fr !important; }
-    .charts-grid[data-cols="2"] { grid-template-columns: 1fr !important; }
-    .metrics-row { grid-template-columns: 1fr !important; }
-    .metrics-row-compact { grid-template-columns: repeat(2, 1fr) !important; }
-    .tables-grid { grid-template-columns: 1fr !important; }
-    .table-card[style*="grid-column: span 2"] { grid-column: span 1 !important; }
-    .sidebar { width: 60px; }
-    .sidebar .nav-text, .sidebar .logo-text, .sidebar .custom-select-group { display: none; }
-    .sidebar-header { justify-content: center; padding: 1rem 0.5rem; }
-    .main-content { margin-left: 0; }
-    .views-container { padding: 1rem; }
-    .metrics-grid { grid-template-columns: 1fr !important; }
-}
+/* Standardized Component Heights */
+.h-kpi { height: 80px; }
+.h-chart-md { height: 280px; }
+.h-chart-lg { height: 400px; }
+.h-table-md { height: 300px; overflow-y: auto; }
 
-@media (max-width: 480px) {
-    .page-title h1 { font-size: 1.25rem; }
-    .subtitle { font-size: 0.8rem; }
-    .metric-value { font-size: 1.5rem !important; }
-    .chart-container { height: 150px !important; }
-    .wl-kpi-grid-compact { grid-template-columns: 1fr !important; }
-    .metrics-row-compact { grid-template-columns: 1fr !important; }
-}
-
-/* =========================================
-   Utility Classes
-========================================= */
-/* SQLSERVER instance dashboard: two full-width strips (6 cols each), 3+3 charts */
-.dashboard-top-strips {
+/* Legacy support for existing classes to avoid breaking too much at once */
+.metrics-row-compact {
     display: grid;
-    grid-template-columns: 1fr;
-    gap: 0.75rem;
-    margin-top: 0.75rem;
-    align-items: stretch;
-}
-.dashboard-strip-panel {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    padding: 0 !important;
-    overflow: hidden;
-}
-.dashboard-strip-header {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: 0.5rem;
-    flex-wrap: nowrap;
-    padding: 0.5rem 0.75rem;
-    background: rgba(59, 130, 246, 0.14);
-    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 0.75rem;
 }
-[data-theme="light"] .dashboard-strip-header {
-    background: rgba(59, 130, 246, 0.12);
-}
-.dashboard-strip-header h4 {
-    margin: 0;
-    color: var(--text-secondary, #888);
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    flex-wrap: nowrap;
-    line-height: 1.3;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.dashboard-strip-header .dashboard-strip-header-icons {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    color: var(--accent-blue, #3b82f6);
-}
-.dashboard-strip-header h4 .dashboard-strip-header-meta {
-    margin-left: auto;
-    flex: 0 0 auto;
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--text-secondary, #888);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.dashboard-strip-header h4 .dashboard-strip-header-tooltip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    margin-left: 0.5rem;
-    color: var(--accent-blue, #3b82f6);
-    font-size: 0.8rem;
-    cursor: help;
-}
-.dashboard-strip-metrics-row--6 {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 0;
-    min-height: 5.35rem;
-    align-items: stretch;
-    flex: 1;
-}
-.dashboard-strip-metrics-row--7 {
-    display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-    gap: 0;
-    min-height: 5.35rem;
-    align-items: stretch;
-    flex: 1;
-}
-.dashboard-strip-metrics-row--8 {
-    display: grid;
-    grid-template-columns: repeat(8, minmax(0, 1fr));
-    gap: 0;
-    min-height: 5.35rem;
-    align-items: stretch;
-    flex: 1;
-}
-.dashboard-strip-metrics-row--9 {
-    display: grid;
-    grid-template-columns: repeat(9, minmax(0, 1fr));
-    gap: 0;
-    min-height: 5.35rem;
-    align-items: stretch;
-    flex: 1;
-}
-.strip-metric-cell {
-    padding: 0.55rem 0.65rem;
-    border-left: 1px solid var(--border-color);
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    min-width: 0;
-    box-sizing: border-box;
-}
-.strip-metric-cell:first-child {
-    border-left: none;
-}
-.strip-metric-cell .metric-title,
-.strip-metric-cell .strip-metric-label {
-    font-size: 0.65rem;
-    color: var(--text-secondary);
-    line-height: 1.25;
-    white-space: normal;
-    margin-bottom: 0.2rem;
-}
-.strip-metric-cell .metric-value,
-.strip-metric-cell .strip-metric-value {
-    font-size: 0.95rem;
-    font-weight: 700;
-    margin-bottom: 0;
-    line-height: 1.2;
-}
-.strip-metric-cell .metric-header {
-    margin-bottom: 0.2rem;
-}
-.strip-metric-cell .text-muted.sub {
-    font-size: 0.6rem;
-    line-height: 1.2;
-    white-space: normal;
-}
-.strip-metric-cell--accent-warn {
-    box-shadow: inset 4px 0 0 var(--warning);
-}
-.strip-metric-cell--accent-bad {
-    box-shadow: inset 4px 0 0 var(--danger);
-}
-
-/* Dashboard sky theme: compact title row + sky-blue metric strips (SQL + PG dashboards) */
-.dashboard-page-title-compact,
-.sql-dashboard-page-title {
-    margin-bottom: 0.35rem !important;
-    align-items: flex-start;
-}
-.dashboard-title-line,
-.sql-dashboard-title-line {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.25rem 1rem;
-    min-width: 0;
-}
-.dashboard-page-title-compact h1,
-.sql-dashboard-page-title h1 {
-    margin-bottom: 0 !important;
-    font-size: 1.35rem;
-    line-height: 1.25;
-}
-.dashboard-page-title-compact .subtitle,
-.sql-dashboard-page-title .subtitle {
-    margin: 0;
-    font-size: 0.8rem;
-    line-height: 1.25;
-}
-@media (max-width: 640px) {
-    .dashboard-page-title-actions,
-    .sql-dashboard-page-title-actions {
-        flex-wrap: wrap;
-        justify-content: flex-end;
-        max-width: 100%;
-    }
-}
-
-/* PostgreSQL Control Center: stack health row under meta + actions */
-.dashboard-pg-header-actions {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 0.5rem;
-    flex: 1;
-    min-width: 0;
-}
-.dashboard-pg-header-primary {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.75rem;
-    justify-content: flex-end;
-    width: 100%;
-}
-.dashboard-pg-header-health-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
-    justify-content: flex-end;
-    width: 100%;
-}
-.dashboard-sky-theme .dashboard-title-line > h1 {
-    white-space: nowrap;
-}
-@media (max-width: 400px) {
-    .dashboard-sky-theme .dashboard-title-line > h1 {
-        white-space: normal;
-    }
-}
-
-/* Inline title + subtitle when both sit under .page-title (no HTML change required) */
-.dashboard-sky-theme .page-title.flex-between > div:first-of-type:has(> h1 + p.subtitle) {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.25rem 1rem;
-}
-.dashboard-sky-theme .page-title.flex-between > div:first-of-type:has(> h1 + p.subtitle) > h1 {
-    margin-bottom: 0 !important;
-    font-size: 1.35rem;
-    line-height: 1.25;
-}
-.dashboard-sky-theme .page-title.flex-between > div:first-of-type:has(> h1 + p.subtitle) > p.subtitle {
-    margin: 0;
-    font-size: 0.8rem;
-    line-height: 1.25;
-}
-
-.dashboard-sky-theme .dashboard-strip-header,
-.sql-dashboard .dashboard-strip-header {
-    background: rgba(186, 230, 253, 0.7);
-    border-bottom-color: rgba(125, 211, 252, 0.9);
-}
-[data-theme="dark"] .dashboard-sky-theme .dashboard-strip-header,
-[data-theme="dark"] .sql-dashboard .dashboard-strip-header {
-    background: rgba(56, 189, 248, 0.14);
-    border-bottom-color: rgba(56, 189, 248, 0.28);
-}
-.dashboard-sky-theme .dashboard-strip-metrics-row--6,
-.sql-dashboard .dashboard-strip-metrics-row--6 {
-    background: rgba(224, 242, 254, 0.75);
-}
-[data-theme="dark"] .dashboard-sky-theme .dashboard-strip-metrics-row--6,
-[data-theme="dark"] .sql-dashboard .dashboard-strip-metrics-row--6 {
-    background: rgba(14, 165, 233, 0.09);
-}
-.dashboard-sky-theme .strip-metric-cell,
-.sql-dashboard .strip-metric-cell {
-    background: rgba(255, 255, 255, 0.45);
-}
-[data-theme="dark"] .dashboard-sky-theme .strip-metric-cell,
-[data-theme="dark"] .sql-dashboard .strip-metric-cell {
-    background: rgba(255, 255, 255, 0.05);
-}
-
-/* Glass panels with KPI metric cards (CPU dashboard, PG cpu/memory, etc.) */
-.dashboard-sky-theme .glass-panel:has(> .metric-card),
-.sql-dashboard .glass-panel:has(> .metric-card) {
-    background: rgba(224, 242, 254, 0.45);
-}
-[data-theme="dark"] .dashboard-sky-theme .glass-panel:has(> .metric-card),
-[data-theme="dark"] .sql-dashboard .glass-panel:has(> .metric-card) {
-    background: rgba(14, 165, 233, 0.07);
-}
-.dashboard-sky-theme .glass-panel .metric-card.glass-panel,
-.sql-dashboard .glass-panel .metric-card.glass-panel {
-    background: rgba(255, 255, 255, 0.5);
-    border: 1px solid rgba(125, 211, 252, 0.35);
-}
-[data-theme="dark"] .dashboard-sky-theme .glass-panel .metric-card.glass-panel,
-[data-theme="dark"] .sql-dashboard .glass-panel .metric-card.glass-panel {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(56, 189, 248, 0.2);
-}
-/* Panels where metrics are nested (h4 + flex column of metric-cards) */
-.dashboard-sky-theme .glass-panel:has(h4):has(.metric-card),
-.sql-dashboard .glass-panel:has(h4):has(.metric-card) {
-    background: rgba(224, 242, 254, 0.45);
-}
-[data-theme="dark"] .dashboard-sky-theme .glass-panel:has(h4):has(.metric-card),
-[data-theme="dark"] .sql-dashboard .glass-panel:has(h4):has(.metric-card) {
-    background: rgba(14, 165, 233, 0.07);
-}
-
-@media (max-width: 1100px) {
-    .dashboard-strip-metrics-row--6 {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-    .strip-metric-cell {
-        border-left: 1px solid var(--border-color);
-        border-top: 1px solid var(--border-color);
-    }
-    .strip-metric-cell:nth-child(3n + 1) {
-        border-left: none;
-    }
-    .strip-metric-cell:nth-child(-n + 3) {
-        border-top: none;
-    }
-}
-
-@media (max-width: 520px) {
-    .dashboard-strip-metrics-row--6 {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .strip-metric-cell {
-        border-left: 1px solid var(--border-color);
-        border-top: 1px solid var(--border-color);
-    }
-    .strip-metric-cell:nth-child(2n + 1) {
-        border-left: none;
-    }
-    .strip-metric-cell:nth-child(-n + 2) {
-        border-top: none;
-    }
-}
-
-.dashboard-charts-row {
-    display: grid !important;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-    gap: 0.75rem;
-}
-.dashboard-charts-row .chart-container {
-    height: 132px !important;
-    flex: none;
-}
-.dashboard-charts-row .chart-card .card-header h3 {
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-    line-height: 1.3;
-}
-
-@media (max-width: 768px) {
-    .dashboard-charts-row[data-cols="3"] {
-        grid-template-columns: 1fr !important;
-    }
-}
-
-@media (max-width: 480px) {
-    .dashboard-charts-row .chart-container {
-        height: 140px !important;
-    }
-}
-

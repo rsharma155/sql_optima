@@ -204,7 +204,7 @@ func (h *SetupHandlers) PostTimescale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := config.SavePersistedTimescaleConfig(h.deps.ConfigPath, h.deps.JWTSecret, cfg); err != nil {
+	if err := hot.SavePersistedTimescaleConfig(h.deps.ConfigPath, h.deps.JWTSecret, cfg); err != nil {
 		ts.Close()
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "connected but failed to save encrypted configuration"})
@@ -332,7 +332,7 @@ func (h *SetupHandlers) PostBootstrapAdmin(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// PostTimescaleMigrateStep runs one of 00_timescale_schema.sql, 01_seed_data.sql, 02_rule_engine.sql
+// PostTimescaleMigrateStep runs one of 01_timescale_schema.sql, 06_seed_data.sql, 02_rule_engine.sql
 // against the provided database (simple-query / multi-statement). Used by the setup wizard.
 func (h *SetupHandlers) PostTimescaleMigrateStep(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

@@ -124,7 +124,7 @@ func New(cfg *Config) (*HotStorage, error) {
 
 	hs := &HotStorage{pool: pool, config: cfg}
 	// Runtime migrations are intentionally disabled.
-	// TimescaleDB schema should be provisioned externally using `infrastructure/sql_scripts/00_timescale_schema.sql`.
+	// TimescaleDB schema should be provisioned externally using `infrastructure/sql_scripts/01_timescale_schema.sql`.
 	// This avoids schema changes on API startup and prevents surprise load on shared Timescale instances.
 	log.Printf("[TimescaleDB] Connected (schema provisioned externally; runtime migrations disabled)")
 
@@ -166,7 +166,6 @@ func (s *HotStorage) GetMetricsForArchive(ctx context.Context, cutoff time.Time,
 		"sqlserver_database_throughput",
 		"monitor.sqlserver_query_store_snapshot",
 		"monitor.sqlserver_query_store_interval",
-		"sqlserver_top_queries",
 		"postgres_bgwriter_stats",
 		"postgres_archiver_stats",
 	}
@@ -211,7 +210,6 @@ func (s *HotStorage) DeleteChunksOlderThan(ctx context.Context, duration time.Du
 		"sqlserver_database_throughput",
 		"monitor.sqlserver_query_store_snapshot",
 		"monitor.sqlserver_query_store_interval",
-		"sqlserver_top_queries",
 		"postgres_bgwriter_stats",
 		"postgres_archiver_stats",
 	}

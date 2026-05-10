@@ -21,148 +21,107 @@ window.DashboardView = async function() {
         appDebug('[Dashboard] Already loading, skipping...');
         return;
     }
-    window.appState.dashboardLoading = true;
     
     // Check if config is loaded
     if (!window.appState.config || !window.appState.config.instances || window.appState.config.instances.length === 0) {
         window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-warning">Please select an instance first</h3></div>`;
-        window.appState.dashboardLoading = false;
         return;
     }
     
-    appDebug('[Dashboard] instances:', window.appState.config.instances.length, 'currentInstanceIdx:', window.appState.currentInstanceIdx);
-    
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
-    appDebug('[Dashboard] Selected instance:', inst);
     if (!inst || typeof inst !== 'object' || !inst.name) {
         window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-warning">Please select an instance first</h3></div>`;
-        window.appState.dashboardLoading = false;
         return;
     }
     if (inst.type === 'postgres') {
-        window.appState.dashboardLoading = false;
         window.appNavigate('pg-dashboard');
         return;
     }
+
+    const dbFilter = window.appState.currentDatabase || 'all';
+    const shellId = `sqlserver-dashboard-shell-${inst.name}-${dbFilter}`;
+    const needsShell = !document.getElementById(shellId);
+
     window.appState.currentInstanceName = inst.name;
-    window.appState.timescaleMetrics = { sqlserver: [], postgres: [], topQueries: [] };
-    window.appState.lastUpdate = null;
-    if (window.appState.dashboardPollingInterval) clearInterval(window.appState.dashboardPollingInterval);
-    window.appState.dashboardPollingInterval = null;
+    window.appState.activeViewId = 'dashboard';
 
-    window.routerOutlet.innerHTML = `
-        <div class="page-view active dashboard-sky-theme">
-            <div class="page-title flex-between dashboard-page-title-compact">
-                <div class="dashboard-title-line">
-                    <h1>SQL Server Dashboard</h1>
-                    <span class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Database: <span class="text-accent">all</span></span>
+    if (needsShell) {
+        window.appState.dashboardLoading = true;
+        window.routerOutlet.innerHTML = `
+            <div class="page-view active dashboard-sky-theme" id="${shellId}">
+                <div class="page-title flex-between dashboard-page-title-compact" style="flex-wrap: wrap; gap: 0.5rem;">
+                    <div class="dashboard-title-line">
+                        <h1>SQL Server Dashboard <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Instance Dashboard" title="Learn more about this dashboard"></i></h1>
+                        <span class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Database: <span class="text-accent">${window.escapeHtml(dbFilter)}</span></span>
+                    </div>
+                    <div id="time-picker-insertion-point"></div>
+                    <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:1rem;">
+                        <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+                            <span id="dataSourceBadge" class="badge badge-info" style="font-size:0.65rem; display:none;">Source</span>
+                        </div>
+                        <div style="text-align:right;">
+                            <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="lastRefreshTime">--:--:--</span></span>
+                        </div>
+                        <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshDashboardData"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                    </div>
                 </div>
-                <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:1rem;">
-                    <span id="dataSourceBadge" class="badge badge-info" style="display:none; font-size:0.65rem;">Source</span>
-                    <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="lastRefreshTime">Loading...</span></span>
-                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshDashboardData"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                <div id="dashboard-content-area">
+                    <div style="display:flex; justify-content:center; align-items:center; height:50vh;">
+                        <div class="spinner"></div><span style="margin-left:1rem;">Loading dashboard layout...</span>
+                    </div>
                 </div>
             </div>
-            <div style="display:flex; justify-content:center; align-items:center; height:50vh;">
-                <div class="spinner"></div><span style="margin-left:1rem;">Loading metrics...</span>
-            </div>
-        </div>
-    `;
+        `;
+        if (window.initPageTimePicker) window.initPageTimePicker();
+    }
 
-    // Top Offenders grid: column sort (dashboard snapshot is always last 1h; change range in drilldown)
+    // Top Offenders grid: column sort
     window.appState.topOffendersGridSort = window.appState.topOffendersGridSort || { key: 'total_cpu_ms', dir: 'desc' };
 
     try {
-        appDebug('[Dashboard] About to fetch dashboard data');
-        
-        // Phase 2: consume DBA-homepage v2 payload (Timescale-backed strip + compat legacy data).
-        const res = await window.apiClient.authenticatedFetch(`/api/sqlserver/dashboard/v2?instance=${encodeURIComponent(inst.name)}`);
-        updateDataSourceBadge(res.headers.get('X-Data-Source'));
-        
-        appDebug('[Dashboard] Response status:', res.status);
+        if (window.appState.fetchingMetrics && !needsShell) {
+            appDebug('[Dashboard] Fetch already in progress, skipping full view refresh');
+            return;
+        }
+
+        appDebug('[Dashboard] Fetching dashboard data...');
+        let url = `/api/sqlserver/dashboard/v2?instance=${encodeURIComponent(inst.name)}`;
+        if (window.appState.fromTs && window.appState.toTs) {
+            const from = new Date(window.appState.fromTs).toISOString();
+            const to = new Date(window.appState.toTs).toISOString();
+            url += `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+        }
+        const res = await window.apiClient.authenticatedFetch(url);
         
         const contentType = res.headers.get('content-type') || '';
-        const bodyText = await res.text();
         if (!contentType.includes('application/json')) {
-            appDebug('[Dashboard] Non-JSON response:', bodyText.substring(0, 200));
-            console.error('[Dashboard] Non-JSON response from API');
             throw new Error(`Expected JSON but got ${contentType || 'unknown'} (${res.status})`);
         }
 
-        let v2;
-        try {
-            v2 = JSON.parse(bodyText);
-        } catch (parseErr) {
-            throw new Error(`Invalid JSON from server (${res.status})`);
-        }
-        if (!res.ok) {
-            const errMsg = (v2 && (v2.error || v2.message)) ? String(v2.error || v2.message) : `HTTP ${res.status}`;
-            throw new Error(errMsg);
-        }
-        appDebug('[Dashboard] V2 data response:', Object.keys(v2));
+        const v2 = await res.json();
+        if (!res.ok) throw new Error(v2.error || v2.message || `HTTP ${res.status}`);
+
         window.appState.dashboardV2 = v2;
-        
-        window.appState.dashboardLoading = false;
-
-        // Use legacy compat payload for the existing renderer (incremental migration).
-        const liveData = (v2 && v2.compat && v2.compat.dashboard) ? v2.compat.dashboard : v2;
-
-        // Phase 3 charts: prefer Timescale trend series when present.
-        // Disk latency trend: adapt v2.root_cause.disk_latency_trend_1h into the existing fileHistory shape
-        // expected by updateIoChart() (snapshots with files[]).
-        try {
-            const ioTrend = v2?.root_cause?.disk_latency_trend_1h;
-            if (Array.isArray(ioTrend) && ioTrend.length > 0) {
-                window.appState.fileHistory = ioTrend.map(p => ({
-                    timestamp: (p.timestamp ? new Date(p.timestamp).toISOString() : ''),
-                    files: [{
-                        read_latency_ms: Number(p.read_latency_ms || 0),
-                        write_latency_ms: Number(p.write_latency_ms || 0)
-                    }]
-                }));
-            }
-        } catch (e) {}
-        
-        const metrics = {
-            avg_cpu_load: liveData.avg_cpu_load ?? liveData.AvgCPULoad ?? liveData.cpu_usage ?? -1,
-            memory_usage: liveData.memory_usage ?? liveData.MemoryUsage ?? liveData.memory_pct ?? -1,
-            active_users: liveData.active_users != null ? liveData.active_users : -1,
-            total_locks: liveData.total_locks ?? liveData.TotalLocks ?? 0,
-            deadlocks: liveData.deadlocks ?? liveData.Deadlocks ?? 0,
-            disk_usage: { data_mb: liveData.disk_usage?.data_mb ?? liveData.disk_usage?.DataMB ?? liveData.DiskUsage?.DataMB ?? 0, log_mb: liveData.disk_usage?.log_mb ?? liveData.disk_usage?.LogMB ?? liveData.DiskUsage?.LogMB ?? 0 },
-            cpu_history: Array.isArray(liveData.cpu_history) ? liveData.cpu_history : Array.isArray(liveData.CPUHistory) ? liveData.CPUHistory : [],
-            connection_stats: Array.isArray(liveData.connection_stats) ? liveData.connection_stats : Array.isArray(liveData.ConnectionStats) ? liveData.ConnectionStats : [],
-            active_blocks: Array.isArray(liveData.active_blocks) ? liveData.active_blocks : Array.isArray(liveData.ActiveBlocks) ? liveData.ActiveBlocks : [],
-            ple_history: Array.isArray(liveData.ple_history) ? liveData.ple_history : Array.isArray(liveData.PLEHistory) ? liveData.PLEHistory : [],
-            file_history: Array.isArray(liveData.file_history) ? liveData.file_history : Array.isArray(liveData.FileHistory) ? liveData.FileHistory : [],
-            locks_by_db: liveData.locks_by_db ?? liveData.LocksByDB ?? {},
-            disk_by_db: liveData.disk_by_db ?? liveData.DiskByDB ?? {},
-            top_queries: Array.isArray(liveData.top_queries) ? liveData.top_queries : Array.isArray(liveData.TopQueries) ? liveData.TopQueries : [],
-            memory_clerks: Array.isArray(liveData.memory_clerks) ? liveData.memory_clerks : Array.isArray(liveData.MemoryClerks) ? liveData.MemoryClerks : [],
-            wait_history: Array.isArray(liveData.wait_history) ? liveData.wait_history : Array.isArray(liveData.WaitHistory) ? liveData.WaitHistory : [],
-            mem_history: Array.isArray(liveData.mem_history) ? liveData.mem_history : Array.isArray(liveData.MemHistory) ? liveData.MemHistory : []
-        };
-        
-        appDebug('[Dashboard] Parsed metrics - cpu:', metrics.avg_cpu_load, 'mem:', metrics.memory_usage, 'cpu_hist:', metrics.cpu_history ? metrics.cpu_history.length : 'N/A');
-        
-        window.appState.liveMetrics = liveData;
-        window.appState.pleHistory = metrics.ple_history;
-        // fileHistory is set from v2 trend above when available; otherwise fall back to legacy metrics.
-        if (!window.appState.fileHistory || window.appState.fileHistory.length === 0) {
-            window.appState.fileHistory = metrics.file_history;
-        }
-        window.appState.waitHistory = metrics.wait_history;
+        window.appState.liveMetrics = v2.compat?.dashboard || v2;
         window.appState.lastUpdate = new Date();
-        renderDashboard(inst, metrics);
-        // keep badge updated after full render (renderDashboard re-creates header)
+
+        if (needsShell) {
+            renderDashboardStructure(inst, v2);
+        }
+        
+        // Update data in place
+        await updateDashboardCharts();
         updateDataSourceBadge(res.headers.get('X-Data-Source'));
-        bindTopOffendersControls();
         if (window.updateAlertsBadge) window.updateAlertsBadge();
-        if (window.updateSqlDashboardAlertBanner) window.updateSqlDashboardAlertBanner();
+        
         startTimescalePolling(inst.name);
     } catch(error) {
-        console.error("Dashboard fetch error:", error);
-        window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-danger">Error loading dashboard</h3><p>${window.escapeHtml(String(error && error.message ? error.message : error))}</p></div>`;
+        console.error("Dashboard error:", error);
+        if (needsShell) {
+            window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-danger">Error loading dashboard</h3><p>${window.escapeHtml(error.message)}</p></div>`;
+        }
+    } finally {
+        window.appState.dashboardLoading = false;
     }
 };
 
@@ -383,17 +342,22 @@ async function fetchTimescaleMetrics(instanceName) {
 
         const dbQ = dashboardDatabaseQueryParam();
         const topOffendersSnapshotRange = '1h';
-        const nowISO = new Date().toISOString();
-        const hourAgoISO = new Date(Date.now() - 3600000).toISOString();
+        let fromISO = new Date(Date.now() - 3600000).toISOString();
+        let toISO = new Date().toISOString();
+
+        if (window.appState.fromTs && window.appState.toTs) {
+            fromISO = new Date(window.appState.fromTs).toISOString();
+            toISO = new Date(window.appState.toTs).toISOString();
+        }
 
         const [sqlserverRes, dbRes, topQueriesRes, longRunningRes, bottlenecksRes, liveDashRes, cpuHistRes] = await Promise.all([
-            window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/metrics?instance=${encodeURIComponent(instanceName)}`),
-            window.apiClient.authenticatedFetch(`/api/sqlserver/db-throughput?instance=${encodeURIComponent(instanceName)}`),
-            window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/top-queries?instance=${encodeURIComponent(instanceName)}`),
-            window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/long-running-queries?instance=${encodeURIComponent(instanceName)}${dbQ}`),
-            window.apiClient.authenticatedFetch(`/api/queries/bottlenecks?instance=${encodeURIComponent(instanceName)}&time_range=${encodeURIComponent(topOffendersSnapshotRange)}&limit=20${dbQ}`),
-            window.apiClient.authenticatedFetch(`/api/sqlserver/dashboard/v2?instance=${encodeURIComponent(instanceName)}`),
-            window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/cpu-history?instance=${encodeURIComponent(instanceName)}&from=${hourAgoISO}&to=${nowISO}`)
+            window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/metrics?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}`),
+            window.apiClient.authenticatedFetch(`/api/sqlserver/db-throughput?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}`),
+            window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/top-queries?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}`),
+            window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/long-running-queries?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}${dbQ}`),
+            window.apiClient.authenticatedFetch(`/api/queries/bottlenecks?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}&time_range=${encodeURIComponent(topOffendersSnapshotRange)}&limit=20${dbQ}`),
+            window.apiClient.authenticatedFetch(`/api/sqlserver/dashboard/v2?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}`),
+            window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/cpu-history?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}`)
         ]).finally(() => {
             window.appState.fetchingMetrics = false;
         });
@@ -483,160 +447,171 @@ function startTimescalePolling(instanceName) {
     }, 30000); // Increased to 30 seconds to reduce API calls
 }
 
+function setChartMessage(canvasId, message, isRefreshing = false) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const parent = canvas.parentElement;
+    if (!parent) return;
+
+    let overlay = parent.querySelector('.chart-no-data-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.className = 'chart-no-data-overlay';
+        overlay.style.cssText = 'position:absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(20,20,35,0.7); z-index:10; color:var(--text-muted); font-size:0.8rem; pointer-events:none; border-radius:8px;';
+        parent.style.position = 'relative';
+        parent.appendChild(overlay);
+    }
+
+    if (message) {
+        overlay.style.display = 'flex';
+        overlay.innerHTML = isRefreshing 
+            ? '<div class="spinner" style="width:20px;height:20px;margin-bottom:8px;"></div><span>Refreshing...</span>'
+            : `<i class="fa-solid fa-info-circle" style="font-size:1.2rem;margin-bottom:8px;"></i><span>${window.escapeHtml(message)}</span>`;
+        canvas.style.opacity = '0.2';
+    } else {
+        overlay.style.display = 'none';
+        canvas.style.opacity = '1';
+    }
+}
+
 async function updateDashboardCharts() {
     if (!window.appState.currentInstanceName) return;
     
-    // Use cached data - don't refetch on every call
+    const v2 = window.appState.dashboardV2 || {};
     const liveData = window.appState.liveMetrics || {};
-    const tsMetrics = window.appState.timescaleMetrics.sqlserver || [];
+    const risk = v2.health_risk || {};
+    const workload = v2.workload_capacity || {};
+
+    // 1. Update KPI Strips (Surgical)
+    const updateKpi = (id, val, suffix = '', dangerThreshold = null, warningThreshold = null) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        
+        const numericVal = parseFloat(val);
+        const displayVal = (val === null || val === undefined || isNaN(numericVal) || numericVal < 0) ? '--' : numericVal.toFixed(id.includes('cpu') || id.includes('memory') ? 1 : 0) + suffix;
+        el.textContent = displayVal;
+
+        const cell = el.closest('.strip-metric-cell');
+        if (cell) {
+            cell.classList.remove('strip-metric-cell--accent-bad', 'strip-metric-cell--accent-warn');
+            if (dangerThreshold !== null && numericVal > dangerThreshold) cell.classList.add('strip-metric-cell--accent-bad');
+            else if (warningThreshold !== null && numericVal > warningThreshold) cell.classList.add('strip-metric-cell--accent-warn');
+        }
+    };
+
+    const cpu = liveData.avg_cpu_load ?? -1;
+    const mem = liveData.memory_usage ?? -1;
+    updateKpi('metric-cpu', cpu, '%', 90, 60);
+    updateKpi('metric-memory', mem, '%', 95, 85);
     
-    // Get latest from TimescaleDB or use live data
-    const latestMetric = tsMetrics.length > 0 ? tsMetrics[tsMetrics.length - 1] : {};
-    
-    // CPU: prefer live data, fallback to TimescaleDB (handle undefined/null)
-    const cpu = (liveData.avg_cpu_load !== undefined && liveData.avg_cpu_load !== null && liveData.avg_cpu_load >= 0 && liveData.avg_cpu_load <= 100) ? liveData.avg_cpu_load : 
-                (latestMetric.avg_cpu_load !== undefined && latestMetric.avg_cpu_load !== null && latestMetric.avg_cpu_load >= 0 && latestMetric.avg_cpu_load <= 100) ? latestMetric.avg_cpu_load : -1;
-    
-    // Memory: prefer live data, fallback to TimescaleDB  
-    const memory = (liveData.memory_usage !== undefined && liveData.memory_usage !== null && liveData.memory_usage >= 0 && liveData.memory_usage <= 100) ? liveData.memory_usage :
-                   (latestMetric.memory_usage !== undefined && latestMetric.memory_usage !== null && latestMetric.memory_usage >= 0 && latestMetric.memory_usage <= 100) ? latestMetric.memory_usage : -1;
-    
-    // TPS: calculate from throughput or live data
-    const throughput = window.appState.timescaleMetrics.throughput || [];
+    const dbFilter = window.appState.currentDatabase || 'all';
+    let diskD = 0, diskL = 0;
+    if(dbFilter === 'all') { 
+        diskD = ((liveData.disk_usage?.data_mb||0)/1024).toFixed(1); 
+        diskL = ((liveData.disk_usage?.log_mb||0)/1024).toFixed(1); 
+    } else if(liveData.disk_by_db && liveData.disk_by_db[dbFilter]) { 
+        diskD = ((liveData.disk_by_db[dbFilter].data_mb||0)/1024).toFixed(1); 
+        diskL = ((liveData.disk_by_db[dbFilter].log_mb||0)/1024).toFixed(1); 
+    }
+    const diskEl = document.getElementById('metric-disk');
+    if (diskEl) diskEl.textContent = `${diskD}/${diskL}`;
+
+    const throughputStats = window.appState.timescaleMetrics.throughput || [];
     let tps = 0;
-    if (throughput.length > 0) {
-        tps = throughput.reduce((s,i) => s + (i.avg_tps || i.tps || 0), 0);
-    }
-    
-    appDebug('[Dashboard] Updating charts - cpu:', cpu, 'mem:', memory, 'tps:', tps, 'liveData keys:', Object.keys(liveData));
+    if(dbFilter === 'all') tps = throughputStats.reduce((s,i) => s + (i.avg_tps || i.tps || 0), 0);
+    else { const dbStat = throughputStats.find(s => s.database_name === dbFilter); if(dbStat) tps = (dbStat.avg_tps || dbStat.tps || 0); }
+    updateKpi('metric-tps', tps);
 
-    const metricsRefreshing = !!window.appState.metricsRefreshInProgress;
-    updateChartLoadingOverlays(metricsRefreshing && (!window.appState.timescaleMetrics.sqlserver || window.appState.timescaleMetrics.sqlserver.length === 0));
-    
-    const cpuEl = document.getElementById('metric-cpu');
-    const memEl = document.getElementById('metric-memory');
-    
-    // Always update CPU display (handle -1 as "no data")
-    if (cpuEl) {
-        const parent = cpuEl.closest('.metric-value');
-        if (parent) {
-            const loading = parent.querySelector('.metric-loading');
-            if (loading) loading.remove();
-        }
-        if (metricsRefreshing && cpu < 0) {
-            cpuEl.innerHTML = '<span style="font-size:0.75rem;color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Loading</span>';
-        } else {
-            cpuEl.textContent = cpu >= 0 ? cpu.toFixed(1) + '%' : 'N/A';
-        }
-        const card = cpuEl.closest('.metric-card');
-        if (card) card.className = 'metric-card glass-panel ' + (cpu > 85 ? 'status-danger' : (cpu > 60 ? 'status-warning' : 'status-healthy'));
-    }
-    
-    // Always update Memory display
-    if (memEl) {
-        const parent = memEl.closest('.metric-value');
-        if (parent) {
-            const loading = parent.querySelector('.metric-loading');
-            if (loading) loading.remove();
-        }
-        if (metricsRefreshing && memory < 0) {
-            memEl.innerHTML = '<span style="font-size:0.75rem;color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Loading</span>';
-        } else {
-            memEl.textContent = memory >= 0 ? memory.toFixed(1) + '%' : 'N/A';
-        }
-        const card = memEl.closest('.metric-card');
-        if (card) card.className = 'metric-card glass-panel ' + (memory > 95 ? 'status-danger' : (memory > 85 ? 'status-warning' : 'status-healthy'));
-    }
-    
-    // Update active users (handle -1 as no data)
-    const activeEl = document.getElementById('metric-active');
-    if (activeEl) {
-        const parent = activeEl.closest('.metric-value');
-        if (parent) {
-            const loading = parent.querySelector('.metric-loading');
-            if (loading) loading.remove();
-        }
-        const active = (liveData.active_users !== undefined && liveData.active_users !== null) ? liveData.active_users : 
-                       (liveData.ActiveUsers !== undefined && liveData.ActiveUsers !== null) ? liveData.ActiveUsers : -1;
-        if (metricsRefreshing && active < 0) {
-            activeEl.innerHTML = '<span style="font-size:0.75rem;color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i></span>';
-        } else {
-            activeEl.textContent = active >= 0 ? active : 'N/A';
-        }
-    }
-    
-    // Update blocked count using active block sessions from DMV live data.
-    const blockedEl = document.getElementById('metric-blocked');
-    if (blockedEl) {
-        const blocked = Array.isArray(liveData.active_blocks) ? liveData.active_blocks.length :
-            (Array.isArray(liveData.ActiveBlocks) ? liveData.ActiveBlocks.length : 0);
-        blockedEl.textContent = blocked;
-    }
-    
-    // Update TPS display
-    const tpsCard = Array.from(document.querySelectorAll('.metric-card')).find(c => c.textContent.includes('TPS'));
-    if (tpsCard) {
-        const tpsEl = tpsCard.querySelector('.metric-value');
-        if (tpsEl) {
-            const loading = tpsEl.querySelector('.metric-loading');
-            if (loading) loading.remove();
-            if (metricsRefreshing && tps <= 0) {
-                tpsEl.innerHTML = '<span style="font-size:0.75rem;color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Loading</span>';
-            } else {
-                tpsEl.textContent = tps > 0 ? tps.toFixed(1) : 'N/A';
-            }
-        }
-    }
-    
-    // Update CPU chart from TimescaleDB (preferred) or live data
-    if (window.currentCharts && window.currentCharts.dashRes) {
-        let cpuHist = [];
-        if (window.appState.timescaleMetrics && window.appState.timescaleMetrics.cpuHistory && window.appState.timescaleMetrics.cpuHistory.length > 0) {
-            cpuHist = window.appState.timescaleMetrics.cpuHistory;
-        } else {
-            cpuHist = liveData.cpu_history || liveData.CPUHistory || [];
-        }
+    updateKpi('metric-active', liveData.active_users);
+    updateKpi('metric-blocked', risk.blocking_sessions ?? 0, '', 0);
 
-        if (cpuHist.length > 0) {
-            const sorted = [...cpuHist].sort((a, b) => {
-                const ta = a.event_time ? new Date(a.event_time.replace(' ','T')).getTime() : (a.capture_timestamp ? new Date(a.capture_timestamp).getTime() : 0);
-                const tb = b.event_time ? new Date(b.event_time.replace(' ','T')).getTime() : (b.capture_timestamp ? new Date(b.capture_timestamp).getTime() : 0);
-                return ta - tb;
-            }).slice(-60);
-            window.currentCharts.dashRes.data.labels = sorted.map(t => { 
-                const ts = t.event_time || t.capture_timestamp;
-                if(!ts) return ''; 
-                const d = new Date(String(ts).replace(' ','T'));
-                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            });
-            window.currentCharts.dashRes.data.datasets[0].data = sorted.map(t => t.sql_process || t.avg_cpu_load || 0);
-            window.currentCharts.dashRes.data.datasets[1].data = sorted.map(t => t.system_idle || (100 - (t.avg_cpu_load || 0)));
-            window.currentCharts.dashRes.update('none');
-        }
+    // Health Score
+    const hsScore = risk.health_score?.score;
+    const hsBadge = document.getElementById('healthScoreBadge');
+    if (hsBadge) {
+        hsBadge.textContent = hsScore != null ? hsScore : '--';
+        hsBadge.className = `badge ml-2 ${hsScore > 80 ? 'badge-success' : (hsScore > 60 ? 'badge-warning' : 'badge-danger')}`;
     }
+
+    updateKpi('metric-grants', risk.memory_grants_pending, '', 0);
+    updateKpi('metric-logins', risk.failed_logins_5m, '', 0);
+    updateKpi('metric-tempdb', risk.tempdb_used_percent, '%', 80, 60);
+    updateKpi('metric-logused', risk.max_log_used_percent, '%', 80, 60);
+    const logDbEl = document.getElementById('metric-logused-db');
+    if (logDbEl) logDbEl.textContent = risk.max_log_db_name || '';
+    updateKpi('metric-ple', risk.ple);
+    updateKpi('metric-comp-ratio', (workload.compilation_ratio || 0) * 100, '%', 50, 25);
+
+    // 2. Update Charts
+    updateCpuChart();
+    updateBatchChart();
+    updateIoChart();
+    updatePleChart();
+    updateBchrChart();
+    updateWaitCategoriesDonut();
     
-    // Update PLE chart
-    if (window.updatePleChart) window.updatePleChart();
-    // Update IO chart
-    if (window.updateIoChart) window.updateIoChart();
-    // Update Wait Categories donut (Phase 2)
-    if (window.updateWaitCategoriesDonut) window.updateWaitCategoriesDonut();
-    // Update Batch Requests trend
-    if (window.updateBatchChart) window.updateBatchChart();
-    // Update Buffer Cache Hit ratio
-    if (window.updateBchrChart) window.updateBchrChart();
-    
-    // Update Active Sessions table
+    // 3. Update Tables (Incremental rows only if needed)
     updateActiveSessionsTable();
-    
-    // Update Query Store offenders table (best-effort)
     updateTopOffendersTable();
-
-    // Update Long Running Queries table
     updateLongRunningQueriesTable();
     
     updateLastRefreshTime();
-    if (window.updateSqlDashboardAlertBanner) window.updateSqlDashboardAlertBanner();
+}
+
+function updateCpuChart() {
+    const canvasId = 'dashResourcesChart';
+    const cpuHist = window.appState.timescaleMetrics?.cpuHistory || window.appState.liveMetrics?.cpu_history || [];
+
+    if (cpuHist.length === 0) {
+        setChartMessage(canvasId, "No CPU history available");
+        return;
+    }
+
+    const sorted = [...cpuHist].sort((a, b) => {
+        let taStr = String(a.event_time || a.capture_timestamp || '').replace(' ', 'T');
+        let tbStr = String(b.event_time || b.capture_timestamp || '').replace(' ', 'T');
+        if (taStr && !taStr.includes('Z') && !taStr.includes('+')) taStr += 'Z';
+        if (tbStr && !tbStr.includes('Z') && !tbStr.includes('+')) tbStr += 'Z';
+        const ta = new Date(taStr).getTime();
+        const tb = new Date(tbStr).getTime();
+        if (isNaN(ta) || isNaN(tb)) return 0;
+        return ta - tb;
+    }).slice(-60);
+
+    const labels = sorted.map(t => {
+        let tsStr = String(t.event_time || t.capture_timestamp || '').replace(' ', 'T');
+        if (tsStr && !tsStr.includes('Z') && !tsStr.includes('+')) tsStr += 'Z';
+        const d = new Date(tsStr);
+        return isNaN(d.getTime()) ? '-' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    });
+    const sqlData = sorted.map(t => typeof t.sql_process === 'number' ? t.sql_process : (t.avg_cpu_load || 0));
+    const systemData = sorted.map(t => t.system_idle != null ? (100 - t.system_idle - (typeof t.sql_process === 'number' ? t.sql_process : (t.avg_cpu_load || 0))) : 0);
+    if (window.currentCharts.dashRes) {
+        window.currentCharts.dashRes.data.labels = labels;
+        window.currentCharts.dashRes.data.datasets[0].data = sqlData;
+        window.currentCharts.dashRes.data.datasets[1].data = systemData;
+        window.currentCharts.dashRes.update('none');
+    } else {
+        const ctx = document.getElementById(canvasId)?.getContext('2d');
+        if (!ctx) return;
+        window.currentCharts.dashRes = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'SQL Server', data: sqlData, borderColor: window.getCSSVar('--accent-blue'), backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.3, pointRadius: 0 },
+                    { label: 'Other/System', data: systemData, borderColor: 'rgba(255,255,255,0.2)', fill: false, tension: 0.3, pointRadius: 0 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true, max: 100 }, x: { ticks: { maxTicksLimit: 8 } } }
+            }
+        });
+    }
+    setChartMessage(canvasId, null);
 }
 
 function updateChartLoadingOverlays(show) {
@@ -785,7 +760,7 @@ function updateLongRunningQueriesTable() {
     if (!tbody) return;
     
     if (window.appState.fetchingMetrics) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center"><div class="spinner"></div> Loading long running queries...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center"><div class="spinner"></div> Loading long running queries...</td></tr>';
         return;
     }
 
@@ -795,7 +770,7 @@ function updateLongRunningQueriesTable() {
     const filteredData = groupLongRunningQueriesForDisplay(longRunningData, dbFilter);
     
     if (filteredData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No long running queries for this database and time range.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No long running queries for this database and time range.</td></tr>';
     } else {
         const sortedData = filteredData.sort((a, b) => b.totalElapsedMs - a.totalElapsedMs);
         const displayQueries = sortedData.slice(0, 10);
@@ -809,8 +784,7 @@ function updateLongRunningQueriesTable() {
             const ageMinutes = ts ? Math.floor((Date.now() - ts.getTime()) / 60000) : -1;
             const ageStr = ageMinutes >= 0 && ageMinutes < 60 ? `(${ageMinutes}m)` : (tsStr || '');
             const qt = (q.queryText || 'Unknown').substring(0, 40);
-            const app = q.programName != null ? String(q.programName) : '';
-            return `<tr><td><span class="badge badge-outline">${tsStr}</span><span class="text-muted" style="font-size:0.65rem; margin-left:4px;">${ageStr}</span></td><td><span class="code-snippet" style="cursor:pointer" data-action="show-query-modal-direct" data-key="lrq${idx}">${window.escapeHtml(qt)}</span></td><td>${window.escapeHtml(q.dbName)}</td><td>${window.escapeHtml(q.loginName)}</td><td title="${window.escapeHtml(app)}">${window.escapeHtml(app.length > 28 ? app.substring(0, 28) + '…' : app)}</td><td>${(q.cpuTimeMs || 0)}ms</td><td>${(q.totalElapsedMs || 0)}ms</td><td>${window.escapeHtml(q.waitType)}</td></tr>`;
+            return `<tr><td><span class="badge badge-outline">${tsStr}</span><span class="text-muted" style="font-size:0.65rem; margin-left:4px;">${ageStr}</span></td><td><span class="code-snippet" style="cursor:pointer" data-action="show-query-modal-direct" data-key="lrq${idx}">${window.escapeHtml(qt)}</span></td><td>${(q.cpuTimeMs || 0)}ms</td><td>${(q.totalElapsedMs || 0)}ms</td></tr>`;
         }).join('');
     }
     
@@ -886,7 +860,7 @@ window.showSessionDetail = function(spid) {
         <div style="margin-bottom:1rem;"><h4 style="margin:0 0 0.75rem 0; color:var(--accent, #3b82f6);">SQL Text</h4>
             <div class="glass-panel" style="background:var(--bg-tertiary, #f9fafb); padding:1rem; max-height:200px; overflow:auto;"><pre style="margin:0; white-space:pre-wrap; color:var(--text-primary, #1f2937); font-family:monospace; font-size:0.85rem;">${window.escapeHtml(session.query_text || 'No query available')}</pre></div>
         </div>
-        ${session.blocking_session_id ? `<div style="margin-top:1rem;"><button class="btn btn-sm btn-outline" style="color:var(--accent, #3b82f6);" data-action="navigate" data-route="drilldown-locks" data-also-call="closeSessionDetail"><i class="fa-solid fa-link"></i> Drill Down to Locks</button></div>` : ''}
+        ${session.blocking_session_id ? `<div style="margin-top:1rem;"><button class="btn btn-sm btn-outline" style="color:var(--accent, #3b82f6);" data-action="navigate" data-route="sqlserver-locks" data-also-call="closeSessionDetail"><i class="fa-solid fa-link"></i> Drill Down to Locks</button></div>` : ''}
     </div>`;
     document.body.appendChild(modalEl);
     modalEl.addEventListener('click', e => { if(e.target === modalEl) window.closeSessionDetail(); });
@@ -941,268 +915,157 @@ window.showQueryModalDirect = function(queryText) {
     modal.addEventListener('click', e => { if(e.target === modal) modal.remove(); });
 };
 
-function renderDashboard(inst, metrics) {
+function renderDashboardStructure(inst, v2) {
     const dbFilter = window.appState.currentDatabase || 'all';
-    const liveData = window.appState.liveMetrics || {};
-    const v2 = window.appState.dashboardV2 || {};
-    const risk = v2.health_risk || {};
-    const workload = v2.workload_capacity || {};
-    const blocking = (risk.blocking_sessions != null) ? Number(risk.blocking_sessions) : null;
-    const allSessions = liveData.active_blocks || [];
-    // Blocking_sessions from v2 health strip is the canonical value now.
-    const connStats = { active: metrics.active_users || 0, blocked: (blocking != null ? blocking : 0) };
-    
-    let totalLocks = 0, totalDeadlocks = 0;
-    if(dbFilter === 'all') { totalLocks = metrics.total_locks || 0; totalDeadlocks = metrics.deadlocks || 0; }
-    else if(metrics.locks_by_db && metrics.locks_by_db[dbFilter]) { totalLocks = metrics.locks_by_db[dbFilter].total_locks; totalDeadlocks = metrics.locks_by_db[dbFilter].deadlocks; }
+    const contentArea = document.getElementById('dashboard-content-area');
+    if (!contentArea) return;
 
-    let diskD = 0, diskL = 0;
-    if(dbFilter === 'all') { diskD = ((metrics.disk_usage?.data_mb||0)/1024).toFixed(1); diskL = ((metrics.disk_usage?.log_mb||0)/1024).toFixed(1); }
-    else if(metrics.disk_by_db && metrics.disk_by_db[dbFilter]) { diskD = ((metrics.disk_by_db[dbFilter].data_mb||0)/1024).toFixed(1); diskL = ((metrics.disk_by_db[dbFilter].log_mb||0)/1024).toFixed(1); }
+    contentArea.innerHTML = `
+        <div id="sql-dashboard-alert-banner" style="display:none;"></div>
+        
+        <!-- ROW 1: MISSION CRITICAL KPIs -->
+        <div class="kpi-row">
+            <div class="glass-panel metric-card-compact h-kpi" title="Percentage of CPU used by the SQL Server process. High values (>90%) may indicate CPU pressure.">
+                <div class="metric-label">CPU Load <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="CPU Load"></i></div>
+                <div class="metric-value" id="metric-cpu">--%</div>
+            </div>
+            <div class="glass-panel metric-card-compact h-kpi" style="cursor:pointer;" data-action="navigate" data-route="drilldown-memory" title="Percentage of physical memory used on the host. Click for detailed memory analysis.">
+                <div class="metric-label">Memory Usage <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="Memory Usage"></i></div>
+                <div class="metric-value" id="metric-memory">--%</div>
+            </div>
+            <div class="glass-panel metric-card-compact h-kpi" title="Transactions Per Second across all user databases. A key measure of database throughput.">
+                <div class="metric-label">TPS <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="TPS"></i></div>
+                <div class="metric-value text-success" id="metric-tps">--</div>
+            </div>
+            <div class="glass-panel metric-card-compact h-kpi" title="Number of active concurrent user sessions currently executing requests.">
+                <div class="metric-label">Active Users <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="Active Users"></i></div>
+                <div class="metric-value text-accent" id="metric-active">--</div>
+            </div>
+            <div class="glass-panel metric-card-compact h-kpi" style="cursor:pointer;" data-action="navigate" data-route="sqlserver-locks" title="Number of sessions currently blocked by other sessions. Click to view blocking chains.">
+                <div class="metric-label">Blocked <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="Blocked Sessions"></i></div>
+                <div class="metric-value text-critical" id="metric-blocked">--</div>
+            </div>
+            <div class="glass-panel metric-card-compact h-kpi" title="Aggregate health score (0-100) based on CPU, memory, blocking, and waits.">
+                <div class="metric-label">Health Score <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="Health Score"></i></div>
+                <div class="metric-value" id="healthScoreBadge">--</div>
+            </div>
+        </div>
 
-    let tps = 0;
-    const throughputStats = window.appState.timescaleMetrics.throughput || [];
-    if(dbFilter === 'all') tps = throughputStats.reduce((s,i) => s + (i.avg_tps || i.tps || 0), 0);
-    else { const dbStat = throughputStats.find(s => s.database_name === dbFilter); if(dbStat) tps = (dbStat.avg_tps || dbStat.tps || 0); }
-
-    // Filter out unrealistic CPU values (>100 means it's raw tick count, not percentage)
-    // Handle undefined/null properly - treat as "no data" (show loading)
-    const rawCpu = metrics.avg_cpu_load;
-    const avgCpuLoad = (rawCpu !== undefined && rawCpu !== null && rawCpu >= 0 && rawCpu <= 100) ? rawCpu : -1;
-    const rawMemory = metrics.memory_usage;
-    const memoryUsage = (rawMemory !== undefined && rawMemory !== null && rawMemory >= 0 && rawMemory <= 100) ? rawMemory : -1;
-    const activeUsers = metrics.active_users !== undefined ? metrics.active_users : -1;
-    const cpuIsDanger = avgCpuLoad > 90;
-    const cpuIsWarning = avgCpuLoad > 60 && avgCpuLoad <= 90;
-    const memIsDanger = memoryUsage > 95;
-    const memIsWarning = memoryUsage > 85 && memoryUsage <= 95;
-    const blockedIsDanger = (blocking != null ? blocking : 0) > 0;
-
-    let sessList = allSessions;
-    if(dbFilter !== 'all') sessList = sessList.filter(s => s.database_name === dbFilter);
-    const significantSessions = sessList.filter(s => { const d = s.wait_time_ms||0; return ((s.status||'').toLowerCase()==='running' || s.blocking_session_id!==0) && d > 5000; });
-    const sortedSessions = [...significantSessions].sort((a,b) => { if(a.blocking_session_id!==0 && b.blocking_session_id===0) return -1; if(a.blocking_session_id===0 && b.blocking_session_id!==0) return 1; return (b.wait_time_ms||0)-(a.wait_time_ms||0); });
-    const sessionsHtml = sortedSessions.slice(0,25).map((s, idx) => renderSessionRow(s, idx)).join('');
-
-    window.appState.queryCache = {};
-    const longRunningRaw = window.appState.timescaleMetrics.longRunningQueries || [];
-    const longRunningGrouped = groupLongRunningQueriesForDisplay(longRunningRaw, dbFilter);
-    appDebug("Initial render: long running groups (scoped) =", longRunningGrouped.length);
-    const displayLongRunning = longRunningGrouped.slice(0, 10).map((q, idx) => {
-        window.appState.queryCache['lrq' + idx] = q.queryText || 'No query';
-        const ts = q.captureTimestamp ? new Date(q.captureTimestamp) : null;
-        const tsStr = ts ? ts.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'}) : '';
-        const ageMinutes = ts ? Math.floor((Date.now() - ts.getTime()) / 60000) : -1;
-        const ageStr = ageMinutes >= 0 && ageMinutes < 60 ? `(${ageMinutes}m)` : (tsStr || '');
-        const qt = (q.queryText || 'Unknown').substring(0, 40);
-        const app = q.programName != null ? String(q.programName) : '';
-        return `<tr><td><span class="badge badge-outline">${tsStr}</span><span class="text-muted" style="font-size:0.65rem; margin-left:4px;">${ageStr}</span></td><td><span class="code-snippet" style="cursor:pointer" data-action="show-query-modal-direct" data-key="lrq${idx}">${window.escapeHtml(qt)}</span></td><td>${window.escapeHtml(q.dbName)}</td><td>${window.escapeHtml(q.loginName)}</td><td title="${window.escapeHtml(app)}">${window.escapeHtml(app.length > 28 ? app.substring(0, 28) + '…' : app)}</td><td>${(q.cpuTimeMs || 0)}ms</td><td>${(q.totalElapsedMs || 0)}ms</td><td>${window.escapeHtml(q.waitType)}</td></tr>`;
-    }).join('');
-    const longRunningHtml = displayLongRunning;
-
-    // Batch Requests/sec trend (1h) from v2
-    const batchTrend = (window.appState.dashboardV2?.root_cause?.batch_requests_trend_1h) || [];
-
-    // Query Store Top Offenders — dashboard uses fixed 1h snapshot; change range in drilldown
-    const qsOffenders = window.appState.queryStoreBottlenecks || [];
-    const toGridSort = window.appState.topOffendersGridSort || { key: 'total_cpu_ms', dir: 'desc' };
-    const qsSortedForGrid = sortQueryStoreOffenderRows(qsOffenders, toGridSort);
-    const offendersHtml = (qsSortedForGrid && qsSortedForGrid.length > 0)
-        ? renderTopOffendersRowsHtml(qsSortedForGrid)
-        : '';
-
-    const overall = computeOverallStatus(metrics);
-    const overallCls = overall === 'CRITICAL' ? 'badge badge-danger' : (overall === 'WARNING' ? 'badge badge-warning' : 'badge badge-success');
-
-    // Phase 2: strip tiles (DBA homepage top rows)
-    const hs = risk.health_score || {};
-    const hsScore = Number.isFinite(hs.score) ? hs.score : null;
-    const hsSeverity = (hs.severity || '').toString().toUpperCase();
-    const hsBadgeCls = hsSeverity === 'CRITICAL' ? 'badge badge-danger' : (hsSeverity === 'WARNING' ? 'badge badge-warning' : 'badge badge-success');
-    const hsLabel = hs.label || (hsSeverity === 'CRITICAL' ? 'Critical' : (hsSeverity === 'WARNING' ? 'Warning' : 'Healthy'));
-
-    const memGrants = (risk.memory_grants_pending != null) ? Number(risk.memory_grants_pending) : null;
-    const failedLogins5m = (risk.failed_logins_5m != null) ? Number(risk.failed_logins_5m) : null;
-    const tempdbPct = (risk.tempdb_used_percent != null) ? Number(risk.tempdb_used_percent) : null;
-    const logPct = (risk.max_log_used_percent != null) ? Number(risk.max_log_used_percent) : null;
-    const logDb = (risk.max_log_db_name != null) ? String(risk.max_log_db_name) : '';
-
-    const batch = (workload.batch_requests_per_sec != null) ? Number(workload.batch_requests_per_sec) : null;
-    const comp = (workload.compilations_per_sec != null) ? Number(workload.compilations_per_sec) : null;
-    const compRatio = (workload.compilation_ratio != null) ? Number(workload.compilation_ratio) : null;
-    const compSev = (workload.compilation_severity || '').toString().toUpperCase();
-
-    window.routerOutlet.innerHTML = `
-        <div class="page-view active dashboard-sky-theme">
-            <div class="page-title flex-between dashboard-page-title-compact">
-                <div class="dashboard-title-line">
-                    <h1>SQL Server Dashboard</h1>
-                    <span class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Database: <span class="text-accent">${window.escapeHtml(dbFilter)}</span></span>
-                </div>
-                <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:1rem;">
-                    <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
-                        <span class="${overallCls}" style="font-size:0.65rem;">Health: ${overall}</span>
-                        <span id="dataSourceBadge" class="badge badge-info" style="font-size:0.65rem; display:none;">Source</span>
-                    </div>
-                    <div style="text-align:right;">
-                        <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="lastRefreshTime">--:--:--</span></span>
-                        <span class="text-muted" style="font-size:0.65rem; display:block;">Auto-refresh: every 10s</span>
-                    </div>
-                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshDashboardData"><i class="fa-solid fa-refresh"></i> Refresh</button>
+        <!-- ROW 2: CORE PERFORMANCE TRENDS -->
+        <div class="grid-container">
+            <div class="col-4 col-laptop-4 col-tablet-6">
+                <div class="card glass-panel h-chart-md">
+                    <div class="card-header" title="Trend of SQL Server CPU usage vs total system CPU usage over the last hour."><h3 style="font-size:0.8rem; margin:0;">System Resources (CPU) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="CPU Load"></i></h3></div>
+                    <div class="chart-container" style="height:210px;"><canvas id="dashResourcesChart"></canvas></div>
                 </div>
             </div>
-            <!--
-            <div class="glass-panel mt-2" style="padding:0.55rem 0.75rem; border-left:3px solid var(--accent-blue,#3b82f6);">
-                <div style="font-size:0.78rem; color:var(--text-muted); line-height:1.45;">
-                    <strong style="color:var(--text);">Related collectors:</strong>
-                    <strong>Storage &amp; Index Health</strong> (separate page) — index samples ~every <strong>15 min</strong>; logs <code style="font-size:0.72rem;">[Collector][SIH]</code>; Timescale required; <code style="font-size:0.72rem;">Instances[].databases</code> optional (auto-discovers user DBs if empty).
-                    <strong>Disk I/O Latency</strong> below — Timescale trend from file stats; this dashboard load triggers a snapshot write when Timescale is connected (plus the Enterprise metrics collector, ~2 min, <code style="font-size:0.72rem;">ENTERPRISE_METRICS_INTERVAL_SEC</code>). See chart <i class="fa-solid fa-circle-info"></i> tooltip.
+            <div class="col-4 col-laptop-4 col-tablet-6">
+                <div class="card glass-panel h-chart-md">
+                    <div class="card-header" title="Number of SQL batches received per second. A core indicator of server workload intensity."><h3 style="font-size:0.8rem; margin:0;">Batch Requests/sec <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Real-Time Diagnostics" data-metric="Batch Requests/sec"></i></h3></div>
+                    <div class="chart-container" style="height:210px;"><canvas id="dashBatchChart"></canvas></div>
                 </div>
             </div>
-            -->
-            <div id="sql-dashboard-alert-banner" style="display:none;"></div>
-            <div class="top-strips dashboard-top-strips" style="grid-template-columns: 1fr 1fr;">
-                <div class="glass-panel dashboard-strip-panel">
-                    <div class="dashboard-strip-header">
-                        <h4>
-                            <span class="dashboard-strip-header-icons" aria-hidden="true">
-                                <i class="fa-solid fa-microchip" title="CPU / compute"></i>
-                                <i class="fa-solid fa-server" title="Host / hardware"></i>
-                                <i class="fa-solid fa-database" title="SQL Engine"></i>
-                            </span>
-                            Host, Hardware, Engine, &amp; Workload
-                            <span class="dashboard-strip-header-tooltip" title="Shows CPU, memory, disk, TPS, active sessions and blocking activity sourced from the monitored SQL Server instance."><i class="fa-solid fa-circle-info"></i></span>
-                        </h4>
-                    </div>
-                    <div class="dashboard-strip-metrics-row--6">
-                        <div class="strip-metric-cell ${cpuIsDanger ? 'strip-metric-cell--accent-bad' : (cpuIsWarning ? 'strip-metric-cell--accent-warn' : '')}" title="Average CPU utilization of the SQL Server host. High values (>85%) indicate compute pressure.">
-                            <div class="strip-metric-label">CPU</div>
-                            <div class="strip-metric-value"><span id="metric-cpu" class="${cpuIsDanger ? 'text-danger fw-bold' : (cpuIsWarning ? 'text-warning fw-bold' : '')}">${avgCpuLoad >= 0 ? avgCpuLoad.toFixed(1) + '%' : ''}</span>${avgCpuLoad < 0 ? '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>' : ''}</div>
-                        </div>
-                        <div class="strip-metric-cell ${memIsDanger ? 'strip-metric-cell--accent-bad' : (memIsWarning ? 'strip-metric-cell--accent-warn' : '')}" style="cursor:pointer;" data-action="navigate" data-route="drilldown-memory" title="Open Memory Drilldown (Timescale range)">
-                            <div class="strip-metric-label">Memory</div>
-                            <div class="strip-metric-value"><span id="metric-memory" class="${memIsDanger ? 'text-danger fw-bold' : (memIsWarning ? 'text-warning fw-bold' : '')}">${memoryUsage >= 0 ? memoryUsage.toFixed(1) + '%' : ''}</span>${memoryUsage < 0 ? '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>' : ''}</div>
-                        </div>
-                        <div class="strip-metric-cell" title="Disk space in GB: D = total data file size, L = total log file size across all databases.">
-                            <div class="strip-metric-label">Disk GB D/L</div>
-                            <div class="strip-metric-value">${diskD > 0 || diskL > 0 ? diskD + '/' + diskL : '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>'}</div>
-                        </div>
-                        <div class="strip-metric-cell" title="Transactions per second — the rate of committed and rolled-back transactions on this instance.">
-                            <div class="strip-metric-label">TPS</div>
-                            <div class="strip-metric-value">${tps > 0 ? tps.toFixed(1) : 'N/A'}</div>
-                        </div>
-                        <div class="strip-metric-cell" title="Number of currently active (running) sessions on the SQL Server instance.">
-                            <div class="strip-metric-label">Active</div>
-                            <div class="strip-metric-value" style="color:var(--success,#22c55e);"><span id="metric-active">${activeUsers >= 0 ? activeUsers : '<div class="metric-loading" style="font-size:0.75rem;"><div class="spinner"></div><span>Loading...</span></div>'}</span></div>
-                        </div>
-                        <div class="strip-metric-cell ${blockedIsDanger ? 'strip-metric-cell--accent-warn' : ''}">
-                            <div class="strip-metric-label" title="Count of active blocked sessions from live blocking activity, not total lock count." style="display:flex; justify-content:space-between; align-items:center; gap:0.35rem;">Blocked${(blocking != null && blocking > 0) ? '<a data-action="navigate" data-route="drilldown-locks" style="font-size:0.65rem; color:var(--accent);" title="Drill down to Locks"><i class="fa-solid fa-arrow-right"></i></a>' : ''}</div>
-                            <div class="strip-metric-value"><span id="metric-blocked">${blocking != null ? blocking : 0}</span></div>
-                        </div>
-                    </div>
+            <div class="col-4 col-laptop-8 col-tablet-6">
+                <div class="card glass-panel h-chart-md">
+                    <div class="card-header" title="Distribution of wait times by category (CPU, IO, Lock, etc.) over the last 15 minutes."><h3 style="font-size:0.8rem; margin:0;">Wait Categories (15m) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Enterprise Metrics" data-metric="Runnable Tasks"></i></h3></div>
+                    <div class="chart-container" style="height:210px;"><canvas id="dashWaitCategoriesDonut"></canvas></div>
                 </div>
+            </div>
+        </div>
 
-                <div class="glass-panel dashboard-strip-panel">
-                    <div class="dashboard-strip-header">
-                        <h4>
-                            <i class="fa-solid fa-heart-pulse text-accent"></i>
-                            Health & Risk (Snapshot)
-                            <span class="dashboard-strip-header-tooltip" title="Snapshot risk signals for SQL Server: blocking sessions, PLE, memory grants, login failures, TempDB and log pressure."><i class="fa-solid fa-circle-info"></i></span>
-                            <span class="dashboard-strip-header-meta ${hsBadgeCls}">Health Score: ${hsScore != null ? hsScore : '--'} • ${window.escapeHtml(hsLabel)}</span>
-                        </h4>
-                    </div>
-                    <div class="dashboard-strip-metrics-row--6">
-                        <div class="strip-metric-cell ${memGrants != null && memGrants > 0 ? 'strip-metric-cell--accent-warn' : ''}" title="Number of queries waiting for a memory grant. Non-zero values indicate memory pressure for query execution.">
-                            <div class="strip-metric-label">Mem Grants Pending</div>
-                            <div class="strip-metric-value">${memGrants != null ? memGrants : '--'}</div>
-                        </div>
-                        <div class="strip-metric-cell ${failedLogins5m != null && failedLogins5m > 0 ? 'strip-metric-cell--accent-warn' : ''}" title="Count of failed login attempts in the last 5 minutes. Spikes may indicate brute-force attacks or misconfigured applications.">
-                            <div class="strip-metric-label">Failed Logins (5m)</div>
-                            <div class="strip-metric-value">${failedLogins5m != null ? failedLogins5m : '--'}</div>
-                        </div>
-                        <div class="strip-metric-cell ${tempdbPct != null && tempdbPct > 80 ? 'strip-metric-cell--accent-bad' : (tempdbPct != null && tempdbPct > 60 ? 'strip-metric-cell--accent-warn' : '')}" title="Percentage of TempDB space currently in use. Values above 80% can cause query failures and spills.">
-                            <div class="strip-metric-label">TempDB Used</div>
-                            <div class="strip-metric-value">${tempdbPct != null ? tempdbPct.toFixed(0) + '%' : '--'}</div>
-                        </div>
-                        <div class="strip-metric-cell ${logPct != null && logPct > 80 ? 'strip-metric-cell--accent-bad' : (logPct != null && logPct > 60 ? 'strip-metric-cell--accent-warn' : '')}" title="Highest transaction log usage percentage across all databases. Full logs block writes and can halt the instance.">
-                            <div class="strip-metric-label">Max Log Used</div>
-                            <div class="strip-metric-value">${logPct != null ? logPct.toFixed(0) + '%' : '--'}</div>
-                            <div class="text-muted sub" title="${window.escapeHtml(logDb)}">${window.escapeHtml(logDb || '')}</div>
-                        </div>
-                        <div class="strip-metric-cell" style="cursor:pointer;" data-action="navigate" data-route="drilldown-memory" title="Open Memory Drilldown (PLE history)">
-                            <div class="strip-metric-label">PLE</div>
-                            <div class="strip-metric-value">${risk.ple != null ? Number(risk.ple).toFixed(0) : '--'}</div>
-                        </div>
-                        <div class="strip-metric-cell ${compSev === 'WARNING' ? 'strip-metric-cell--accent-warn' : ''}" title="Ratio of SQL compilations to batch requests. High ratios indicate excessive ad-hoc queries or plan cache eviction.">
-                            <div class="strip-metric-label">Compilations Ratio</div>
-                            <div class="strip-metric-value">${compRatio != null ? (compRatio * 100).toFixed(1) + '%' : '--'}</div>
-                            <div class="text-muted sub">${batch != null ? batch.toFixed(0) : '--'} batch/s · ${comp != null ? comp.toFixed(0) : '--'} comp/s</div>
-                        </div>
-                    </div>
+        <!-- ROW 3: STORAGE & MEMORY -->
+        <div class="grid-container mt-3">
+            <div class="col-4 col-laptop-4 col-tablet-3">
+                <div class="card glass-panel" style="height: 180px; padding: 0.75rem;" title="Average time taken for disk read and write operations. High values (>20ms) indicate storage bottlenecks.">
+                    <div class="card-header" style="padding: 0 0 0.5rem 0;"><h4 style="font-size:0.7rem; margin:0;">Disk I/O Latency (ms) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="TPS"></i></h4></div>
+                    <div class="chart-container" style="height:120px;"><canvas id="dashIoChart"></canvas></div>
                 </div>
             </div>
-            <div class="charts-grid dashboard-charts-row mt-3" data-cols="3">
-                <div class="chart-card glass-panel" style="padding:0.6rem; cursor:pointer;" data-action="navigate" data-route="drilldown-cpu" title="Drilldown into System Resources"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">System Resources</h3></div><div class="chart-container"><canvas id="dashResourcesChart"></canvas></div></div>
-                <div class="chart-card glass-panel" style="padding:0.6rem;" title="Batch requests per second over the last hour — a key throughput indicator for SQL Server workload."><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Batch Requests/sec (1h)</h3></div><div class="chart-container"><canvas id="dashBatchChart"></canvas></div></div>
-                <div class="chart-card glass-panel" style="padding:0.6rem;"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Disk I/O Latency <span class="dashboard-strip-header-tooltip" title="Trend uses Timescale (sqlserver_file_io_latency). Each dashboard load records one snapshot when Timescale is connected; the Enterprise metrics collector also writes on a timer (default ~2 min, ENTERPRISE_METRICS_INTERVAL_SEC). Check logs for WarmFileIOLatency / EnterpriseMetricsCollector / insert errors. Latency can read as 0 ms with no I/O or very fast storage."><i class="fa-solid fa-circle-info"></i></span></h3></div><div class="chart-container"><canvas id="dashIoChart"></canvas></div></div>
+            <div class="col-4 col-laptop-4 col-tablet-3">
+                <div class="card glass-panel" style="height: 180px; padding: 0.75rem;" title="Average time a data page stays in memory. Lower values indicate memory pressure and frequent disk reads.">
+                    <div class="card-header" style="padding: 0 0 0.5rem 0;"><h4 style="font-size:0.7rem; margin:0;">Page Life Expectancy <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="PLE"></i></h4></div>
+                    <div class="chart-container" style="height:120px;"><canvas id="dashPleChart"></canvas></div>
+                </div>
             </div>
-            <div class="charts-grid dashboard-charts-row mt-2" data-cols="3">
-                <div class="chart-card glass-panel" style="padding:0.6rem; cursor:pointer;" data-action="navigate" data-route="drilldown-memory" title="Memory drilldown (PLE &amp; Timescale)"><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Page Life Expectancy</h3></div><div class="chart-container"><canvas id="dashPleChart"></canvas></div></div>
-                <div class="chart-card glass-panel" style="padding:0.6rem;" title="Buffer cache hit ratio over the last hour. Values below 95% suggest insufficient memory for the workload."><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Buffer Cache Hit % (1h)</h3></div><div class="chart-container"><canvas id="dashBchrChart"></canvas></div></div>
-                <div class="chart-card glass-panel" style="padding:0.6rem;" title="Distribution of wait categories over the last 15 minutes. Helps identify bottlenecks (CPU, I/O, locking, network, memory)."><div class="card-header"><h3 style="font-size:0.82rem; margin:0;">Wait Categories (15m)</h3></div><div class="chart-container"><canvas id="dashWaitCategoriesDonut"></canvas></div></div>
+            <div class="col-4 col-laptop-8 col-tablet-6">
+                <div class="card glass-panel" style="height: 180px; padding: 0.75rem;" title="Percentage of page requests satisfied from memory rather than disk. Should ideally be >95%.">
+                    <div class="card-header" style="padding: 0 0 0.5rem 0;"><h4 style="font-size:0.7rem; margin:0;">Buffer Cache Hit % <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="Memory Usage"></i></h4></div>
+                    <div class="chart-container" style="height:120px;"><canvas id="dashBchrChart"></canvas></div>
+                </div>
             </div>
-            <div class="tables-grid mt-3" style="display:grid; grid-template-columns:1fr; gap:0.75rem;">
-                <div class="table-card glass-panel">
-                    <div class="card-header">
-                        <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-bolt text-accent"></i> Top Offenders (Query Store) <span style="font-size:0.6rem; font-weight:normal; color:var(--text-muted);">${dbFilter === 'all' ? '· all user DBs' : '· ' + window.escapeHtml(dbFilter)}</span></h3>
-                        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
-                            <span class="text-muted" style="font-size:0.65rem;">1h snapshot · click column headers to sort</span>
-                            <span class="badge badge-info">${qsOffenders.length}</span>
-                            <a data-action="navigate" data-route="drilldown-bottlenecks" class="btn btn-xs btn-outline text-accent" style="font-size:0.7rem;" title="Open full Query Store view (time range &amp; details)"><i class="fa-solid fa-arrow-right"></i> Drill down</a>
-                        </div>
+        </div>
+
+        <!-- ROW 4: TOP OFFENDERS & SESSIONS -->
+        <div class="grid-container mt-3">
+            <div class="col-8 col-laptop-8 col-tablet-6">
+                <div class="card glass-panel h-table-md">
+                    <div class="card-header flex-between">
+                        <h3 style="font-size:0.85rem; margin:0;" title="Historical query performance bottlenecks identified by Query Store."><i class="fa-solid fa-bolt text-accent"></i> Top Offenders (Query Store) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Query Analysis" data-metric="Regressions"></i></h3>
+                        <a data-action="navigate" data-route="drilldown-bottlenecks" class="btn btn-xs btn-outline text-accent">Full Analysis</a>
                     </div>
-                    <div class="table-responsive" style="max-height:220px; overflow-y:auto;">
+                    <div class="table-responsive">
                         <table class="data-table" id="topOffendersGrid" style="font-size:0.7rem;">
                             <thead><tr>
-                                <th>#</th>
-                                <th data-sort-key="database_name" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">database <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
-                                <th data-sort-key="query_text" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">sql_text <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
-                                <th data-sort-key="execution_count" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">exec <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
-                                <th data-sort-key="avg_cpu_ms" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">avg_cpu(ms) <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
-                                <th data-sort-key="avg_duration_ms" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">avg_dur(ms) <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
-                                <th data-sort-key="avg_logical_reads" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">avg_reads <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
-                                <th data-sort-key="total_cpu_ms" title="Sort" style="cursor:pointer;user-select:none;white-space:nowrap;">total_cpu(ms) <i class="fa-solid fa-sort sort-icon" style="opacity:0.65;font-size:0.6rem;"></i></th>
+                                <th title="Rank">#</th>
+                                <th title="Database Name">DB</th>
+                                <th title="SQL Query Text (truncated)">SQL Text</th>
+                                <th title="Total number of executions in the period">Exec</th>
+                                <th title="Average CPU time per execution (ms)">Avg CPU</th>
+                                <th title="Average elapsed time per execution (ms)">Avg Dur</th>
+                                <th title="Total cumulative CPU time (ms)">Total CPU</th>
                             </tr></thead>
-                            <tbody id="top-offenders-body">${offendersHtml || '<tr><td colspan="8" class="text-center text-muted">No Query Store offenders yet (Query Store may be disabled or not collected).</td></tr>'}</tbody>
+                            <tbody id="top-offenders-body"></tbody>
                         </table>
                     </div>
                 </div>
             </div>
-            <div class="tables-grid mt-3" style="display:grid; grid-template-columns:1fr; gap:0.75rem;">
-                <div class="table-card glass-panel">
-                    <div class="card-header">
-                        <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-clock text-accent"></i> Long Running Queries <span style="font-size:0.65rem; font-weight:normal; color:var(--text-muted);">(last 15 min)</span> <span style="font-size:0.6rem; font-weight:normal; color:var(--text-muted);">${dbFilter === 'all' ? '· all user DBs' : '· ' + window.escapeHtml(dbFilter)}</span></h3>
-                        <span class="badge badge-warning" id="long-running-badge">${longRunningGrouped.length}</span>
+            <div class="col-4 col-laptop-4 col-tablet-6">
+                <div class="card glass-panel h-table-md">
+                    <div class="card-header flex-between">
+                        <h3 style="font-size:0.85rem; margin:0;" title="Queries currently executing that have exceeded typical execution time thresholds."><i class="fa-solid fa-clock text-accent"></i> Long Running <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Real-Time Diagnostics" data-metric="Batch Requests/sec"></i></h3>
+                        <span class="badge badge-warning" id="long-running-badge">0</span>
                     </div>
-                    <div class="table-responsive" style="max-height:220px; overflow-y:auto;">
-                        <table class="data-table" style="font-size:0.7rem;"><thead><tr><th>time</th><th>sql_text</th><th>database</th><th>login</th><th>app</th><th>cpu(ms)</th><th>duration(ms)</th><th>wait</th></tr></thead>
-                        <tbody id="long-running-body">${longRunningHtml || '<tr><td colspan="8" class="text-center text-muted">No long running queries in the current time range.</td></tr>'}</tbody></table>
-                    </div>
-                </div>
-            </div>
-            <div class="tables-grid mt-3" style="display:grid; grid-template-columns:1fr; gap:0.75rem;">
-                <div class="table-card glass-panel">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Active Sessions (&gt;5s or Blocking)</h3><div style="display:flex; gap:0.5rem; align-items:center;"><span class="badge badge-${connStats.blocked>0?'danger':'info'}" id="active-sessions-badge">${significantSessions.length}</span><a data-action="navigate" data-route="drilldown-locks" style="font-size:0.7rem; color:var(--accent);" title="Drill down to Locks"><i class="fa-solid fa-arrow-right"></i></a></div></div>
-                    <div class="table-responsive" style="max-height:280px; overflow-y:auto;">
-                        <table class="data-table" style="font-size:0.7rem;"><thead><tr><th>spid</th><th>state</th><th>blocker</th><th>duration</th><th>status</th><th>wait_type</th><th>database</th><th>login</th><th>sql_text</th></tr></thead>
-                        <tbody id="active-sessions-body">${sessionsHtml || '<tr><td colspan="9" class="text-center text-muted">No significant sessions.</td></tr>'}</tbody></table>
+                    <div class="table-responsive">
+                        <table class="data-table" style="font-size:0.7rem;">
+                            <thead><tr>
+                                <th title="Last seen timestamp">Time</th>
+                                <th title="SQL Query Text">SQL</th>
+                                <th title="CPU time used (ms)">CPU</th>
+                                <th title="Total elapsed time (ms)">Dur</th>
+                            </tr></thead>
+                            <tbody id="long-running-body"></tbody>
+                        </table>
                     </div>
                 </div>
             </div>
-        </div>`;
-    updateLastRefreshTime();
+            <div class="col-12">
+                <div class="card glass-panel h-table-md">
+                    <div class="card-header flex-between">
+                        <h3 style="font-size:0.85rem; margin:0;" title="Active concurrent sessions with significant resource usage or blocking."><i class="fa-solid fa-users text-accent"></i> Significant Active Sessions <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="Active Users"></i></h3>
+                        <span class="badge badge-info" id="active-sessions-badge">0</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table" style="font-size:0.7rem;">
+                            <thead><tr>
+                                <th title="Session ID (SPID)">SPID</th>
+                                <th title="Current session state">State</th>
+                                <th title="Blocking session ID (if any)">Blocker</th>
+                                <th title="Current execution duration">Duration</th>
+                                <th title="Current wait type">Wait Type</th>
+                                <th title="Database Name">Database</th>
+                                <th title="Login Name">Login</th>
+                                <th title="SQL Query Text">SQL Text</th>
+                            </tr></thead>
+                            <tbody id="active-sessions-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
     bindTopOffendersControls();
-    setTimeout(() => initDashboardCharts(metrics), 25);
+    if (window.updateSqlDashboardAlertBanner) window.updateSqlDashboardAlertBanner();
 }
 
 function initDashboardCharts(metrics) {
@@ -1217,14 +1080,23 @@ function initDashboardCharts(metrics) {
     let cpuHist = metrics.cpu_history || [];
     cpuHist = cpuHist.filter(t => t.sql_process >= 0 && t.sql_process <= 100);
     cpuHist.sort((a, b) => {
-        const ta = a.event_time ? new Date(a.event_time.replace(' ','T')).getTime() : 0;
-        const tb = b.event_time ? new Date(b.event_time.replace(' ','T')).getTime() : 0;
+        let taStr = String(a.event_time || a.capture_timestamp || '').replace(' ','T');
+        let tbStr = String(b.event_time || b.capture_timestamp || '').replace(' ','T');
+        if (taStr && !taStr.includes('Z') && !taStr.includes('+')) taStr += 'Z';
+        if (tbStr && !tbStr.includes('Z') && !tbStr.includes('+')) tbStr += 'Z';
+        const ta = new Date(taStr).getTime();
+        const tb = new Date(tbStr).getTime();
         return ta - tb;
     });
     if(cpuHist.length > 60) cpuHist = cpuHist.slice(-60);
     const sqlArr = cpuHist.map(t => t.sql_process);
     const idleArr = cpuHist.map(t => t.system_idle);
-    const cAxis = cpuHist.map(t => { if(!t.event_time) return ''; const parts = t.event_time.split(' '); if(parts.length < 2) return ''; return parts[1].substring(0,5); });
+    const cAxis = cpuHist.map(t => { 
+        let tsStr = String(t.event_time || t.capture_timestamp || '').replace(' ','T');
+        if (tsStr && !tsStr.includes('Z') && !tsStr.includes('+')) tsStr += 'Z';
+        const d = new Date(tsStr);
+        return isNaN(d.getTime()) ? '-' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    });
 
     const hasCpuData = cpuHist.length > 0 && sqlArr.some(v => v >= 0);
     const resChartContainer = document.getElementById('dashResourcesChart')?.parentElement;
@@ -1267,6 +1139,7 @@ function initDashboardCharts(metrics) {
         const chartOptions = {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
             plugins: {
                 legend: {
                     position: 'top',
@@ -1339,6 +1212,8 @@ window.updateBchrChart = function() {
                 label: 'BCHR %',
                 data: values,
                 borderColor: window.getCSSVar('--success'),
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                fill: true,
                 tension: 0.35,
                 pointRadius: 0
             }]
@@ -1346,6 +1221,7 @@ window.updateBchrChart = function() {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
             plugins: { legend: { display: false } },
             scales: {
                 y: { beginAtZero: false, suggestedMin: 0, suggestedMax: 100, ticks: { callback: (v) => v + '%' } },
@@ -1399,6 +1275,8 @@ window.updateBatchChart = function() {
                 label: 'Batch Requests/sec',
                 data: values,
                 borderColor: window.getCSSVar('--accent-blue'),
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                fill: true,
                 tension: 0.35,
                 pointRadius: 0
             }]
@@ -1406,6 +1284,7 @@ window.updateBatchChart = function() {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
             plugins: { legend: { display: false } },
             scales: {
                 y: { beginAtZero: true, title: { display: true, text: '/sec' } },
@@ -1520,6 +1399,7 @@ window.updateIoChart = function() {
         const ioChartOptions = {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
             plugins: {
                 legend: {
                     display: true,
@@ -1538,37 +1418,43 @@ window.updateIoChart = function() {
 
 window.updatePleChart = function() {
     if(window.currentCharts && window.currentCharts.dashPle) window.currentCharts.dashPle.destroy();
-    const pleHist = window.appState.pleHistory || [];
     
-    // Handle both array of numbers and array of objects
+    // Source from window.appState.pleHistory, fallback to dashboardV2?.memory_storage_internals?.ple_history
+    let pleHist = window.appState.pleHistory || [];
+    if (!pleHist || pleHist.length === 0) {
+        pleHist = window.appState.dashboardV2?.memory_storage_internals?.ple_history || [];
+    }
+    
     let hasData = false;
     let pleData = [];
     let labels = [];
     
     if (pleHist.length > 0) {
-        // Check if it's an array of numbers or objects
         if (typeof pleHist[0] === 'number') {
-            // Format: [123, 124, 125, ...] - just numbers
             hasData = pleHist.some(v => v > 0);
             if (hasData) {
                 pleData = pleHist.slice(-60);
                 labels = pleData.map((_, i) => '-' + (pleData.length - 1 - i) + 'm');
             }
         } else if (typeof pleHist[0] === 'object') {
-            // Format: [{ple: 123, timestamp: ...}, ...]
-            hasData = pleHist.some(v => (v.ple || v.avg_ple || 0) > 0);
+            // Support keys: ple, avg_ple, value, ple_seconds
+            hasData = pleHist.some(v => (v.ple ?? v.avg_ple ?? v.value ?? v.ple_seconds ?? 0) > 0);
             if (hasData) {
                 const sorted = [...pleHist].sort((a, b) => {
-                    const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-                    const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-                    return ta - tb;
+                    const taStr = String(a.timestamp || a.capture_time || a.event_time || '').replace(' ', 'T');
+                    const tbStr = String(b.timestamp || b.capture_time || b.event_time || '').replace(' ', 'T');
+                    const ta = new Date(taStr).getTime();
+                    const tb = new Date(tbStr).getTime();
+                    return (isNaN(ta) || isNaN(tb)) ? 0 : ta - tb;
                 }).slice(-60);
-                pleData = sorted.map(t => t.ple || t.avg_ple || 0);
+                pleData = sorted.map(t => t.ple ?? t.avg_ple ?? t.value ?? t.ple_seconds ?? 0);
                 labels = sorted.map(t => {
-                    if(!t.timestamp) return '';
-                    const parts = t.timestamp.split(' ');
-                    if(parts.length < 2) return '';
-                    return parts[1].substring(0,5);
+                    const ts = t.timestamp || t.capture_time || t.event_time;
+                    if(!ts) return '';
+                    const tsStr = String(ts).replace(' ', 'T');
+                    const date = new Date(tsStr);
+                    if (isNaN(date.getTime())) return '-';
+                    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
                 });
             }
         }
@@ -1591,8 +1477,6 @@ window.updatePleChart = function() {
     }
     
     if (!hasData) return;
-    const maxServerMemoryGB = window.appState.liveMetrics?.max_server_memory_gb || 8192;
-    const pleThreshold = (maxServerMemoryGB / 4) * 300;
     const ctxPle = document.getElementById('dashPleChart')?.getContext('2d');
     if(ctxPle) {
         const pleChartData = {
@@ -1610,28 +1494,9 @@ window.updatePleChart = function() {
         const pleChartOptions = {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
             plugins: { 
-                legend: { display: false },
-                annotation: {
-                    annotations: {
-                        threshold: {
-                            type: 'line',
-                            yMin: pleThreshold,
-                            yMax: pleThreshold,
-                            borderColor: 'rgba(239, 68, 68, 0.7)',
-                            borderWidth: 2,
-                            borderDash: [6, 6],
-                            label: {
-                                display: true,
-                                content: 'Threshold: ' + pleThreshold.toFixed(0) + 's',
-                                position: 'end',
-                                backgroundColor: 'rgba(239, 68, 68, 0.8)',
-                                color: 'white',
-                                font: { size: 10 }
-                            }
-                        }
-                    }
-                }
+                legend: { display: false }
             },
             scales: {
                 y: { 
@@ -1655,40 +1520,22 @@ window.updateWaitChart = function() {
 
 // Phase 2: Wait Categories donut (last 15 minutes) from /api/sqlserver/dashboard/v2 payload.
 window.updateWaitCategoriesDonut = function() {
-    if (window.currentCharts && window.currentCharts.waitCategoriesDonut) {
-        window.currentCharts.waitCategoriesDonut.destroy();
-    }
+    const canvasId = 'dashWaitCategoriesDonut';
+    const agg = window.appState.dashboardV2?.root_cause?.wait_categories_15m || [];
 
-    const v2 = window.appState.dashboardV2 || {};
-    const agg = v2?.root_cause?.wait_categories_15m || [];
-
-    const container = document.getElementById('dashWaitCategoriesDonut')?.parentElement;
-    if (!container) return;
-
-    // Remove any existing message
-    const existingMsg = container.querySelector('.chart-message');
-    if (existingMsg) existingMsg.remove();
-
-    const waitRefreshing = !!window.appState.metricsRefreshInProgress;
-    if (!Array.isArray(agg) || agg.length === 0) {
-        container.innerHTML += waitRefreshing
-            ? '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;text-align:center;"><div class="spinner" style="width:18px;height:18px;margin:0 auto 6px;"></div>Loading metrics…</div>'
-            : '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">Waiting for data collection...</div>';
+    if (agg.length === 0) {
+        setChartMessage(canvasId, "No recent wait activity");
         return;
     }
 
     const labels = agg.map(r => r.wait_category || 'Other');
     const values = agg.map(r => Number(r.wait_time_ms || 0));
     const total = values.reduce((s, v) => s + (isFinite(v) ? v : 0), 0);
+
     if (!isFinite(total) || total <= 0) {
-        container.innerHTML += waitRefreshing
-            ? '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;text-align:center;"><div class="spinner" style="width:18px;height:18px;margin:0 auto 6px;"></div>Loading metrics…</div>'
-            : '<div class="chart-message" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);font-size:0.8rem;">No wait activity detected</div>';
+        setChartMessage(canvasId, "No wait activity detected");
         return;
     }
-
-    const ctx = document.getElementById('dashWaitCategoriesDonut')?.getContext('2d');
-    if (!ctx) return;
 
     const palette = {
         CPU: window.getCSSVar('--warning') || '#f59e0b',
@@ -1701,34 +1548,44 @@ window.updateWaitCategoriesDonut = function() {
     };
     const bg = labels.map(l => palette[l] || palette.Other);
 
-    window.currentCharts = window.currentCharts || {};
-    window.currentCharts.waitCategoriesDonut = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: labels,
-            datasets: [{
-                data: values,
-                backgroundColor: bg,
-                borderColor: 'rgba(255,255,255,0.08)',
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { position: 'right', labels: { boxWidth: 10, font: { size: 9 } } },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            const v = context.parsed || 0;
-                            const pct = total > 0 ? ((v / total) * 100).toFixed(1) : '0.0';
-                            return `${context.label}: ${Math.round(v)} ms (${pct}%)`;
+    if (window.currentCharts && window.currentCharts.waitCategoriesDonut) {
+        window.currentCharts.waitCategoriesDonut.data.labels = labels;
+        window.currentCharts.waitCategoriesDonut.data.datasets[0].data = values;
+        window.currentCharts.waitCategoriesDonut.data.datasets[0].backgroundColor = bg;
+        window.currentCharts.waitCategoriesDonut.update('none');
+    } else {
+        const ctx = document.getElementById(canvasId)?.getContext('2d');
+        if (!ctx) return;
+        window.currentCharts = window.currentCharts || {};
+        window.currentCharts.waitCategoriesDonut = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: values,
+                    backgroundColor: bg,
+                    borderColor: 'rgba(255,255,255,0.08)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'right', labels: { boxWidth: 10, font: { size: 9 } } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const v = context.parsed || 0;
+                                const pct = total > 0 ? ((v / total) * 100).toFixed(1) : '0.0';
+                                return `${context.label}: ${Math.round(v)} ms (${pct}%)`;
+                            }
                         }
                     }
-                }
-            },
-            cutout: '55%'
-        }
-    });
+                },
+                cutout: '55%'
+            }
+        });
+    }
+    setChartMessage(canvasId, null);
 };

@@ -1,135 +1,111 @@
 <!--
- * SQL Optima — https://github.com/rsharma155/sql_optima
- *
- * Purpose: Advanced PostgreSQL enterprise metrics dashboard (BGWriter, Archiver, Settings Drift).
- *
- * Author: Ravi Sharma
- * Copyright (c) 2026 Ravi Sharma
- * SPDX-License-Identifier: MIT
+ * SQL Optima — PostgreSQL Enterprise Monitor template
 -->
 <div class="page-view active dashboard-sky-theme">
-    <!-- Header -->
+    <!-- ROW 0: HEADER -->
     <div class="page-title flex-between dashboard-page-title-compact">
-        <div class="dashboard-title-line" style="flex:1; min-width:0; display:flex; align-items:center; gap:1rem;">
-            <button class="btn btn-secondary btn-sm" data-action="navigate" data-route="pg-dashboard" title="Back to Control Center">
-                <i class="fa-solid fa-arrow-left"></i>
-            </button>
-            <div>
-                <h1>Postgres Enterprise Monitor</h1>
-                <span class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></span>
-            </div>
+        <div class="dashboard-title-line">
+            <h1><i class="fa-solid fa-building-shield"></i> Enterprise Monitor <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Enterprise Monitor" title="Learn more about this dashboard"></i></h1>
+            <span class="subtitle">BGWriter, Archiver, and Internal Engine Signals</span>
         </div>
-        <div class="dashboard-page-title-actions dashboard-pg-header-actions">
+        <div class="flex-center dashboard-page-title-actions" style="gap: 0.75rem;">
             <div id="time-picker-insertion-point"></div>
-            <div class="dashboard-pg-header-primary">
-                <div class="time-picker glass-panel p-2 rounded" style="display:flex; flex-wrap:wrap; align-items:center; gap:0.35rem 0.85rem; justify-content:flex-end;">
-                    <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="pgLastRefreshTime">--:--:--</span></span>
-                    <span class="text-muted" style="font-size:0.75rem;" id="pg-uptime">Loading...</span>
-                    <span class="text-muted" style="font-size:0.75rem;" id="pg-version">Loading...</span>
-                </div>
-                <div class="glass-panel p-2 rounded" style="display:flex; align-items:center; gap:0.5rem; cursor:help;" id="pgHealthTooltipContainer">
-                    <span class="text-muted" style="font-size:0.75rem;">Health</span>
-                    <span id="pgHealthScoreBadge" class="badge badge-success" style="min-width:3.5rem; text-align:center;">--</span>
-                </div>
-                <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgEnterpriseDashboardView" title="Force refresh the dashboard data."><i class="fa-solid fa-refresh"></i> Refresh</button>
-            </div>
+            <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgEnterpriseDashboardView"><i class="fa-solid fa-refresh"></i> Refresh</button>
         </div>
     </div>
 
-    <!-- ROW 1: Enterprise KPIs -->
-    <div class="glass-panel dashboard-strip-panel mt-2">
-        <div class="dashboard-strip-header">
-            <h4><i class="fa-solid fa-building-shield text-accent"></i> Enterprise Health Signals</h4>
+    <!-- ROW 1: MISSION CONTROL KPIs -->
+    <div class="kpi-row">
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Health Score <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Health Score"></i></div>
+            <div class="metric-value" id="pgHealthScoreBadge">--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">Instance overall</span>
         </div>
-        <div class="dashboard-strip-metrics-row--4">
-            <div class="strip-metric-cell" id="card-ckpt-timed" title="Scheduled checkpoints.">
-                <div class="strip-metric-label">Timed Checkpoints</div>
-                <div class="strip-metric-value" id="stat-ckpt-timed">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-ckpt-req" title="Requested checkpoints (max_wal_size pressure).">
-                <div class="strip-metric-label">Req Checkpoints</div>
-                <div class="strip-metric-value" id="stat-ckpt-req">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-archived-count" title="Total WAL files archived.">
-                <div class="strip-metric-label">Archived WALs</div>
-                <div class="strip-metric-value" id="stat-archived-count">--</div>
-            </div>
-            <div class="strip-metric-cell" id="card-archiver-failed" title="WAL archiving failures.">
-                <div class="strip-metric-label">Archiving Failures</div>
-                <div class="strip-metric-value" id="stat-archiver-failed">--</div>
-            </div>
+        <div class="glass-panel metric-card-compact h-kpi" id="card-ckpt-timed">
+            <div class="metric-label">Timed Checkpoints <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="Checkpoint Ratio"></i></div>
+            <div class="metric-value text-success" id="stat-ckpt-timed">--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">Scheduled cycle</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi" id="card-ckpt-req">
+            <div class="metric-label">Req Checkpoints <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="Checkpoint Ratio"></i></div>
+            <div class="metric-value" id="stat-ckpt-req">--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">WAL pressure triggers</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi" id="card-archived-wals">
+            <div class="metric-label">Archived WALs <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="Archive Success"></i></div>
+            <div class="metric-value text-accent" id="stat-archived-wals">--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">Durability success</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi" id="card-archiving-failures">
+            <div class="metric-label">Archiving Failures <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="Archive Success"></i></div>
+            <div class="metric-value" id="stat-archiving-failures">--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">Critical backup risk</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">BGWriter Halts <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="BGWriter Halts"></i></div>
+            <div class="metric-value text-warning" id="stat-bgw-halts">--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">Maxwritten hits</span>
         </div>
     </div>
 
-    <div class="dashboard-grid" style="display: grid; gap: var(--spacing-md); margin-top:0.75rem;">
+    <!-- ROW 2+: INVESTIGATION GRIDS -->
+    <div class="grid-container mt-3">
         <!-- BGWriter/Checkpoint Statistics Card -->
-        <div class="card glass-panel" style="padding:0.75rem;">
-            <div class="card-header">
-                <h3 style="font-size:0.85rem; margin:0;" title="Background writer and checkpoint statistics from pg_stat_bgwriter. Shows how PostgreSQL flushes dirty buffers to disk. Rising 'req' checkpoints may indicate max_wal_size is too low."><i class="fa-solid fa-database text-accent"></i> BGWriter / Checkpoint Statistics</h3>
-            </div>
-            <div class="card-body mt-2">
-                <div id="bgwriter-section">
-                    <div class="loading-spinner"><i class="fa-solid fa-spinner fa-spin"></i> Loading BGWriter data...</div>
+        <div class="col-12">
+            <div class="card glass-panel">
+                <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-database text-accent"></i> BGWriter / Checkpoint Statistics</h3></div>
+                <div class="card-body" id="bgwriter-section">
+                    <div class="flex-center py-5"><div class="spinner"></div></div>
                 </div>
             </div>
         </div>
 
         <!-- WAL Archiver Statistics Card -->
-        <div class="card glass-panel" style="padding:0.75rem;">
-            <div class="card-header">
-                <h3 style="font-size:0.85rem; margin:0;" title="WAL archiver statistics from pg_stat_archiver. Monitors continuous archiving health — failures mean WAL files are not being shipped to the backup destination."><i class="fa-solid fa-archive text-accent"></i> WAL Archiver Statistics</h3>
-            </div>
-            <div class="card-body mt-2">
-                <div id="archiver-section">
-                    <div class="loading-spinner"><i class="fa-solid fa-spinner fa-spin"></i> Loading Archiver data...</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Contention: Wait Events -->
-        <div class="card glass-panel" style="padding:0.75rem;">
-            <div class="card-header">
-                <h3 style="font-size:0.85rem; margin:0;" title="Wait event type distribution over time from pg_stat_activity snapshots. Helps identify contention bottlenecks (Lock, IO, LWLock, BufferPin, etc.)."><i class="fa-solid fa-road-barrier text-accent"></i> Contention: Wait Events (history)</h3>
-            </div>
-            <div class="card-body mt-2">
-                <div id="waits-section">
-                    <div class="loading-spinner"><i class="fa-solid fa-spinner fa-spin"></i> Loading wait events...</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- IO: per DB IO/temp -->
-        <div class="card glass-panel" style="padding:0.75rem;">
-            <div class="card-header">
-                <h3 style="font-size:0.85rem; margin:0;" title="Per-database I/O and temp file usage from pg_stat_database. blks_read shows physical reads (not served from cache). temp_bytes shows sorts/hashes spilling to disk."><i class="fa-solid fa-hard-drive text-accent"></i> IO: Per-DB Reads / Temp Spill (history)</h3>
-            </div>
-            <div class="card-body mt-2">
-                <div id="io-section">
-                    <div class="loading-spinner"><i class="fa-solid fa-spinner fa-spin"></i> Loading IO stats...</div>
+        <div class="col-6 col-laptop-6 col-tablet-6">
+            <div class="card glass-panel">
+                <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-archive text-accent"></i> WAL Archiver Statistics</h3></div>
+                <div class="card-body" id="archiver-section" style="height:250px;">
+                    <div class="flex-center py-4"><div class="spinner"></div></div>
                 </div>
             </div>
         </div>
 
         <!-- Config drift -->
-        <div class="card glass-panel" style="padding:0.75rem;">
-            <div class="card-header">
-                <h3 style="font-size:0.85rem; margin:0;" title="Detects postgresql.conf / ALTER SYSTEM parameter changes between consecutive collector snapshots. Useful for auditing configuration drift."><i class="fa-solid fa-sliders text-accent"></i> Config Drift (latest vs previous snapshot)</h3>
+        <div class="col-6 col-laptop-6 col-tablet-6">
+            <div class="card glass-panel">
+                <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-sliders text-accent"></i> Config Drift (Audit)</h3></div>
+                <div class="card-body" id="drift-section" style="height:250px;">
+                    <div class="flex-center py-4"><div class="spinner"></div></div>
+                </div>
             </div>
-            <div class="card-body mt-2">
-                <div id="drift-section">
-                    <div class="loading-spinner"><i class="fa-solid fa-spinner fa-spin"></i> Loading drift...</div>
+        </div>
+
+        <!-- Contention: Wait Events -->
+        <div class="col-7 col-laptop-8 col-tablet-6">
+            <div class="card glass-panel">
+                <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-road-barrier text-accent"></i> Contention Wait Analysis</h3></div>
+                <div class="card-body" id="waits-section">
+                    <div class="flex-center py-4"><div class="spinner"></div></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- IO Stats -->
+        <div class="col-5 col-laptop-4 col-tablet-6">
+            <div class="card glass-panel">
+                <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-hard-drive text-accent"></i> Database I/O &amp; Temp Spill</h3></div>
+                <div class="card-body" id="io-section">
+                    <div class="flex-center py-4"><div class="spinner"></div></div>
                 </div>
             </div>
         </div>
 
         <!-- Query internals (pg_stat_statements) -->
-        <div class="card glass-panel" style="padding:0.75rem;">
-            <div class="card-header">
-                <h3 style="font-size:0.85rem; margin:0;" title="Top queries from pg_stat_statements sorted by temp block writes. Identifies queries spilling to disk — raising work_mem for these queries can improve performance."><i class="fa-solid fa-magnifying-glass-chart text-accent"></i> Query Internals (pg_stat_statements)</h3>
-            </div>
-            <div class="card-body mt-2">
-                <div id="qint-section">
-                    <div class="loading-spinner"><i class="fa-solid fa-spinner fa-spin"></i> Loading query internals...</div>
+        <div class="col-12">
+            <div class="card glass-panel">
+                <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-magnifying-glass-chart text-accent"></i> High-Impact Internal Queries</h3></div>
+                <div class="card-body" id="qint-section">
+                    <div class="flex-center py-4"><div class="spinner"></div></div>
                 </div>
             </div>
         </div>

@@ -72,7 +72,7 @@ func (tl *TimescaleLogger) GetPostgresVacuumProgress(ctx context.Context, instan
 		       heap_blks_total, heap_blks_scanned, heap_blks_vacuumed,
 		       index_vacuum_count, max_dead_tuples, num_dead_tuples
 		FROM postgres_vacuum_progress
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC, heap_blks_scanned DESC
 		LIMIT $2
 	`

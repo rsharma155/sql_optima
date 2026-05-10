@@ -10,6 +10,7 @@ package hot
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"time"
 
@@ -28,15 +29,33 @@ func (tl *TimescaleLogger) LogSQLServerSessionSnapshots(ctx context.Context, sna
 		INSERT INTO sqlserver_session_snapshot (
 			sample_time, instance_id, session_id, login_name, original_login_name,
 			host_name, program_name, database_name, is_user_process, status,
-			query_hash, query_plan_hash
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			query_hash, query_plan_hash,
+			total_elapsed_time_ms, cpu_time_ms, wait_type, blocking_session_id, query_text
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 	`
 
 	for _, s := range snapshots {
+		qh := bytesToInt64(s.QueryHash)
+		qph := bytesToInt64(s.QueryPlanHash)
+
 		batch.Queue(query,
-			s.SampleTime, s.InstanceID, s.SessionID, s.LoginName, s.OriginalLoginName,
-			s.HostName, s.ProgramName, s.DatabaseName, s.IsUserProcess, s.Status,
-			s.QueryHash, s.QueryPlanHash,
+			s.SampleTime, 
+			s.InstanceID, 
+			s.SessionID, 
+			tl.ToSafeUTF8(s.LoginName), 
+			tl.ToSafeUTF8(s.OriginalLoginName),
+			tl.ToSafeUTF8(s.HostName), 
+			tl.ToSafeUTF8(s.ProgramName), 
+			tl.ToSafeUTF8(s.DatabaseName), 
+			s.IsUserProcess, 
+			tl.ToSafeUTF8(s.Status),
+			qh, 
+			qph,
+			s.TotalElapsedTimeMs,
+			s.CPUTimeMs,
+			tl.ToSafeUTF8(s.WaitType),
+			s.BlockingSessionID,
+			tl.ToSafeUTF8(s.QueryText),
 		)
 	}
 
@@ -46,6 +65,23 @@ func (tl *TimescaleLogger) LogSQLServerSessionSnapshots(ctx context.Context, sna
 	}
 
 	return nil
+}
+
+func bytesToInt64(b []byte) *int64 {
+	if len(b) == 0 {
+		return nil
+	}
+	var val int64
+	if len(b) >= 8 {
+		val = int64(binary.BigEndian.Uint64(b[len(b)-8:]))
+	} else {
+		var u uint64
+		for _, x := range b {
+			u = (u << 8) | uint64(x)
+		}
+		val = int64(u)
+	}
+	return &val
 }
 
 // RunSQLServerIdentityUpsertJob executes the MERGE logic to map query hashes to identities
@@ -117,6 +153,21 @@ WHERE c.instance_id = i.instance_id
   AND c.query_hash = i.query_hash
   AND c.classification <> 'USER';
 `
+	// Step 2.5: Mark queries with 'sys.' or '[sys].' as SYSTEM
+	step25 := `
+UPDATE public.sqlserver_query_classification_dim c
+SET classification = 'SYSTEM'
+FROM public.sqlserver_query_metrics_v2 q
+WHERE c.instance_id = q.instance_id 
+  AND c.query_hash = q.query_hash
+  AND (
+       UPPER(q.statement_text) LIKE '%SYS.%' 
+    OR UPPER(q.statement_text) LIKE '%[SYS].%'
+    OR UPPER(q.query_text_raw) LIKE '%SYS.%'
+    OR UPPER(q.query_text_raw) LIKE '%[SYS].%'
+  )
+  AND c.classification <> 'SYSTEM';
+`
 	// Step 3: Mark remaining as SYSTEM if not seen in identity for 1 hour
 	step3 := `
 UPDATE public.sqlserver_query_classification_dim
@@ -136,6 +187,9 @@ WHERE classification = 'UNKNOWN'
 	}
 	if _, err := tx.Exec(ctx, step2); err != nil {
 		return fmt.Errorf("RunSQLServerClassificationJob step 2: %w", err)
+	}
+	if _, err := tx.Exec(ctx, step25); err != nil {
+		return fmt.Errorf("RunSQLServerClassificationJob step 2.5: %w", err)
 	}
 	if _, err := tx.Exec(ctx, step3); err != nil {
 		return fmt.Errorf("RunSQLServerClassificationJob step 3: %w", err)
@@ -157,7 +211,8 @@ func (tl *TimescaleLogger) GetLatestSQLServerSessionSnapshots(ctx context.Contex
 	q := `
 		SELECT sample_time, instance_id, session_id, login_name, original_login_name,
 		       host_name, program_name, database_name, is_user_process, status,
-		       query_hash, query_plan_hash
+		       query_hash, query_plan_hash,
+		       total_elapsed_time_ms, cpu_time_ms, wait_type, blocking_session_id, query_text
 		FROM sqlserver_session_snapshot
 		WHERE instance_id = $1 AND sample_time = $2
 	`
@@ -176,13 +231,17 @@ func (tl *TimescaleLogger) GetLatestSQLServerSessionSnapshots(ctx context.Contex
 	var results []models.SQLServerSessionSnapshot
 	for rows.Next() {
 		var s models.SQLServerSessionSnapshot
+		var qh, qph *int64
 		if err := rows.Scan(
 			&s.SampleTime, &s.InstanceID, &s.SessionID, &s.LoginName, &s.OriginalLoginName,
 			&s.HostName, &s.ProgramName, &s.DatabaseName, &s.IsUserProcess, &s.Status,
-			&s.QueryHash, &s.QueryPlanHash,
+			&qh, &qph,
+			&s.TotalElapsedTimeMs, &s.CPUTimeMs, &s.WaitType, &s.BlockingSessionID, &s.QueryText,
 		); err != nil {
 			continue
 		}
+		// Convert int64 back to []byte for compatibility if needed, 
+		// but frontend mostly uses query_hash as string/hex which we handle elsewhere.
 		results = append(results, s)
 	}
 	return results, nil

@@ -15,8 +15,9 @@ import (
 )
 
 // registerAlertReadRoutes attaches read-only alert engine endpoints.
-func registerAlertReadRoutes(sr *mux.Router, ah *handlers.AlertHandlers) {
+func registerAlertReadRoutes(sr *mux.Router, getAH func() *handlers.AlertHandlers) {
 	sr.HandleFunc("/alerts", func(w http.ResponseWriter, r *http.Request) {
+		ah := getAH()
 		if ah == nil {
 			http.Error(w, `{"success":false,"error":"alert engine not configured (TimescaleDB disconnected)"}`, http.StatusServiceUnavailable)
 			return
@@ -25,6 +26,7 @@ func registerAlertReadRoutes(sr *mux.Router, ah *handlers.AlertHandlers) {
 	}).Methods("GET")
 
 	sr.HandleFunc("/alerts/count", func(w http.ResponseWriter, r *http.Request) {
+		ah := getAH()
 		if ah == nil {
 			http.Error(w, `{"success":false,"error":"alert engine not configured"}`, http.StatusServiceUnavailable)
 			return
@@ -33,6 +35,7 @@ func registerAlertReadRoutes(sr *mux.Router, ah *handlers.AlertHandlers) {
 	}).Methods("GET")
 
 	sr.HandleFunc("/alerts/{id}", func(w http.ResponseWriter, r *http.Request) {
+		ah := getAH()
 		if ah == nil {
 			http.Error(w, `{"success":false,"error":"alert engine not configured"}`, http.StatusServiceUnavailable)
 			return
@@ -41,6 +44,7 @@ func registerAlertReadRoutes(sr *mux.Router, ah *handlers.AlertHandlers) {
 	}).Methods("GET")
 
 	sr.HandleFunc("/alerts/maintenance", func(w http.ResponseWriter, r *http.Request) {
+		ah := getAH()
 		if ah == nil {
 			http.Error(w, `{"success":false,"error":"alert engine not configured"}`, http.StatusServiceUnavailable)
 			return
@@ -50,8 +54,9 @@ func registerAlertReadRoutes(sr *mux.Router, ah *handlers.AlertHandlers) {
 }
 
 // registerAlertMutationRoutes attaches alert mutation endpoints (acknowledge, resolve, maintenance CRUD).
-func registerAlertMutationRoutes(sr *mux.Router, ah *handlers.AlertHandlers) {
+func registerAlertMutationRoutes(sr *mux.Router, getAH func() *handlers.AlertHandlers) {
 	sr.HandleFunc("/alerts/{id}/acknowledge", func(w http.ResponseWriter, r *http.Request) {
+		ah := getAH()
 		if ah == nil {
 			http.Error(w, `{"success":false,"error":"alert engine not configured"}`, http.StatusServiceUnavailable)
 			return
@@ -60,6 +65,7 @@ func registerAlertMutationRoutes(sr *mux.Router, ah *handlers.AlertHandlers) {
 	}).Methods("POST")
 
 	sr.HandleFunc("/alerts/{id}/resolve", func(w http.ResponseWriter, r *http.Request) {
+		ah := getAH()
 		if ah == nil {
 			http.Error(w, `{"success":false,"error":"alert engine not configured"}`, http.StatusServiceUnavailable)
 			return
@@ -68,6 +74,7 @@ func registerAlertMutationRoutes(sr *mux.Router, ah *handlers.AlertHandlers) {
 	}).Methods("POST")
 
 	sr.HandleFunc("/alerts/maintenance", func(w http.ResponseWriter, r *http.Request) {
+		ah := getAH()
 		if ah == nil {
 			http.Error(w, `{"success":false,"error":"alert engine not configured"}`, http.StatusServiceUnavailable)
 			return
@@ -76,6 +83,7 @@ func registerAlertMutationRoutes(sr *mux.Router, ah *handlers.AlertHandlers) {
 	}).Methods("POST")
 
 	sr.HandleFunc("/alerts/maintenance/{id}", func(w http.ResponseWriter, r *http.Request) {
+		ah := getAH()
 		if ah == nil {
 			http.Error(w, `{"success":false,"error":"alert engine not configured"}`, http.StatusServiceUnavailable)
 			return

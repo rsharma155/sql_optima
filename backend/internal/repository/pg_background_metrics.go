@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 )
 
 // BGWriterStats represents PostgreSQL background writer metrics from pg_stat_bgwriter.
@@ -32,14 +33,14 @@ type BGWriterStats struct {
 // These metrics are collected and stored in TimescaleDB for historical analysis.
 func (c *PgRepository) FetchBGWriterStats(instanceName string) (*BGWriterStats, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
 		log.Printf("[POSTGRES] FetchBGWriterStats: connection not found for %s, attempting reconnect", instanceName)
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 			if !ok || db == nil {
 				return nil, fmt.Errorf("connection not found after reconnect")
@@ -50,19 +51,39 @@ func (c *PgRepository) FetchBGWriterStats(instanceName string) (*BGWriterStats, 
 	}
 
 	stats := &BGWriterStats{}
-	query := `
-		/* SQL_OPTIMA */ SELECT   
-			checkpoints_timed,
-			checkpoints_req,
-			checkpoint_write_time,
-			checkpoint_sync_time,
-			buffers_checkpoint,
-			buffers_clean,
-			maxwritten_clean,
-			buffers_backend,
-			buffers_alloc
-		FROM pg_stat_bgwriter
-	`
+	
+	versionNum := c.GetPgVersion(instanceName)
+
+	var query string
+	if versionNum >= 170000 {
+		query = `
+			/* SQL_OPTIMA */ SELECT   
+				(SELECT COALESCE(checkpoints_timed,0) FROM pg_stat_checkpointer),
+				(SELECT COALESCE(checkpoints_req,0) FROM pg_stat_checkpointer),
+				(SELECT COALESCE(checkpoint_write_time,0) FROM pg_stat_checkpointer),
+				(SELECT COALESCE(checkpoint_sync_time,0) FROM pg_stat_checkpointer),
+				(SELECT COALESCE(buffers_written,0) FROM pg_stat_checkpointer),
+				buffers_clean,
+				maxwritten_clean,
+				0, -- buffers_backend moved to pg_stat_io
+				0  -- buffers_alloc moved to pg_stat_io
+			FROM pg_stat_bgwriter
+		`
+	} else {
+		query = `
+			/* SQL_OPTIMA */ SELECT   
+				checkpoints_timed,
+				checkpoints_req,
+				checkpoint_write_time,
+				checkpoint_sync_time,
+				buffers_checkpoint,
+				buffers_clean,
+				maxwritten_clean,
+				buffers_backend,
+				buffers_alloc
+			FROM pg_stat_bgwriter
+		`
+	}
 
 	err := db.QueryRow(query).Scan(
 		&stats.CheckpointsTimed,
@@ -94,14 +115,14 @@ type ArchiverStats struct {
 // FetchArchiverStats retrieves WAL archiver statistics from pg_stat_archiver.
 func (c *PgRepository) FetchArchiverStats(instanceName string) (*ArchiverStats, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
 		log.Printf("[POSTGRES] FetchArchiverStats: connection not found for %s, attempting reconnect", instanceName)
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 			if !ok || db == nil {
 				return nil, fmt.Errorf("connection not found after reconnect")

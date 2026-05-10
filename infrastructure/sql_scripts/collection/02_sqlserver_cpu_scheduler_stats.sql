@@ -4,7 +4,7 @@
 -- Description: Collects CPU scheduler and workload group metrics with pressure warnings
 
 SELECT /* SQL_OPTIMA */   
-    GETDATE() AS capture_timestamp,
+    GETUTCDATE() AS capture_timestamp,
     @server_instance_name AS server_instance_name,
     osi.max_workers_count,
     osi.scheduler_count,

@@ -39,7 +39,7 @@ func (h *DashboardHandlers) Widgets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return

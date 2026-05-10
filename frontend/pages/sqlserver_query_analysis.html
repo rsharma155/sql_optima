@@ -11,15 +11,15 @@
 <div class="page-view active dashboard-sky-theme qa-page-modern">
     <div class="page-title flex-between dashboard-page-title-compact">
         <div class="dashboard-title-line" style="flex:1; min-width:0;">
-            <h1><i class="fa-solid fa-magnifying-glass-chart"></i> SQL Server Query Analysis</h1>
+            <h1><i class="fa-solid fa-magnifying-glass-chart"></i> SQL Server Query Analysis <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Query Analysis" title="Learn more about this dashboard"></i></h1>
             <span class="subtitle">Instance: <span id="qaInstanceName">--</span></span>
         </div>
         <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.5rem; flex-wrap:nowrap; justify-content:flex-end;">
             <div style="display:flex; align-items:center; gap:0.4rem; background:rgba(255,255,255,0.05); padding:0.2rem 0.5rem; border-radius:6px; border:1px solid var(--border-color); flex-shrink:0;">
                 <label class="text-muted" for="qaFrom" style="font-size:0.65rem; margin:0; font-weight:600; text-transform:uppercase;">From</label>
-                <input type="datetime-local" id="qaFrom" class="form-control form-control-sm" style="max-width:165px; height:1.6rem; font-size:0.7rem; border:none; background:transparent; padding:0;" />
+                <input type="datetime-local" id="qaFrom" class="form-control form-control-sm" style="max-width:130px; height:1.6rem; font-size:0.7rem; border:none; background:transparent; padding:0;" />
                 <label class="text-muted" for="qaTo" style="font-size:0.65rem; margin:0; font-weight:600; text-transform:uppercase;">To</label>
-                <input type="datetime-local" id="qaTo" class="form-control form-control-sm" style="max-width:165px; height:1.6rem; font-size:0.7rem; border:none; background:transparent; padding:0;" />
+                <input type="datetime-local" id="qaTo" class="form-control form-control-sm" style="max-width:130px; height:1.6rem; font-size:0.7rem; border:none; background:transparent; padding:0;" />
                 <button type="button" class="btn btn-xs btn-primary" id="qaApplyRange" style="height:1.5rem; padding:0 0.5rem; font-size:0.65rem; min-width:auto;"><i class="fa-solid fa-filter" style="font-size:0.6rem;"></i> Apply</button>
             </div>
             <button class="btn btn-xs btn-outline text-accent" data-action="call" data-fn="qaRefreshAll" style="height:1.6rem; min-width:auto; padding:0 0.5rem;"><i class="fa-solid fa-refresh"></i> Refresh</button>
@@ -27,17 +27,14 @@
         </div>
     </div>
 
+    <div id="qaDataWarning" class="alert alert-warning mt-2 mb-2" style="display:none; font-size:0.75rem; padding:0.5rem 1rem; border-radius:8px;">
+        <i class="fa-solid fa-circle-exclamation"></i> <strong>No Query Store data detected:</strong> Ensure Query Store is enabled on your target databases and that user workload is active for the selected time range.
+    </div>
+
     <!-- Enhanced Filters -->
     <div class="mt-2 flex-between" style="padding:0 0.5rem;">
         <div style="display:flex; align-items:center; gap:1.5rem;">
-            <label class="switch-container" style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
-                <input type="checkbox" id="qaExcludeSystem" checked style="width:1rem; height:1rem;">
-                <span class="text-sm text-muted" style="font-weight:500;">Exclude System Queries</span>
-            </label>
-            <label class="switch-container" style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
-                <input type="checkbox" id="qaComparePrev" style="width:1rem; height:1rem;">
-                <span class="text-sm text-muted" style="font-weight:500;">Compare to Previous Period</span>
-            </label>
+            <!-- Removed checkboxes as requested -->
         </div>
         <div class="text-muted" style="font-size:0.65rem;">
             <i class="fa-solid fa-circle-info"></i> Metrics calculated for selected time range.
@@ -56,7 +53,7 @@
         </div>
         <div class="glass-panel qa-kpi-card" title="Percentage of total CPU consumed by the Top 10 queries">
             <div class="qa-kpi-info">
-                <div class="qa-kpi-label">Top 10 CPU Share</div>
+                <div class="qa-kpi-label">Top 10 CPU Share <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Query Analysis" data-metric="Regressions"></i></div>
                 <div class="qa-kpi-value" id="kpi-cpu-share">--</div>
                 <span class="qa-kpi-sub" id="kpi-cpu-share-sub">of total workload</span>
             </div>
@@ -72,7 +69,7 @@
         </div>
         <div class="glass-panel qa-kpi-card">
             <div class="qa-kpi-info">
-                <div class="qa-kpi-label">Avg CPU</div>
+                <div class="qa-kpi-label">Avg CPU <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Health" data-metric="CPU Load"></i></div>
                 <div class="qa-kpi-value" id="kpi-cpu">--</div>
                 <span class="qa-kpi-sub">Per execution</span>
             </div>
@@ -80,7 +77,7 @@
         </div>
         <div class="glass-panel qa-kpi-card">
             <div class="qa-kpi-info">
-                <div class="qa-kpi-label">Regressions</div>
+                <div class="qa-kpi-label">Regressions <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Query Analysis" data-metric="Regressions"></i></div>
                 <div class="qa-kpi-value" id="kpi-regressions">--</div>
                 <span class="qa-kpi-sub">vs previous period</span>
             </div>
@@ -88,7 +85,7 @@
         </div>
         <div class="glass-panel qa-kpi-card">
             <div class="qa-kpi-info">
-                <div class="qa-kpi-label">Plan Changes</div>
+                <div class="qa-kpi-label">Plan Changes <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Query Analysis" data-metric="Plan Changes"></i></div>
                 <div class="qa-kpi-value" id="kpi-plan-changes">--</div>
                 <span class="qa-kpi-sub">New plans detected</span>
             </div>
@@ -147,6 +144,9 @@
             <div class="flex-between mb-3">
                 <h6 style="margin:0;">Top Queries by Resource Consumption</h6>
                 <div class="flex-row gap-2">
+                    <label class="flex-center gap-1 small text-muted" style="cursor:pointer; margin-right: 1rem;">
+                        <input type="checkbox" id="qaIgnoreSystem" checked> Ignore System Queries
+                    </label>
                     <input type="text" id="qaSearch" class="form-control form-control-sm" placeholder="Search by text, proc or hash..." style="max-width:250px;">
                 </div>
             </div>
@@ -169,12 +169,23 @@
 
 <style>
     .qa-page-modern { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
-    .qa-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; }
-    .qa-kpi-card { padding: 1rem; display: flex; justify-content: space-between; align-items: center; }
-    .qa-kpi-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); }
-    .qa-kpi-value { font-size: 1.35rem; font-weight: 800; margin-top: 0.2rem; }
-    .qa-kpi-sub { font-size: 0.6rem; color: var(--text-muted); display: block; margin-top: 0.1rem; }
-    .qa-kpi-icon { width: 2.5rem; height: 2.5rem; border-radius: 0.75rem; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; }
+    .qa-kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.4rem; }
+    .qa-kpi-card { padding: 0.5rem; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; min-height: 90px; }
+    .qa-kpi-info { display: flex; flex-direction: column; align-items: center; }
+    .qa-kpi-label { font-size: 0.55rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); }
+    .qa-kpi-value { font-size: 1.1rem; font-weight: 800; margin-top: 0.1rem; }
+    .qa-kpi-sub { font-size: 0.5rem; color: var(--text-muted); display: block; margin-top: 0.1rem; }
+    .qa-kpi-icon { display: none; } /* Hide icons on same row to save space */
+    
+    @media (max-width: 1024px) {
+        .qa-kpi-grid { grid-template-columns: repeat(6, 1fr); }
+        .qa-kpi-value { font-size: 0.9rem; }
+    }
+    @media (max-width: 768px) {
+        .qa-kpi-grid { gap: 0.25rem; }
+        .qa-kpi-label { font-size: 0.5rem; }
+        .qa-kpi-value { font-size: 0.8rem; }
+    }
     .qa-kpi-icon--blue { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
     .qa-kpi-icon--amber { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
     .qa-kpi-icon--rose { background: rgba(239, 68, 68, 0.1); color: #ef4444; }

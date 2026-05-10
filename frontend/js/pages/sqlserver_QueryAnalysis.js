@@ -72,7 +72,6 @@
         document.getElementById('qaInstanceName').textContent = instName;
         const fromEl = document.getElementById('qaFrom');
         const toEl = document.getElementById('qaTo');
-        const excludeSystemEl = document.getElementById('qaExcludeSystem');
         
         const now = new Date();
         const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
@@ -107,12 +106,20 @@
                 }, 300);
             });
         }
+        
+        const ignoreSystemCheck = document.getElementById('qaIgnoreSystem');
+        if (ignoreSystemCheck) {
+            ignoreSystemCheck.addEventListener('change', () => {
+                fetchActiveTab();
+            });
+        }
 
         async function fetchActiveTab() {
             const activeTab = document.querySelector('.qa-tab-btn.active').dataset.tab;
             const from = new Date(fromEl.value).toISOString();
             const to = new Date(toEl.value).toISOString();
-            const excludeSystem = excludeSystemEl.checked;
+            const ignoreSysEl = document.getElementById('qaIgnoreSystem');
+            const excludeSystem = ignoreSysEl ? ignoreSysEl.checked : true;
             const dbName = window.appState.currentDatabase || 'all';
             
             // Always refresh summary for KPIs
@@ -121,11 +128,11 @@
             await fetchWatchedHashes();
 
             if (activeTab === 'top-queries') {
-                await fetchTopQueries(from, to, excludeSystem, dbName);
+                await fetchTopQueries(from, to, dbName);
             } else if (activeTab === 'regressions') {
-                await fetchRegressions(dbName);
+                await fetchRegressions(from, to, excludeSystem, dbName);
             } else if (activeTab === 'instability') {
-                await fetchPlanInstability(dbName);
+                await fetchPlanInstability(from, to, dbName);
             } else if (activeTab === 'live') {
                 await Promise.all([
                     fetchLiveQueries(dbName),
@@ -174,6 +181,16 @@
         }
 
         function updateKpis(data) {
+            const hasData = (data.total_executions || 0) > 0 || (data.total_queries_in_qs || 0) > 0;
+            if (!hasData) {
+                // Show a gentle warning that Query Store might be off or no user activity
+                const warning = document.getElementById('qaDataWarning');
+                if (warning) warning.style.display = 'block';
+            } else {
+                const warning = document.getElementById('qaDataWarning');
+                if (warning) warning.style.display = 'none';
+            }
+
             setSafeText('kpi-executions', fmtK(data.total_executions));
             setSafeText('kpi-duration', fmtMs(data.avg_duration_ms));
             setSafeText('kpi-cpu', fmtMs(data.avg_cpu_ms));
@@ -192,19 +209,28 @@
 
         async function fetchTrendCharts(from, to, dbName) {
             try {
-                const resp = await window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/query-stats-timeseries?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}&database=${encodeURIComponent(dbName)}`);
-                if (!resp.ok) return;
-                const data = await resp.json();
-                renderWorkloadChart(data.series || []);
-                renderLatencyChart(data.series || []);
+                // Fetch CPU for Workload chart
+                const cpuResp = await window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/query-stats-timeseries?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}&metric=cpu&database=${encodeURIComponent(dbName)}`);
+                if (cpuResp.ok) {
+                    const cpuData = await cpuResp.json();
+                    renderWorkloadChart(cpuData.series || []);
+                }
+
+                // Fetch Duration for Latency chart
+                const durResp = await window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/query-stats-timeseries?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}&metric=duration&database=${encodeURIComponent(dbName)}`);
+                if (durResp.ok) {
+                    const durData = await durResp.json();
+                    renderLatencyChart(durData.series || []);
+                }
             } catch (e) { console.error('trend charts failed', e); }
         }
 
-        async function fetchTopQueries(from, to, excludeSystem, dbName) {
+        async function fetchTopQueries(from, to, dbName) {
             const body = document.getElementById('qaTopQueriesBody');
+            const excludeSystem = document.getElementById('qaIgnoreSystem')?.checked || false;
             body.innerHTML = '<div class="text-muted p-3"><i class="fa-solid fa-spinner fa-spin"></i> Loading top queries...</div>';
             try {
-                const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/top-queries?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}&exclude_system=${excludeSystem}&limit=50&database=${encodeURIComponent(dbName)}`);
+                const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/top-queries?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}&exclude_system=${excludeSystem}&limit=100&database=${encodeURIComponent(dbName)}`);
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const data = await resp.json();
                 _topRows = data.queries || data || [];
@@ -221,11 +247,19 @@
                 return;
             }
             const q = document.getElementById('qaSearch')?.value.toLowerCase() || '';
-            const filtered = _topRows.filter(r => (r.query_text || '').toLowerCase().includes(q) || (r.query_hash || '').toLowerCase().includes(q));
+            const excludeSystem = document.getElementById('qaIgnoreSystem')?.checked || false;
+
+            let filtered = _topRows.filter(r => (r.query_text || '').toLowerCase().includes(q) || (r.query_hash || '').toLowerCase().includes(q));
+
+            if (excludeSystem) {
+                filtered = filtered.filter(r => {
+                    const txt = (r.query_text || '').toLowerCase();
+                    return !txt.includes('sys.') && !txt.includes('[sys].') && !txt.includes('msdb.') && !txt.includes('[msdb].') && !txt.includes('information_schema.');
+                });
+            }
             container.innerHTML = renderTopQueriesTable(filtered);
             renderContributionChart(_topRows.slice(0, 10));
         }
-
         function renderRegressions() {
             const container = document.getElementById('qaRegressionsBody');
             if (!_regRows.length) {
@@ -383,11 +417,11 @@
                 <thead><tr>
                     <th style="width:2.5rem; text-align:center;"></th>
                     <th>Query</th>
-                    ${sortTh('top-queries', 'executions_per_sec', 'Exec/sec', 'text-right')}
                     ${sortTh('top-queries', 'executions', 'Executions', 'text-right')}
                     ${sortTh('top-queries', 'avg_cpu_ms', 'Avg CPU', 'text-right')}
+                    ${sortTh('top-queries', 'avg_duration_ms', 'Avg Duration', 'text-right')}
+                    ${sortTh('top-queries', 'avg_reads', 'Avg Reads', 'text-right')}
                     ${sortTh('top-queries', 'total_cpu_ms', 'Total CPU', 'text-right')}
-                    ${sortTh('top-queries', 'plan_count', 'Plans', 'text-center')}
                     ${sortTh('top-queries', 'last_execution_time', 'Last Execution', 'text-right')}
                     <th>Database</th>
                 </tr></thead>
@@ -395,6 +429,9 @@
                     const cacheKey = 'qa_top_' + i;
                     window.appState.queryCache[cacheKey] = { text: r.query_text, query_hash: r.query_hash, database_name: r.database_name };
                     const isWatched = _watchedHashes.has(r.query_hash);
+                    const lastExec = r.last_execution_time && r.last_execution_time !== '0001-01-01T00:00:00Z' 
+                                    ? new Date(r.last_execution_time).toLocaleString() 
+                                    : '--';
                     return `<tr>
                     <td><button class="qa-watch-btn ${isWatched ? 'watched' : ''}" data-action="watch-query" data-hash="${esc(r.query_hash)}" data-db="${esc(r.database_name)}" data-label="${esc((r.query_text || '').substring(0, 80))}" data-query-text="${esc(r.query_text || '')}" ${isWatched ? 'disabled' : ''}>
                         <i class="fa-${isWatched ? 'solid' : 'regular'} fa-star"></i>
@@ -402,12 +439,12 @@
                     <td style="max-width:300px; cursor:pointer;" data-action="show-query-modal-direct" data-key="${cacheKey}" data-fn="showQueryStoreQueryModal">
                         <span class="qa-query-text" title="Click to view full SQL">${esc(r.query_text)}</span>
                     </td>
-                    <td class="text-right font-mono">${fmtNum(r.executions_per_sec || 0)}</td>
                     <td class="text-right font-mono">${fmtK(r.executions)}</td>
                     <td class="text-right font-mono">${fmtMs(r.avg_cpu_ms)}</td>
+                    <td class="text-right font-mono">${fmtMs(r.avg_duration_ms)}</td>
+                    <td class="text-right font-mono">${fmtNum(r.avg_reads)}</td>
                     <td class="text-right font-mono" style="color:var(--accent); font-weight:700;">${fmtMs(r.total_cpu_ms)}</td>
-                    <td class="text-center"><span class="qa-badge ${r.plan_count > 1 ? 'qa-badge--warn' : 'qa-badge--default'}">${r.plan_count}</span></td>
-                    <td class="text-right text-muted" style="font-size:0.65rem;">${r.last_execution_time ? new Date(r.last_execution_time).toLocaleString() : '--'}</td>
+                    <td class="text-right text-muted" style="font-size:0.65rem;">${lastExec}</td>
                     <td class="text-muted" style="font-size:0.7rem;">${esc(r.database_name)}</td>
                 </tr>`}).join('')}</tbody></table></div>`;
         }

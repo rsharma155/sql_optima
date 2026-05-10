@@ -64,6 +64,9 @@ func (h *PostgresSecurityHandler) GetDashboardData(w http.ResponseWriter, r *htt
 	elevatedRoles, _ := repo.GetElevatedRoles(ctx, instance)
 	data["elevated_roles"] = elevatedRoles
 
+	allRoles, _ := repo.GetAllRoles(ctx, instance)
+	data["all_roles"] = allRoles
+
 	dmlTrend, _ := repo.GetDMLActivityTrend(ctx, instance, from, to)
 	data["dml_trend"] = dmlTrend
 

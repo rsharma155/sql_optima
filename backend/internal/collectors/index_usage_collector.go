@@ -42,7 +42,7 @@ func CollectSQLServerIndexUsage(ctx context.Context, dbq repository.Queryer) ([]
 	// NOTE: counters are cumulative; deltas are computed against monitor.index_usage_state.
 	// Aggregate pages per (object_id, index_id) in a subquery so we do not need a GROUP BY
 	// that would make s.last_user_* invalid in the SELECT list (SQL Server rejects that).
-	query := ` /* SQL_OPTIMA */ 
+	query := `/* SQL_OPTIMA */ 
 		SELECT
 			DB_NAME() AS db_name,
 			OBJECT_SCHEMA_NAME(i.object_id) AS schema_name,

@@ -32,15 +32,15 @@ func (w *TimescaleWriter) WriteMSSQLMetrics(ctx context.Context, metrics []domai
 		ts, instance_id, database_name, login_name, application_name,
 		query_hash, plan_hash, total_executions, total_cpu_ms, total_elapsed_ms,
 		total_logical_reads, total_physical_reads, total_rows, statement_text, query_text_raw,
-		last_execution_time
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
+		last_execution_time, is_user_workload
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
 
 	for _, m := range metrics {
 		_, err := w.pool.Exec(ctx, batch,
 			m.Timestamp, m.InstanceID, m.DatabaseName, m.LoginName, m.ApplicationName,
 			m.QueryHash, m.PlanHash, m.TotalExecutions, m.TotalCPUMs, m.TotalElapsedMs,
 			m.TotalLogicalReads, m.TotalPhysicalReads, m.TotalRows, m.StatementText, m.QueryTextRaw,
-			m.LastExecutionTime,
+			m.LastExecutionTime, m.IsUserWorkload,
 		)
 		if err != nil {
 			return err

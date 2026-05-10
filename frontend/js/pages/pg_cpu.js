@@ -2,90 +2,13 @@
  * SQL Optima — PostgreSQL CPU utilization dashboard (host vs Postgres, saturation, DB share, top queries).
  */
 (function() {
-    window.PgCpuView = async function() {
+window.PgCpuView = async function() {
         const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || { name: 'Loading...', type: 'postgres' };
         const dbName = window.appState.currentDatabase || 'all';
         
         window.appState.activeViewId = 'pg-cpu';
         
-        window.routerOutlet.innerHTML = `
-            <div class="page-view active dashboard-sky-theme pg-cpu-page">
-                <div class="page-title flex-between dashboard-page-title-compact">
-                    <div class="dashboard-title-line">
-                        <h1><i class="fa-solid fa-microchip"></i> CPU Usage</h1>
-                        <span class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></span>
-                    </div>
-                    <div class="flex-center">
-                        <div id="time-picker-insertion-point"></div>
-                    </div>
-                </div>
-
-                <!-- ROW 1: Compact Metric Strip -->
-                <div class="metrics-row-compact">
-                    <div class="glass-panel metric-card-compact">
-                        <div class="metric-label">Host CPU</div>
-                        <div class="metric-value" id="kpi-host-cpu">--</div>
-                    </div>
-                    <div class="glass-panel metric-card-compact">
-                        <div class="metric-label">Postgres CPU</div>
-                        <div class="metric-value text-accent" id="kpi-pg-cpu">--</div>
-                    </div>
-                    <div class="glass-panel metric-card-compact">
-                        <div class="metric-label">Active Conns</div>
-                        <div class="metric-value" id="kpi-active-conn">--</div>
-                    </div>
-                    <div class="glass-panel metric-card-compact">
-                        <div class="metric-label">Saturation</div>
-                        <div class="metric-value" id="cpu-saturation-badge">--</div>
-                    </div>
-                    <div class="glass-panel metric-card-compact">
-                        <div class="metric-label">CPU/Conn</div>
-                        <div class="metric-value" id="kpi-cpu-per-conn">--</div>
-                    </div>
-                    <div class="glass-panel metric-card-compact">
-                        <div class="metric-label">Load/Cores</div>
-                        <div class="metric-value" id="kpi-load-cores">--</div>
-                    </div>
-                    <div class="glass-panel metric-card-compact">
-                        <div class="metric-label">Uptime</div>
-                        <div class="metric-value" id="pg-uptime" style="font-size:0.8rem;">--</div>
-                    </div>
-                    <div class="glass-panel metric-card-compact">
-                        <div class="metric-label">Health</div>
-                        <div class="metric-value" id="pgHealthScoreBadge">--</div>
-                    </div>
-                </div>
-
-                <!-- ROW 2: Charts -->
-                <div class="chart-row-compact">
-                    <div class="card glass-panel">
-                        <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Host vs. Postgres CPU %</h3></div>
-                        <div class="chart-container chart-container-compact">
-                            <canvas id="cpuTimeSeriesChart"></canvas>
-                        </div>
-                    </div>
-                    <div class="card glass-panel">
-                        <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">CPU Time by DB</h3></div>
-                        <div class="chart-container chart-container-compact">
-                            <canvas id="cpuDbDonutChart"></canvas>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ROW 3: Top CPU Queries -->
-                <div class="card glass-panel">
-                    <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Top CPU Intensive Queries</h3></div>
-                    <div class="table-container-compact" style="height:180px !important;">
-                        <table class="modern-table modern-table-compact">
-                            <thead>
-                                <tr><th>User</th><th>QueryID</th><th>Query</th><th>Total ms</th><th>Calls</th><th>Avg ms</th></tr>
-                            </thead>
-                            <tbody id="cpu-top-queries-body"></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        `;
+        window.routerOutlet.innerHTML = await window.loadTemplate('/pages/pg_cpu.html', { inst, dbName });
 
         window.initPageTimePicker();
         initPgCpu();
@@ -135,60 +58,53 @@
 
         const timeParams = (from && to) ? `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}` : '&limit=60';
         updatePgCpuHeader(inst.name);
-        let sat = {}; let points = []; let dbRows = []; let topQueries = [];
+        let sat = {}; let points = []; let dbRows = []; let topQueries = []; let cc = {};
 
         try {
-            const [histRes, satRes, dbRes, qRes] = await Promise.all([
+            const [histRes, satRes, dbRes, qRes, ccRes] = await Promise.all([
                 window.apiClient.authenticatedFetch(`/api/cpu/history?instance=${q}${timeParams}`),
                 window.apiClient.authenticatedFetch(`/api/cpu/saturation?instance=${q}${timeParams}`),
                 window.apiClient.authenticatedFetch(`/api/cpu/database?instance=${q}${timeParams}`),
                 window.apiClient.authenticatedFetch(`/api/cpu/top-queries?instance=${q}${timeParams}&limit=20`),
+                window.apiClient.authenticatedFetch(`/api/postgres/control-center?instance=${q}`),
             ]);
             if (histRes.ok) points = (await histRes.json()).points || [];
             if (satRes.ok) sat = await satRes.json();
             if (dbRes.ok) dbRows = (await dbRes.json()).rows || [];
             if (qRes.ok) topQueries = (await qRes.json()).queries || [];
+            if (ccRes.ok) cc = (await ccRes.json()).stats || {};
         } catch (e) { console.error('PG CPU dashboard fetch failed:', e); }
 
-        updatePgCpuKpis(sat);
+        updatePgCpuKpis(sat, cc);
         renderPgCpuLineChart(points);
         renderPgCpuDonut(dbRows);
         renderPgCpuTopQueries(topQueries);
     }
 
-    function updatePgCpuKpis(sat) {
-        const osConfigured = sat.os_collector_configured;
-        const host = pgCpuNum(sat.host_cpu_percent);
+    function updatePgCpuKpis(sat, cc) {
         const pg = pgCpuNum(sat.postgres_cpu_percent);
-        const satPct = pgCpuNum(sat.cpu_saturation_pct);
         const perConn = pgCpuNum(sat.cpu_per_connection);
-        const load1 = pgCpuNum(sat.load_1m);
-        const cores = parseInt(String(sat.cpu_cores ?? 0), 10) || 0;
         const active = parseInt(String(sat.active_connections ?? 0), 10) || 0;
 
-        const hostEl = document.getElementById('kpi-host-cpu');
         const pgEl = document.getElementById('kpi-pg-cpu');
         const connEl = document.getElementById('kpi-active-conn');
         const perEl = document.getElementById('kpi-cpu-per-conn');
-        const loadEl = document.getElementById('kpi-load-cores');
-        const badge = document.getElementById('cpu-saturation-badge');
+        const tpsEl = document.getElementById('kpi-tps');
+        const waitEl = document.getElementById('kpi-waiting');
+        const deadEl = document.getElementById('kpi-dead-tuple');
 
-        if (hostEl) hostEl.textContent = osConfigured ? host.toFixed(1) + '%' : 'N/A';
         if (pgEl) pgEl.textContent = pg.toFixed(1) + '%';
         if (connEl) connEl.textContent = String(active);
         if (perEl) perEl.textContent = perConn > 0 ? perConn.toFixed(2) + '%' : (active > 0 ? '0%' : 'N/A');
-        if (loadEl) loadEl.textContent = osConfigured ? `${load1.toFixed(2)} / ${cores}` : 'N/A';
 
-        if (badge) {
-            badge.textContent = osConfigured ? satPct.toFixed(0) + '%' : 'N/A';
-            badge.style.color = satPct > 90 ? 'var(--danger)' : satPct > 70 ? 'var(--warning)' : 'var(--success)';
-        }
+        if (tpsEl) tpsEl.textContent = pgCpuNum(cc.tps).toFixed(0);
+        if (waitEl) waitEl.textContent = String(cc.waiting_sessions ?? 0);
+        if (deadEl) deadEl.textContent = pgCpuNum(cc.dead_tuple_pct).toFixed(1) + '%';
     }
 
     function renderPgCpuLineChart(points) {
         const rowsAsc = (points || []).slice().reverse();
         const timeLabels = rowsAsc.map((r) => r.capture_timestamp ? new Date(r.capture_timestamp).toLocaleTimeString() : '');
-        const hostSeries = rowsAsc.map((r) => pgCpuNum(r.host_cpu_percent || r.cpu_usage));
         const pgSeries = rowsAsc.map((r) => pgCpuNum(r.postgres_cpu_percent));
         const ctx = document.getElementById('cpuTimeSeriesChart');
         if (!ctx) return;
@@ -198,8 +114,7 @@
             data: {
                 labels: timeLabels,
                 datasets: [
-                    { label: 'Host %', data: hostSeries, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 0 },
-                    { label: 'PG %', data: pgSeries, borderColor: '#14b8a6', fill: false, tension: 0.3, pointRadius: 0 }
+                    { label: 'Postgres CPU %', data: pgSeries, borderColor: '#14b8a6', fill: false, tension: 0.3, pointRadius: 0 }
                 ]
             },
             options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { beginAtZero: true, max: 100 } } }
@@ -228,14 +143,47 @@
         if (!tbody) return;
         const list = queries || [];
         if (list.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">None</td></tr>'; return; }
-        tbody.innerHTML = list.slice(0, 5).map((q) => `
+
+        // Accumulate by query text
+        const map = new Map();
+        list.forEach(q => {
+            const key = q.query || 'empty';
+            if (!map.has(key)) {
+                map.set(key, {
+                    captured_at: q.captured_at,
+                    user_name: q.user_name,
+                    query: q.query,
+                    total_exec_time: pgCpuNum(q.total_exec_time),
+                    calls: parseInt(q.calls || 0, 10),
+                    count: 1
+                });
+            } else {
+                const existing = map.get(key);
+                existing.total_exec_time += pgCpuNum(q.total_exec_time);
+                existing.calls += parseInt(q.calls || 0, 10);
+                existing.count += 1;
+                // keep the latest timestamp
+                if (new Date(q.captured_at) > new Date(existing.captured_at)) {
+                    existing.captured_at = q.captured_at;
+                    existing.user_name = q.user_name;
+                }
+            }
+        });
+
+        const sorted = Array.from(map.values()).sort((a, b) => b.total_exec_time - a.total_exec_time);
+
+        tbody.innerHTML = sorted.slice(0, 10).map((q) => {
+            const ts = q.captured_at ? new Date(q.captured_at).toLocaleTimeString() : '—';
+            const avgMs = q.calls > 0 ? q.total_exec_time / q.calls : 0;
+            return `
             <tr>
+                <td><span class="badge badge-outline">${ts}</span></td>
                 <td>${pgCpuEsc(q.user_name || '—')}</td>
-                <td><code>${pgCpuEsc(q.queryid || '—')}</code></td>
-                <td><code title="${pgCpuEsc(q.query)}">${pgCpuTrunc(q.query, 30)}</code></td>
-                <td>${pgCpuNum(q.total_exec_time).toFixed(1)}</td>
-                <td>${q.calls || '0'}</td>
-                <td>${pgCpuNum(q.avg_ms).toFixed(2)}</td>
-            </tr>`).join('');
+                <td><code title="${pgCpuEsc(q.query)}">${pgCpuTrunc(q.query, 60)}</code></td>
+                <td class="text-right">${q.total_exec_time.toFixed(1)}</td>
+                <td class="text-right">${q.calls || '0'}</td>
+                <td class="text-right">${avgMs.toFixed(2)}</td>
+            </tr>`;
+        }).join('');
     }
 })();

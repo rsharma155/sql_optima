@@ -243,6 +243,23 @@ func (h *AdminServerHandlers) TestServerDraft(w http.ResponseWriter, r *http.Req
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
+
+	// 1. Check for duplicates (name or host/port) - only if it's not a placeholder test
+	if in.Name != "_test" {
+		store, _, _, _ := h.reg()
+		if store != nil {
+			dupMsg, _ := store.CheckDuplicate(r.Context(), "", in.Name, in.Host, in.Port)
+			if dupMsg != "" {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"error":   dupMsg,
+				})
+				return
+			}
+		}
+	}
+
 	now := time.Now().UTC()
 	s := servers.Server{
 		Name:      strings.TrimSpace(in.Name),
@@ -332,7 +349,21 @@ func (h *AdminServerHandlers) AddServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// MANDATORY connection test before saving
+	// 1. Check for duplicates (name or host/port)
+	dupMsg, err := store.CheckDuplicate(r.Context(), "", in.Name, in.Host, in.Port)
+	if err != nil {
+		log.Printf("[AddServer] Duplicate check error: %v", err)
+		// Non-critical: we continue if DB check fails, but log it.
+	} else if dupMsg != "" {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   dupMsg,
+		})
+		return
+	}
+
+	// 2. MANDATORY connection test before saving
 	s_test := servers.Server{
 		Name:     in.Name,
 		DBType:   in.DBType,
@@ -804,6 +835,7 @@ func (h *AdminServerHandlers) GetServer(w http.ResponseWriter, r *http.Request) 
 
 	s, _, _, err := store.GetEncrypted(r.Context(), id)
 	if err != nil {
+		log.Printf("[GetServer] store.GetEncrypted failed for id %s: %v", id, err)
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server not found"})
 		return
@@ -875,6 +907,19 @@ func (h *AdminServerHandlers) UpdateServer(w http.ResponseWriter, r *http.Reques
 	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Host) == "" || strings.TrimSpace(req.Username) == "" || port <= 0 || port > 65535 {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "name, host, username, and valid port are required"})
+		return
+	}
+
+	// 1. Check for duplicates (excluding current ID)
+	dupMsg, err := store.CheckDuplicate(r.Context(), id, req.Name, req.Host, port)
+	if err != nil {
+		log.Printf("[UpdateServer] Duplicate check error: %v", err)
+	} else if dupMsg != "" {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   dupMsg,
+		})
 		return
 	}
 

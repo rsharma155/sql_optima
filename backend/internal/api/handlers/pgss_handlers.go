@@ -133,8 +133,14 @@ func (h *PostgresHandlers) PgssTop(w http.ResponseWriter, r *http.Request) {
 	default:
 		sortBy = "total_time"
 	}
+	// Optional filter params — allowlist characters to prevent injection
+	dbName    := sanitizeFilterParam(r.URL.Query().Get("db_name"))
+	userName  := sanitizeFilterParam(r.URL.Query().Get("username"))
+	appName   := sanitizeFilterParam(r.URL.Query().Get("app_name"))
+	queryType := sanitizeQueryType(r.URL.Query().Get("query_type"))
+	hideSystem := r.URL.Query().Get("hide_system") == "true"
 
-	queries, err := h.metricsSvc.GetPgssTopQueries(r.Context(), instance, from, to, sortBy, 50)
+	queries, err := h.metricsSvc.GetPgssTopQueries(r.Context(), instance, from, to, sortBy, 100, dbName, userName, appName, queryType, hideSystem)
 	if err != nil {
 		slog.Error("pgss_top_queries_error", "instance", instance, "sort", sortBy, "error", err)
 		queries = nil
@@ -202,6 +208,120 @@ func (h *PostgresHandlers) PgssSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(summary)
+}
+
+// PgssFilters returns distinct db_name, username, app_name values for filter dropdowns.
+func (h *PostgresHandlers) PgssFilters(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
+		return
+	}
+
+	from, to := parseTimeRange(r)
+	opts, err := h.metricsSvc.GetPgssFilterOptions(r.Context(), instance, from, to)
+	if err != nil {
+		slog.Error("pgss_filters_error", "instance", instance, "error", err)
+	}
+	if opts == nil {
+		opts = &models.PgssFilterOptions{Instance: instance}
+	}
+	json.NewEncoder(w).Encode(opts)
+}
+
+// PgssDbBreakdown returns per-database workload summary for the By Database tab.
+func (h *PostgresHandlers) PgssDbBreakdown(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
+		return
+	}
+
+	from, to := parseTimeRange(r)
+	rows, err := h.metricsSvc.GetPgssDbBreakdown(r.Context(), instance, from, to)
+	if err != nil {
+		slog.Error("pgss_db_breakdown_error", "instance", instance, "error", err)
+		rows = nil
+	}
+	json.NewEncoder(w).Encode(models.PgssDbBreakdownResponse{Instance: instance, Rows: rows})
+}
+
+// PgssUserBreakdown returns per-login workload summary for the By User tab.
+func (h *PostgresHandlers) PgssUserBreakdown(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
+		return
+	}
+
+	from, to := parseTimeRange(r)
+	rows, err := h.metricsSvc.GetPgssUserBreakdown(r.Context(), instance, from, to)
+	if err != nil {
+		slog.Error("pgss_user_breakdown_error", "instance", instance, "error", err)
+		rows = nil
+	}
+	json.NewEncoder(w).Encode(models.PgssUserBreakdownResponse{Instance: instance, Rows: rows})
+}
+
+// sanitizeFilterParam strips characters outside the printable ASCII safe set (letters, digits, @._- ).
+// This prevents SQL injection through filter query parameters.
+func sanitizeFilterParam(s string) string {
+	s = strings.TrimSpace(s)
+	var out strings.Builder
+	for _, ch := range s {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.' || ch == '@' {
+			out.WriteRune(ch)
+		}
+	}
+	return out.String()
+}
+
+// sanitizeQueryType accepts only the known single-char query type codes.
+func sanitizeQueryType(s string) string {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	switch s {
+	case "S", "I", "U", "D", "E", "O":
+		return s
+	default:
+		return ""
+	}
 }
 
 // parseTimeRange extracts from/to from query params with 1-hour default.

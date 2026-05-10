@@ -9,6 +9,7 @@ package repository
 
 import (
 	"fmt"
+	"strings"
 )
 
 type PgSystemStatsDetail struct {
@@ -23,7 +24,7 @@ type PgSystemStatsDetail struct {
 // If those helper views/functions are not available, it falls back to existing approximations.
 func (c *PgRepository) GetSystemStatsDetail(instanceName string) (*PgSystemStatsDetail, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")

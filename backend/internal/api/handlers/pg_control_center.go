@@ -40,12 +40,26 @@ func (h *PostgresHandlers) ControlCenter(w http.ResponseWriter, r *http.Request)
 	//to := r.URL.Query().Get("to")
 
 	row, err := h.metricsSvc.GetLatestPostgresControlCenterStats(r.Context(), instance)
-	// If timescale is connected and we have from/to, maybe we should get stats from history?
-	// But usually these KPIs are "Right Now".
 	if err != nil {
 		log.Printf("[API] PG control-center error for %s: %v", instance, err)
 		row = nil
 	}
+
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	limit := 60
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	hist, err := h.metricsSvc.GetPostgresControlCenterHistory(r.Context(), instance, from, to, limit)
+	if err != nil {
+		log.Printf("[API] PG control-center history error for %s: %v", instance, err)
+		hist = &hot.PostgresControlCenterHistory{}
+	}
+
 	if h.metricsSvc.IsTimescaleConnected() {
 		w.Header().Set("X-Data-Source", "timescale")
 	} else {
@@ -54,6 +68,7 @@ func (h *PostgresHandlers) ControlCenter(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"instance": instance,
 		"stats":    row,
+		"history":  hist,
 	})
 }
 

@@ -47,6 +47,7 @@ type MetricsService struct {
 	UserRepo         *repository.UserRepository
 	ServerRepo       servers.ServerStore
 	AuditRepo        *repository.AuditLogRepository
+	ConfigRepo       *repository.CollectorConfigRepository
 	ServerKMS        servers.KeyManagementService
 	ServerSecretBox  servers.SecretBox
 	Config           *config.Config
@@ -78,6 +79,14 @@ type MetricsService struct {
 	sihLastTable15m  map[string]time.Time
 	sihLastGrowth6h  map[string]time.Time
 	sihLastDefsDaily map[string]time.Time
+
+	// Control Plane for Sequential Collection
+	controlPlanes map[string]*InstanceControlPlane
+	cpMu          sync.Mutex
+}
+
+type InstanceControlPlane struct {
+	tasks chan func()
 }
 
 func NewMetricsService(pg *repository.PgRepository, ms *repository.SqlServerRepository, cfg *config.Config, tsStorage *hot.HotStorage) *MetricsService {
@@ -93,6 +102,7 @@ func NewMetricsService(pg *repository.PgRepository, ms *repository.SqlServerRepo
 	var userRepo *repository.UserRepository
 	var serverRepo servers.ServerStore
 	var auditRepo *repository.AuditLogRepository
+	var configRepo *repository.CollectorConfigRepository
 	var secretBox servers.SecretBox
 	var pgHealthRepo *instance_health.InstanceHealthRepository
 	var pgHealthService *instance_health.InstanceHealthService
@@ -127,6 +137,7 @@ func NewMetricsService(pg *repository.PgRepository, ms *repository.SqlServerRepo
 
 		serverRepo = repository.NewServerRegistryRepository(tsStorage.Pool())
 		auditRepo = repository.NewAuditLogRepository(tsStorage.Pool())
+		configRepo = repository.NewCollectorConfigRepository(tsStorage.Pool())
 		secretBox = appsec.NewEnvelopeSecretBox()
 		log.Println("[MetricsService] Server registry initialized")
 	}
@@ -138,25 +149,57 @@ func NewMetricsService(pg *repository.PgRepository, ms *repository.SqlServerRepo
 		UserRepo:         userRepo,
 		ServerRepo:       serverRepo,
 		AuditRepo:        auditRepo,
+		ConfigRepo:       configRepo,
 		ServerSecretBox:  secretBox,
 		Config:           cfg,
 		dashboardCache:   make(map[string]models.DashboardMetrics),
 		pgDashboardCache: make(map[string]models.PgCoreDashboardCache),
 		tsLogger:         tsLogger,
 		tsHotStorage:     tsStorage,
+		controlPlanes:    make(map[string]*InstanceControlPlane),
 		PgHealthRepo:     pgHealthRepo,
 		PgHealthService:  pgHealthService,
 		PgQueryRouter:    pgQueryRouter,
 		PgTimescaleColl:  pgTimescaleColl,
-
 		PgObservabilityRepo: pgObsRepo,
 		PgBackupRepo:        pgBackupRepo,
 		PgSecurityRepo:      pgSecurityRepo,
+		sihLastIndex15m:     make(map[string]time.Time),
+		sihLastTable15m:     make(map[string]time.Time),
+		sihLastGrowth6h:     make(map[string]time.Time),
+		sihLastDefsDaily:    make(map[string]time.Time),
+	}
+}
 
-		sihLastIndex15m:  make(map[string]time.Time),
-		sihLastTable15m:  make(map[string]time.Time),
-		sihLastGrowth6h:  make(map[string]time.Time),
-		sihLastDefsDaily: make(map[string]time.Time),
+// EnqueueCollection routes a task to the instance-specific sequential worker.
+// This acts as a Master Control Plane to prevent overlapping DMV queries and excessive locking.
+func (s *MetricsService) EnqueueCollection(instanceName string, task func()) {
+	s.cpMu.Lock()
+	if s.controlPlanes == nil {
+		s.controlPlanes = make(map[string]*InstanceControlPlane)
+	}
+	cp, ok := s.controlPlanes[instanceName]
+	if !ok {
+		cp = &InstanceControlPlane{
+			tasks: make(chan func(), 100), // Bounded buffer to prevent memory exhaustion
+		}
+		s.controlPlanes[instanceName] = cp
+		// Start a dedicated single-threaded worker for this instance
+		go func(name string, plane *InstanceControlPlane) {
+			log.Printf("[ControlPlane] Starting sequential worker for instance: %s", name)
+			for t := range plane.tasks {
+				t()
+			}
+		}(instanceName, cp)
+	}
+	s.cpMu.Unlock()
+
+	// Enqueue the task; drop if queue is full to prevent background pile-up during server stalls.
+	select {
+	case cp.tasks <- task:
+		// Enqueued successfully
+	default:
+		log.Printf("[ControlPlane] WARNING: Task queue full for %s, skipping this collection cycle to prevent resource exhaustion", instanceName)
 	}
 }
 
@@ -213,6 +256,11 @@ func (s *MetricsService) RebindTimescale(ts *hot.HotStorage) {
 		s.PgHealthRepo = instance_health.NewInstanceHealthRepository(ts.Pool())
 		s.PgHealthService = instance_health.NewInstanceHealthService(s.PgHealthRepo)
 
+		// New Postgres Domain Repositories
+		s.PgObservabilityRepo = pg_obs_repo.NewPostgresObservabilityRepository(ts.Pool())
+		s.PgBackupRepo = pg_backup_repo.NewPostgresBackupRepository(ts.Pool())
+		s.PgSecurityRepo = pg_security_repo.NewPostgresSecurityRepository(ts.Pool())
+
 		// Re-initialize PostgreSQL Query Router
 		tsDB := stdlib.OpenDBFromPool(ts.Pool())
 		smRepo := pg_repo.NewPgStatMonitorRepository()
@@ -227,6 +275,7 @@ func (s *MetricsService) RebindTimescale(ts *hot.HotStorage) {
 		s.UserRepo = repository.NewUserRepository(ts.Pool())
 		s.ServerRepo = repository.NewServerRegistryRepository(ts.Pool())
 		s.AuditRepo = repository.NewAuditLogRepository(ts.Pool())
+		s.ConfigRepo = repository.NewCollectorConfigRepository(ts.Pool())
 		s.ServerSecretBox = appsec.NewEnvelopeSecretBox()
 		log.Println("[MetricsService] TimescaleDB rebound; application tables reattached")
 		return
@@ -235,10 +284,15 @@ func (s *MetricsService) RebindTimescale(ts *hot.HotStorage) {
 	s.PgHealthRepo = nil
 	s.PgHealthService = nil
 	s.PgQueryRouter = nil
+	s.PgTimescaleColl = nil
+	s.PgObservabilityRepo = nil
+	s.PgBackupRepo = nil
+	s.PgSecurityRepo = nil
 	s.WidgetRepo = nil
 	s.UserRepo = nil
 	s.ServerRepo = nil
 	s.AuditRepo = nil
+	s.ConfigRepo = nil
 	s.ServerSecretBox = nil
 	log.Println("[MetricsService] TimescaleDB detached")
 }
@@ -651,11 +705,11 @@ func (s *MetricsService) GetTimescaleTempdbTopConsumers(ctx context.Context, ins
 	return s.tsLogger.GetTempdbTopConsumers(ctx, instanceName, limit)
 }
 
-func (s *MetricsService) GetTimescaleWaitCategoryAgg(ctx context.Context, instanceName string, minutes int) ([]hot.WaitCategoryAgg, error) {
+func (s *MetricsService) GetTimescaleWaitCategoryAgg(ctx context.Context, instanceName string, minutes int, from, to string) ([]hot.WaitCategoryAgg, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	return s.tsLogger.GetWaitCategoryAgg(ctx, instanceName, minutes)
+	return s.tsLogger.GetWaitCategoryAgg(ctx, instanceName, minutes, from, to)
 }
 
 // GetTimescalePerformanceDebtFindings returns recent Performance Debt findings (Timescale snapshot).
@@ -904,6 +958,13 @@ func (s *MetricsService) GetTimescaleSQLServerMetrics(instanceName string, limit
 		return nil, fmt.Errorf("TimescaleDB not connected")
 	}
 	return s.tsLogger.GetSQLServerMetrics(context.Background(), instanceName, limit)
+}
+
+func (s *MetricsService) GetTimescaleSQLServerMetricsRange(instanceName, from, to string, limit int) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetSQLServerMetricsRange(context.Background(), instanceName, from, to, limit)
 }
 
 func (s *MetricsService) GetTimescalePostgresThroughput(instanceName string, limit int) ([]hot.PostgresThroughputRow, error) {
@@ -1157,6 +1218,20 @@ func (s *MetricsService) GetPgBlockingDetailsInRange(ctx context.Context, instan
 	return s.tsLogger.GetPgBlockingDetailsInRange(ctx, instanceName, from, to)
 }
 
+func (s *MetricsService) GetPgBlockingIncidents(ctx context.Context, instanceName string, windowHours, limit int) ([]hot.PgBlockingIncidentSummary, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetPgBlockingIncidents(ctx, instanceName, windowHours, limit)
+}
+
+func (s *MetricsService) GetPgChronicBlockers(ctx context.Context, instanceName string, from, to time.Time, limit int) ([]hot.PgChronicBlockerRow, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("TimescaleDB not connected")
+	}
+	return s.tsLogger.GetPgChronicBlockers(ctx, instanceName, from, to, limit)
+}
+
 func (s *MetricsService) GetLatestPostgresPoolerStats(ctx context.Context, instanceName string) (*hot.PostgresPoolerStatRow, error) {
 	if s.tsLogger == nil {
 		return nil, fmt.Errorf("TimescaleDB not connected")
@@ -1394,11 +1469,11 @@ func (s *MetricsService) GetTimescaleSQLServerMemoryDrilldown(instanceName, from
 	}, nil
 }
 
-func (s *MetricsService) GetQueryStatsTimeSeries(instanceName, metric, timeRange string) ([]map[string]interface{}, error) {
+func (s *MetricsService) GetQueryStatsTimeSeries(instanceName, metric, from, to string, dbName string) ([]map[string]interface{}, error) {
 	if s.tsLogger == nil {
-		return nil, fmt.Errorf("TimescaleDB not connected")
+		return nil, fmt.Errorf("timescale logger not initialized")
 	}
-	return s.tsLogger.GetQueryStatsTimeSeries(context.Background(), instanceName, metric, timeRange)
+	return s.tsLogger.GetQueryStatsTimeSeries(context.Background(), instanceName, metric, from, to, dbName)
 }
 
 func (s *MetricsService) GetTimescaleSQLServerLongRunningQueries(instanceName string, limit int, from, to string, database string) ([]map[string]interface{}, error) {
@@ -1443,7 +1518,7 @@ func (s *MetricsService) GetDashboardFromTimescale(instanceName string) (map[str
 
 // GetDashboardHomepageV2 returns the Phase-1 DBA homepage payload using cached metrics only.
 // Phase-2 will extend this to prefer TimescaleDB snapshots and add missing signals.
-func (s *MetricsService) GetDashboardHomepageV2(instanceName string) dashboard.HomepageV2 {
+func (s *MetricsService) GetDashboardHomepageV2(instanceName string, from, to string) dashboard.HomepageV2 {
 	d := s.GetCachedDashboard(instanceName)
 
 	// Phase-2: prefer Timescale snapshot for risk/health strip when available.
@@ -1453,21 +1528,70 @@ func (s *MetricsService) GetDashboardHomepageV2(instanceName string) dashboard.H
 	var batchTrend []map[string]interface{}
 	var ioTrend []map[string]interface{}
 	var bchrTrend []map[string]interface{}
+
+	// Default to last 1h if not provided for history charts
+	if from == "" || to == "" {
+		now := time.Now().UTC()
+		to = now.Format(time.RFC3339)
+		from = now.Add(-1 * time.Hour).Format(time.RFC3339)
+	}
+
+	var pleObjects []map[string]any
+
 	if s.tsLogger != nil {
 		if r, err := s.tsLogger.GetLatestSQLServerRiskHealth(context.Background(), instanceName); err == nil {
 			tsRisk = r
 		}
-		if a, err := s.tsLogger.GetWaitCategoryAgg(context.Background(), instanceName, 15); err == nil {
+		if a, err := s.tsLogger.GetWaitCategoryAgg(context.Background(), instanceName, 15, from, to); err == nil {
 			waitAgg = a
 		}
-		if t, err := s.tsLogger.GetBatchRequestsTrend(context.Background(), instanceName, 60); err == nil {
+		if t, err := s.tsLogger.GetBatchRequestsTrend(context.Background(), instanceName, 60, from, to); err == nil {
 			batchTrend = t
 		}
-		if t, err := s.tsLogger.GetFileIOLatencyTrend(context.Background(), instanceName, 60); err == nil {
+		if t, err := s.tsLogger.GetFileIOLatencyTrend(context.Background(), instanceName, 60, from, to); err == nil {
 			ioTrend = t
 		}
-		if t, err := s.tsLogger.GetBufferCacheHitTrend(context.Background(), instanceName, 60); err == nil {
+		if t, err := s.tsLogger.GetBufferCacheHitTrend(context.Background(), instanceName, 60, from, to); err == nil {
 			bchrTrend = t
+		}
+
+		// Also override historical charts
+		if h, err := s.tsLogger.GetSQLServerCPUHistory(context.Background(), instanceName, from, to, 2000); err == nil {
+			d.CPUHistory = make([]models.CPUTick, len(h))
+			for i, tick := range h {
+				sqlProc, _ := tick["sql_process"].(float64)
+				sysIdle, _ := tick["system_idle"].(float64)
+				otherProc, _ := tick["other_process"].(float64)
+				ts, _ := tick["event_time"].(string)
+				d.CPUHistory[i] = models.CPUTick{
+					SQLProcess:   sqlProc,
+					SystemIdle:   sysIdle,
+					OtherProcess: otherProc,
+					EventTime:    ts,
+				}
+			}
+		}
+		if h, err := s.tsLogger.GetSQLServerMetricsRange(context.Background(), instanceName, from, to, 2000); err == nil {
+			d.MemHistory = make([]float64, len(h))
+			for i, m := range h {
+				mem, _ := m["memory_usage"].(float64)
+				d.MemHistory[i] = mem
+			}
+		}
+		if h, err := s.tsLogger.GetSQLServerMemoryHistoryRange(context.Background(), instanceName, from, to, 2000); err == nil {
+			// Map to list of objects with "ple" key for consistency
+			pleObjects = make([]map[string]any, len(h))
+			d.PLEHistory = make([]float64, len(h))
+			for i, m := range h {
+				pleVal, _ := m["page_life_expectancy"].(float64)
+				ts, _ := m["capture_timestamp"].(time.Time)
+				pleObjects[i] = map[string]any{
+					"ple":        pleVal,
+					"timestamp":  ts,
+					"event_time": ts.Format(time.RFC3339),
+				}
+				d.PLEHistory[i] = pleVal
+			}
 		}
 	}
 
@@ -1606,7 +1730,12 @@ func (s *MetricsService) GetDashboardHomepageV2(instanceName string) dashboard.H
 			}(),
 		},
 		MemoryStorage: map[string]any{
-			"ple_history": d.PLEHistory,
+			"ple_history": func() any {
+				if len(pleObjects) > 0 {
+					return pleObjects
+				}
+				return d.PLEHistory
+			}(),
 			"mem_history": d.MemHistory,
 			"disk_usage":  d.DiskUsage,
 			"disk_by_db":  d.DiskByDB,
@@ -1634,8 +1763,8 @@ func (s *MetricsService) GetDashboardHomepageV2(instanceName string) dashboard.H
 }
 
 // GetDashboardHomepageV2WithSource returns the homepage payload and which source was used for Timescale-backed parts.
-func (s *MetricsService) GetDashboardHomepageV2WithSource(instanceName string) (dashboard.HomepageV2, string) {
-	out := s.GetDashboardHomepageV2(instanceName)
+func (s *MetricsService) GetDashboardHomepageV2WithSource(instanceName string, from, to string) (dashboard.HomepageV2, string) {
+	out := s.GetDashboardHomepageV2(instanceName, from, to)
 	if s.tsLogger == nil {
 		return out, "live_cache"
 	}
@@ -1752,11 +1881,11 @@ func (s *MetricsService) ExecuteWidgetQuery(ctx context.Context, widgetID string
 }
 
 func (s *MetricsService) GetQueryBottlenecks(instanceName string, limit int) ([]map[string]interface{}, error) {
-	return s.GetQueryStoreBottlenecks(context.Background(), instanceName, "1h", limit, "")
+	return s.GetQueryStoreBottlenecks(context.Background(), instanceName, "1h", limit, "", "", "")
 }
 
-func (s *MetricsService) GetQueryBottlenecksWithRange(instanceName, timeRange string, limit int, database string) ([]map[string]interface{}, error) {
-	return s.GetQueryStoreBottlenecks(context.Background(), instanceName, timeRange, limit, database)
+func (s *MetricsService) GetQueryBottlenecksWithRange(instanceName, timeRange string, limit int, database string, from, to string) ([]map[string]interface{}, error) {
+	return s.GetQueryStoreBottlenecks(context.Background(), instanceName, timeRange, limit, database, from, to)
 }
 
 func (s *MetricsService) GetSqlServerQueryStoreSQLText(ctx context.Context, instanceName, databaseName, queryHash string) (string, error) {
@@ -1978,4 +2107,41 @@ func (s *MetricsService) GetTimescalePostgresDatabases(ctx context.Context, inst
 		return nil, fmt.Errorf("TimescaleDB not connected")
 	}
 	return s.tsLogger.GetPostgresDatabases(ctx, instanceName)
+}
+
+func (s *MetricsService) GetPostgresWaitSummary(ctx context.Context, instanceName string) (map[string]int, error) {
+	return s.PgRepo.GetWaitEventSummary(instanceName)
+}
+
+func (s *MetricsService) GetPostgresTopWaitEvents(ctx context.Context, instanceName string, limit int) (map[string]int, error) {
+	return s.PgRepo.GetTopWaitEvents(instanceName, limit)
+}
+
+func pleValOnly(h []map[string]interface{}) []float64 {
+	out := make([]float64, len(h))
+	for i, m := range h {
+		val, _ := m["page_life_expectancy"].(float64)
+		out[i] = val
+	}
+	return out
+}
+
+// GetHealthV2DashboardData orchestrates fetching both real-time and historical data for SQL Server Health V2.
+func (s *MetricsService) GetHealthV2DashboardData(ctx context.Context, instanceName string, from, to time.Time) (models.HealthV2DashboardResponse, error) {
+	// 1. Real-time data from repository
+	res, err := s.MsRepo.FetchHealthV2(ctx, instanceName)
+	if err != nil {
+		return res, err
+	}
+
+	if s.tsLogger == nil {
+		return res, nil // TimescaleDB not configured, return real-time only
+	}
+
+	// 2. Historical trends from TimescaleDB
+	res.WaitTrends, _ = s.tsLogger.GetWaitTrendV2(ctx, instanceName, from, to)
+	res.IOLatency, _ = s.tsLogger.GetIOLatencyTrendV2(ctx, instanceName, from, to)
+	res.Throughput, _ = s.tsLogger.GetThroughputTrendV2(ctx, instanceName, from, to)
+
+	return res, nil
 }

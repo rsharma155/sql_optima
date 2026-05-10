@@ -91,7 +91,7 @@ func (tl *TimescaleLogger) GetPostgresWaitEventsHistory(ctx context.Context, ins
 		q = `
 			SELECT capture_timestamp, server_instance_name, COALESCE(wait_event_type,''), COALESCE(wait_event,''), sessions_count
 			FROM postgres_wait_event_stats
-			WHERE server_instance_name = $1
+			WHERE UPPER(server_instance_name) = UPPER($1)
 			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 			ORDER BY capture_timestamp DESC
 			LIMIT 2000
@@ -101,7 +101,7 @@ func (tl *TimescaleLogger) GetPostgresWaitEventsHistory(ctx context.Context, ins
 		q = `
 			SELECT capture_timestamp, server_instance_name, COALESCE(wait_event_type,''), COALESCE(wait_event,''), sessions_count
 			FROM postgres_wait_event_stats
-			WHERE server_instance_name = $1
+			WHERE UPPER(server_instance_name) = UPPER($1)
 			ORDER BY capture_timestamp DESC
 			LIMIT $2
 		`
@@ -137,7 +137,7 @@ func (tl *TimescaleLogger) GetPostgresLockWaitHistory(ctx context.Context, insta
 	q := `
 		SELECT capture_timestamp, COALESCE(SUM(sessions_count), 0)::int
 		FROM postgres_wait_event_stats
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		  AND wait_event_type = 'Lock'
 		  AND capture_timestamp >= $2
 		GROUP BY capture_timestamp
@@ -203,7 +203,7 @@ func (tl *TimescaleLogger) GetPostgresDbIOHistory(ctx context.Context, instanceN
 		q = `
 			SELECT capture_timestamp, server_instance_name, database_name, blks_read, blks_hit, temp_files, temp_bytes
 			FROM postgres_db_io_stats
-			WHERE server_instance_name = $1
+			WHERE UPPER(server_instance_name) = UPPER($1)
 			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 			ORDER BY capture_timestamp DESC
 			LIMIT 2000
@@ -213,7 +213,7 @@ func (tl *TimescaleLogger) GetPostgresDbIOHistory(ctx context.Context, instanceN
 		q = `
 			SELECT capture_timestamp, server_instance_name, database_name, blks_read, blks_hit, temp_files, temp_bytes
 			FROM postgres_db_io_stats
-			WHERE server_instance_name = $1
+			WHERE UPPER(server_instance_name) = UPPER($1)
 			ORDER BY capture_timestamp DESC
 			LIMIT $2
 		`
@@ -269,7 +269,7 @@ func (tl *TimescaleLogger) GetPostgresSettingsSnapshotLatestTwo(ctx context.Cont
 	tsRows, err := tl.pool.Query(ctx, `
 		SELECT DISTINCT capture_timestamp
 		FROM postgres_settings_snapshot
-		WHERE server_instance_name = $1
+		WHERE UPPER(server_instance_name) = UPPER($1)
 		ORDER BY capture_timestamp DESC
 		LIMIT 2
 	`, instanceName)
@@ -299,7 +299,7 @@ func (tl *TimescaleLogger) GetPostgresSettingsSnapshotLatestTwo(ctx context.Cont
 		rows, err := tl.pool.Query(ctx, `
 			SELECT capture_timestamp, server_instance_name, name, COALESCE(setting,''), COALESCE(unit,''), COALESCE(source,'')
 			FROM postgres_settings_snapshot
-			WHERE server_instance_name = $1 AND capture_timestamp = $2
+			WHERE UPPER(server_instance_name) = UPPER($1) AND capture_timestamp = $2
 		`, instanceName, ts)
 		if err != nil {
 			return nil, err

@@ -15,6 +15,10 @@ import (
 
 // pgStatStatementsExcludedRoleNames returns role names whose statements are omitted from Query Performance.
 // Default: dbmonitor_user. Extend with env SQL_OPTIMA_PG_STATEMENTS_EXCLUDE_USERS=comma,separated,names
+// PgSystemDatabases lists PostgreSQL cluster-internal databases to skip during collection.
+// Use SQL_OPTIMA_PG_INCLUDE_SYSTEM_DATABASES=true to override.
+var PgSystemDatabases = []string{"postgres", "template0", "template1"}
+
 func pgStatStatementsExcludedRoleNames() []string {
 	seen := make(map[string]struct{})
 	add := func(name string) {
@@ -28,6 +32,13 @@ func pgStatStatementsExcludedRoleNames() []string {
 	add("dbmonitor")
 	add("sql_optima")
 	add("sqloptima")
+	// Infrastructure / HA / proxy roles
+	add("pgbouncer")
+	add("repmgr")
+	add("barman")
+	add("patroni")
+	add("pg_monitor")
+	add("streaming_replica")
 	// add("postgres") // superuser — removed from default exclude to allow monitoring benchmarking/load-tests run as postgres
 	if extra := os.Getenv("SQL_OPTIMA_PG_STATEMENTS_EXCLUDE_USERS"); extra != "" {
 		for _, p := range strings.Split(extra, ",") {
@@ -66,18 +77,31 @@ func buildPgStatStatementsFilters() string {
 		  AND s.query NOT ILIKE 'notify %'
 		  AND s.query NOT ILIKE 'show %'
 		  AND s.query NOT ILIKE 'set %'
-		  AND s.query NOT ILIKE 'savepoint%'
-		  AND s.query NOT ILIKE 'release savepoint%'
-		  AND s.query NOT ILIKE '%pg_catalog%'
-		  AND s.query NOT ILIKE '%information_schema%'
-		  AND s.query NOT ILIKE '%pg_toast.%'
-		  AND s.query NOT ILIKE '%pg_stat_%'
-		  AND s.query NOT ILIKE '%pg_locks%'
-		  AND s.query NOT ILIKE '%pg_database%'
-		  AND s.query NOT ILIKE '%pg_class%'
-		  AND s.query NOT ILIKE '%pg_attribute%'
-		  AND s.query <> 'SELECT /* SQL_OPTIMA */   1'
-		  AND s.query <> 'SELECT /* SQL_OPTIMA */   $1'`)
+		  AND s.query NOT ILIKE 'fetch %'
+		  AND s.query NOT ILIKE 'declare %'
+		  AND s.query NOT ILIKE 'begin%'
+		  AND s.query NOT ILIKE 'commit%'
+		  AND s.query NOT ILIKE 'rollback%'
+		  AND s.query NOT ILIKE 'copy %'
+		  AND s.query NOT ILIKE 'cluster %'
+		  AND s.query NOT ILIKE 'explain %'
+		  AND s.query NOT ILIKE '%pg_backend_pid%'
+		  AND s.query NOT ILIKE '%pg_terminate_backend%'
+		  AND s.query NOT ILIKE '%pg_cancel_backend%'
+		  AND s.query NOT ILIKE '%pg_reload_conf%'
+		  AND s.query NOT ILIKE '%pg_advisory_lock%'
+		  AND s.query NOT ILIKE '%pg_try_advisory_lock%'
+		  AND s.query NOT ILIKE '%pg_advisory_unlock%'
+		  AND s.query NOT ILIKE '%pg_total_relation_size%'
+		  AND s.query NOT ILIKE '%pg_database_size%'
+		  AND s.query NOT ILIKE '%pg_relation_size%'
+		  AND s.query NOT ILIKE '%pg_indexes_size%'
+		  AND s.query NOT ILIKE '%timescaledb_information.%'
+		  AND s.query NOT ILIKE '%_timescaledb_internal.%'
+		  AND s.query NOT ILIKE '%pg_stat_monitor%'
+		  AND s.query NOT ILIKE '%SELECT /* SQL_OPTIMA */%'
+		  AND s.query <> 'SELECT 1'
+		  AND s.query <> 'SELECT $1'`)
 	// Replication / physical & logical decoding (walsender, pg_recvlogical, etc.)
 	b.WriteString(`
 		  AND s.query NOT ILIKE '%IDENTIFY_SYSTEM%'
@@ -94,6 +118,19 @@ func buildPgStatStatementsFilters() string {
 		  AND s.query NOT ILIKE '%pg_sync_replication_slots%'
 		  AND s.query NOT ILIKE '%BASE_BACKUP%'
 		  AND s.query NOT ILIKE '%TIMELINE_HISTORY%'`)
+
+	// ORM / framework internal catalog queries
+	b.WriteString(`
+		  AND s.query NOT ILIKE '%pg_type%'
+		  AND s.query NOT ILIKE '%pg_attribute%'
+		  AND s.query NOT ILIKE '%pg_class%'
+		  AND s.query NOT ILIKE '%pg_namespace%'
+		  AND s.query NOT ILIKE '%pg_constraint%'
+		  AND s.query NOT ILIKE '%pg_description%'
+		  AND s.query NOT ILIKE '%information_schema.%'`)
+	// Connection pool / health-check pings
+	b.WriteString(`
+		  AND s.query NOT IN ('SELECT 1', 'SELECT $1', 'select 1', '/* ping */', 'select version()')`)
 
 	// Performance thresholds: Ignore very light/rare queries.
 	// NOTE: To capture ALL queries (including low frequency and fast execution),

@@ -235,7 +235,7 @@ export function showQueryModal(queryText) {
     
     document.getElementById('queryModalText').textContent = queryText;
     
-    document.getElementById('close-query-modal').onclick = () => modal.remove();
+    document.getElementById('close-query-modal').addEventListener('click', () => modal.remove());
     
     document.getElementById('copySqlBtn').addEventListener('click', function() {
         const textToCopy = document.getElementById('queryModalText').textContent;
@@ -254,6 +254,14 @@ export function showQueryModal(queryText) {
 
 export async function boot() {
     console.log('[BOOT] Starting application boot sequence...');
+
+    // Global event delegation for close buttons (CSP compliance)
+    document.addEventListener('click', (e) => {
+        const btnClose = e.target.closest('.btn-close');
+        if (btnClose && btnClose.parentElement) {
+            btnClose.parentElement.style.display = 'none';
+        }
+    });
 
     await apiClient.fetchAuthStatus();
     console.log('[BOOT] auth_required=', appState.authRequired);

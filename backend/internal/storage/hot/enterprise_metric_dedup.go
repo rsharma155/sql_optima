@@ -25,6 +25,9 @@ const (
 	enterpriseKindWaitsDelta         = "waits_delta"
 	enterpriseKindTableStructure     = "table_structure"
 	enterpriseKindPgIndexDefinitions = "pg_index_definitions"
+	enterpriseKindTableSize          = "table_size"
+	enterpriseKindPgSessionActivity  = "pg_session_activity"
+	enterpriseKindPgQueryWaitProfile = "pg_query_wait_profile"
 )
 
 func enterpriseHashKey(instance, kind string) string {
@@ -186,6 +189,28 @@ func (tl *TimescaleLogger) FingerprintIndexDefinitionRows(instance string, rows 
 	})
 	for _, r := range cp {
 		_, _ = fmt.Fprintf(h, "%s.%s.%s.%s:%s:%s:%s:%v:%v:%s|", r.DBName, r.SchemaName, r.TableName, r.IndexName, r.KeyColumns, r.IncludeColumns, r.FilterDefinition.String, r.IsUnique, r.IsPK, r.IndexType)
+	}
+	return h.Sum64()
+}
+
+func (tl *TimescaleLogger) FingerprintTableSizeRows(instance string, rows []TableSizeHistoryRow) uint64 {
+	h := fnv.New64a()
+	_, _ = fmt.Fprintf(h, "%s|%s|%d|", instance, enterpriseKindTableSize, len(rows))
+	if len(rows) == 0 {
+		return h.Sum64()
+	}
+	cp := append([]TableSizeHistoryRow(nil), rows...)
+	sort.Slice(cp, func(i, j int) bool {
+		if cp[i].DatabaseName != cp[j].DatabaseName {
+			return cp[i].DatabaseName < cp[j].DatabaseName
+		}
+		if cp[i].SchemaName != cp[j].SchemaName {
+			return cp[i].SchemaName < cp[j].SchemaName
+		}
+		return cp[i].TableName < cp[j].TableName
+	})
+	for _, r := range cp {
+		_, _ = fmt.Fprintf(h, "%s:%s:%s:%d:%g:%g:%g|", r.DatabaseName, r.SchemaName, r.TableName, r.RowCount, r.TotalMB, r.DataMB, r.IndexMB)
 	}
 	return h.Sum64()
 }

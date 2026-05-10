@@ -167,19 +167,37 @@ function renderJobsContent(inst, metrics) {
         </div>
 
         <div id="jobTab-list" class="tab-panel mt-2">
-            <div class="table-card glass-panel">
+            <div class="table-card glass-panel" style="padding:0;">
                 <div class="table-responsive" style="max-height:400px;">
-                    <table class="data-table">
+                    <table class="modern-table modern-table-compact">
                         <thead><tr><th>Job Name</th><th>Category</th><th>Enabled</th><th>Status</th><th>Last Run</th><th>Last Result</th><th>Owner</th></tr></thead>
                         <tbody>
                             ${jList.map(j => `
                                 <tr>
-                                    <td><strong title="${window.escapeHtml(j.description)}">${window.escapeHtml(j.job_name)}</strong></td>
+                                    <td>
+                                        <div style="display:flex; align-items:center; gap:0.5rem;">
+                                            <i class="fa-solid fa-gear ${j.current_status === 'Running' ? 'fa-spin text-warning' : 'text-muted'}"></i>
+                                            <strong title="${window.escapeHtml(j.description)}">${window.escapeHtml(j.job_name)}</strong>
+                                        </div>
+                                    </td>
                                     <td><span class="small text-muted">${window.escapeHtml(j.category || 'Uncategorized')}</span></td>
-                                    <td><span class="badge ${j.enabled ? 'badge-success' : 'badge-outline'}">${j.enabled ? 'Yes' : 'No'}</span></td>
-                                    <td><span class="badge ${j.current_status === 'Running' ? 'badge-warning' : 'badge-outline'}">${window.escapeHtml(j.current_status)}</span></td>
-                                    <td>${parseRunTime(j.last_run_date, j.last_run_time)}</td>
-                                    <td><span class="badge ${formatStringColor(j.last_run_status)}">${window.escapeHtml(j.last_run_status)}</span></td>
+                                    <td>
+                                        <span class="badge ${j.enabled ? 'badge-success' : 'badge-outline'}" style="font-size:0.6rem;">
+                                            <i class="fa-solid ${j.enabled ? 'fa-check-circle' : 'fa-times-circle'}"></i> ${j.enabled ? 'Enabled' : 'Disabled'}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="badge ${j.current_status === 'Running' ? 'badge-warning' : 'badge-outline'}" style="font-size:0.6rem;">
+                                            ${window.escapeHtml(j.current_status)}
+                                        </span>
+                                    </td>
+                                    <td class="small">${parseRunTime(j.last_run_date, j.last_run_time)}</td>
+                                    <td>
+                                        <div style="display:flex; align-items:center; gap:0.4rem;">
+                                            <i class="fa-solid ${j.last_run_status === 'Succeeded' ? 'fa-circle-check text-success' : (j.last_run_status === 'Failed' ? 'fa-circle-xmark text-danger' : 'fa-circle-question text-muted')}"></i>
+                                            <span class="badge ${formatStringColor(j.last_run_status)}" style="font-size:0.6rem;">${window.escapeHtml(j.last_run_status)}</span>
+                                        </div>
+                                    </td>
                                     <td class="text-muted small">${window.escapeHtml(j.owner)}</td>
                                 </tr>
                             `).join('') || '<tr><td colspan="7" class="text-center text-muted">No jobs found</td></tr>'}
@@ -190,16 +208,20 @@ function renderJobsContent(inst, metrics) {
         </div>
 
         <div id="jobTab-schedules" class="tab-panel mt-2" style="display:none;">
-            <div class="table-card glass-panel">
-                <table class="data-table">
+            <div class="table-card glass-panel" style="padding:0;">
+                <table class="modern-table modern-table-compact">
                     <thead><tr><th>Job</th><th>Schedule</th><th>Active</th><th>Next Expected Run</th></tr></thead>
                     <tbody>
                         ${sched.map(s => `
                             <tr>
                                 <td><strong>${window.escapeHtml(s.job_name)}</strong></td>
-                                <td>${window.escapeHtml(s.schedule_name)}</td>
-                                <td><span class="badge ${s.status === 'Active' ? 'badge-success' : 'badge-outline'}">${s.status}</span></td>
-                                <td><i class="fa-regular fa-clock text-accent"></i> ${s.next_run_datetime ? s.next_run_datetime.substring(0, 19).replace('T', ' ') : 'N/A'}</td>
+                                <td><span class="small">${window.escapeHtml(s.schedule_name)}</span></td>
+                                <td>
+                                    <span class="badge ${s.status === 'Active' ? 'badge-success' : 'badge-outline'}" style="font-size:0.6rem;">
+                                        ${s.status}
+                                    </span>
+                                </td>
+                                <td class="small"><i class="fa-regular fa-clock text-accent"></i> ${s.next_run_datetime ? s.next_run_datetime.substring(0, 19).replace('T', ' ') : 'N/A'}</td>
                             </tr>
                         `).join('') || '<tr><td colspan="4" class="text-center text-muted">No upcoming schedules</td></tr>'}
                     </tbody>
@@ -208,17 +230,17 @@ function renderJobsContent(inst, metrics) {
         </div>
 
         <div id="jobTab-failures" class="tab-panel mt-2" style="display:none;">
-            <div class="table-card glass-panel">
-                <table class="data-table">
+            <div class="table-card glass-panel" style="padding:0;">
+                <table class="modern-table modern-table-compact">
                     <thead><tr><th>Job</th><th>Step</th><th>Failed At</th><th>Message</th></tr></thead>
                     <tbody>
                         ${fails.map((f, idx) => `
                             <tr>
-                                <td><strong>${window.escapeHtml(f.job_name)}</strong></td>
-                                <td><span class="badge badge-outline">${window.escapeHtml(f.step_name)}</span></td>
-                                <td style="white-space:nowrap;">${parseRunTime(f.run_date, f.run_time)}</td>
-                                <td class="small" style="max-width:500px; cursor:pointer;" data-action="jobs-detail" data-idx="${idx}">
-                                    ${window.escapeHtml(f.message ? (f.message.slice(0, 120) + '...') : 'No message')}
+                                <td><strong class="text-danger">${window.escapeHtml(f.job_name)}</strong></td>
+                                <td><span class="badge badge-outline" style="font-size:0.6rem;">${window.escapeHtml(f.step_name)}</span></td>
+                                <td style="white-space:nowrap;" class="small text-muted">${parseRunTime(f.run_date, f.run_time)}</td>
+                                <td class="small" style="max-width:500px; cursor:pointer;" data-action="call" data-fn="showJobFailureDetail" data-idx="${idx}">
+                                    <div class="text-truncate-2">${window.escapeHtml(f.message ? f.message : 'No message')}</div>
                                 </td>
                             </tr>
                         `).join('') || '<tr><td colspan="4" class="text-center text-success">No failures in selected range</td></tr>'}

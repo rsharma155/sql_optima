@@ -110,7 +110,7 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 		q := `
 			/* SQL_OPTIMA */ SELECT   ISNULL(cntr_value, 0)
 			FROM sys.dm_os_performance_counters WITH (NOLOCK)
-			WHERE counter_name='Page life expectancy';
+			WHERE counter_name='Page life expectancy' AND object_name LIKE '%Buffer Manager%';
 		`
 		var ple int64
 		_ = db.QueryRowContext(ctx, q).Scan(&ple)
@@ -165,6 +165,8 @@ func (c *SqlServerRepository) FetchBufferPoolByDB(ctx context.Context, instanceN
 			DB_NAME(database_id) AS database_name,
 			COUNT(*)*8/1024 AS buffer_mb
 		FROM sys.dm_os_buffer_descriptors WITH (NOLOCK)
+		WHERE database_id > 4 -- User DBs only
+		  AND LOWER(ISNULL(DB_NAME(database_id), '')) NOT IN ('distribution', 'model_replicatedmaster', 'model_msdb')
 		GROUP BY database_id
 		ORDER BY buffer_mb DESC;
 	`, limit)

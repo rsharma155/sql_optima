@@ -10,6 +10,7 @@ package repository
 import (
 	"database/sql"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/models"
@@ -26,13 +27,13 @@ func (c *PgRepository) FetchPgCoreThroughputTelemetry(instanceName string, prev 
 	metrics.Timestamp = time.Now().Format("15:04:05")
 
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
 		log.Printf("[POSTGRES] FetchPgCoreThroughputTelemetry: connection not found for %s, attempting reconnect", instanceName)
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 			if !ok || db == nil {
 				log.Printf("[POSTGRES] FetchPgCoreThroughputTelemetry: reconnect failed for %s", instanceName)
@@ -103,7 +104,7 @@ func (c *PgRepository) FetchPgCoreThroughputTelemetry(instanceName string, prev 
 		log.Printf("[POSTGRES] Query failed for %s, attempting reconnect: %v", instanceName, queryErr)
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, dbOk := c.conns[instanceName]
+			db, dbOk := c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 
 			if dbOk && db != nil {

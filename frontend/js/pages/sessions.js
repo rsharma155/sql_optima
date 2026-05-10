@@ -12,8 +12,11 @@ window.PgSessionsView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || { name: 'Loading...', type: 'postgres' };
     const dbName = window.appState.currentDatabase || 'all';
 
+    window.appState.activeViewId = 'pg-sessions';
+
     window.routerOutlet.innerHTML = await window.loadTemplate('/pages/sessions.html', { inst, dbName });
     
+    window.initPageTimePicker();
     await initPgSessions();
 
     // Set Refresh Interval
@@ -25,7 +28,7 @@ window.PgSessionsView = async function() {
             clearInterval(window.pgSessionsInterval);
         }
     }, 30000); // 30s refresh for sessions
-}
+};
 
 async function updatePgSessionsHeader(instName) {
     try {

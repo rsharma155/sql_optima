@@ -39,7 +39,7 @@ func (h *QueryHandlers) Bottlenecks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
@@ -63,8 +63,10 @@ func (h *QueryHandlers) Bottlenecks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	database := strings.TrimSpace(r.URL.Query().Get("database"))
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
 
-	bottlenecks, err := h.metricsSvc.GetQueryBottlenecksWithRange(instance, timeRange, limit, database)
+	bottlenecks, err := h.metricsSvc.GetQueryBottlenecksWithRange(instance, timeRange, limit, database, from, to)
 	if err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "does not exist") || strings.Contains(errStr, "relation") {
@@ -102,7 +104,7 @@ func (h *QueryHandlers) QueryStoreSQLText(w http.ResponseWriter, r *http.Request
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceInConfig(h.cfg, instance) {
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return

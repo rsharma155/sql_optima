@@ -114,14 +114,14 @@ func (c *PgRepository) OpenConnForDatabase(ctx context.Context, instanceName, db
 // GetDatabases returns the list of user databases (excludes template databases and 'postgres').
 func (c *PgRepository) GetDatabases(instanceName string) ([]string, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[instanceName]
+	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
 		log.Printf("[POSTGRES] GetDatabases: connection not found for %s, attempting reconnect", instanceName)
 		if c.reconnectInstance(instanceName) {
 			c.mutex.RLock()
-			db, ok = c.conns[instanceName]
+			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 			if !ok || db == nil {
 				return nil, fmt.Errorf("connection not found after reconnect")

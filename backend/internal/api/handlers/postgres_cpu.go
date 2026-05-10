@@ -12,7 +12,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
@@ -52,21 +51,8 @@ func (h *PostgresHandlers) CPUHistory(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if fromStr != "" && toStr != "" {
-		// Try to parse as RFC3339 or fallback to simpler format if needed
-		fromT, _ := time.Parse(time.RFC3339, fromStr)
-		if fromT.IsZero() {
-			fromT, _ = time.Parse("2006-01-02T15:04", fromStr)
-		}
-		toT, _ := time.Parse(time.RFC3339, toStr)
-		if toT.IsZero() {
-			toT, _ = time.Parse("2006-01-02T15:04", toStr)
-		}
-
-		if !fromT.IsZero() && !toT.IsZero() {
-			rows, err = h.metricsSvc.GetPostgresCpuHistoryRange(instance, fromT, toT)
-		} else {
-			rows, err = h.metricsSvc.GetPostgresCpuHistory(instance, limit)
-		}
+		fromT, toT := ParseTimeRange(fromStr, toStr)
+		rows, err = h.metricsSvc.GetPostgresCpuHistoryRange(instance, fromT, toT)
 	} else {
 		rows, err = h.metricsSvc.GetPostgresCpuHistory(instance, limit)
 	}

@@ -8,7 +8,7 @@ SELECT /* SQL_OPTIMA */   TOP(256)
     SQLProcessUtilization AS [SQL_Server_CPU], 
     SystemIdle AS [System_Idle_CPU], 
     100 - SystemIdle - SQLProcessUtilization AS [Other_Process_CPU],
-    CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETDATE()), 120) AS [Event_Time]
+    CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETUTCDATE()), 120) AS [Event_Time]
 FROM ( 
     SELECT /* SQL_OPTIMA */   record.value('(./Record/@id)[1]', 'int') AS record_id, 
         record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') 

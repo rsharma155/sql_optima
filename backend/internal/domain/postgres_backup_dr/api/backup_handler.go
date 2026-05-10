@@ -52,20 +52,29 @@ func (h *PostgresBackupHandler) GetDashboardData(w http.ResponseWriter, r *http.
 
 	data := make(map[string]interface{})
 
+	// KPIs (Row 1)
 	kpis, _ := repo.GetKPIData(ctx, instance, from, to)
 	data["kpis"] = kpis
 
+	// Trends (Row 2 & 3)
 	walTrend, _ := repo.GetWALTrend(ctx, instance, from, to)
 	data["wal_trend"] = walTrend
+
+	replicationLagTrend, _ := repo.GetReplicationLagTrend(ctx, instance, from, to)
+	data["replication_lag_trend"] = replicationLagTrend
 
 	archiveHealth, _ := repo.GetArchiveHealth(ctx, instance, from, to)
 	data["archive_health"] = archiveHealth
 
-	failedEvents, _ := repo.GetFailedArchiveEvents(ctx, instance, from, to)
-	data["failed_events"] = failedEvents
-
 	checkpointTrend, _ := repo.GetCheckpointTrend(ctx, instance, from, to)
 	data["checkpoint_trend"] = checkpointTrend
+
+	// Operational Details (Row 4)
+	replicationDetails, _ := repo.GetReplicationDetails(ctx, instance)
+	data["replication_details"] = replicationDetails
+
+	archiverFailures, _ := repo.GetArchiverFailures(ctx, instance)
+	data["archiver_failures"] = archiverFailures
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)

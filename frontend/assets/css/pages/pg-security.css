@@ -1,0 +1,193 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Security Monitor Dashboard Specific Styles (Compact Version)
+ */
+
+.security-grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+/* Column Spans */
+.col-span-1 { grid-column: span 1; }
+.col-span-2 { grid-column: span 2; }
+.col-span-3 { grid-column: span 3; }
+.col-span-4 { grid-column: span 4; }
+.col-span-5 { grid-column: span 5; }
+.col-span-6 { grid-column: span 6; }
+.col-span-7 { grid-column: span 7; }
+.col-span-8 { grid-column: span 8; }
+.col-span-9 { grid-column: span 9; }
+.col-span-10 { grid-column: span 10; }
+.col-span-11 { grid-column: span 11; }
+.col-span-12 { grid-column: span 12; }
+
+/* Fixed Row Heights */
+.row-height-kpi { height: 90px; }
+.row-height-chart { height: 260px; }
+.row-height-table { height: 260px; }
+
+.row-span-2 { grid-row: span 2; }
+
+/* Security Color Palette */
+.risk-critical { background: #e11d48 !important; color: #fff !important; }
+.risk-warning { background: #f59e0b !important; color: #fff !important; }
+.risk-safe { background: #22c55e !important; color: #fff !important; }
+.risk-info { background: #3b82f6 !important; color: #fff !important; }
+
+.text-critical { color: #e11d48 !important; }
+.text-warning { color: #f59e0b !important; }
+.text-safe { color: #22c55e !important; }
+.text-info { color: #3b82f6 !important; }
+
+/* Risk Card Styling - Adjusted to match other KPIs height */
+.risk-card {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    text-align: left;
+    border-radius: 12px;
+    padding: 0.5rem 1rem;
+    height: 90px;
+    transition: all 0.3s ease;
+}
+
+.risk-card .risk-main {
+    display: flex;
+    flex-direction: column;
+}
+
+.risk-card .risk-level-value {
+    font-size: 1.4rem;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 0.15rem;
+}
+
+.risk-card .risk-label {
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+    opacity: 0.9;
+}
+
+.risk-card .risk-indicators {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    font-size: 0.6rem;
+    font-weight: 500;
+    text-align: right;
+    border-left: 1px solid rgba(255,255,255,0.2);
+    padding-left: 0.75rem;
+}
+
+/* KPI Card Enhancements */
+.security-kpi-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0.5rem 0.75rem;
+    height: 90px;
+}
+
+.security-kpi-card .kpi-label {
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: 0.15rem;
+}
+
+.security-kpi-card .kpi-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.security-kpi-card .kpi-trend {
+    font-size: 0.65rem;
+    margin-top: 0.15rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+/* Table Density */
+.compact-security-table {
+    width: 100%;
+    font-size: 0.72rem !important;
+}
+
+.compact-security-table th {
+    background: rgba(0,0,0,0.02);
+    padding: 0.4rem !important;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    font-size: 0.62rem;
+}
+
+[data-theme="dark"] .compact-security-table th {
+    background: rgba(255,255,255,0.02);
+}
+
+.compact-security-table td {
+    padding: 0.35rem 0.4rem !important;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.row-superuser { background-color: rgba(225, 29, 72, 0.05); }
+.row-replication { background-color: rgba(245, 158, 11, 0.05); }
+
+/* Charts */
+.security-chart-container {
+    height: 200px;
+    width: 100%;
+}
+
+/* No data placeholder */
+.no-data-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 0.8rem;
+}
+
+/* Badges */
+.badge {
+    display: inline-block;
+    padding: 0.15rem 0.4rem;
+    font-size: 0.6rem;
+    font-weight: 700;
+    border-radius: 4px;
+    text-transform: uppercase;
+}
+.badge-danger { background: rgba(225, 29, 72, 0.15); color: #e11d48; border: 1px solid rgba(225, 29, 72, 0.2); }
+.badge-warning { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.2); }
+.badge-info { background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2); }
+.badge-success { background: rgba(34, 197, 94, 0.15); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.2); }
+
+/* Breakpoints */
+@media (max-width: 1400px) {
+    .security-grid { grid-template-columns: repeat(8, 1fr); }
+    .col-span-1, .col-span-2, .col-span-3, .col-span-4, .col-span-5, .col-span-6, .col-span-7, .col-span-8, .col-span-9, .col-span-10, .col-span-11, .col-span-12 {
+        grid-column: span 8;
+    }
+}
+
+@media (max-width: 768px) {
+    .security-grid { grid-template-columns: 1fr; }
+    .security-grid > div { grid-column: span 1 !important; }
+    .risk-card { height: auto; padding: 1.5rem; }
+}

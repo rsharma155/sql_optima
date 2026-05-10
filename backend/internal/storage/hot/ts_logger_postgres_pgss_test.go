@@ -392,3 +392,109 @@ func TestTopQueryFlagComputation(t *testing.T) {
 		})
 	}
 }
+
+// ---- New struct compile-time guards ----
+
+func TestPgssFilterOptionsStructExists(t *testing.T) {
+	var _ PgssFilterOptions
+}
+
+func TestPgssDbBreakdownStructExists(t *testing.T) {
+	var _ PgssDbBreakdown
+}
+
+func TestPgssUserBreakdownStructExists(t *testing.T) {
+	var _ PgssUserBreakdown
+}
+
+// ---- PgssTopQuery new fields ----
+
+func TestPgssTopQueryHasDbNameAndUserName(t *testing.T) {
+	q := PgssTopQuery{
+		QueryID: 1, Query: "SELECT 1",
+		DbName: "app_db", UserName: "app_user", AppName: "myapp", QueryType: "S",
+		TotalTime: 100, Calls: 50, AvgMs: 2.0,
+	}
+	if q.DbName != "app_db" {
+		t.Fatalf("DbName: want app_db, got %q", q.DbName)
+	}
+	if q.QueryType != "S" {
+		t.Fatalf("QueryType: want S, got %q", q.QueryType)
+	}
+}
+
+// ---- PgssSummary UniqueQueryCount ----
+
+func TestPgssSummaryHasUniqueQueryCount(t *testing.T) {
+	s := PgssSummary{
+		QueryLoadMsSec: 1.0, QPS: 100.0,
+		P99Ms: 5.0, CacheHitPct: 99.0,
+		UniqueQueryCount: 42,
+	}
+	if s.UniqueQueryCount != 42 {
+		t.Fatalf("UniqueQueryCount: want 42, got %d", s.UniqueQueryCount)
+	}
+}
+
+// ---- GetPgssFilterOptions nil-pool guard ----
+
+func TestGetPgssFilterOptions_NilPool(t *testing.T) {
+	tl := &TimescaleLogger{} // nil pool
+	// Should return empty options, not panic
+	opts, _ := tl.GetPgssFilterOptions(context.TODO(), "test-instance",
+		time.Now().Add(-time.Hour), time.Now())
+	if opts == nil {
+		// nil is acceptable for nil pool
+		return
+	}
+}
+
+// ---- subSnap DbName/UserName/QueryType propagation ----
+
+func TestSubSnap_PropagatesNewFields(t *testing.T) {
+	base := PostgresQueryStatsSnapRow{
+		QueryID: 1, Calls: 10, TotalTimeMs: 100, DbName: "old_db", UserName: "old_user",
+	}
+	curr := PostgresQueryStatsSnapRow{
+		QueryID: 1, Calls: 20, TotalTimeMs: 250, DbName: "app_db", UserName: "app_user", QueryType: "S",
+	}
+	d := subSnap(base, curr)
+	if d.DbName != "app_db" {
+		t.Errorf("DbName should be from current, got %q", d.DbName)
+	}
+	if d.UserName != "app_user" {
+		t.Errorf("UserName should be from current, got %q", d.UserName)
+	}
+	if d.QueryType != "S" {
+		t.Errorf("QueryType should be from current, got %q", d.QueryType)
+	}
+}
+
+// ---- UpsertPgssQueryDim with new signature — empty rows guard ----
+
+func TestUpsertPgssQueryDim_EmptyRowsNewSignature(t *testing.T) {
+	tl := &TimescaleLogger{}
+	err := tl.UpsertPgssQueryDim(context.TODO(), "test", nil)
+	if err != nil {
+		t.Fatalf("expected nil error for empty rows, got %v", err)
+	}
+}
+
+// ---- PGQueryMetricsDelta new fields ----
+
+func TestPGQueryMetricsDeltaHasNewFields(t *testing.T) {
+	d := PGQueryMetricsDelta{
+		SampleTime: time.Now(), InstanceName: "inst", QueryID: 1,
+		DbName: "app_db", UserName: "app_user", AppName: "", QueryType: "S",
+		DeltaCalls: 10, DeltaExecMs: 100.0, MeanExecMs: 10.0, DeltaPlanTime: 5.0,
+	}
+	if d.DbName != "app_db" {
+		t.Fatalf("DbName: want app_db, got %q", d.DbName)
+	}
+	if d.QueryType != "S" {
+		t.Fatalf("QueryType: want S, got %q", d.QueryType)
+	}
+	if d.MeanExecMs != 10.0 {
+		t.Fatalf("MeanExecMs: want 10.0, got %f", d.MeanExecMs)
+	}
+}

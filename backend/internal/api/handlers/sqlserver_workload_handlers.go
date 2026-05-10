@@ -37,6 +37,16 @@ func (h *SqlServerWorkloadHandlers) Summary(w http.ResponseWriter, r *http.Reque
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "sqlserver") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
+		return
+	}
 
 	fromStr := r.URL.Query().Get("from")
 	toStr := r.URL.Query().Get("to")
@@ -65,6 +75,16 @@ func (h *SqlServerWorkloadHandlers) Trends(w http.ResponseWriter, r *http.Reques
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "sqlserver") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
+		return
+	}
 
 	fromStr := r.URL.Query().Get("from")
 	toStr := r.URL.Query().Get("to")
@@ -91,6 +111,16 @@ func (h *SqlServerWorkloadHandlers) TopOffenders(w http.ResponseWriter, r *http.
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "sqlserver") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
 		return
 	}
 
@@ -144,6 +174,16 @@ func (h *SqlServerWorkloadHandlers) handleTimeline(w http.ResponseWriter, r *htt
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "sqlserver") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
+		return
+	}
 
 	fromStr := r.URL.Query().Get("from")
 	toStr := r.URL.Query().Get("to")
@@ -170,6 +210,16 @@ func (h *SqlServerWorkloadHandlers) handleTopN(w http.ResponseWriter, r *http.Re
 	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return
+	}
+	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "sqlserver") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
 		return
 	}
 
