@@ -1,5 +1,5 @@
 # Build from repository root: docker build -t sql-optima:latest .
-FROM golang:1.25-bookworm AS build
+FROM golang:1.26-bookworm AS build
 WORKDIR /src
 COPY backend/go.mod backend/go.sum ./backend/
 WORKDIR /src/backend
@@ -11,9 +11,7 @@ COPY infrastructure/sql_scripts /src/infrastructure/sql_scripts
 RUN echo 'instances: []' > ../config.yaml
 COPY frontend ../frontend
 # Force module mode even if a stale vendor/ exists in build context.
-# GOTOOLCHAIN=auto lets the builder satisfy go.mod's minimum-version requirement
-# even when the base image ships a slightly older patch release.
-RUN GOTOOLCHAIN=auto CGO_ENABLED=0 go build -mod=mod -ldflags="-s -w" -o /sql-optima ./cmd/server
+RUN CGO_ENABLED=0 go build -mod=mod -ldflags="-s -w" -o /sql-optima ./cmd/server
 RUN mkdir -p /src/backend/logs && chmod 0777 /src/backend/logs
 
 FROM gcr.io/distroless/static-debian12:nonroot
