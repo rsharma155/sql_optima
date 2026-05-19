@@ -8,12 +8,13 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
-	"log"
 )
 
 // CollectPgReplication fetches PostgreSQL replication stats
-func (c *PgRepository) CollectPgReplication(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *PgRepository) CollectPgReplication(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		/* SQL_OPTIMA */ SELECT   
 			pid,
@@ -35,9 +36,11 @@ func (c *PgRepository) CollectPgReplication(db *sql.DB) ([]map[string]interface{
 		ORDER BY state, backend_start DESC
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[PostgreSQL] Replication Query Error: %v", err)
+		slog.Error("[PostgreSQL] Replication Query Error", "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -61,22 +64,24 @@ func (c *PgRepository) CollectPgReplication(db *sql.DB) ([]map[string]interface{
 	return results, nil
 }
 
-// CollectPgReplicationLag fetches replication lag in MB
-func (c *PgRepository) CollectPgReplicationLag(db *sql.DB) (float64, string, error) {
+// CollectPgReplicationLag fetches the worst-case replication lag in MB across all standbys.
+// Uses WAL LSN delta (sent vs replay) which is the correct byte-based lag measure.
+func (c *PgRepository) CollectPgReplicationLag(ctx context.Context, db *sql.DB) (float64, string, error) {
 	query := `
-		/* SQL_OPTIMA */ SELECT   
-			COALESCE(EXTRACT(EPOCH FROM (now() - replay_lag)) * 1024, 0) AS lag_mb,
-			COALESCE(state, 'unknown') AS state
+		/* SQL_OPTIMA */
+		SELECT
+			COALESCE(MAX(pg_wal_lsn_diff(sent_lsn, replay_lsn)), 0) / 1024.0 / 1024.0 AS lag_mb,
+			COALESCE((SELECT state FROM pg_stat_replication ORDER BY pg_wal_lsn_diff(sent_lsn, replay_lsn) DESC LIMIT 1), 'none') AS state
 		FROM pg_stat_replication
-		ORDER BY replay_lag DESC
-		LIMIT 1
 	`
 
 	var lagMB float64
 	var state string
-	err := db.QueryRow(query).Scan(&lagMB, &state)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err := db.QueryRowContext(ctx, query).Scan(&lagMB, &state)
 	if err != nil {
-		log.Printf("[PostgreSQL] Replication Lag Query Error: %v", err)
+		slog.Error("[PostgreSQL] Replication Lag Query Error", "err", err)
 		return 0, "none", err
 	}
 	return lagMB, state, nil

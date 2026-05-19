@@ -9,34 +9,49 @@ package hot
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 )
 
 type PostgresVacuumProgressRow struct {
-	CaptureTimestamp   time.Time `json:"capture_timestamp"`
-	ServerInstanceName string    `json:"server_instance_name"`
-	PID                int64     `json:"pid"`
-	DatabaseName       string    `json:"database_name,omitempty"`
-	UserName           string    `json:"user_name,omitempty"`
-	RelationName       string    `json:"relation_name,omitempty"`
-	Phase              string    `json:"phase,omitempty"`
-	HeapBlksTotal      int64     `json:"heap_blks_total"`
-	HeapBlksScanned    int64     `json:"heap_blks_scanned"`
-	HeapBlksVacuumed   int64     `json:"heap_blks_vacuumed"`
-	IndexVacuumCount   int64     `json:"index_vacuum_count"`
-	MaxDeadTuples      int64     `json:"max_dead_tuples"`
-	NumDeadTuples      int64     `json:"num_dead_tuples"`
+	CaptureTimestamp time.Time `json:"capture_timestamp"`
+	ServerID         uuid.UUID `json:"server_id"`
+	PID              int64     `json:"pid"`
+	DatabaseName     string    `json:"database_name,omitempty"`
+	UserName         string    `json:"user_name,omitempty"`
+	RelationName     string    `json:"relation_name,omitempty"`
+	Phase            string    `json:"phase,omitempty"`
+	HeapBlksTotal    int64     `json:"heap_blks_total"`
+	HeapBlksScanned  int64     `json:"heap_blks_scanned"`
+	HeapBlksVacuumed int64     `json:"heap_blks_vacuumed"`
+	IndexVacuumCount int64     `json:"index_vacuum_count"`
+	MaxDeadTuples    int64     `json:"max_dead_tuples"`
+	NumDeadTuples    int64     `json:"num_dead_tuples"`
 }
 
-func (tl *TimescaleLogger) LogPostgresVacuumProgress(ctx context.Context, instanceName string, rows []PostgresVacuumProgressRow) error {
+func (tl *TimescaleLogger) LogPostgresVacuumProgress(ctx context.Context, serverID uuid.UUID, rows []PostgresVacuumProgressRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
+
+	sig := pgFnv64(serverID, len(rows))
+	for _, r := range rows {
+		sig = pgFnv64(sig, r.PID, r.DatabaseName, r.RelationName, r.Phase, r.HeapBlksScanned)
+	}
+
+	tl.mu.Lock()
+	if prev, ok := tl.prevPgVacuumProgressHash[serverID]; ok && prev == sig {
+		tl.mu.Unlock()
+		return nil
+	}
+	tl.prevPgVacuumProgressHash[serverID] = sig
+	tl.mu.Unlock()
+
 	q := `
 		INSERT INTO postgres_vacuum_progress (
-			capture_timestamp, server_instance_name,
+			capture_timestamp, server_id,
 			pid, database_name, user_name, relation_name, phase,
 			heap_blks_total, heap_blks_scanned, heap_blks_vacuumed,
 			index_vacuum_count, max_dead_tuples, num_dead_tuples
@@ -46,7 +61,7 @@ func (tl *TimescaleLogger) LogPostgresVacuumProgress(ctx context.Context, instan
 	b := &pgx.Batch{}
 	for _, r := range rows {
 		b.Queue(q,
-			now, instanceName,
+			now, serverID,
 			r.PID, r.DatabaseName, r.UserName, r.RelationName, r.Phase,
 			r.HeapBlksTotal, r.HeapBlksScanned, r.HeapBlksVacuumed,
 			r.IndexVacuumCount, r.MaxDeadTuples, r.NumDeadTuples,
@@ -62,21 +77,21 @@ func (tl *TimescaleLogger) LogPostgresVacuumProgress(ctx context.Context, instan
 	return nil
 }
 
-func (tl *TimescaleLogger) GetPostgresVacuumProgress(ctx context.Context, instanceName string, limit int) ([]PostgresVacuumProgressRow, error) {
+func (tl *TimescaleLogger) GetPostgresVacuumProgress(ctx context.Context, serverID uuid.UUID, limit int) ([]PostgresVacuumProgressRow, error) {
 	if limit <= 0 {
 		limit = 200
 	}
 	q := `
-		SELECT capture_timestamp, server_instance_name,
+		SELECT capture_timestamp, server_id,
 		       pid, COALESCE(database_name,''), COALESCE(user_name,''), COALESCE(relation_name,''), COALESCE(phase,''),
 		       heap_blks_total, heap_blks_scanned, heap_blks_vacuumed,
 		       index_vacuum_count, max_dead_tuples, num_dead_tuples
 		FROM postgres_vacuum_progress
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC, heap_blks_scanned DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +101,7 @@ func (tl *TimescaleLogger) GetPostgresVacuumProgress(ctx context.Context, instan
 	for rows.Next() {
 		var r PostgresVacuumProgressRow
 		if err := rows.Scan(
-			&r.CaptureTimestamp, &r.ServerInstanceName,
+			&r.CaptureTimestamp, &r.ServerID,
 			&r.PID, &r.DatabaseName, &r.UserName, &r.RelationName, &r.Phase,
 			&r.HeapBlksTotal, &r.HeapBlksScanned, &r.HeapBlksVacuumed,
 			&r.IndexVacuumCount, &r.MaxDeadTuples, &r.NumDeadTuples,

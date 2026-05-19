@@ -10,12 +10,14 @@
 package repository
 
 import (
-	"fmt"
-	"strings"
+	"context"
+	"database/sql"
+	"time"
 )
 
 // PGTimescaleLockInternal is the internal struct for lock data.
 type PGTimescaleLockInternal struct {
+	CollectedAt    time.Time
 	DatabaseName   string
 	PID            int
 	WaitEventType  string
@@ -26,18 +28,14 @@ type PGTimescaleLockInternal struct {
 	QueryText      string
 	BlockedBy      int
 	WaitDurationMs float64
+	RelationOID    uint32
+	RelationName   string
+	TransactionID  string
 }
 
 // FetchDetailedLocks returns current locks with detailed metadata for historical logging.
-func (c *PgRepository) FetchDetailedLocks(instanceName string) ([]PGTimescaleLockInternal, error) {
-	c.mutex.RLock()
-	db, ok := c.conns[strings.ToUpper(instanceName)]
-	c.mutex.RUnlock()
-
-	if !ok || db == nil {
-		return nil, fmt.Errorf("connection not found")
-	}
-
+func (c *PgRepository) FetchDetailedLocks(ctx context.Context, instanceName string, db *sql.DB) ([]PGTimescaleLockInternal, error) {
+	now := time.Now().UTC()
 	query := `
 		/* SQL_OPTIMA_PHASE8 */
 		SELECT 
@@ -48,14 +46,21 @@ func (c *PgRepository) FetchDetailedLocks(instanceName string) ([]PGTimescaleLoc
 			l.locktype,
 			l.mode,
 			l.granted,
-			LEFT(a.query, 500) as query_text,
+			COALESCE(LEFT(a.query, 500), '') as query_text,
 			(SELECT pid FROM pg_locks bl WHERE bl.locktype = l.locktype AND bl.database IS NOT DISTINCT FROM l.database AND bl.relation IS NOT DISTINCT FROM l.relation AND bl.page IS NOT DISTINCT FROM l.page AND bl.tuple IS NOT DISTINCT FROM l.tuple AND bl.virtualxid IS NOT DISTINCT FROM l.virtualxid AND bl.transactionid IS NOT DISTINCT FROM l.transactionid AND bl.classid IS NOT DISTINCT FROM l.classid AND bl.objid IS NOT DISTINCT FROM l.objid AND bl.objsubid IS NOT DISTINCT FROM l.objsubid AND bl.granted = true AND bl.pid <> l.pid LIMIT 1) as blocked_by,
-			CASE WHEN l.granted = false THEN EXTRACT(EPOCH FROM (now() - a.state_change)) * 1000 ELSE 0 END as wait_duration_ms
+			COALESCE(CASE WHEN l.granted = false THEN EXTRACT(EPOCH FROM (now() - a.state_change)) * 1000 ELSE 0 END, 0) as wait_duration_ms,
+			COALESCE(l.relation, 0)::oid::integer as relation_oid,
+			COALESCE(rel.relname, 'virtual') as relation_name,
+			COALESCE(l.transactionid::text, '') as transaction_id
 		FROM pg_locks l
 		LEFT JOIN pg_stat_activity a ON l.pid = a.pid
+		LEFT JOIN pg_class rel ON l.relation = rel.oid
 		WHERE l.pid <> pg_backend_pid()
+		  AND l.locktype NOT IN ('virtualxid', 'transactionid')
 	`
-	rows, err := db.Query(query)
+	tctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -65,9 +70,11 @@ func (c *PgRepository) FetchDetailedLocks(instanceName string) ([]PGTimescaleLoc
 	for rows.Next() {
 		var l PGTimescaleLockInternal
 		var blockedBy *int
+		l.CollectedAt = now
 		err := rows.Scan(
 			&l.DatabaseName, &l.PID, &l.WaitEventType, &l.WaitEvent,
 			&l.LockType, &l.Mode, &l.Granted, &l.QueryText, &blockedBy, &l.WaitDurationMs,
+			&l.RelationOID, &l.RelationName, &l.TransactionID,
 		)
 		if err != nil {
 			continue
@@ -83,10 +90,13 @@ func (c *PgRepository) FetchDetailedLocks(instanceName string) ([]PGTimescaleLoc
 // PGStatStatementsInternal is the internal struct for pg_stat_statements.
 type PGStatStatementsInternal struct {
 	QueryID           int64
-	DatabaseName      string
+	DbName            string
 	UserName          string
+	Query             string
+	QueryType         string
 	Calls             int64
 	TotalTime         float64
+	MeanTime          float64
 	Rows              int64
 	SharedBlksHit     int64
 	SharedBlksRead    int64
@@ -97,19 +107,14 @@ type PGStatStatementsInternal struct {
 	BlkReadTime       float64
 	BlkWriteTime      float64
 	WalBytes          float64
+	TotalPlanTime     float64
+	MeanPlanTime      float64
+	Plans             int64
 }
 
 // FetchStatStatements returns a raw snapshot of pg_stat_statements.
-func (c *PgRepository) FetchStatStatements(instanceName string) ([]PGStatStatementsInternal, error) {
-	c.mutex.RLock()
-	db, ok := c.conns[strings.ToUpper(instanceName)]
-	c.mutex.RUnlock()
-
-	if !ok || db == nil {
-		return nil, fmt.Errorf("connection not found")
-	}
-
-	version := c.GetPgVersion(instanceName)
+func (c *PgRepository) FetchStatStatements(ctx context.Context, instanceName string, db *sql.DB) ([]PGStatStatementsInternal, error) {
+	version := c.GetPgVersion(ctx, instanceName)
 
 	var query string
 	if version >= 130000 {
@@ -119,8 +124,11 @@ func (c *PgRepository) FetchStatStatements(instanceName string) ([]PGStatStateme
 				queryid, 
 				COALESCE(d.datname, 'unknown') as datname,
 				COALESCE(u.rolname, 'unknown') as username,
+				LEFT(query, 500),
+				'O' as query_type,
 				calls, 
-				total_exec_time + total_plan_time as total_time,
+				total_exec_time,
+				(total_exec_time / NULLIF(calls, 0)) as mean_time,
 				rows, 
 				shared_blks_hit, 
 				shared_blks_read, 
@@ -130,10 +138,14 @@ func (c *PgRepository) FetchStatStatements(instanceName string) ([]PGStatStateme
 				temp_blks_written, 
 				blk_read_time, 
 				blk_write_time,
-				wal_bytes
+				wal_bytes,
+				COALESCE(total_plan_time, 0),
+				(COALESCE(total_plan_time, 0) / NULLIF(plans, 0)) as mean_plan_time,
+				COALESCE(plans, 0)
 			FROM pg_stat_statements s
 			LEFT JOIN pg_database d ON s.dbid = d.oid
 			LEFT JOIN pg_roles u ON s.userid = u.oid
+			ORDER BY total_exec_time DESC
 			LIMIT 500
 		`
 	} else {
@@ -143,8 +155,11 @@ func (c *PgRepository) FetchStatStatements(instanceName string) ([]PGStatStateme
 				queryid, 
 				COALESCE(d.datname, 'unknown') as datname,
 				COALESCE(u.rolname, 'unknown') as username,
+				LEFT(query, 500),
+				'O' as query_type,
 				calls, 
 				total_time,
+				(total_time / NULLIF(calls, 0)) as mean_time,
 				rows, 
 				shared_blks_hit, 
 				shared_blks_read, 
@@ -154,15 +169,21 @@ func (c *PgRepository) FetchStatStatements(instanceName string) ([]PGStatStateme
 				temp_blks_written, 
 				blk_read_time, 
 				blk_write_time,
-				0 as wal_bytes
+				0 as wal_bytes,
+				0 as total_plan_time,
+				0 as mean_plan_time,
+				0 as plans
 			FROM pg_stat_statements s
 			LEFT JOIN pg_database d ON s.dbid = d.oid
 			LEFT JOIN pg_roles u ON s.userid = u.oid
+			ORDER BY total_time DESC
 			LIMIT 500
 		`
 	}
 
-	rows, err := db.Query(query)
+	tctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -172,9 +193,10 @@ func (c *PgRepository) FetchStatStatements(instanceName string) ([]PGStatStateme
 	for rows.Next() {
 		var s PGStatStatementsInternal
 		err := rows.Scan(
-			&s.QueryID, &s.DatabaseName, &s.UserName, &s.Calls, &s.TotalTime, &s.Rows,
+			&s.QueryID, &s.DbName, &s.UserName, &s.Query, &s.QueryType, &s.Calls, &s.TotalTime, &s.MeanTime, &s.Rows,
 			&s.SharedBlksHit, &s.SharedBlksRead, &s.SharedBlksDirtied, &s.SharedBlksWritten,
 			&s.TempBlksRead, &s.TempBlksWritten, &s.BlkReadTime, &s.BlkWriteTime, &s.WalBytes,
+			&s.TotalPlanTime, &s.MeanPlanTime, &s.Plans,
 		)
 		if err != nil {
 			continue

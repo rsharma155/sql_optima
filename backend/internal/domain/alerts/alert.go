@@ -82,8 +82,8 @@ func (e Engine) Valid() bool {
 type Alert struct {
 	ID             uuid.UUID              `json:"id"`
 	Fingerprint    string                 `json:"fingerprint"`
-	ServerID       *uuid.UUID             `json:"server_id,omitempty"`
-	InstanceName   string                 `json:"instance_name"`
+	ServerID       uuid.UUID              `json:"server_id"`
+	ServerName     string                 `json:"server_name"`
 	Engine         Engine                 `json:"engine"`
 	Severity       Severity               `json:"severity"`
 	Status         Status                 `json:"status"`
@@ -136,4 +136,18 @@ func (a *Alert) BumpHitCount(at time.Time) {
 // IsOpen returns true when the alert still requires attention.
 func (a *Alert) IsOpen() bool {
 	return a.Status == StatusOpen || a.Status == StatusAcknowledged
+}
+
+// AlertRule represents a configured check that can generate alerts.
+type AlertRule struct {
+	ID          uuid.UUID              `json:"id"`
+	Name        string                 `json:"name"`
+	Engine      Engine                 `json:"engine"`
+	Category    string                 `json:"category"`
+	Severity    Severity               `json:"severity"`
+	Description string                 `json:"description"`
+	Config      map[string]interface{} `json:"config"`
+	IsEnabled   bool                   `json:"is_enabled"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
 }

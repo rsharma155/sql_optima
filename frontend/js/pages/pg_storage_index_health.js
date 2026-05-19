@@ -10,7 +10,7 @@
 
 window.PgStorageIndexHealthView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
-    const dashTitle = 'Index & Table Health';
+    const dashTitle = 'Postgres Index & Table Health';
     if (!inst || String(inst.type || '').toLowerCase() !== 'postgres') {
         window.routerOutlet.innerHTML = `
             <div class="page-view active dashboard-sky-theme">

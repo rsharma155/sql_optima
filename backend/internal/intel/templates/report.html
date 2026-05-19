@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MonitorMind Report - {{.RunID}}</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Inter', -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; }
+.header { background: #1e293b; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; }
+.header h1 { font-size: 20px; color: #3b82f6; }
+.header .subtitle { font-size: 12px; color: #64748b; }
+.cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; padding: 16px; }
+.card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; text-align: center; }
+.card .value { font-size: 28px; font-weight: 700; }
+.card .label { font-size: 12px; color: #64748b; margin-top: 4px; }
+.card .sub { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.green { color: #22c55e; }
+.yellow { color: #eab308; }
+.orange { color: #f97316; }
+.red { color: #ef4444; }
+.blue { color: #3b82f6; }
+.summary { padding: 16px 24px; background: #1e293b; margin: 0 16px 16px; border-radius: 8px; border: 1px solid #334155; }
+.summary h2 { font-size: 16px; margin-bottom: 8px; color: #94a3b8; }
+.summary p { font-size: 14px; line-height: 1.6; color: #cbd5e1; }
+.section { padding: 16px 24px; }
+.section h2 { font-size: 16px; color: #94a3b8; margin-bottom: 12px; border-bottom: 1px solid #334155; padding-bottom: 8px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #1e293b; }
+th { background: #1e293b; color: #64748b; font-weight: 600; }
+tr:hover { background: #1e293b; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge-critical { background: #7f1d1d; color: #fca5a5; }
+.badge-high { background: #7c2d12; color: #fdba74; }
+.badge-medium { background: #713f12; color: #fde68a; }
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px 24px; }
+.chart-box { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px; }
+.chart-box h3 { font-size: 13px; color: #94a3b8; margin-bottom: 8px; }
+.working-well li { padding: 4px 0; font-size: 13px; color: #86efac; }
+.kanban { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 16px 24px; }
+.kanban-col { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px; }
+.kanban-col h3 { font-size: 13px; color: #64748b; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 2px solid #334155; }
+.kanban-card { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 8px; margin-bottom: 6px; font-size: 12px; }
+.kanban-card .action { color: #e2e8f0; }
+.kanban-card .reason { color: #64748b; font-size: 11px; margin-top: 2px; }
+@media (max-width: 768px) {
+  .cards { grid-template-columns: repeat(2, 1fr); }
+  .chart-grid { grid-template-columns: 1fr; }
+  .kanban { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="header">
+<div>
+<h1>MonitorMind</h1>
+<div class="subtitle">Autonomous Monitoring Intelligence</div>
+</div>
+<div style="text-align:right">
+<div style="font-size:13px;color:#e2e8f0">{{.RunID}}</div>
+<div class="subtitle">Generated: {{.GeneratedAt}}</div>
+</div>
+</div>
+
+<div class="cards">
+<div class="card">
+<div class="value {{riskColor .OverallRisk.Category}}">{{printf "%.0f" .OverallRisk.OverallScore}}<span style="font-size:14px;color:#64748b">/100</span></div>
+<div class="label">{{.OverallRisk.Category}}</div>
+</div>
+<div class="card">
+<div class="value blue">{{if .FailureForecast}}{{len .FailureForecast}}{{else}}0{{end}}</div>
+<div class="label">Failure Risks</div>
+</div>
+<div class="card">
+<div class="value red">{{.CriticalCount}}</div>
+<div class="label">Critical Alerts</div>
+<div class="sub">{{.HighCount}} High</div>
+</div>
+<div class="card">
+<div class="value green">{{.ConfidenceScore | mul 100 | printf "%.0f"}}<span style="font-size:14px;color:#64748b">%</span></div>
+<div class="label">Confidence</div>
+</div>
+<div class="card">
+<div class="value blue">{{len .Forecasts}}</div>
+<div class="label">Forecast Metrics</div>
+</div>
+</div>
+
+<div class="summary">
+<h2>Executive Summary</h2>
+<p>{{.NarrativeSummary}}</p>
+</div>
+
+<div class="section">
+<h2>What's Working Well</h2>
+<ul class="working-well">
+{{range .WorkingWell}}<li>{{.}}</li>{{end}}
+</ul>
+</div>
+
+<div class="section">
+<h2>Current Issues ({{len .CurrentIssues}})</h2>
+<table>
+<thead><tr><th>Severity</th><th>Issue</th><th>Description</th></tr></thead>
+<tbody>
+{{range .CurrentIssues}}
+<tr>
+<td><span class="badge badge-{{severityClass .severity}}">{{.severity}}</span></td>
+<td>{{.title}}</td>
+<td>{{.description}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+
+<div class="section">
+<h2>Failure Forecast</h2>
+<table>
+<thead><tr><th>Component</th><th>Window</th><th>Confidence</th></tr></thead>
+<tbody>
+{{range .FailureForecast}}
+<tr><td>{{.Component}}</td><td>{{.PredictedFailureWindow}}</td><td>{{.Confidence}}</td></tr>
+{{end}}
+</tbody>
+</table>
+</div>
+
+<div class="section">
+<h2>Forecast Data</h2>
+<table>
+<thead><tr><th>Metric</th><th>Horizon</th><th>Confidence</th><th>Failure Days</th></tr></thead>
+<tbody>
+{{range .Forecasts}}
+<tr><td>{{.MetricName}}</td><td>{{.HorizonDays}}d</td><td>{{.Confidence | mul 100 | printf "%.0f"}}%</td><td>{{if .PredictedFailureDays}}{{.PredictedFailureDays}}{{else}}N/A{{end}}</td></tr>
+{{end}}
+</tbody>
+</table>
+</div>
+
+<div class="section">
+<h2>Root Cause Hypotheses</h2>
+<ul style="padding-left:20px">
+{{range .RootCauseHypotheses}}<li style="font-size:13px;padding:4px 0;color:#cbd5e1">{{.}}</li>{{end}}
+</ul>
+</div>
+
+<div class="section">
+<h2>Recommended Actions</h2>
+<div class="kanban">
+<div class="kanban-col">
+<h3>Immediate</h3>
+{{range .RecommendedActions}}{{if eq .urgency "immediate"}}
+<div class="kanban-card"><div class="action">{{.action}}</div><div class="reason">{{.reason}}</div></div>
+{{end}}{{end}}
+</div>
+<div class="kanban-col">
+<h3>Short-Term</h3>
+{{range .RecommendedActions}}{{if eq .urgency "short-term"}}
+<div class="kanban-card"><div class="action">{{.action}}</div><div class="reason">{{.reason}}</div></div>
+{{end}}{{end}}
+</div>
+<div class="kanban-col">
+<h3>Strategic</h3>
+{{range .RecommendedActions}}{{if eq .urgency "strategic"}}
+<div class="kanban-card"><div class="action">{{.action}}</div><div class="reason">{{.reason}}</div></div>
+{{end}}{{end}}
+</div>
+</div>
+</div>
+
+<div id="risk-trend" class="chart-box" style="margin:16px 24px;height:300px">
+<h3>Risk Trend (7 Days)</h3>
+<div id="riskTrendChart" style="height:260px"></div>
+</div>
+
+<div id="capacity-chart" class="chart-box" style="margin:16px 24px;height:300px">
+<h3>Capacity Forecast (30 Days)</h3>
+<div id="capacityForecastChart" style="height:260px"></div>
+</div>
+
+<script>
+var riskData = {{.RiskTrendJSON | safeJS}};
+var capData = {{.CapacityForecastJSON | safeJS}};
+if (riskData && riskData.data) {
+  Plotly.newPlot('riskTrendChart', riskData.data, riskData.layout || {}, {responsive: true, displayModeBar: false});
+}
+if (capData && capData.data) {
+  Plotly.newPlot('capacityForecastChart', capData.data, capData.layout || {}, {responsive: true, displayModeBar: false});
+}
+</script>
+</body>
+</html>

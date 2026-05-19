@@ -13,16 +13,16 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
 // LogSQLServerMemoryMetrics inserts one snapshot row (append-only).
-func (tl *TimescaleLogger) LogSQLServerMemoryMetrics(ctx context.Context, instanceName string, row map[string]interface{}) error {
+func (tl *TimescaleLogger) LogSQLServerMemoryMetrics(ctx context.Context, serverID uuid.UUID, row map[string]interface{}) error {
 	if row == nil {
 		return nil
 	}
 	// Compute spill rates from cumulative counters.
-	// We do this here (logger-side) so the collector stays “must-have only” and storage gets per-sec series.
 	sortTot := getInt64FromMap(row, "sort_warnings_total")
 	hashTot := getInt64FromMap(row, "hash_warnings_total")
 	sortRate := 0.0
@@ -31,9 +31,9 @@ func (tl *TimescaleLogger) LogSQLServerMemoryMetrics(ctx context.Context, instan
 
 	tl.mu.Lock()
 	if tl.prevSpillByInstance == nil {
-		tl.prevSpillByInstance = make(map[string]spillDeltaState)
+		tl.prevSpillByInstance = make(map[uuid.UUID]spillDeltaState)
 	}
-	prev := tl.prevSpillByInstance[instanceName]
+	prev := tl.prevSpillByInstance[serverID]
 	dt := now.Sub(prev.lastTS).Seconds()
 	if !prev.lastTS.IsZero() && dt > 0 {
 		ds := float64(sortTot - prev.lastSort)
@@ -45,7 +45,7 @@ func (tl *TimescaleLogger) LogSQLServerMemoryMetrics(ctx context.Context, instan
 			hashRate = dh / dt
 		}
 	}
-	tl.prevSpillByInstance[instanceName] = spillDeltaState{
+	tl.prevSpillByInstance[serverID] = spillDeltaState{
 		lastTS:   now,
 		lastSort: sortTot,
 		lastHash: hashTot,
@@ -54,7 +54,7 @@ func (tl *TimescaleLogger) LogSQLServerMemoryMetrics(ctx context.Context, instan
 
 	_, err := tl.pool.Exec(ctx, `
 		INSERT INTO sqlserver_memory_metrics (
-			capture_timestamp, server_instance_name,
+			capture_timestamp, server_id,
 			sql_memory_used_mb, sql_memory_target_mb,
 			os_total_memory_mb, os_available_memory_mb,
 			process_physical_low, process_virtual_low,
@@ -64,7 +64,7 @@ func (tl *TimescaleLogger) LogSQLServerMemoryMetrics(ctx context.Context, instan
 			sort_warnings_total, hash_warnings_total,
 			sort_warnings_per_sec, hash_warnings_per_sec
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-	`, now, instanceName,
+	`, now, serverID,
 		getInt64FromMap(row, "sql_memory_used_mb"),
 		getInt64FromMap(row, "sql_memory_target_mb"),
 		getInt64FromMap(row, "os_total_memory_mb"),
@@ -86,7 +86,7 @@ func (tl *TimescaleLogger) LogSQLServerMemoryMetrics(ctx context.Context, instan
 	return err
 }
 
-func (tl *TimescaleLogger) LogSQLServerBufferPoolByDB(ctx context.Context, instanceName string, rows []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogSQLServerBufferPoolByDB(ctx context.Context, serverID uuid.UUID, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -95,9 +95,9 @@ func (tl *TimescaleLogger) LogSQLServerBufferPoolByDB(ctx context.Context, insta
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_buffer_pool_db (
-				capture_timestamp, server_instance_name, database_name, buffer_mb
+				capture_timestamp, server_id, database_name, buffer_mb
 			) VALUES ($1,$2,$3,$4)
-		`, now, instanceName,
+		`, now, serverID,
 			getStr(r, "database_name"),
 			getInt64FromMap(r, "buffer_mb"),
 		)
@@ -112,7 +112,7 @@ func (tl *TimescaleLogger) LogSQLServerBufferPoolByDB(ctx context.Context, insta
 	return nil
 }
 
-func (tl *TimescaleLogger) GetSQLServerMemoryMetricsRange(ctx context.Context, instanceName, from, to string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerMemoryMetricsRange(ctx context.Context, serverID uuid.UUID, from, to string, limit int) ([]map[string]interface{}, error) {
 	start, end, err := parseTimeRangeRFC3339(from, to)
 	if err != nil {
 		return nil, err
@@ -131,13 +131,13 @@ func (tl *TimescaleLogger) GetSQLServerMemoryMetricsRange(ctx context.Context, i
 		       sort_warnings_total, hash_warnings_total,
 		       sort_warnings_per_sec, hash_warnings_per_sec
 		FROM sqlserver_memory_metrics
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC
 		LIMIT $4
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, start, end, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, start, end, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (tl *TimescaleLogger) GetSQLServerMemoryMetricsRange(ctx context.Context, i
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) GetSQLServerBufferPoolByDBRange(ctx context.Context, instanceName, from, to string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerBufferPoolByDBRange(ctx context.Context, serverID uuid.UUID, from, to string, limit int) ([]map[string]interface{}, error) {
 	start, end, err := parseTimeRangeRFC3339(from, to)
 	if err != nil {
 		return nil, err
@@ -198,13 +198,13 @@ func (tl *TimescaleLogger) GetSQLServerBufferPoolByDBRange(ctx context.Context, 
 	q := `
 		SELECT capture_timestamp, database_name, buffer_mb
 		FROM sqlserver_buffer_pool_db
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC, buffer_mb DESC
 		LIMIT $4
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, start, end, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, start, end, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +228,7 @@ func (tl *TimescaleLogger) GetSQLServerBufferPoolByDBRange(ctx context.Context, 
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) GetPlanCacheHealthRange(ctx context.Context, instanceName, from, to string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetPlanCacheHealthRange(ctx context.Context, serverID uuid.UUID, from, to string, limit int) ([]map[string]interface{}, error) {
 	start, end, err := parseTimeRangeRFC3339(from, to)
 	if err != nil {
 		return nil, err
@@ -240,13 +240,13 @@ func (tl *TimescaleLogger) GetPlanCacheHealthRange(ctx context.Context, instance
 		SELECT capture_timestamp, total_cache_mb, single_use_cache_mb, single_use_cache_pct,
 		       adhoc_cache_mb, prepared_cache_mb, proc_cache_mb
 		FROM sqlserver_plan_cache
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC
 		LIMIT $4
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, start, end, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, start, end, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -269,164 +269,6 @@ func (tl *TimescaleLogger) GetPlanCacheHealthRange(ctx context.Context, instance
 			"prepared_cache_mb":    prep,
 			"proc_cache_mb":        proc,
 		})
-	}
-	return out, rows.Err()
-}
-
-// GetSQLServerMetricsRange returns sqlserver_metrics rows for [from, to] (RFC3339), ordered by time.
-func (tl *TimescaleLogger) GetSQLServerMetricsRange(ctx context.Context, instanceName, from, to string, limit int) ([]map[string]interface{}, error) {
-	start, end, err := parseTimeRangeRFC3339(from, to)
-	if err != nil {
-		return nil, err
-	}
-	if limit <= 0 || limit > 10000 {
-		limit = 2000
-	}
-	query := `
-		SELECT capture_timestamp, server_instance_name, avg_cpu_load, memory_usage,
-		       active_users, total_locks, deadlocks, data_disk_mb, log_disk_mb, free_disk_mb
-		FROM sqlserver_metrics
-		WHERE UPPER(server_instance_name) = UPPER($1)
-		  AND capture_timestamp >= $2
-		  AND capture_timestamp <= $3
-		ORDER BY capture_timestamp ASC
-		LIMIT $4`
-	rows, err := tl.pool.Query(ctx, query, instanceName, start, end, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []map[string]interface{}
-	for rows.Next() {
-		var ts time.Time
-		var srv string
-		var cpu, mem, dataMB, logMB, freeMB float64
-		var users, locks, dead int
-		if err := rows.Scan(&ts, &srv, &cpu, &mem, &users, &locks, &dead, &dataMB, &logMB, &freeMB); err != nil {
-			continue
-		}
-		out = append(out, map[string]interface{}{
-			"capture_timestamp": ts,
-			"event_time":        ts.Format(time.RFC3339),
-			"server_name":       srv,
-			"avg_cpu_load":      cpu,
-			"memory_usage":      mem,
-			"active_users":      users,
-			"total_locks":       locks,
-			"deadlocks":         dead,
-			"data_disk_mb":      dataMB,
-			"log_disk_mb":       logMB,
-			"free_disk_mb":      freeMB,
-		})
-	}
-	return out, rows.Err()
-}
-
-// GetSQLServerMemoryHistoryRange returns sqlserver_memory_history PLE samples for [from, to] (RFC3339).
-func (tl *TimescaleLogger) GetSQLServerMemoryHistoryRange(ctx context.Context, instanceName, from, to string, limit int) ([]map[string]interface{}, error) {
-	start, end, err := parseTimeRangeRFC3339(from, to)
-	if err != nil {
-		return nil, err
-	}
-	if limit <= 0 || limit > 10000 {
-		limit = 2000
-	}
-	q := `
-		SELECT capture_timestamp, page_life_expectancy
-		FROM sqlserver_memory_history
-		WHERE UPPER(server_instance_name) = UPPER($1)
-		  AND capture_timestamp >= $2
-		  AND capture_timestamp <= $3
-		ORDER BY capture_timestamp ASC
-		LIMIT $4`
-	rows, err := tl.pool.Query(ctx, q, instanceName, start, end, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []map[string]interface{}
-	for rows.Next() {
-		var ts time.Time
-		var ple sql.NullFloat64
-		if err := rows.Scan(&ts, &ple); err != nil {
-			continue
-		}
-		pv := 0.0
-		if ple.Valid {
-			pv = ple.Float64
-		}
-		out = append(out, map[string]interface{}{
-			"capture_timestamp":            ts,
-			"event_time":                   ts.Format(time.RFC3339),
-			"page_life_expectancy_seconds": pv,
-			"page_life_expectancy":         pv,
-			"ple":                          pv,
-		})
-	}
-	return out, rows.Err()
-}
-
-// GetSQLServerSchedulerMemoryRange returns sqlserver_cpu_scheduler_stats OS memory fields for [from, to] (RFC3339).
-func (tl *TimescaleLogger) GetSQLServerSchedulerMemoryRange(ctx context.Context, instanceName, from, to string, limit int) ([]map[string]interface{}, error) {
-	start, end, err := parseTimeRangeRFC3339(from, to)
-	if err != nil {
-		return nil, err
-	}
-	if limit <= 0 || limit > 10000 {
-		limit = 2000
-	}
-	q := `
-		SELECT capture_timestamp,
-		       total_physical_memory_kb, available_physical_memory_kb,
-		       system_memory_state_desc, physical_memory_pressure_warning
-		FROM sqlserver_cpu_scheduler_stats
-		WHERE UPPER(server_instance_name) = UPPER($1)
-		  AND capture_timestamp >= $2
-		  AND capture_timestamp <= $3
-		ORDER BY capture_timestamp ASC
-		LIMIT $4`
-	rows, err := tl.pool.Query(ctx, q, instanceName, start, end, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []map[string]interface{}
-	for rows.Next() {
-		var ts time.Time
-		var totalPhys, availPhys sql.NullInt64
-		var stateDesc sql.NullString
-		var pressure sql.NullBool
-		if err := rows.Scan(&ts, &totalPhys, &availPhys, &stateDesc, &pressure); err != nil {
-			continue
-		}
-		tpk := int64(0)
-		if totalPhys.Valid {
-			tpk = totalPhys.Int64
-		}
-		apk := int64(0)
-		if availPhys.Valid {
-			apk = availPhys.Int64
-		}
-		pctFree := 0.0
-		if tpk > 0 {
-			pctFree = (float64(apk) / float64(tpk)) * 100.0
-		}
-		m := map[string]interface{}{
-			"capture_timestamp":                ts,
-			"event_time":                       ts.Format(time.RFC3339),
-			"total_physical_memory_kb":         tpk,
-			"available_physical_memory_kb":     apk,
-			"physical_memory_free_percent":     pctFree,
-			"physical_memory_pressure_warning": pressure.Valid && pressure.Bool,
-			"system_memory_state_desc":         "",
-		}
-		if stateDesc.Valid {
-			m["system_memory_state_desc"] = stateDesc.String
-		}
-		out = append(out, m)
 	}
 	return out, rows.Err()
 }

@@ -8,13 +8,14 @@
 package collectors
 
 import (
+	"log/slog"
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/repository"
 )
@@ -39,6 +40,7 @@ type CollectorResult struct {
 
 type SQLSERVERCollector struct {
 	conns      map[string]*sql.DB
+	serverIDs  map[string]uuid.UUID
 	mu         sync.RWMutex
 	result     CollectorResult
 	liveTicker *time.Ticker
@@ -48,12 +50,13 @@ type SQLSERVERCollector struct {
 	wg         sync.WaitGroup
 }
 
-func NewSQLSERVERCollector(conns map[string]*sql.DB) *SQLSERVERCollector {
+func NewSQLSERVERCollector(conns map[string]*sql.DB, serverIDs map[string]uuid.UUID) *SQLSERVERCollector {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &SQLSERVERCollector{
-		conns:  conns,
-		ctx:    ctx,
-		cancel: cancel,
+		conns:     conns,
+		serverIDs: serverIDs,
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 }
 
@@ -61,17 +64,17 @@ func (c *SQLSERVERCollector) Start() {
 	c.liveTicker = time.NewTicker(LiveInterval)
 	c.histTicker = time.NewTicker(HistoricalInterval)
 
-	log.Printf("[Collector] Split-Speed Background Daemon starting...")
-	log.Printf("[Collector]   - Live Diagnostics ticker: every %v", LiveInterval)
-	log.Printf("[Collector]   - Historical Storage ticker: every %v", HistoricalInterval)
-	log.Printf("[Collector]   - Live collectors: queries_active.go, blocking_locks.go (every 15s)")
-	log.Printf("[Collector]   - Historical collectors: cpu_memory.go, waits.go, storage_io.go (every 60s)")
+	slog.Info("[Collector] Split-Speed Background Daemon starting...")
+	slog.Info("[Collector]   - Live Diagnostics ticker: every", "val", LiveInterval)
+	slog.Info("[Collector]   - Historical Storage ticker: every", "val", HistoricalInterval)
+	slog.Info("[Collector]   - Live collectors: queries_active.go, blocking_locks.go (every 15s)")
+	slog.Info("[Collector]   - Historical collectors: cpu_memory.go, waits.go, storage_io.go (every 60s)")
 
 	go func() {
 		for {
 			select {
 			case <-c.ctx.Done():
-				log.Printf("[Collector] Background daemon shutting down")
+				slog.Info("[Collector] Background daemon shutting dow")
 				return
 
 			case <-c.liveTicker.C:
@@ -89,7 +92,7 @@ func (c *SQLSERVERCollector) Stop() {
 	c.liveTicker.Stop()
 	c.histTicker.Stop()
 	c.wg.Wait()
-	log.Printf("[Collector] Stopped all collectors")
+	slog.Info("[Collector] Stopped all collectors")
 }
 
 func (c *SQLSERVERCollector) GetResult() CollectorResult {
@@ -107,13 +110,14 @@ func (c *SQLSERVERCollector) runLiveCollectors() {
 	c.mu.Unlock()
 
 	for name, db := range conns {
+		serverID := c.serverIDs[name]
 		wg.Add(1)
-		go func(instanceName string, db *sql.DB) {
+		go func(instanceName string, serverID uuid.UUID, db *sql.DB) {
 			defer wg.Done()
 
 			queries, err := repository.CollectActiveQueries(c.ctx, db)
 			if err != nil {
-				log.Printf("[Collector] ERROR CollectActiveQueries for %s: %v", instanceName, err)
+				slog.Error("[Collector] ERROR CollectActiveQueries", "target", instanceName, "err", err)
 				errors = append(errors, fmt.Errorf("active queries: %w", err))
 			} else {
 				c.mu.Lock()
@@ -123,7 +127,7 @@ func (c *SQLSERVERCollector) runLiveCollectors() {
 
 			blocking, err := repository.CollectBlockingLocks(c.ctx, db)
 			if err != nil {
-				log.Printf("[Collector] ERROR CollectBlockingLocks for %s: %v", instanceName, err)
+				slog.Error("[Collector] ERROR CollectBlockingLocks", "target", instanceName, "err", err)
 				errors = append(errors, fmt.Errorf("blocking locks: %w", err))
 			} else {
 				c.mu.Lock()
@@ -133,18 +137,18 @@ func (c *SQLSERVERCollector) runLiveCollectors() {
 
 			snapshots, err := repository.CollectSessionSnapshot(c.ctx, db)
 			if err != nil {
-				log.Printf("[Collector] ERROR CollectSessionSnapshot for %s: %v", instanceName, err)
+				slog.Error("[Collector] ERROR CollectSessionSnapshot", "target", instanceName, "err", err)
 				errors = append(errors, fmt.Errorf("session snapshot: %w", err))
 			} else {
 				c.mu.Lock()
-				// Add instance ID to snapshots
+				// Add serverID ID to snapshots
 				for i := range snapshots {
-					snapshots[i].InstanceID = instanceName
+					snapshots[i].ServerID = serverID
 				}
 				c.result.SessionSnapshots = append(c.result.SessionSnapshots, snapshots...)
 				c.mu.Unlock()
 			}
-		}(name, db)
+		}(name, serverID, db)
 	}
 
 	wg.Wait()
@@ -153,12 +157,12 @@ func (c *SQLSERVERCollector) runLiveCollectors() {
 	c.result.Errors = errors
 	c.mu.Unlock()
 
-	log.Printf("[Collector] Live tick complete - ActiveQueries: %d, Blocking: %d, SessionSnapshots: %d, Errors: %d",
-		len(c.result.ActiveQueries), len(c.result.Blocking), len(c.result.SessionSnapshots), len(errors))
+	slog.Error(fmt.Sprintf("[Collector] Live tick complete - ActiveQueries: %d, Blocking: %d, SessionSnapshots: %d, Errors: %d", len(c.result.ActiveQueries), len(c.result.Blocking), len(c.result.SessionSnapshots), len(errors)))
 }
 
 func (c *SQLSERVERCollector) runHistoricalCollectors() {
 	var wg sync.WaitGroup
+	var mu sync.Mutex
 	errors := []error{}
 
 	c.mu.Lock()
@@ -166,14 +170,17 @@ func (c *SQLSERVERCollector) runHistoricalCollectors() {
 	c.mu.Unlock()
 
 	for name, db := range conns {
+		serverID := c.serverIDs[name]
 		wg.Add(1)
-		go func(instanceName string, db *sql.DB) {
+		go func(instanceName string, serverID uuid.UUID, db *sql.DB) {
 			defer wg.Done()
 
 			cpu, mem, err := repository.CollectCPUMemory(c.ctx, db)
 			if err != nil {
-				log.Printf("[Collector] ERROR CollectCPUMemory for %s: %v", instanceName, err)
+				slog.Error("[Collector] ERROR CollectCPUMemory", "target", instanceName, "err", err)
+				mu.Lock()
 				errors = append(errors, fmt.Errorf("cpu/memory: %w", err))
+				mu.Unlock()
 			} else {
 				c.mu.Lock()
 				c.result.CPU = cpu
@@ -183,8 +190,10 @@ func (c *SQLSERVERCollector) runHistoricalCollectors() {
 
 			waits, err := repository.CollectWaitStats(c.ctx, db)
 			if err != nil {
-				log.Printf("[Collector] ERROR CollectWaitStats for %s: %v", instanceName, err)
+				slog.Error("[Collector] ERROR CollectWaitStats", "target", instanceName, "err", err)
+				mu.Lock()
 				errors = append(errors, fmt.Errorf("wait stats: %w", err))
+				mu.Unlock()
 			} else {
 				c.mu.Lock()
 				c.result.WaitStats = waits
@@ -193,8 +202,10 @@ func (c *SQLSERVERCollector) runHistoricalCollectors() {
 
 			storage, tempdb, err := repository.CollectStorageIO(c.ctx, db)
 			if err != nil {
-				log.Printf("[Collector] ERROR CollectStorageIO for %s: %v", instanceName, err)
+				slog.Error("[Collector] ERROR CollectStorageIO", "target", instanceName, "err", err)
+				mu.Lock()
 				errors = append(errors, fmt.Errorf("storage I/O: %w", err))
+				mu.Unlock()
 			} else {
 				c.mu.Lock()
 				c.result.FileStats = storage
@@ -204,14 +215,16 @@ func (c *SQLSERVERCollector) runHistoricalCollectors() {
 
 			longRunning, err := repository.CollectLongRunningQueries(c.ctx, db)
 			if err != nil {
-				log.Printf("[Collector] ERROR CollectLongRunningQueries for %s: %v", instanceName, err)
+				slog.Error("[Collector] ERROR CollectLongRunningQueries", "target", instanceName, "err", err)
+				mu.Lock()
 				errors = append(errors, fmt.Errorf("long running: %w", err))
+				mu.Unlock()
 			} else {
 				c.mu.Lock()
 				c.result.LongRunning = longRunning
 				c.mu.Unlock()
 			}
-		}(name, db)
+		}(name, serverID, db)
 	}
 
 	wg.Wait()
@@ -220,7 +233,5 @@ func (c *SQLSERVERCollector) runHistoricalCollectors() {
 	c.result.Errors = errors
 	c.mu.Unlock()
 
-	log.Printf("[Collector] Historical tick complete - CPU: %v, Memory: %v, Waits: %d, Storage: %d, TempDB: %v, LongRunning: %d, Errors: %d",
-		c.result.CPU != nil, c.result.Memory != nil, len(c.result.WaitStats), len(c.result.FileStats),
-		c.result.TempDBStats != nil, len(c.result.LongRunning), len(errors))
+	slog.Error(fmt.Sprintf("[Collector] Historical tick complete - CPU: %v, Memory: %v, Waits: %d, Storage: %d, TempDB: %v, LongRunning: %d, Errors: %d", c.result.CPU != nil, c.result.Memory != nil, len(c.result.WaitStats), len(c.result.FileStats), c.result.TempDBStats != nil, len(c.result.LongRunning), len(errors)))
 }

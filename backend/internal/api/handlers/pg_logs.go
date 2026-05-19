@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: HTTP handlers for PostgreSQL logs analysis and summaries.
+// Purpose: PostgreSQL log ingestion and retrieval API handlers.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -9,166 +9,88 @@ package handlers
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
-	"strings"
-	"time"
 
-	"github.com/rsharma155/sql_optima/internal/storage/hot"
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	"github.com/rsharma155/sql_optima/internal/service"
 )
 
+type PgLogHandlers struct {
+	metricsSvc *service.MetricsService
+}
 
-func (h *PostgresHandlers) LogsReport(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
-		return
-	}
-	if !h.metricsSvc.IsTimescaleConnected() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "timescale not connected"})
-		return
-	}
+func NewPgLogHandlers(svc *service.MetricsService) *PgLogHandlers {
+	return &PgLogHandlers{metricsSvc: svc}
+}
 
+type pgLogReportRequest struct {
+	ServerID uuid.UUID   `json:"server_id"`
+	Events   interface{} `json:"events"`
+}
+
+func (h *PgLogHandlers) LogEvents(w http.ResponseWriter, r *http.Request) {
 	var req pgLogReportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
-		return
-	}
-	instance := strings.TrimSpace(req.Instance)
-	if instance == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is required"})
-		return
-	}
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
 
-	rows := make([]hot.PostgresLogEventRow, 0, len(req.Events))
-	for _, e := range req.Events {
-		if strings.TrimSpace(e.Message) == "" {
-			continue
-		}
-		ts := time.Now().UTC()
-		if e.CaptureTimestamp != nil {
-			ts = e.CaptureTimestamp.UTC()
-		}
-		rows = append(rows, hot.PostgresLogEventRow{
-			CaptureTimestamp:   ts,
-			ServerInstanceName: instance,
-			Severity:           e.Severity,
-			SQLState:           e.SQLState,
-			Message:            e.Message,
-			UserName:           e.UserName,
-			DatabaseName:       e.DatabaseName,
-			ApplicationName:    e.ApplicationName,
-			ClientAddr:         e.ClientAddr,
-			PID:                e.PID,
-			Context:            e.Context,
-			Detail:             e.Detail,
-			Hint:               e.Hint,
-			Raw:                e.Raw,
-		})
-	}
-	if len(rows) == 0 {
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "inserted": 0})
-		return
-	}
+	id := req.ServerID
 
-	if err := h.metricsSvc.LogPostgresLogEvents(r.Context(), instance, rows); err != nil {
-		log.Printf("[API] PG logs report insert error for %s: %v", instance, err)
+	if err := h.metricsSvc.LogPostgresLogEvents(r.Context(), id, req.Events); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "failed to store log events"})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "inserted": len(rows)})
+	w.WriteHeader(http.StatusAccepted)
 }
 
-func (h *PostgresHandlers) LogsSummary(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
+func (h *PgLogHandlers) GetLogSummary(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	windowMin := 60
-	if wq := r.URL.Query().Get("window_minutes"); wq != "" {
-		if n, err := strconv.Atoi(wq); err == nil && n > 0 && n <= 1440 {
-			windowMin = n
+
+	window := 60
+	if val := r.URL.Query().Get("window"); val != "" {
+		if v, err := strconv.Atoi(val); err == nil {
+			window = v
 		}
 	}
-	if !h.metricsSvc.IsTimescaleConnected() {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"instance": instance,
-			"summary":  (*hot.PostgresLogSummary)(nil),
-			"source":   "none",
-		})
+
+	res, err := h.metricsSvc.GetPostgresLogSummary(r.Context(), id, window)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s, err := h.metricsSvc.GetPostgresLogSummary(r.Context(), instance, windowMin)
-	if err != nil {
-		log.Printf("[API] PG logs summary error for %s: %v", instance, err)
-		s = &hot.PostgresLogSummary{WindowMinutes: windowMin}
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance": instance,
-		"summary":  s,
-		"source":   "timescale",
-	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-func (h *PostgresHandlers) LogsRecent(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
+func (h *PgLogHandlers) GetLogEvents(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	limit := 200
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 2000 {
-			limit = n
+
+	limit := 100
+	if val := r.URL.Query().Get("limit"); val != "" {
+		if v, err := strconv.Atoi(val); err == nil {
+			limit = v
 		}
 	}
 	severity := r.URL.Query().Get("severity")
-	if !h.metricsSvc.IsTimescaleConnected() {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"instance": instance,
-			"events":   []hot.PostgresLogEventRow{},
-			"source":   "none",
-		})
+
+	res, err := h.metricsSvc.GetPostgresLogEvents(r.Context(), id, limit, severity)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	rows, err := h.metricsSvc.GetPostgresLogEvents(r.Context(), instance, limit, severity)
-	if err != nil {
-		rows = []hot.PostgresLogEventRow{}
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance": instance,
-		"events":   rows,
-		"source":   "timescale",
-	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }

@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: CSV export handler for the PostgreSQL Best Practices dashboard.
+// Purpose: PostgreSQL metrics export API handlers.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -10,46 +10,34 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	"github.com/rsharma155/sql_optima/internal/service"
 )
 
-// ExportBestPracticesCSV streams the PostgreSQL Best Practices audit as a downloadable CSV.
-func (h *PostgresHandlers) ExportBestPracticesCSV(w http.ResponseWriter, r *http.Request) {
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
+type PgExportHandlers struct {
+	metricsSvc *service.MetricsService
+}
+
+func NewPgExportHandlers(svc *service.MetricsService) *PgExportHandlers {
+	return &PgExportHandlers{metricsSvc: svc}
+}
+
+func (h *PgExportHandlers) ExportBestPractices(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
 	}
 
-	data := h.metricsSvc.FetchPgBestPracticesWithTimescale(r.Context(), instance)
-
-	cw := newCSVResponse(w, "pg_best_practices", instance)
-
-	cw.WriteSection("", []string{
-		"Category", "Parameter", "Current Value", "Default Value", "Status", "Guidance", "Remediation SQL",
-	})
-
-	for _, check := range data.ServerConfig {
-		cw.WriteRow([]string{
-			check.Category,
-			check.ConfigurationName,
-			check.CurrentValue,
-			check.DefaultValue,
-			check.Status,
-			check.Message,
-			check.RemediationSQL,
-		})
+	res, err := h.metricsSvc.FetchPgBestPracticesWithTimescale(r.Context(), id)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 
-	cw.Flush()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }

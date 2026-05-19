@@ -26,11 +26,31 @@ func TestValidateReadOnly_Postgres(t *testing.T) {
 }
 
 func TestWrapWithRowLimit(t *testing.T) {
+	// Postgres wrapping
 	out, err := WrapWithRowLimit("postgres", "SELECT n FROM generate_series(1,3) n", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "LIMIT 10") {
 		t.Fatalf("got %q", out)
+	}
+
+	// SQL Server wrapping (standard)
+	out, err = WrapWithRowLimit("sqlserver", "SELECT name FROM sys.databases", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "SELECT TOP (10) * FROM") {
+		t.Fatalf("expected TOP (10) wrapping for sqlserver, got %q", out)
+	}
+
+	// SQL Server CTE (no wrapping)
+	cte := "WITH DBs AS (SELECT name FROM sys.databases) SELECT * FROM DBs"
+	out, err = WrapWithRowLimit("sqlserver", cte, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != cte {
+		t.Fatalf("expected no wrapping for SQL Server CTE, got %q", out)
 	}
 }

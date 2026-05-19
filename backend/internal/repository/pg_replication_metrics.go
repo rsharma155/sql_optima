@@ -10,8 +10,9 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/rsharma155/sql_optima/internal/models"
@@ -19,7 +20,7 @@ import (
 
 // GetReplicationLag returns replication lag in MB for standby servers.
 // Returns status: "primary", "standby", or "unknown"
-func (c *PgRepository) GetReplicationLag(instanceName string) (lagMB float64, status string, err error) {
+func (c *PgRepository) GetReplicationLag(ctx context.Context, instanceName string) (lagMB float64, status string, err error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -30,7 +31,9 @@ func (c *PgRepository) GetReplicationLag(instanceName string) (lagMB float64, st
 
 	// Check if this is a standby using pg_is_in_recovery()
 	var isStandby bool
-	err = db.QueryRow("SELECT /* SQL_OPTIMA */   pg_is_in_recovery()").Scan(&isStandby)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err = db.QueryRowContext(ctx, "SELECT /* SQL_OPTIMA */   pg_is_in_recovery()").Scan(&isStandby)
 	if err != nil {
 		return 0, "unknown", err
 	}
@@ -48,7 +51,9 @@ func (c *PgRepository) GetReplicationLag(instanceName string) (lagMB float64, st
 				ELSE 0 
 			END as lag_mb
 	`
-	err = db.QueryRow(query).Scan(&lagMB)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err = db.QueryRowContext(ctx, query).Scan(&lagMB)
 	if err != nil {
 		return 0, "standby", err
 	}
@@ -58,7 +63,7 @@ func (c *PgRepository) GetReplicationLag(instanceName string) (lagMB float64, st
 }
 
 // GetReplicationStats returns detailed replication information including standby lag.
-func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgReplicationStats, error) {
+func (c *PgRepository) GetReplicationStats(ctx context.Context, instanceName string) (*models.PgReplicationStats, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -71,12 +76,16 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 
 	// Best-effort HA "cluster_name" signal (often set by operators).
 	var clusterName string
-	_ = db.QueryRow("SELECT /* SQL_OPTIMA */   COALESCE(setting,'') FROM pg_settings WHERE name='cluster_name'").Scan(&clusterName)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	_ = db.QueryRowContext(ctx, "SELECT /* SQL_OPTIMA */   COALESCE(setting,'') FROM pg_settings WHERE name='cluster_name'").Scan(&clusterName)
 	var appNames []string
 
 	// Step 1: Determine Node Role
 	var isStandby bool
-	err := db.QueryRow("SELECT /* SQL_OPTIMA */   pg_is_in_recovery() AS is_standby").Scan(&isStandby)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err := db.QueryRowContext(ctx, "SELECT /* SQL_OPTIMA */   pg_is_in_recovery() AS is_standby").Scan(&isStandby)
 	if err != nil {
 		return nil, fmt.Errorf("failed to determine node role: %w", err)
 	}
@@ -86,18 +95,24 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 		// Step 2 (Primary): Fetch Connected CNPG Replicas from pg_stat_replication
 		stats.ClusterState = "primary"
 
-		rows, err := db.Query(`
-			/* SQL_OPTIMA */ SELECT   
+		ctx, cancel = WithQueryTimeout(ctx, 0)
+		defer cancel()
+		rows, err := db.QueryContext(ctx, `
+			/* SQL_OPTIMA */
+			SELECT
 				application_name AS replica_pod_name,
-				client_addr AS pod_ip,
-				state,
-				sync_state,
-				COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) / 1024.0 / 1024.0, 0) AS replay_lag_mb
+				COALESCE(client_addr::text, '') AS pod_ip,
+				COALESCE(state, '') AS state,
+				COALESCE(sync_state, '') AS sync_state,
+				COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) / 1024.0 / 1024.0, 0) AS replay_lag_mb,
+				COALESCE(EXTRACT(EPOCH FROM write_lag), 0)  AS write_lag_sec,
+				COALESCE(EXTRACT(EPOCH FROM flush_lag), 0)  AS flush_lag_sec,
+				COALESCE(EXTRACT(EPOCH FROM replay_lag), 0) AS replay_lag_sec
 			FROM pg_stat_replication
 			ORDER BY application_name
 		`)
 		if err != nil {
-			log.Printf("[POSTGRES] GetReplicationStats: pg_stat_replication query failed for %s: %v", instanceName, err)
+			slog.Error("[POSTGRES] GetReplicationStats: pg_stat_replication query failed", "target", instanceName, "err", err)
 			stats.Standbys = []models.PgReplicationStat{}
 		} else {
 			defer rows.Close()
@@ -105,8 +120,9 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 			var maxLagMB float64
 			for rows.Next() {
 				var stat models.PgReplicationStat
-				if err := rows.Scan(&stat.ReplicaPodName, &stat.PodIP, &stat.State, &stat.SyncState, &stat.ReplayLagMB); err != nil {
-					log.Printf("[POSTGRES] GetReplicationStats: scan error for %s: %v", instanceName, err)
+				if err := rows.Scan(&stat.ReplicaPodName, &stat.PodIP, &stat.State, &stat.SyncState,
+					&stat.ReplayLagMB, &stat.WriteLagSec, &stat.FlushLagSec, &stat.ReplayLagSec); err != nil {
+					slog.Error("[POSTGRES] GetReplicationStats: scan error", "target", instanceName, "err", err)
 					continue
 				}
 				appNames = append(appNames, stat.ReplicaPodName)
@@ -125,7 +141,9 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 		stats.ClusterState = "standby"
 
 		var localLagMB float64
-		err = db.QueryRow(`
+		ctx, cancel = WithQueryTimeout(ctx, 0)
+		defer cancel()
+		err = db.QueryRowContext(ctx, `
 			/* SQL_OPTIMA */ SELECT   
 				CASE 
 					WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0
@@ -133,7 +151,7 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 				END AS local_replay_lag_mb
 		`).Scan(&localLagMB)
 		if err != nil {
-			log.Printf("[POSTGRES] GetReplicationStats: local lag query failed for %s: %v", instanceName, err)
+			slog.Error("[POSTGRES] GetReplicationStats: local lag query failed", "target", instanceName, "err", err)
 			stats.LocalLagMB = 0
 		} else {
 			stats.LocalLagMB = localLagMB
@@ -148,7 +166,9 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 
 	// Get WAL generation rate (approximation)
 	var walRate float64
-	err = db.QueryRow(`
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err = db.QueryRowContext(ctx, `
 		/* SQL_OPTIMA */ SELECT   
 			CASE 
 				WHEN pg_is_in_recovery() = false AND pg_current_wal_lsn() IS NOT NULL 
@@ -163,8 +183,10 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 	// Get BGWriter efficiency
 	var buffersBackend, maxwrittenClean int64
 	var versionNum int
-	if err := db.QueryRow("SELECT current_setting('server_version_num')::integer").Scan(&versionNum); err != nil {
-		versionNum = 120000 
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, "SELECT current_setting('server_version_num')::integer").Scan(&versionNum); err != nil {
+		versionNum = 120000
 	}
 
 	var bgQuery string
@@ -174,7 +196,9 @@ func (c *PgRepository) GetReplicationStats(instanceName string) (*models.PgRepli
 		bgQuery = "SELECT /* SQL_OPTIMA */ buffers_backend, maxwritten_clean FROM pg_stat_bgwriter"
 	}
 
-	err = db.QueryRow(bgQuery).Scan(&buffersBackend, &maxwrittenClean)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err = db.QueryRowContext(ctx, bgQuery).Scan(&buffersBackend, &maxwrittenClean)
 	if err == nil && (buffersBackend+maxwrittenClean) > 0 {
 		stats.BgWriterEffPct = float64(buffersBackend) / float64(buffersBackend+maxwrittenClean) * 100
 	}

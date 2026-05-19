@@ -8,21 +8,22 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
 	"fmt"
-	"log"
 )
 
 // FetchPlanCacheHealth returns plan cache size and single-use plan pressure.
-func (c *SqlServerRepository) FetchPlanCacheHealth(instanceName string) (map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchPlanCacheHealth(ctx context.Context, instanceName string) (map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
-	return c.CollectPlanCacheHealth(db)
+	return c.CollectPlanCacheHealth(ctx, db)
 }
 
-func (c *SqlServerRepository) CollectPlanCacheHealth(db *sql.DB) (map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectPlanCacheHealth(ctx context.Context, db *sql.DB) (map[string]interface{}, error) {
 	// Cache sizes are pages*8KB; convert to MB.
 	// single-use pressure is a common DBA signal for "Optimize for ad hoc workloads" / parameterization.
 	q := `
@@ -52,7 +53,9 @@ func (c *SqlServerRepository) CollectPlanCacheHealth(db *sql.DB) (map[string]int
 		FROM agg;
 	`
 	var total, single, pct, adhoc, prep, proc float64
-	if err := db.QueryRow(q).Scan(&total, &single, &pct, &adhoc, &prep, &proc); err != nil {
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, q).Scan(&total, &single, &pct, &adhoc, &prep, &proc); err != nil {
 		return nil, err
 	}
 	return map[string]interface{}{
@@ -66,15 +69,15 @@ func (c *SqlServerRepository) CollectPlanCacheHealth(db *sql.DB) (map[string]int
 }
 
 // FetchMemoryGrantWaiters returns queries waiting for a memory grant.
-func (c *SqlServerRepository) FetchMemoryGrantWaiters(instanceName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchMemoryGrantWaiters(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
-	return c.CollectMemoryGrantWaiters(db)
+	return c.CollectMemoryGrantWaiters(ctx, db)
 }
 
-func (c *SqlServerRepository) CollectMemoryGrantWaiters(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectMemoryGrantWaiters(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	// User databases only (database_id > 4), user sessions, exclude typical system sp_/xp_ batches.
 	q := `
 		SELECT  /* SQL_OPTIMA */  TOP 20
@@ -108,7 +111,9 @@ func (c *SqlServerRepository) CollectMemoryGrantWaiters(db *sql.DB) ([]map[strin
 		  )
 		ORDER BY mg.wait_time_ms DESC;
 	`
-	rows, err := db.Query(q)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -138,15 +143,15 @@ func (c *SqlServerRepository) CollectMemoryGrantWaiters(db *sql.DB) ([]map[strin
 }
 
 // FetchTempdbTopConsumers returns sessions currently consuming tempdb space.
-func (c *SqlServerRepository) FetchTempdbTopConsumers(instanceName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchTempdbTopConsumers(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
-	return c.CollectTempdbTopConsumers(db)
+	return c.CollectTempdbTopConsumers(ctx, db)
 }
 
-func (c *SqlServerRepository) CollectTempdbTopConsumers(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectTempdbTopConsumers(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	// dm_db_task_space_usage is per-task; aggregate by session_id to find top consumers.
 	// Page counts are 8KB pages -> MB = pages*8/1024.
 	q := `
@@ -200,9 +205,11 @@ func (c *SqlServerRepository) CollectTempdbTopConsumers(db *sql.DB) ([]map[strin
 			AND ISNULL(si.program_name,'') NOT IN ('dbmonitor_user','sql-optima')
 		ORDER BY tempdb_mb DESC;
 	`
-	rows, err := db.Query(q)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
-		log.Printf("[SQLSERVER] TempdbTopConsumers query error: %v", err)
+		slog.Error("[SQLSERVER] TempdbTopConsumers query error", "err", err)
 		return nil, err
 	}
 	defer rows.Close()

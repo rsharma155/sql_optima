@@ -9,7 +9,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"log"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -56,7 +55,7 @@ func (h *AdminHandlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.metricsSvc.UserRepo.CreateUser(r.Context(), req.Username, req.Password, req.Role)
 	if err != nil {
-		log.Printf("[API] User creation error: %v", err)
+		slog.Error("[API] User creation error", "err", err)
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return

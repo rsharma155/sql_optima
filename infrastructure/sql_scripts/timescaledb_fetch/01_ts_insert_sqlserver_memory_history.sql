@@ -3,5 +3,5 @@
 -- Target Table: sqlserver_memory_history
 -- Description: Inserts Page Life Expectancy value into memory history
 
-INSERT INTO sqlserver_memory_history (capture_timestamp, server_instance_name, page_life_expectancy)
+INSERT INTO sqlserver_memory_history (capture_timestamp, server_id, page_life_expectancy)
 VALUES ($1, $2, $3);

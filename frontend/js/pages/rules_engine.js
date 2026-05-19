@@ -31,13 +31,9 @@ window.RulesEngineView = async function() {
     `;
 
     try {
-        let serverId = inst.id;
-        if (!serverId || serverId === 0) {
-            serverId = window.appState.currentInstanceIdx + 1;
-        }
         const dbType = inst.type || (inst.name.toLowerCase().includes('sql') ? 'sqlserver' : 'postgres');
         const response = await window.apiClient.authenticatedFetch(
-            `/api/rules/best-practices?server_id=${serverId}&db_type=${dbType}`
+            `/api/rules/best-practices?instance=${encodeURIComponent(inst.name)}&db_type=${dbType}`
         );
         if (!response.ok) {
             if (response.status === 400) {

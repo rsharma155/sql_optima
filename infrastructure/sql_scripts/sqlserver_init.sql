@@ -63,6 +63,7 @@ GRANT SELECT ON dbo.sysschedules TO [dbmonitor_user];
 GRANT SELECT ON dbo.syscategories TO [dbmonitor_user];
 GRANT SELECT ON dbo.sysjobsteps TO [dbmonitor_user];
 GRANT SELECT ON dbo.sysoperators TO [dbmonitor_user];
+GRANT EXECUTE ON dbo.agent_datetime TO [dbmonitor_user];
 GO
 
 PRINT 'Granted SELECT permissions on msdb SQL Agent tables to [dbmonitor_user].';

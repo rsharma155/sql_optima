@@ -27,7 +27,7 @@ func NewSQLServerSnapshotRepository(db *sql.DB) *SQLServerSnapshotRepository {
 
 const querySnapshotSQL = `
 /* SQL_OPTIMA */
-SELECT 
+SELECT TOP 500
  COALESCE(pa.dbid, st.dbid) AS db_id,
  ISNULL(DB_NAME(COALESCE(pa.dbid, st.dbid)), 'unknown') AS database_name,
  qs.execution_count AS total_executions,
@@ -59,20 +59,17 @@ SELECT
  qs.query_plan_hash,
  qs.query_hash,
  qs.plan_handle
-FROM sys.dm_exec_query_stats qs
+FROM sys.dm_exec_query_stats qs WITH (NOLOCK)
 CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
 OUTER APPLY (
  SELECT CONVERT(INT,value) dbid
  FROM sys.dm_exec_plan_attributes(qs.plan_handle)
  WHERE attribute=N'dbid'
 ) pa
-WHERE pa.dbid > 4
---AND st.text NOT LIKE '%/* SQL_OPTIMA */%'
-AND  qs.statement_sql_handle IS NOT NULL
-AND qs.last_execution_time >= CASE 
-  WHEN @last_watermark <= '1900-01-01' THEN GETUTCDATE() 
-  ELSE @last_watermark 
-END;
+WHERE ISNULL(pa.dbid, st.dbid) > 4
+  AND qs.statement_sql_handle IS NOT NULL
+  AND qs.last_execution_time >= @last_watermark
+ORDER BY qs.total_worker_time DESC;
 `
 
 func (r *SQLServerSnapshotRepository) GetSqlServerStartTime(ctx context.Context) (time.Time, error) {

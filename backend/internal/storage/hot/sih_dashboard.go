@@ -40,7 +40,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 	{
 		// Unused index count in window: 0 reads, >0 updates (and not PK)
 		args := []interface{}{engine, serverID, from, to}
-		where := `engine=$1 AND server_id=$2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
+		where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 		argN := 5
 		if len(f.DBNames) > 0 {
 			where += fmt.Sprintf(" AND db_name = ANY($%d)", argN)
@@ -53,8 +53,8 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 			argN++
 		}
 		if f.TableLike != "" {
-			where += fmt.Sprintf(" AND table_name ILIKE $%d", argN)
-			args = append(args, "%"+f.TableLike+"%")
+			where += fmt.Sprintf(" AND table_name = $%d", argN)
+			args = append(args, f.TableLike)
 		}
 
 		q := fmt.Sprintf(`
@@ -82,7 +82,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 	{
 		// Index write overhead %
 		args := []interface{}{engine, serverID, from, to}
-		where := `engine=$1 AND server_id=$2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
+		where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 		argN := 5
 		if len(f.DBNames) > 0 {
 			where += fmt.Sprintf(" AND db_name = ANY($%d)", argN)
@@ -95,8 +95,8 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 			argN++
 		}
 		if f.TableLike != "" {
-			where += fmt.Sprintf(" AND table_name ILIKE $%d", argN)
-			args = append(args, "%"+f.TableLike+"%")
+			where += fmt.Sprintf(" AND table_name = $%d", argN)
+			args = append(args, f.TableLike)
 		}
 		q := fmt.Sprintf(`
 			SELECT COALESCE(
@@ -124,22 +124,22 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 	// Fastest growing table (7d) - best effort, within provided window.
 	{
 		args := []interface{}{engine, serverID, to}
-		where := `engine = $1 AND server_id = $2 AND time <= $3::timestamptz`
+		where := `engine = $1 AND server_id = $2::uuid AND capture_timestamp <= $3::timestamptz`
 		where, args, _ = sihAppendFilters(where, args, f, 4)
 		q := fmt.Sprintf(`
 			WITH latest AS (
 			  SELECT DISTINCT ON (db_name, schema_name, table_name)
-			    db_name, schema_name, table_name, table_size_mb, time
+			    db_name, schema_name, table_name, table_size_mb, capture_timestamp
 			  FROM monitor.table_size_history
 			  WHERE %s
-			  ORDER BY db_name, schema_name, table_name, time DESC
+			  ORDER BY db_name, schema_name, table_name, capture_timestamp DESC
 			),
 			earliest AS (
 			  SELECT DISTINCT ON (db_name, schema_name, table_name)
-			    db_name, schema_name, table_name, table_size_mb, time
+			    db_name, schema_name, table_name, table_size_mb, capture_timestamp
 			  FROM monitor.table_size_history
-			  WHERE %s AND time >= ($3::timestamptz - INTERVAL '7 days')
-			  ORDER BY db_name, schema_name, table_name, time ASC
+			  WHERE %s AND capture_timestamp >= ($3::timestamptz - INTERVAL '7 days')
+			  ORDER BY db_name, schema_name, table_name, capture_timestamp ASC
 			)
 			SELECT COALESCE(l.db_name || '.' || l.schema_name || '.' || l.table_name, ''),
 			       COALESCE(
@@ -186,7 +186,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 	var largestTables []StorageIndexHealthTopRow
 	{
 		args := []interface{}{engine, serverID, to}
-		where := `engine=$1 AND server_id=$2 AND time <= $3::timestamptz`
+		where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp <= $3::timestamptz`
 		where, args, _ = sihAppendFilters(where, args, f, 4)
 		// Prefer monitor.table_usage_stats as it is 15m cadence vs 6h for table_size_history
 		q := fmt.Sprintf(`
@@ -196,10 +196,10 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 			       COALESCE(row_count,0)::float8 AS rows
 			FROM (
 				SELECT DISTINCT ON (db_name, schema_name, table_name)
-					db_name, schema_name, table_name, table_size_mb, index_size_mb, row_count, time
+					db_name, schema_name, table_name, table_size_mb, index_size_mb, row_count, capture_timestamp
 				FROM monitor.table_usage_stats
 				WHERE %s
-				ORDER BY db_name, schema_name, table_name, time DESC
+				ORDER BY db_name, schema_name, table_name, capture_timestamp DESC
 			) t
 			ORDER BY v DESC
 			LIMIT 50
@@ -231,10 +231,10 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 				       COALESCE(row_count,0)::float8 AS rows
 				FROM (
 					SELECT DISTINCT ON (db_name, schema_name, table_name)
-						db_name, schema_name, table_name, table_size_mb, index_size_mb, row_count, time
+						db_name, schema_name, table_name, table_size_mb, index_size_mb, row_count, capture_timestamp
 					FROM monitor.table_size_history
 					WHERE %s
-					ORDER BY db_name, schema_name, table_name, time DESC
+					ORDER BY db_name, schema_name, table_name, capture_timestamp DESC
 				) t
 				ORDER BY v DESC
 				LIMIT 50
@@ -257,16 +257,16 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 	var largestIndexes []StorageIndexHealthTopRow
 	{
 		args := []interface{}{engine, serverID, to}
-		where := `engine=$1 AND server_id=$2 AND time <= $3::timestamptz AND COALESCE(is_pk,false) = false`
+		where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp <= $3::timestamptz AND COALESCE(is_pk,false) = false`
 		where, args, _ = sihAppendFilters(where, args, f, 4)
 		q := fmt.Sprintf(`
 			SELECT db_name, schema_name, table_name, index_name, COALESCE(index_size_mb,0)::float8 AS v
 			FROM (
 				SELECT DISTINCT ON (db_name, schema_name, table_name, index_name)
-					db_name, schema_name, table_name, index_name, index_size_mb, time
+					db_name, schema_name, table_name, index_name, index_size_mb, capture_timestamp
 				FROM monitor.index_usage_stats
 				WHERE %s
-				ORDER BY db_name, schema_name, table_name, index_name, time DESC
+				ORDER BY db_name, schema_name, table_name, index_name, capture_timestamp DESC
 			) t
 			ORDER BY v DESC
 			LIMIT 50
@@ -291,14 +291,23 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 	var growth []StorageIndexHealthGrowthPoint
 	{
 		args := []interface{}{engine, serverID, growthFrom, to}
-		where := `engine=$1 AND server_id=$2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
+		where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 		where, args, _ = sihAppendFilters(where, args, f, 5)
+		// Use DISTINCT ON per (day-bucket, table) to get the latest snapshot per table per day
+		// before summing; otherwise multiple intra-day samples inflate the total.
 		q := fmt.Sprintf(`
-			SELECT time_bucket('1 day', time) AS bucket,
-			       SUM(COALESCE(table_size_mb,0))::float8 AS table_mb,
-			       SUM(COALESCE(index_size_mb,0))::float8 AS index_mb
-			FROM monitor.table_size_history
-			WHERE %s
+			SELECT bucket,
+			       SUM(table_size_mb)::float8,
+			       SUM(index_size_mb)::float8
+			FROM (
+				SELECT DISTINCT ON (time_bucket('1 day', capture_timestamp), db_name, schema_name, table_name)
+					time_bucket('1 day', capture_timestamp) AS bucket,
+					COALESCE(table_size_mb,0) AS table_size_mb,
+					COALESCE(index_size_mb,0) AS index_size_mb
+				FROM monitor.table_size_history
+				WHERE %s
+				ORDER BY time_bucket('1 day', capture_timestamp), db_name, schema_name, table_name, capture_timestamp DESC
+			) t
 			GROUP BY bucket
 			ORDER BY bucket ASC
 			LIMIT 90
@@ -320,11 +329,18 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		// If growth empty, try bucket from table_usage_stats (short window support)
 		if len(growth) == 0 {
 			q2 := fmt.Sprintf(`
-				SELECT time_bucket('1 day', time) AS bucket,
-					SUM(COALESCE(table_size_mb,0))::float8 AS table_mb,
-					SUM(COALESCE(index_size_mb,0))::float8 AS index_mb
-				FROM monitor.table_usage_stats
-				WHERE %s
+				SELECT bucket,
+					SUM(table_size_mb)::float8,
+					SUM(index_size_mb)::float8
+				FROM (
+					SELECT DISTINCT ON (time_bucket('1 day', capture_timestamp), db_name, schema_name, table_name)
+						time_bucket('1 day', capture_timestamp) AS bucket,
+						COALESCE(table_size_mb,0) AS table_size_mb,
+						COALESCE(index_size_mb,0) AS index_size_mb
+					FROM monitor.table_usage_stats
+					WHERE %s
+					ORDER BY time_bucket('1 day', capture_timestamp), db_name, schema_name, table_name, capture_timestamp DESC
+				) t
 				GROUP BY bucket
 				ORDER BY bucket ASC
 			`, where)
@@ -345,7 +361,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 	gSummary := StorageIndexHealthGrowthSummary{}
 	{
 		args := []interface{}{engine, serverID, to}
-		where := `engine=$1 AND server_id=$2 AND time <= $3::timestamptz AND time >= ($3::timestamptz - INTERVAL '31 days')`
+		where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp <= $3::timestamptz AND capture_timestamp >= ($3::timestamptz - INTERVAL '31 days')`
 		n := 4
 		if len(f.DBNames) > 0 {
 			where += fmt.Sprintf(" AND db_name = ANY($%d)", n)
@@ -358,13 +374,13 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 			n++
 		}
 		if f.TableLike != "" {
-			where += fmt.Sprintf(" AND table_name ILIKE $%d", n)
-			args = append(args, "%"+f.TableLike+"%")
+			where += fmt.Sprintf(" AND table_name = $%d", n)
+			args = append(args, f.TableLike)
 		}
 
 		// Prefer monitor.table_usage_stats for summary as it is more frequent
 		q := fmt.Sprintf(`
-			SELECT time_bucket('1 day', time) AS bucket,
+			SELECT time_bucket('1 day', capture_timestamp) AS bucket,
 			       SUM(COALESCE(table_size_mb,0))::float8 AS table_mb,
 			       SUM(COALESCE(index_size_mb,0))::float8 AS index_mb,
 			       SUM(COALESCE(row_count,0))::bigint AS rows
@@ -398,7 +414,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		// Fallback to table_size_history if no usage stats
 		if len(pts) == 0 {
 			q2 := fmt.Sprintf(`
-				SELECT time_bucket('1 day', time) AS bucket,
+				SELECT time_bucket('1 day', capture_timestamp) AS bucket,
 					SUM(COALESCE(table_size_mb,0))::float8 AS table_mb,
 					SUM(COALESCE(index_size_mb,0))::float8 AS index_mb,
 					SUM(COALESCE(row_count,0))::bigint AS rows
@@ -472,7 +488,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 	var unused []StorageIndexHealthTopRow
 	{
 		args := []interface{}{engine, serverID, from, to}
-		where := `engine=$1 AND server_id=$2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
+		where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 		n := 5
 		if len(f.DBNames) > 0 {
 			where += fmt.Sprintf(" AND db_name = ANY($%d)", n)
@@ -485,8 +501,8 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 			n++
 		}
 		if f.TableLike != "" {
-			where += fmt.Sprintf(" AND table_name ILIKE $%d", n)
-			args = append(args, "%"+f.TableLike+"%")
+			where += fmt.Sprintf(" AND table_name = $%d", n)
+			args = append(args, f.TableLike)
 		}
 		q := fmt.Sprintf(`
 			WITH win AS (
@@ -503,8 +519,8 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 			        COALESCE(index_size_mb,0)::float8 AS size_mb,
 			        last_user_seek
 			  FROM monitor.index_usage_stats
-			  WHERE engine=$1 AND server_id=$2 AND time <= $4::timestamptz
-			  ORDER BY db_name, schema_name, table_name, index_name, time DESC
+			  WHERE engine=$1 AND server_id=$2::uuid AND capture_timestamp <= $4::timestamptz
+			  ORDER BY db_name, schema_name, table_name, index_name, capture_timestamp DESC
 			)
 			SELECT w.db_name, w.schema_name, w.table_name, w.index_name,
 			       COALESCE(l.size_mb,0)::float8 AS size_mb,
@@ -563,20 +579,72 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		}
 	}
 
+	// ---------------- Top Growth Tables (7d) ----------------
+	var topGrowth []StorageIndexHealthTopRow
+	{
+		// Calculate growth per table over the last 7 days
+		args := []interface{}{engine, serverID, to}
+		where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp <= $3::timestamptz AND capture_timestamp >= ($3::timestamptz - INTERVAL '7 days')`
+		n := 4
+		if len(f.DBNames) > 0 {
+			where += fmt.Sprintf(" AND db_name = ANY($%d)", n)
+			args = append(args, f.DBNames)
+			n++
+		}
+		if len(f.SchemaNames) > 0 {
+			where += fmt.Sprintf(" AND schema_name = ANY($%d)", n)
+			args = append(args, f.SchemaNames)
+			n++
+		}
+		if f.TableLike != "" {
+			where += fmt.Sprintf(" AND table_name = $%d", n)
+			args = append(args, f.TableLike)
+		}
+
+		q := fmt.Sprintf(`
+			SELECT db_name, schema_name, table_name, (MAX(table_size_mb) - MIN(table_size_mb)) as growth_mb
+			FROM monitor.table_usage_stats
+			WHERE %s
+			GROUP BY db_name, schema_name, table_name
+			HAVING (MAX(table_size_mb) - MIN(table_size_mb)) > 0
+			ORDER BY growth_mb DESC
+			LIMIT 10
+		`, where)
+		rows, err := tl.pool.Query(ctx, q, args...)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var r StorageIndexHealthTopRow
+				if err := rows.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.Value); err == nil {
+					topGrowth = append(topGrowth, r)
+				}
+			}
+		}
+	}
+
 	// Final KPI adjustments from summaries
 	kpis.TotalDBSizeMB = gSummary.CurrentTableMB + gSummary.CurrentIndexMB
 	kpis.Growth7dPct = gSummary.Growth7dPct
+	kpis.ForecastTableMB90d = gSummary.ProjectedTableMB90d + gSummary.ProjectedIndexMB90d
 	for _, u := range unused {
 		kpis.UnusedIndexMB += u.Value2
 	}
 
+		// ---------------- Collector Error Check ----------------
+	var collectorErr string
+	if engine == "sqlserver" {
+		_ = tl.pool.QueryRow(ctx, "SELECT last_error FROM sqlserver_collector_instance_state WHERE server_id = $1::uuid", serverID).Scan(&collectorErr)
+	}
+
 	return &StorageIndexHealthDashboard{
 		Engine: engine, Instance: serverID, From: from, To: to,
+		CollectorError:      collectorErr,
 		KPIs:                kpis,
 		TopScans:            topScans,
 		SeekScanLookup:      seekScan,
 		LargestTables:       largestTables,
 		LargestIndexes:      largestIndexes,
+		TopGrowthTables:     topGrowth,
 		Growth:              growth,
 		GrowthSummary:       gSummary,
 		UnusedIndexes:       unused,

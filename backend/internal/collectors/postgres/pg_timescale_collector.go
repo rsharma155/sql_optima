@@ -1,210 +1,136 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Unified collector for PostgreSQL Phase 8 migration to TimescaleDB.
-// Prefix: pg_ (as requested)
+// Purpose: Main collector for all PostgreSQL-related metrics (sessions, locks, throughput).
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
 // SPDX-License-Identifier: MIT
-
 package postgres
 
 import (
-	"context"
 	"log/slog"
-	"sync"
+	"context"
+	"database/sql"
 	"time"
 
-	"github.com/rsharma155/sql_optima/internal/domain/postgres_monitoring/instance_health"
+	"github.com/rsharma155/sql_optima/internal/collectors"
+	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
 type PgTimescaleCollector struct {
-	pgRepo        *repository.PgRepository
-	healthService *instance_health.InstanceHealthService
-	tsLogger      *hot.TimescaleLogger
-
-	// State for delta calculation of pg_stat_statements
-	prevStats map[string]map[int64]repository.PGStatStatementsInternal // instance -> queryid -> last seen stats
-	mu        sync.Mutex
+	pgRepo   *repository.PgRepository
+	tsLogger *hot.TimescaleLogger
 }
 
-func NewPgTimescaleCollector(pgRepo *repository.PgRepository, healthService *instance_health.InstanceHealthService, tsLogger *hot.TimescaleLogger) *PgTimescaleCollector {
+func NewPgTimescaleCollector(pgRepo *repository.PgRepository, tsLogger *hot.TimescaleLogger) *PgTimescaleCollector {
 	return &PgTimescaleCollector{
-		pgRepo:        pgRepo,
-		healthService: healthService,
-		tsLogger:      tsLogger,
-		prevStats:     make(map[string]map[int64]repository.PGStatStatementsInternal),
+		pgRepo:   pgRepo,
+		tsLogger: tsLogger,
 	}
 }
 
-func (c *PgTimescaleCollector) Collect(ctx context.Context, instanceName string) error {
-	ts := time.Now().UTC()
-	slog.Info("pg_timescale_collect_start", "instance", instanceName)
+func (c *PgTimescaleCollector) Collect(ctx context.Context, inst config.Instance, db *sql.DB) error {
+	instanceName := inst.Name
+	serverID := inst.ServerID
 
-	// 1. COLLECT & LOG DETAILED LOCKS
-	locks, err := c.pgRepo.FetchDetailedLocks(instanceName)
-	if err == nil && len(locks) > 0 {
-		lockRows := make([]hot.PostgresLockRow, 0, len(locks))
-		for _, l := range locks {
-			lockRows = append(lockRows, hot.PostgresLockRow{
-				PID:            l.PID,
-				DatabaseName:   l.DatabaseName,
-				WaitEventType:  l.WaitEventType,
-				WaitEvent:      l.WaitEvent,
-				LockType:       l.LockType,
-				Mode:           l.Mode,
-				Granted:        l.Granted,
-				QueryText:      l.QueryText,
-				BlockedBy:      l.BlockedBy,
-				WaitDurationMs: l.WaitDurationMs,
+	// 1. Locks
+	rows, err := c.pgRepo.FetchDetailedLocks(ctx, instanceName, db)
+	if err == nil {
+		var hotRows []hot.PostgresLockRow
+		for _, r := range rows {
+			hotRows = append(hotRows, hot.PostgresLockRow{
+				CollectedAt:    r.CollectedAt,
+				ServerID:       serverID,
+				PID:            r.PID,
+				LockType:       r.LockType,
+				Mode:           r.Mode,
+				Granted:        r.Granted,
+				RelationOID:    r.RelationOID,
+				RelationName:   r.RelationName,
+				TransactionID:  r.TransactionID,
+				WaitingSeconds: r.WaitDurationMs / 1000.0,
 			})
 		}
-		if err := c.tsLogger.LogPGTimescaleLock(ctx, instanceName, ts, lockRows); err != nil {
-			slog.Warn("pg_ts_locks_log_error", "instance", instanceName, "error", err)
+		if err := c.tsLogger.LogPGTimescaleLock(ctx, serverID, hotRows); err != nil {
+			slog.Error("[PgTimescaleCollector] ERROR: LogPGTimescaleLock failed", "target", instanceName, "err", err)
 		}
 	}
 
-	// 2. COLLECT & LOG STAT STATEMENTS DELTAS
-	c.collectStatStatementsDeltas(ctx, instanceName, ts)
+	// 2. Query Stats (via pg_stat_statements)
+	stats, err := c.pgRepo.FetchStatStatements(ctx, instanceName, db)
+	if err == nil {
+		now := time.Now().UTC()
+		var deltas []hot.PostgresStatStatementsDeltaRow
+		for _, s := range stats {
+			prev, ok := c.pgRepo.GetPreviousSnapshot(instanceName, s.QueryID)
+			if ok {
+				if s.Calls > prev.Calls {
+					deltas = append(deltas, hot.PostgresStatStatementsDeltaRow{
+						CaptureTimestamp:       now,
+						ServerID:               serverID,
+						QueryID:                s.QueryID,
+						DatabaseName:           s.DbName,
+						UserName:               s.UserName,
+						CallsDelta:             s.Calls - prev.Calls,
+						TotalTimeDeltaMs:       s.TotalTime - prev.TotalTime,
+						RowsDelta:              s.Rows - prev.Rows,
+						SharedBlksHitDelta:     s.SharedBlksHit - prev.SharedBlksHit,
+						SharedBlksReadDelta:    s.SharedBlksRead - prev.SharedBlksRead,
+						SharedBlksDirtiedDelta: s.SharedBlksDirtied - prev.SharedBlksDirtied,
+						SharedBlksWrittenDelta: s.SharedBlksWritten - prev.SharedBlksWritten,
+						TempBlksReadDelta:      s.TempBlksRead - prev.TempBlksRead,
+						TempBlksWrittenDelta:   s.TempBlksWritten - prev.TempBlksWritten,
+						BlkReadTimeDeltaMs:     s.BlkReadTime - prev.BlkReadTime,
+						BlkWriteTimeDeltaMs:    s.BlkWriteTime - prev.BlkWriteTime,
+						WalBytesDelta:          int64(s.WalBytes) - prev.WalBytes,
+					})
+				}
+			}
+			// Map internal struct back to repository expected struct
+			c.pgRepo.UpdatePreviousSnapshot(instanceName, s.QueryID, repository.PgQueryStat{
+				QueryID:           s.QueryID,
+				DbName:            s.DbName,
+				UserName:          s.UserName,
+				Query:             s.Query,
+				QueryType:         s.QueryType,
+				Calls:             s.Calls,
+				TotalTime:         s.TotalTime,
+				MeanTime:          s.MeanTime,
+				Rows:              s.Rows,
+				SharedBlksHit:     s.SharedBlksHit,
+				SharedBlksRead:    s.SharedBlksRead,
+				SharedBlksDirtied: s.SharedBlksDirtied,
+				SharedBlksWritten: s.SharedBlksWritten,
+				TempBlksRead:      s.TempBlksRead,
+				TempBlksWritten:   s.TempBlksWritten,
+				BlkReadTime:       s.BlkReadTime,
+				BlkWriteTime:      s.BlkWriteTime,
+				WalBytes:          int64(s.WalBytes),
+				TotalPlanTime:     s.TotalPlanTime,
+				MeanPlanTime:      s.MeanPlanTime,
+				Plans:             s.Plans,
+			})
+		}
+		if len(deltas) > 0 {
+			if err := c.tsLogger.LogPostgresStatStatementsDelta(ctx, serverID, deltas); err != nil {
+				slog.Error("[PgTimescaleCollector] ERROR: LogPostgresStatStatementsDelta failed", "target", instanceName, "err", err)
+			}
+		}
+	}
 
-	// 3. COLLECT & LOG ENGINE SNAPSHOT
-	c.collectInstanceSnapshot(ctx, instanceName, ts)
+	// 3. Table & Index Usage (for SIH Dashboard)
+	tableUsage, err := collectors.CollectPostgresTableUsageAndSize(ctx, db)
+	if err == nil {
+		_, _ = collectors.PersistPostgresTableUsageDeltas(ctx, c.tsLogger, serverID, tableUsage, time.Now())
+		_, _ = collectors.PersistPostgresTableSizeHistory(ctx, c.tsLogger, serverID, tableUsage, time.Now())
+	}
+
+	indexUsage, err := collectors.CollectPostgresIndexUsage(ctx, db)
+	if err == nil {
+		_, _ = collectors.PersistPostgresIndexUsageDeltas(ctx, c.tsLogger, serverID, indexUsage, time.Now())
+	}
 
 	return nil
-}
-
-func (c *PgTimescaleCollector) collectStatStatementsDeltas(ctx context.Context, instanceName string, ts time.Time) {
-	currStats, err := c.pgRepo.FetchStatStatements(instanceName)
-	if err != nil {
-		slog.Warn("pg_ts_stat_fetch_error", "instance", instanceName, "error", err)
-		return
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	prev, ok := c.prevStats[instanceName]
-	if !ok {
-		// First run: just seed the state
-		newPrev := make(map[int64]repository.PGStatStatementsInternal)
-		for _, s := range currStats {
-			newPrev[s.QueryID] = s
-		}
-		c.prevStats[instanceName] = newPrev
-		return
-	}
-
-	deltaRows := make([]hot.PostgresStatStatementsDeltaRow, 0)
-	for _, curr := range currStats {
-		p, exists := prev[curr.QueryID]
-		if !exists || curr.Calls < p.Calls {
-			// New query or stats reset: skip this interval
-			prev[curr.QueryID] = curr
-			continue
-		}
-
-		// Only log if there was activity (calls > 0)
-		if curr.Calls > p.Calls {
-			deltaRows = append(deltaRows, hot.PostgresStatStatementsDeltaRow{
-				QueryID:           curr.QueryID,
-				DatabaseName:      curr.DatabaseName,
-				UserName:          curr.UserName,
-				Calls:             curr.Calls - p.Calls,
-				TotalTimeMs:       curr.TotalTime - p.TotalTime,
-				Rows:              curr.Rows - p.Rows,
-				SharedBlksHit:     curr.SharedBlksHit - p.SharedBlksHit,
-				SharedBlksRead:    curr.SharedBlksRead - p.SharedBlksRead,
-				SharedBlksDirtied: curr.SharedBlksDirtied - p.SharedBlksDirtied,
-				SharedBlksWritten: curr.SharedBlksWritten - p.SharedBlksWritten,
-				TempBlksRead:      curr.TempBlksRead - p.TempBlksRead,
-				TempBlksWritten:   curr.TempBlksWritten - p.TempBlksWritten,
-				BlkReadTimeMs:     curr.BlkReadTime - p.BlkReadTime,
-				BlkWriteTimeMs:    curr.BlkWriteTime - p.BlkWriteTime,
-				WalBytes:          curr.WalBytes - p.WalBytes,
-			})
-		}
-		prev[curr.QueryID] = curr
-	}
-
-	if len(deltaRows) > 0 {
-		if err := c.tsLogger.LogPGStatStatementsDelta(ctx, instanceName, ts, deltaRows); err != nil {
-			slog.Warn("pg_ts_stat_delta_log_error", "instance", instanceName, "error", err)
-		}
-	}
-}
-
-func (c *PgTimescaleCollector) collectInstanceSnapshot(ctx context.Context, instanceName string, ts time.Time) {
-	// Re-using logic from PgSnapshotCollector but logging to the new Phase 8 table
-	active, waiting, _ := c.pgRepo.FetchActiveWaitingSessions(instanceName)
-	tps := 0.0
-	xactTotal, err := c.pgRepo.FetchXactTotal(instanceName)
-	if err == nil {
-		if r, ok := c.tsLogger.ComputePgTps(instanceName, xactTotal, 15.0); ok {
-			tps = r
-		}
-	}
-
-	cacheHit, _ := c.pgRepo.FetchCacheHitRatioPct(instanceName)
-	replicaLag, _ := c.pgRepo.FetchReplicaLagSec(instanceName)
-	walBytes, err := c.pgRepo.FetchWalBytesTotal(instanceName)
-	walRate := 0.0
-	if err == nil {
-		if r, ok := c.tsLogger.ComputeWalRateMBPerMin(instanceName, walBytes, 15.0); ok {
-			walRate = r / 60.0 // convert MB/min to MB/s for MBPS
-		}
-	}
-
-	obs, _ := c.pgRepo.FetchDBObservationMetrics(instanceName)
-	maxXid := int64(0)
-	if obs != nil {
-		maxXid = obs.XIDAge
-	}
-
-	cp, _ := c.pgRepo.FetchBGWriterStats(instanceName)
-	cpRatio := 0.0
-	if cp != nil {
-		total := float64(cp.CheckpointsTimed + cp.CheckpointsReq)
-		if total > 0 {
-			cpRatio = float64(cp.CheckpointsReq) / total
-		}
-	}
-
-	// Calculate a real-time health score using the existing service
-	dummySnap := &instance_health.PgInstanceSnapshot{
-		ActiveSessions:     active,
-		BlockedSessions:    waiting,
-		TPS:                tps,
-		CacheHitRatio:      cacheHit,
-		ReplicaLagSec:      replicaLag,
-		MaxXIDAge:          maxXid,
-		CheckpointReqRatio: cpRatio,
-	}
-	healthScore := c.healthService.CalculateHealthScore(dummySnap)
-
-	row := hot.PostgresInstanceSnapshotRow{
-		HealthScore:        healthScore,
-		TotalConnections:   active + waiting, // Simple approx
-		ActiveSessions:     active,
-		WaitingSessions:    waiting,
-		LongestActiveMs:    0, // Not easily available in one call
-		TPS:                tps,
-		CacheHitRatio:      cacheHit,
-		ReplicaLagSec:      replicaLag,
-		MaxXidAge:          maxXid,
-		WalGenRateMbps:    walRate,
-		CheckpointReqRatio: cpRatio,
-	}
-
-	if err := c.tsLogger.LogPGInstanceSnapshot(ctx, instanceName, ts, row); err != nil {
-		slog.Warn("pg_ts_instance_snap_log_error", "instance", instanceName, "error", err)
-	}
-
-	// Also log to pg_ts_metrics for the legacy/overview charts to prevent blank graphs
-	_ = c.tsLogger.LogPGMetric(ctx, instanceName, ts, "active_sessions_ts", float64(active))
-	_ = c.tsLogger.LogPGMetric(ctx, instanceName, ts, "waiting_load", float64(waiting))
-	_ = c.tsLogger.LogPGMetric(ctx, instanceName, ts, "tps", tps)
-	_ = c.tsLogger.LogPGMetric(ctx, instanceName, ts, "replica_lag_sec", replicaLag)
-	_ = c.tsLogger.LogPGMetric(ctx, instanceName, ts, "health_score", float64(healthScore))
 }

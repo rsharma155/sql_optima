@@ -8,9 +8,9 @@
 package repository
 
 import (
+	"log/slog"
 	"context"
 	"database/sql"
-	"log"
 	"strings"
 
 	"github.com/rsharma155/sql_optima/internal/models"
@@ -33,9 +33,11 @@ func (c *SqlServerRepository) CollectKPIs(ctx context.Context, db *sql.DB) (map[
 		OPTION (RECOMPILE)`
 
 	var activeSessions, totalMemory, availableMemory, batchRequests int
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
 	err := db.QueryRowContext(ctx, query).Scan(&activeSessions, &totalMemory, &availableMemory, &batchRequests)
 	if err != nil {
-		log.Printf("[SQLSERVER] CollectKPIs Error: %v", err)
+		slog.Error("[SQLSERVER] CollectKPIs Error", "err", err)
 		return nil, err
 	}
 
@@ -51,7 +53,7 @@ func (c *SqlServerRepository) CollectKPIs(ctx context.Context, db *sql.DB) (map[
 
 // CollectCPUMetrics fetches CPU usage from sys.dm_os_ring_buffers
 // Returns CPU history array and current CPU load
-func (c *SqlServerRepository) CollectCPUMetrics(db *sql.DB) ([]models.CPUTick, float64, error) {
+func (c *SqlServerRepository) CollectCPUMetrics(ctx context.Context, db *sql.DB) ([]models.CPUTick, float64, error) {
 	cpuQuery := `
 		/* SQL_OPTIMA */
 		DECLARE @ts_now bigint = (SELECT ms_ticks FROM sys.dm_os_sys_info WITH (NOLOCK)); 
@@ -73,9 +75,11 @@ func (c *SqlServerRepository) CollectCPUMetrics(db *sql.DB) ([]models.CPUTick, f
 		) AS y 
 		ORDER BY record_id DESC;
 	`
-	cpuRows, err := db.Query(cpuQuery)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	cpuRows, err := db.QueryContext(ctx, cpuQuery)
 	if err != nil {
-		log.Printf("[SQLSERVER] CPU Query Error: %v", err)
+		slog.Error("[SQLSERVER] CPU Query Error", "err", err)
 		return nil, 0, err
 	}
 	defer cpuRows.Close()
@@ -102,10 +106,12 @@ func (c *SqlServerRepository) CollectCPUMetrics(db *sql.DB) ([]models.CPUTick, f
 }
 
 // CollectActiveSessions counts currently running user sessions
-func (c *SqlServerRepository) CollectActiveSessions(db *sql.DB) (int, error) {
+func (c *SqlServerRepository) CollectActiveSessions(ctx context.Context, db *sql.DB) (int, error) {
 	sessionQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')`
 	var count int
-	err := db.QueryRow(sessionQuery).Scan(&count)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	err := db.QueryRowContext(ctx, sessionQuery).Scan(&count)
+	cancel()
 	return count, err
 }
 
@@ -175,6 +181,8 @@ func (c *SqlServerRepository) CollectCPUSchedulerStats(ctx context.Context, db *
 	stats := &models.CPUSchedulerStats{}
 	var workerThreadWarning, runnableWarning, memPressureWarning sql.NullInt64
 
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
 	err := db.QueryRowContext(ctx, query).Scan(
 		&stats.CaptureTimestamp,
 		&stats.CPUCount,
@@ -200,7 +208,7 @@ func (c *SqlServerRepository) CollectCPUSchedulerStats(ctx context.Context, db *
 		&memPressureWarning,
 	)
 	if err != nil {
-		log.Printf("[SQLSERVER] CollectCPUSchedulerStats Error: %v", err)
+		slog.Error("[SQLSERVER] CollectCPUSchedulerStats Error", "err", err)
 		return nil, err
 	}
 
@@ -236,6 +244,8 @@ func (c *SqlServerRepository) CollectServerProperties(ctx context.Context, db *s
 	props := &models.ServerProperties{}
 	var hyperthreadEnabled sql.NullInt64
 
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
 	err := db.QueryRowContext(ctx, query).Scan(
 		&props.CaptureTimestamp,
 		&props.CPUCount,
@@ -251,7 +261,7 @@ func (c *SqlServerRepository) CollectServerProperties(ctx context.Context, db *s
 		&props.PropertiesHash,
 	)
 	if err != nil {
-		log.Printf("[SQLSERVER] CollectServerProperties Error: %v", err)
+		slog.Error("[SQLSERVER] CollectServerProperties Error", "err", err)
 		return nil, err
 	}
 

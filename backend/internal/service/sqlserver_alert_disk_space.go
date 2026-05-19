@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Alert evaluator – SQL Server disk space threshold detection.
+// Purpose: Evaluator for SQL Server disk space usage.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -11,92 +11,77 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/rsharma155/sql_optima/internal/domain/alerts"
 )
 
-// SqlServerDiskSpaceEvaluator checks for low free disk space on SQL Server drives.
 type SqlServerDiskSpaceEvaluator struct {
-	tsPool      *pgxpool.Pool
-	warningPct  float64
-	criticalPct float64
+	tsPool *pgxpool.Pool
 }
 
 func NewSqlServerDiskSpaceEvaluator(tsPool *pgxpool.Pool) *SqlServerDiskSpaceEvaluator {
-	return &SqlServerDiskSpaceEvaluator{
-		tsPool:      tsPool,
-		warningPct:  20,
-		criticalPct: 10,
-	}
+	return &SqlServerDiskSpaceEvaluator{tsPool: tsPool}
 }
 
 func (e *SqlServerDiskSpaceEvaluator) Engine() alerts.Engine { return alerts.EngineSQLServer }
 
-func (e *SqlServerDiskSpaceEvaluator) Evaluate(ctx context.Context, instanceName string) ([]AlertEvaluatorResult, error) {
-	const q = `
-		SELECT database_name,
-		       COALESCE(data_mb, 0) + COALESCE(log_mb, 0) AS used_mb,
-		       COALESCE(free_mb, 0) AS free_mb
+func (e *SqlServerDiskSpaceEvaluator) Evaluate(ctx context.Context, serverID uuid.UUID) ([]AlertEvaluatorResult, error) {
+	q := `
+		SELECT database_name, data_mb, log_mb, free_mb
 		FROM sqlserver_disk_history
-		WHERE server_instance_name = $1
-		  AND capture_timestamp >= now() - INTERVAL '15 minutes'
+		WHERE server_id = $1
+		  AND capture_timestamp >= now() - interval '10 minutes'
 		ORDER BY capture_timestamp DESC
-		LIMIT 20`
-
-	rows, err := e.tsPool.Query(ctx, q, instanceName)
+	`
+	rows, err := e.tsPool.Query(ctx, q, serverID)
 	if err != nil {
-		if isNoDataError(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("sqlserver_disk_space: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
 
 	var results []AlertEvaluatorResult
-	seen := make(map[string]bool)
+	serverName := serverID.String()
 
+	seenDBs := make(map[string]bool)
 	for rows.Next() {
 		var dbName string
-		var usedMB, freeMB float64
-		if err := rows.Scan(&dbName, &usedMB, &freeMB); err != nil {
+		var dataMB, logMB, freeMB float64
+		if err := rows.Scan(&dbName, &dataMB, &logMB, &freeMB); err != nil {
 			continue
 		}
-		if seen[dbName] {
+		if seenDBs[dbName] {
 			continue
 		}
-		seen[dbName] = true
+		seenDBs[dbName] = true
 
-		totalMB := usedMB + freeMB
-		if totalMB <= 0 {
-			continue
-		}
-		freePct := (freeMB / totalMB) * 100
+		totalMB := dataMB + logMB + freeMB
+		if totalMB > 0 {
+			usedPct := ((dataMB + logMB) / totalMB) * 100.0
+			if usedPct >= 90.0 {
+				sev := alerts.SeverityWarning
+				if usedPct >= 97.0 {
+					sev = alerts.SeverityCritical
+				}
 
-		var sev alerts.Severity
-		if freePct <= e.criticalPct {
-			sev = alerts.SeverityCritical
-		} else if freePct <= e.warningPct {
-			sev = alerts.SeverityWarning
-		} else {
-			continue
+				results = append(results, AlertEvaluatorResult{
+					RuleName:    "MSDiskSpaceLow",
+					Category:    "Storage",
+					Severity:    sev,
+					Title:       fmt.Sprintf("SQL Server disk space low on %s (%.1f%% used)", dbName, usedPct),
+					Description: fmt.Sprintf("Database %s has %.1f%% disk usage. Free: %.1f MB", dbName, usedPct, freeMB),
+					Evidence: map[string]interface{}{
+						"database": dbName,
+						"used_pct": usedPct,
+						"free_mb":  freeMB,
+					},
+					ServerID:   serverID,
+					ServerName: serverName,
+					Engine:     alerts.EngineSQLServer,
+				})
+			}
 		}
-
-		results = append(results, AlertEvaluatorResult{
-			RuleName:     "sqlserver_disk_space",
-			Category:     "disk",
-			Severity:     sev,
-			Title:        fmt.Sprintf("SQL Server low disk: %s (%.1f%% free)", dbName, freePct),
-			Description:  fmt.Sprintf("Database %s on %s has only %.1f%% free space (%.0f MB free of %.0f MB)", dbName, instanceName, freePct, freeMB, totalMB),
-			InstanceName: instanceName,
-			Engine:       alerts.EngineSQLServer,
-			Evidence: map[string]interface{}{
-				"database": dbName,
-				"free_mb":  freeMB,
-				"total_mb": totalMB,
-				"free_pct": freePct,
-			},
-		})
 	}
+
 	return results, nil
 }

@@ -8,9 +8,10 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -41,10 +42,10 @@ func (c *PgRepository) QueryPgBestPracticesConfigRows(instanceName string) ([]Pg
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
-		log.Printf("[POSTGRES] QueryPgBestPracticesConfigRows: connection not found for %s", instanceName)
+		slog.Info("[POSTGRES] QueryPgBestPracticesConfigRows: connection not found for", "val", instanceName)
 		return nil, fmt.Errorf("connection not found")
 	}
-	return c.queryPgSettings(db)
+	return c.queryPgSettings(context.Background(), db)
 }
 
 // FetchPgBestPracticesFromConfigs evaluates DBA rules for pre-built config rows (e.g. after overlaying a Timescale snapshot).
@@ -57,7 +58,7 @@ func (c *PgRepository) FetchPgBestPracticesFromConfigs(instanceName string, conf
 }
 
 // queryPgSettings fetches critical PostgreSQL parameters from pg_settings.
-func (c *PgRepository) queryPgSettings(db *sql.DB) ([]PgConfigRow, error) {
+func (c *PgRepository) queryPgSettings(ctx context.Context, db *sql.DB) ([]PgConfigRow, error) {
 	// default_value: reset_val is what RESET / postgresql.conf would use; boot_val is bootstrap default.
 	// Using reset_val avoids showing the same text as "setting" when the instance is still at file defaults.
 	query := `
@@ -94,7 +95,9 @@ func (c *PgRepository) queryPgSettings(db *sql.DB) ([]PgConfigRow, error) {
 		ORDER BY name
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

@@ -5,7 +5,7 @@
 
 INSERT INTO sqlserver_cpu_scheduler_stats (
     capture_timestamp,
-    server_instance_name,
+    server_id,
     max_workers_count,
     scheduler_count,
     cpu_count,

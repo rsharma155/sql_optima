@@ -47,7 +47,7 @@ func (r *ServerRegistryRepository) Create(ctx context.Context, s servers.Server,
 	if err != nil {
 		return servers.Server{}, err
 	}
-	s.ID = id.String()
+	s.ID = id
 	s.CreatedAt = createdAt
 	s.UpdatedAt = updatedAt
 	return s, nil
@@ -76,14 +76,12 @@ func (r *ServerRegistryRepository) List(ctx context.Context, activeOnly bool) ([
 
 	var out []servers.Server
 	for rows.Next() {
-		var id uuid.UUID
 		var s servers.Server
 		var dbType, authType, sslMode string
 		var lastTest sql.NullTime
-		if err := rows.Scan(&id, &s.Name, &dbType, &s.Host, &s.Port, &s.Username, &authType, &sslMode, &s.IsActive, &s.CreatedAt, &s.UpdatedAt, &s.CreatedBy, &lastTest); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &dbType, &s.Host, &s.Port, &s.Username, &authType, &sslMode, &s.IsActive, &s.CreatedAt, &s.UpdatedAt, &s.CreatedBy, &lastTest); err != nil {
 			continue
 		}
-		s.ID = id.String()
 		s.DBType = servers.DBType(dbType)
 		s.AuthType = servers.AuthType(authType)
 		s.SSLMode = servers.SSLMode(sslMode)
@@ -101,7 +99,6 @@ func (r *ServerRegistryRepository) GetByName(ctx context.Context, name string) (
 		return servers.Server{}, fmt.Errorf("timescale not configured")
 	}
 	var s servers.Server
-	var id uuid.UUID
 	var dbType, authType, sslMode string
 	var createdBy string
 	var lastTest sql.NullTime
@@ -110,11 +107,10 @@ func (r *ServerRegistryRepository) GetByName(ctx context.Context, name string) (
 		FROM optima_servers
 		WHERE UPPER(name) = UPPER($1) AND is_active = TRUE
 		LIMIT 1
-	`, strings.TrimSpace(name)).Scan(&id, &s.Name, &dbType, &s.Host, &s.Port, &s.Username, &authType, &sslMode, &s.IsActive, &s.CreatedAt, &s.UpdatedAt, &createdBy, &lastTest)
+	`, strings.TrimSpace(name)).Scan(&s.ID, &s.Name, &dbType, &s.Host, &s.Port, &s.Username, &authType, &sslMode, &s.IsActive, &s.CreatedAt, &s.UpdatedAt, &createdBy, &lastTest)
 	if err != nil {
 		return servers.Server{}, err
 	}
-	s.ID = id.String()
 	s.DBType = servers.DBType(dbType)
 	s.AuthType = servers.AuthType(authType)
 	s.SSLMode = servers.SSLMode(sslMode)
@@ -126,13 +122,9 @@ func (r *ServerRegistryRepository) GetByName(ctx context.Context, name string) (
 	return s, nil
 }
 
-func (r *ServerRegistryRepository) GetEncrypted(ctx context.Context, id string) (servers.Server, []byte, []byte, error) {
+func (r *ServerRegistryRepository) GetEncrypted(ctx context.Context, id uuid.UUID) (servers.Server, []byte, []byte, error) {
 	if r == nil || r.pool == nil {
 		return servers.Server{}, nil, nil, fmt.Errorf("timescale not configured")
-	}
-	uid, err := uuid.Parse(strings.TrimSpace(id))
-	if err != nil {
-		return servers.Server{}, nil, nil, fmt.Errorf("invalid server id")
 	}
 
 	var s servers.Server
@@ -140,15 +132,14 @@ func (r *ServerRegistryRepository) GetEncrypted(ctx context.Context, id string) 
 	var encSecret, encDEK []byte
 	var createdBy string
 	var lastTest sql.NullTime
-	err = r.pool.QueryRow(ctx, `
-		SELECT  name, db_type, host, port, username, auth_type, encrypted_secret, encrypted_dek, ssl_mode, is_active, created_at, updated_at, COALESCE(created_by,''), last_test_at
+	err := r.pool.QueryRow(ctx, `
+		SELECT  id, name, db_type, host, port, username, auth_type, encrypted_secret, encrypted_dek, ssl_mode, is_active, created_at, updated_at, COALESCE(created_by,''), last_test_at
 		FROM optima_servers
 		WHERE id = $1
-	`, uid).Scan(&s.Name, &dbType, &s.Host, &s.Port, &s.Username, &authType, &encSecret, &encDEK, &sslMode, &s.IsActive, &s.CreatedAt, &s.UpdatedAt, &createdBy, &lastTest)
+	`, id).Scan(&s.ID, &s.Name, &dbType, &s.Host, &s.Port, &s.Username, &authType, &encSecret, &encDEK, &sslMode, &s.IsActive, &s.CreatedAt, &s.UpdatedAt, &createdBy, &lastTest)
 	if err != nil {
 		return servers.Server{}, nil, nil, err
 	}
-	s.ID = uid.String()
 	s.DBType = servers.DBType(dbType)
 	s.AuthType = servers.AuthType(authType)
 	s.SSLMode = servers.SSLMode(sslMode)
@@ -160,120 +151,67 @@ func (r *ServerRegistryRepository) GetEncrypted(ctx context.Context, id string) 
 	return s, encSecret, encDEK, nil
 }
 
-func (r *ServerRegistryRepository) Delete(ctx context.Context, id string) error {
+func (r *ServerRegistryRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	if r == nil || r.pool == nil {
 		return fmt.Errorf("timescale not configured")
 	}
-	uid, err := uuid.Parse(strings.TrimSpace(id))
-	if err != nil {
-		return fmt.Errorf("invalid server id")
-	}
-	ct, err := r.pool.Exec(ctx, `DELETE FROM optima_servers WHERE id=$1`, uid)
-	if err != nil {
-		return err
-	}
-	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("server not found")
-	}
-	return nil
-}
-
-func (r *ServerRegistryRepository) SetActive(ctx context.Context, id string, active bool) error {
-	if r == nil || r.pool == nil {
-		return fmt.Errorf("timescale not configured")
-	}
-	uid, err := uuid.Parse(strings.TrimSpace(id))
-	if err != nil {
-		return fmt.Errorf("invalid server id")
-	}
-	_, err = r.pool.Exec(ctx, `UPDATE optima_servers SET is_active=$2, updated_at=now() WHERE id=$1`, uid, active)
+	_, err := r.pool.Exec(ctx, "DELETE FROM optima_servers WHERE id = $1", id)
 	return err
 }
 
-func (r *ServerRegistryRepository) UpdateMetadata(ctx context.Context, id string, name, host string, port int, username, sslMode string) error {
+func (r *ServerRegistryRepository) SetActive(ctx context.Context, id uuid.UUID, active bool) error {
 	if r == nil || r.pool == nil {
 		return fmt.Errorf("timescale not configured")
 	}
-	uid, err := uuid.Parse(strings.TrimSpace(id))
-	if err != nil {
-		return fmt.Errorf("invalid server id")
-	}
-	ct, err := r.pool.Exec(ctx, `
-		UPDATE optima_servers SET name=$2, host=$3, port=$4, username=$5, ssl_mode=$6, updated_at=now()
-		WHERE id=$1
-	`, uid, strings.TrimSpace(name), strings.TrimSpace(host), port, strings.TrimSpace(username), strings.TrimSpace(sslMode))
-	if err != nil {
-		return err
-	}
-	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("server not found")
-	}
-	return nil
-}
-
-func (r *ServerRegistryRepository) UpdateCredentials(ctx context.Context, id string, encryptedSecret, encryptedDEK []byte) error {
-	if r == nil || r.pool == nil {
-		return fmt.Errorf("timescale not configured")
-	}
-	uid, err := uuid.Parse(strings.TrimSpace(id))
-	if err != nil {
-		return fmt.Errorf("invalid server id")
-	}
-	ct, err := r.pool.Exec(ctx, `
-		UPDATE optima_servers SET encrypted_secret=$2, encrypted_dek=$3, updated_at=now() WHERE id=$1
-	`, uid, encryptedSecret, encryptedDEK)
-	if err != nil {
-		return err
-	}
-	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("server not found")
-	}
-	return nil
-}
-
-func (r *ServerRegistryRepository) TouchLastTest(ctx context.Context, id string, at time.Time) error {
-	if r == nil || r.pool == nil {
-		return fmt.Errorf("timescale not configured")
-	}
-	uid, err := uuid.Parse(strings.TrimSpace(id))
-	if err != nil {
-		return fmt.Errorf("invalid server id")
-	}
-	_, err = r.pool.Exec(ctx, `UPDATE optima_servers SET last_test_at=$2, updated_at=now() WHERE id=$1`, uid, at.UTC())
+	_, err := r.pool.Exec(ctx, "UPDATE optima_servers SET is_active = $1 WHERE id = $2", active, id)
 	return err
 }
 
-func (r *ServerRegistryRepository) CheckDuplicate(ctx context.Context, excludeID string, name, host string, port int) (string, error) {
+func (r *ServerRegistryRepository) UpdateMetadata(ctx context.Context, id uuid.UUID, name, host string, port int, username, sslMode string) error {
+	if r == nil || r.pool == nil {
+		return fmt.Errorf("timescale not configured")
+	}
+	_, err := r.pool.Exec(ctx, `
+		UPDATE optima_servers 
+		SET name = $1, host = $2, port = $3, username = $4, ssl_mode = $5, updated_at = NOW()
+		WHERE id = $6
+	`, name, host, port, username, sslMode, id)
+	return err
+}
+
+func (r *ServerRegistryRepository) UpdateCredentials(ctx context.Context, id uuid.UUID, encryptedSecret, encryptedDEK []byte) error {
+	if r == nil || r.pool == nil {
+		return fmt.Errorf("timescale not configured")
+	}
+	_, err := r.pool.Exec(ctx, `
+		UPDATE optima_servers 
+		SET encrypted_secret = $1, encrypted_dek = $2, updated_at = NOW()
+		WHERE id = $3
+	`, encryptedSecret, encryptedDEK, id)
+	return err
+}
+
+func (r *ServerRegistryRepository) TouchLastTest(ctx context.Context, id uuid.UUID, at time.Time) error {
+	if r == nil || r.pool == nil {
+		return fmt.Errorf("timescale not configured")
+	}
+	_, err := r.pool.Exec(ctx, "UPDATE optima_servers SET last_test_at = $1 WHERE id = $2", at, id)
+	return err
+}
+
+func (r *ServerRegistryRepository) CheckDuplicate(ctx context.Context, excludeID uuid.UUID, name, host string, port int) (string, error) {
 	if r == nil || r.pool == nil {
 		return "", fmt.Errorf("timescale not configured")
 	}
-
-	var excludeUUID uuid.UUID
-	if excludeID != "" {
-		excludeUUID, _ = uuid.Parse(excludeID)
-	}
-
-	// Check by Name
-	var foundName string
+	var existingName string
 	err := r.pool.QueryRow(ctx, `
 		SELECT name FROM optima_servers 
-		WHERE LOWER(name) = LOWER($1) AND is_active = TRUE AND id != $2 
+		WHERE (UPPER(name) = UPPER($1) OR (UPPER(host) = UPPER($2) AND port = $3))
+		AND id != $4
 		LIMIT 1
-	`, strings.TrimSpace(name), excludeUUID).Scan(&foundName)
-	if err == nil {
-		return fmt.Sprintf("server with name '%s' already exists", foundName), nil
+	`, name, host, port, excludeID).Scan(&existingName)
+	if err == sql.ErrNoRows {
+		return "", nil
 	}
-
-	// Check by Host and Port
-	var foundHost string
-	err = r.pool.QueryRow(ctx, `
-		SELECT host FROM optima_servers 
-		WHERE host = $1 AND port = $2 AND is_active = TRUE AND id != $3 
-		LIMIT 1
-	`, strings.TrimSpace(host), port, excludeUUID).Scan(&foundHost)
-	if err == nil {
-		return fmt.Sprintf("server with host '%s' and port %d already exists", foundHost, port), nil
-	}
-
-	return "", nil
+	return existingName, err
 }

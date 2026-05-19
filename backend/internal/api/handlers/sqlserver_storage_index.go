@@ -1,88 +1,174 @@
-/*
- * SQL Optima — https://github.com/rsharma155/sql_optima
- *
- * Purpose: HTTP handlers for enhanced SQL Server Storage & Index Health diagnostics.
- *          Supports time-series trends and detailed table drill-downs.
- *
- * Author: Ravi Sharma
- * Copyright (c) 2026 Ravi Sharma
- * SPDX-License-Identifier: MIT
- */
-
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: SQL Server storage and index health API handlers.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package handlers
 
 import (
 	"encoding/json"
 	"net/http"
-	"time"
 
+	"github.com/google/uuid"
+	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/service"
+	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
-type SqlServerStorageIndexHandlers struct {
+type SqlServerStorageHandlers struct {
 	metricsSvc *service.MetricsService
+	cfg        *config.Config
 }
 
-func NewSqlServerStorageIndexHandlers(svc *service.MetricsService) *SqlServerStorageIndexHandlers {
-	return &SqlServerStorageIndexHandlers{metricsSvc: svc}
+func NewSqlServerStorageHandlers(svc *service.MetricsService, cfg *config.Config) *SqlServerStorageHandlers {
+	return &SqlServerStorageHandlers{metricsSvc: svc, cfg: cfg}
 }
 
-// TableDrilldown returns a comprehensive analytical package for a specific table.
-func (h *SqlServerStorageIndexHandlers) TableDrilldown(w http.ResponseWriter, r *http.Request) {
+func (h *SqlServerStorageHandlers) parseID(r *http.Request) (uuid.UUID, bool) {
+	return ParseServerID(r, h.cfg)
+}
+
+func (h *SqlServerStorageHandlers) TableDrilldown(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	engine := r.URL.Query().Get("engine")
-	instance := r.URL.Query().Get("instance")
-	db := r.URL.Query().Get("db")
-	schema := r.URL.Query().Get("schema")
-	table := r.URL.Query().Get("table")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{})
+}
+
+func (h *SqlServerStorageHandlers) PerformanceDebt(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{})
+}
+
+func (h *SqlServerStorageHandlers) GetIndexUsage(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name or server_id required"})
+		return
+	}
+
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
 
-	if instance == "" || db == "" || table == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "instance, db, and table are required"})
-		return
-	}
-
-	// Default to sqlserver if engine not provided
-	if engine == "" {
-		engine = "sqlserver"
-	}
-
-	// Default to last 24h if missing to avoid SQL cast errors
-	if from == "" || to == "" {
-		now := time.Now().UTC()
-		if to == "" {
-			to = now.Format(time.RFC3339)
-		}
-		if from == "" {
-			from = now.Add(-24 * time.Hour).Format(time.RFC3339)
-		}
-	}
-
-	// 1. Table Growth History
-	growth, err := h.metricsSvc.GetTableSizeHistory(r.Context(), engine, instance, from, to, db, schema, table)
+	res, err := h.metricsSvc.TimescaleStorageIndexHealthIndexUsage(r.Context(), id, from, to)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "growth: " + err.Error()})
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (h *SqlServerStorageHandlers) GetTableUsage(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name or server_id required"})
 		return
 	}
 
-	// 2. Index Usage History
-	indices, _ := h.metricsSvc.GetIndexUsageHistory(r.Context(), engine, instance, from, to, db, schema, table)
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
 
-	// 3. Fragmentation History
-	frag, _ := h.metricsSvc.GetIndexFragmentationHistory(r.Context(), engine, instance, from, to, db, schema, table)
+	res, err := h.metricsSvc.TimescaleStorageIndexHealthTableUsage(r.Context(), id, from, to)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
 
-	// 4. Table Structure (latest)
-	// (Logic can be added here to fetch from snapshot.sqlserver_table_structure_history)
+func (h *SqlServerStorageHandlers) GetGrowth(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name or server_id required"})
+		return
+	}
 
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance":      instance,
-		"database":      db,
-		"table":         table,
-		"growth_series": growth,
-		"index_usage":   indices,
-		"fragmentation": frag,
-	})
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
+	res, err := h.metricsSvc.TimescaleStorageIndexHealthGrowth(r.Context(), id, from, to)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (h *SqlServerStorageHandlers) GetDashboard(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name or server_id required"})
+		return
+	}
+
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	filters := hot.SIHFilters{
+		DBNames:     r.URL.Query()["db"],
+		SchemaNames: r.URL.Query()["schema"],
+		TableLike:   r.URL.Query().Get("table"),
+	}
+
+	res, err := h.metricsSvc.TimescaleStorageIndexHealthDashboard(r.Context(), id, from, to, filters)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (h *SqlServerStorageHandlers) GetFilterOptions(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name or server_id required"})
+		return
+	}
+
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	db := r.URL.Query().Get("db")
+	schema := r.URL.Query().Get("schema")
+
+	res, err := h.metricsSvc.TimescaleStorageIndexHealthFilterOptions(r.Context(), id, from, to, db, schema)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (h *SqlServerStorageHandlers) GetIndexDefinition(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name or server_id required"})
+		return
+	}
+
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
+	res, err := h.metricsSvc.TimescaleStorageIndexDefinition(r.Context(), id, from, to)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }

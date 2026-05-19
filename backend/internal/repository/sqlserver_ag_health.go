@@ -8,9 +8,9 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
-	"fmt"
-	"log"
 )
 
 type AGHealthStats struct {
@@ -34,18 +34,20 @@ type AGHealthStats struct {
 	SecondaryLagSecs     int64        `json:"secondary_lag_secs"`
 }
 
-func (c *SqlServerRepository) FetchAGClusterStatus(instanceName string) (map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchAGClusterStatus(ctx context.Context, instanceName string) (map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
-		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
+		return map[string]interface{}{"cluster_name": nil}, nil
 	}
 
 	query := `/* SQL_OPTIMA */ SELECT cluster_name, quorum_type_desc, quorum_state_desc FROM sys.dm_hadr_cluster`
-	row := db.QueryRow(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	row := db.QueryRowContext(ctx, query)
 
 	var clusterName, quorumType, quorumState string
 	if err := row.Scan(&clusterName, &quorumType, &quorumState); err != nil {
-		return nil, err
+		return map[string]interface{}{"cluster_name": nil}, nil
 	}
 
 	return map[string]interface{}{
@@ -62,16 +64,18 @@ type AGClusterMember struct {
 	NumberOfQuorumVotes int    `json:"number_of_quorum_votes"`
 }
 
-func (c *SqlServerRepository) FetchAGClusterMembers(instanceName string) ([]AGClusterMember, error) {
+func (c *SqlServerRepository) FetchAGClusterMembers(ctx context.Context, instanceName string) ([]AGClusterMember, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
-		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
+		return []AGClusterMember{}, nil
 	}
 
 	query := `/* SQL_OPTIMA */ SELECT member_name, member_type_desc, member_state_desc, number_of_quorum_votes FROM sys.dm_hadr_cluster_members`
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		return nil, err
+		return []AGClusterMember{}, nil
 	}
 	defer rows.Close()
 
@@ -86,16 +90,18 @@ func (c *SqlServerRepository) FetchAGClusterMembers(instanceName string) ([]AGCl
 	return members, nil
 }
 
-func (c *SqlServerRepository) FetchAGHealthStats(instanceName string) ([]AGHealthStats, error) {
+func (c *SqlServerRepository) FetchAGHealthStats(ctx context.Context, instanceName string) ([]AGHealthStats, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
-		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
+		return []AGHealthStats{}, nil
 	}
 
 	checkQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.availability_groups`
 	var agCount int
-	if err := db.QueryRow(checkQuery).Scan(&agCount); err != nil {
-		log.Printf("[SQLSERVER] FetchAGHealthStats AG metadata check failed for %s: %v (likely not configured or no permissions to sys.availability_groups)", instanceName, err)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	if err := db.QueryRowContext(ctx, checkQuery).Scan(&agCount); err != nil {
+	cancel()
+		slog.Error("[SQLSERVER] FetchAGHealthStats AG metadata check failed", "target", instanceName, "err", err)
 		return []AGHealthStats{}, nil
 	}
 
@@ -131,9 +137,11 @@ func (c *SqlServerRepository) FetchAGHealthStats(instanceName string) ([]AGHealt
 		ORDER BY ag.name, ar.replica_server_name, database_name
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[SQLSERVER] FetchAGHealthStats Error for %s: %v", instanceName, err)
+		slog.Error("[SQLSERVER] FetchAGHealthStats Error", "target", instanceName, "err", err)
 		// Fallback to replica-level only if database-level fails
 		query = `
 			/* SQL_OPTIMA */
@@ -161,9 +169,11 @@ func (c *SqlServerRepository) FetchAGHealthStats(instanceName string) ([]AGHealt
 			LEFT JOIN sys.dm_hadr_availability_replica_states ars ON ar.replica_id = ars.replica_id
 			ORDER BY ag.name, ar.replica_server_name
 		`
-		rows, err = db.Query(query)
+		ctx, cancel = WithQueryTimeout(ctx, 0)
+		defer cancel()
+		rows, err = db.QueryContext(ctx, query)
 		if err != nil {
-			log.Printf("[SQLSERVER] FetchAGHealthStats Fallback Error for %s: %v", instanceName, err)
+			slog.Error("[SQLSERVER] FetchAGHealthStats Fallback Error", "target", instanceName, "err", err)
 			return []AGHealthStats{}, nil
 		}
 	}
@@ -181,7 +191,7 @@ func (c *SqlServerRepository) FetchAGHealthStats(instanceName string) ([]AGHealt
 		if err := rows.Scan(&s.AGName, &s.ReplicaServerName, &dbName, &roleDesc, &opState, &connState, &syncState, &syncStateDesc,
 			&isPrimary, &logSendQueue, &redoQueue, &logSendRate, &redoRate,
 			&s.LastSentTime, &s.LastReceivedTime, &s.LastHardenedTime, &s.LastRedoneTime, &secondaryLag); err != nil {
-			log.Printf("[SQLSERVER] FetchAGHealthStats Scan Error: %v", err)
+			slog.Error("[SQLSERVER] FetchAGHealthStats Scan Error", "err", err)
 			continue
 		}
 

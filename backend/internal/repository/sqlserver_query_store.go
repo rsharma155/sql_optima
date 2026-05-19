@@ -8,12 +8,13 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,25 +35,27 @@ type QueryStoreStats struct {
 	LastExecutionTime time.Time
 }
 
-func (c *SqlServerRepository) FetchQueryStoreStats(instanceName string) ([]QueryStoreStats, error) {
+func (c *SqlServerRepository) FetchQueryStoreStats(ctx context.Context, instanceName string) ([]QueryStoreStats, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
 	}
 
-	dbNames, err := c.listUserDatabaseNamesForQueryStore(db)
+	dbNames, err := c.listUserDatabaseNamesForQueryStore(ctx, db)
 	if err != nil || len(dbNames) == 0 {
-		log.Printf("[SQLSERVER] FetchQueryStoreStats: no user DBs with Query Store or list error for %s: %v — trying current database only", instanceName, err)
-		return c.fetchQueryStoreStatsSingleDB(db, "")
+		slog.Error("[SQLSERVER] FetchQueryStoreStats: no user DBs with Query Store or list error", "target", instanceName, "err", err)
+		return c.fetchQueryStoreStatsSingleDB(ctx, db, "")
 	}
 
 	var merged []QueryStoreStats
 	for _, dbn := range dbNames {
 		qb := sqlServerQuoteBracket(dbn)
 		query := queryStoreStatsSelectSQL(qb)
-		rows, err := db.Query(query)
+		ctx, cancel := WithQueryTimeout(ctx, 0)
+		rows, err := db.QueryContext(ctx, query)
 		if err != nil {
-			log.Printf("[SQLSERVER] FetchQueryStoreStats query in %s: %v", dbn, err)
+			cancel()
+			slog.Info("[SQLSERVER] FetchQueryStoreStats query in", "target", dbn, "err", err)
 			continue
 		}
 		for rows.Next() {
@@ -62,7 +65,7 @@ func (c *SqlServerRepository) FetchQueryStoreStats(instanceName string) ([]Query
 			var qh int64
 			if err := rows.Scan(&qh, &queryText, &qs.PlanID, &qs.IntervalID, &qs.Executions,
 				&qs.AvgDurationMs, &qs.AvgCpuMs, &qs.AvgLogicalReads, &qs.TotalCpuMs, &qs.LastExecutionTime); err != nil {
-				log.Printf("[SQLSERVER] FetchQueryStoreStats Scan Error: %v", err)
+				slog.Error("[SQLSERVER] FetchQueryStoreStats Scan Error", "err", err)
 				continue
 			}
 			qs.QueryHash = fmt.Sprintf("0x%X", uint64(qh))
@@ -74,10 +77,11 @@ func (c *SqlServerRepository) FetchQueryStoreStats(instanceName string) ([]Query
 			merged = append(merged, qs)
 		}
 		rows.Close()
+		cancel()
 	}
 
 	if len(merged) == 0 {
-		return c.fetchQueryStoreStatsSingleDB(db, "")
+		return c.fetchQueryStoreStatsSingleDB(ctx, db, "")
 	}
 	sort.Slice(merged, func(i, j int) bool {
 		return merged[i].TotalCpuMs > merged[j].TotalCpuMs
@@ -127,7 +131,7 @@ func queryStoreStatsSelectSQL(dbPrefix string) string {
 	`, dbPrefix, dbPrefix, dbPrefix, dbPrefix, dbPrefix)
 }
 
-func (c *SqlServerRepository) listUserDatabaseNamesForQueryStore(db *sql.DB) ([]string, error) {
+func (c *SqlServerRepository) listUserDatabaseNamesForQueryStore(ctx context.Context, db *sql.DB) ([]string, error) {
 	q := `/* SQL_OPTIMA */  
 		SELECT  d.name
 		FROM sys.databases d WITH (NOLOCK)
@@ -135,7 +139,9 @@ func (c *SqlServerRepository) listUserDatabaseNamesForQueryStore(db *sql.DB) ([]
 		  AND d.state = 0
 		  AND d.is_query_store_on = 1
 		ORDER BY d.name`
-	rows, err := db.Query(q)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +157,7 @@ func (c *SqlServerRepository) listUserDatabaseNamesForQueryStore(db *sql.DB) ([]
 	return names, rows.Err()
 }
 
-func (c *SqlServerRepository) fetchQueryStoreStatsSingleDB(db *sql.DB, labelDB string) ([]QueryStoreStats, error) {
+func (c *SqlServerRepository) fetchQueryStoreStatsSingleDB(ctx context.Context, db *sql.DB, labelDB string) ([]QueryStoreStats, error) {
 	query := `
 		/* SQL_OPTIMA */ SELECT   TOP 100
 			CAST(q.query_hash AS BIGINT) AS query_hash,
@@ -189,7 +195,9 @@ func (c *SqlServerRepository) fetchQueryStoreStatsSingleDB(db *sql.DB, labelDB s
 		  )
 		ORDER BY (ISNULL(rs.avg_cpu_time, 0) * ISNULL(rs.count_executions, 0)) DESC
 	`
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +226,7 @@ func (c *SqlServerRepository) fetchQueryStoreStatsSingleDB(db *sql.DB, labelDB s
 	return results, rows.Err()
 }
 
-func (c *SqlServerRepository) FetchQueryStoreSQLText(instanceName, databaseName, queryHash string) (string, error) {
+func (c *SqlServerRepository) FetchQueryStoreSQLText(ctx context.Context, instanceName, databaseName, queryHash string) (string, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return "", fmt.Errorf("no connection for instance: %s", instanceName)
@@ -236,7 +244,7 @@ func (c *SqlServerRepository) FetchQueryStoreSQLText(instanceName, databaseName,
 	// Strip any UI suffixes like :1
 	hashPart := strings.Split(queryHash, ":")[0]
 	hashPart = strings.TrimPrefix(hashPart, "0x")
-	
+
 	if b, err := hex.DecodeString(hashPart); err == nil {
 		qhBytes = b
 	} else {
@@ -264,7 +272,9 @@ func (c *SqlServerRepository) FetchQueryStoreSQLText(instanceName, databaseName,
 	`, dbPrefix, dbPrefix, dbPrefix, dbPrefix)
 
 	var sqlText sql.NullString
-	if err := db.QueryRow(q, qhBytes).Scan(&sqlText); err != nil {
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, q, qhBytes).Scan(&sqlText); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil
 		}

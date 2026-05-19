@@ -8,9 +8,10 @@
 package hot
 
 import (
+	"log/slog"
 	"context"
 	"fmt"
-	"log"
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,7 +20,7 @@ import (
 // LogShippingRow is the TimescaleDB-facing representation of one log shipping health snapshot.
 type LogShippingRow struct {
 	CaptureTimestamp        time.Time
-	ServerInstanceName      string
+	ServerID                uuid.UUID
 	PrimaryServer           string
 	PrimaryDatabase         string
 	SecondaryServer         string
@@ -35,7 +36,7 @@ type LogShippingRow struct {
 }
 
 // LogLogShippingHealth batch-inserts log shipping health rows.
-func (tl *TimescaleLogger) LogLogShippingHealth(ctx context.Context, instanceName string, rows []LogShippingRow) error {
+func (tl *TimescaleLogger) LogLogShippingHealth(ctx context.Context, serverID uuid.UUID, rows []LogShippingRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -43,7 +44,7 @@ func (tl *TimescaleLogger) LogLogShippingHealth(ctx context.Context, instanceNam
 	batch := &pgx.Batch{}
 	query := `
 		INSERT INTO sqlserver_log_shipping_health (
-			capture_timestamp, server_instance_name,
+			capture_timestamp, server_id,
 			primary_server, primary_database,
 			secondary_server, secondary_database,
 			last_backup_date, last_backup_file,
@@ -54,7 +55,7 @@ func (tl *TimescaleLogger) LogLogShippingHealth(ctx context.Context, instanceNam
 
 	for _, r := range rows {
 		batch.Queue(query,
-			r.CaptureTimestamp, r.ServerInstanceName,
+			r.CaptureTimestamp, r.ServerID,
 			r.PrimaryServer, r.PrimaryDatabase,
 			r.SecondaryServer, r.SecondaryDatabase,
 			r.LastBackupDate, r.LastBackupFile,
@@ -73,12 +74,12 @@ func (tl *TimescaleLogger) LogLogShippingHealth(ctx context.Context, instanceNam
 		}
 	}
 
-	log.Printf("[TSLogger] LogLogShippingHealth: inserted %d rows for %s", len(rows), instanceName)
+	slog.Info("[TSLogger] LogLogShippingHealth: inserted", "arg1", len(rows), "arg2", serverID)
 	return nil
 }
 
-// GetLogShippingHealth returns the most recent log shipping health snapshot for an instance.
-func (tl *TimescaleLogger) GetLogShippingHealth(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
+// GetLogShippingHealth returns the most recent log shipping health snapshot for an serverID.
+func (tl *TimescaleLogger) GetLogShippingHealth(ctx context.Context, serverID uuid.UUID) ([]map[string]interface{}, error) {
 	query := `
 		SELECT DISTINCT ON (primary_database, secondary_database)
 			capture_timestamp,
@@ -95,12 +96,12 @@ func (tl *TimescaleLogger) GetLogShippingHealth(ctx context.Context, instanceNam
 			status,
 			is_primary
 		FROM sqlserver_log_shipping_health
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND capture_timestamp >= NOW() - INTERVAL '1 hour'
 		ORDER BY primary_database, secondary_database, capture_timestamp DESC
 	`
 
-	rows, err := tl.pool.Query(ctx, query, instanceName)
+	rows, err := tl.pool.Query(ctx, query, serverID)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +133,7 @@ func (tl *TimescaleLogger) GetLogShippingHealth(ctx context.Context, instanceNam
 			&restoreDelay, &restoreThreshold,
 			&status, &isPrimary,
 		); err != nil {
-			log.Printf("[LogShipping] scan error: %v", err)
+			slog.Error("[LogShipping] scan error", "err", err)
 			continue
 		}
 

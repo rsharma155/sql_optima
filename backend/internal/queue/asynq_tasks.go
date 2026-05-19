@@ -1,32 +1,34 @@
-// SQL Optima — https://github.com/rsharma155/sql_optima
-//
-// Purpose: Asynq task definitions for live and historical metric collection.
-//
-// Author: Ravi Sharma
-// Copyright (c) 2026 Ravi Sharma
-// SPDX-License-Identifier: MIT
+// Package queue implements background task processing logic.
 package queue
 
 import (
+	"log/slog"
 	"context"
 
 	"github.com/hibiken/asynq"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
+// Task names
 const (
-	TypeLive       = "optima:collector:live"
-	TypeHistorical = "optima:collector:historical"
+	TypeHistorical = "metrics:historical"
 )
 
-// RegisterHandlers wires core collector ticks for the Asynq worker.
+// HandleHistoricalCollectionTask returns a handler for historical collection tasks.
+func HandleHistoricalCollectionTask(svc *service.MetricsService) asynq.HandlerFunc {
+	return func(ctx context.Context, t *asynq.Task) error {
+		slog.Info("[Queue] Starting background historical collection...")
+		svc.TriggerBackgroundCollectorsOnce()
+		return nil
+	}
+}
+
+// RegisterHandlers registers all task handlers with the asynq server.
 func RegisterHandlers(mux *asynq.ServeMux, svc *service.MetricsService) {
-	mux.HandleFunc(TypeLive, func(ctx context.Context, t *asynq.Task) error {
-		svc.RunLiveCollectorOnce(ctx)
-		return nil
-	})
-	mux.HandleFunc(TypeHistorical, func(ctx context.Context, t *asynq.Task) error {
-		svc.RunHistoricalCollectorOnce(ctx)
-		return nil
-	})
+	mux.HandleFunc(TypeHistorical, HandleHistoricalCollectionTask(svc))
+}
+
+// NewHistoricalCollectionTask creates a new background metrics task.
+func NewHistoricalCollectionTask() (*asynq.Task, error) {
+	return asynq.NewTask(TypeHistorical, nil), nil
 }

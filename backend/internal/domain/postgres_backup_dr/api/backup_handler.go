@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/rsharma155/sql_optima/internal/api/handlers"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
@@ -23,9 +25,8 @@ func NewPostgresBackupHandler(svc *service.MetricsService) *PostgresBackupHandle
 }
 
 func (h *PostgresBackupHandler) GetDashboardData(w http.ResponseWriter, r *http.Request) {
-	instance := r.URL.Query().Get("instance")
-	if instance == "" {
-		http.Error(w, "instance parameter is required", http.StatusBadRequest)
+	serverID, ok := handlers.ParseServerID(r, h.metricsSvc.Config)
+	if !ok {
 		return
 	}
 
@@ -43,7 +44,7 @@ func (h *PostgresBackupHandler) GetDashboardData(w http.ResponseWriter, r *http.
 	if repo == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   "backup repository not initialized (TimescaleDB disconnected)",
 		})
@@ -52,30 +53,27 @@ func (h *PostgresBackupHandler) GetDashboardData(w http.ResponseWriter, r *http.
 
 	data := make(map[string]interface{})
 
-	// KPIs (Row 1)
-	kpis, _ := repo.GetKPIData(ctx, instance, from, to)
+	kpis, _ := repo.GetKPIData(ctx, serverID, from, to)
 	data["kpis"] = kpis
 
-	// Trends (Row 2 & 3)
-	walTrend, _ := repo.GetWALTrend(ctx, instance, from, to)
+	walTrend, _ := repo.GetWALTrend(ctx, serverID, from, to)
 	data["wal_trend"] = walTrend
 
-	replicationLagTrend, _ := repo.GetReplicationLagTrend(ctx, instance, from, to)
-	data["replication_lag_trend"] = replicationLagTrend
+	lagTrend, _ := repo.GetReplicationLagTrend(ctx, serverID, from, to)
+	data["replication_lag_trend"] = lagTrend
 
-	archiveHealth, _ := repo.GetArchiveHealth(ctx, instance, from, to)
+	archiveHealth, _ := repo.GetArchiveHealth(ctx, serverID, from, to)
 	data["archive_health"] = archiveHealth
 
-	checkpointTrend, _ := repo.GetCheckpointTrend(ctx, instance, from, to)
+	checkpointTrend, _ := repo.GetCheckpointTrend(ctx, serverID, from, to)
 	data["checkpoint_trend"] = checkpointTrend
 
-	// Operational Details (Row 4)
-	replicationDetails, _ := repo.GetReplicationDetails(ctx, instance)
+	replicationDetails, _ := repo.GetReplicationDetails(ctx, serverID)
 	data["replication_details"] = replicationDetails
 
-	archiverFailures, _ := repo.GetArchiverFailures(ctx, instance)
+	archiverFailures, _ := repo.GetArchiverFailures(ctx, serverID)
 	data["archiver_failures"] = archiverFailures
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	_ = json.NewEncoder(w).Encode(data)
 }

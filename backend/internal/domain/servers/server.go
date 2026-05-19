@@ -2,6 +2,7 @@ package servers
 
 import (
 	"errors"
+	"github.com/google/uuid"
 	"strings"
 	"time"
 )
@@ -22,19 +23,19 @@ const (
 type SSLMode string
 
 type Server struct {
-	ID         string
-	Name       string
-	DBType     DBType
-	Host       string
-	Port       int
-	Username   string
-	AuthType   AuthType
-	SSLMode    SSLMode
-	IsActive   bool
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	CreatedBy  string
-	LastTestAt *time.Time
+	ID         uuid.UUID  `json:"id"`
+	Name       string     `json:"name"`
+	DBType     DBType     `json:"db_type"`
+	Host       string     `json:"host"`
+	Port       int        `json:"port"`
+	Username   string     `json:"username"`
+	AuthType   AuthType   `json:"auth_type,omitempty"`
+	SSLMode    SSLMode    `json:"ssl_mode,omitempty"`
+	IsActive   bool       `json:"is_active"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	CreatedBy  string     `json:"created_by,omitempty"`
+	LastTestAt *time.Time `json:"last_test_at,omitempty"`
 }
 
 type CredentialPayload struct {

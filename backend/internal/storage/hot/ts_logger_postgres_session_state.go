@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: PostgreSQL session state and wait event logger.
+// Purpose: PostgreSQL aggregated session state counts logger.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -9,78 +9,66 @@ package hot
 
 import (
 	"context"
-	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-type PostgresSessionStateCountRow struct {
-	CaptureTimestamp   time.Time `json:"capture_timestamp"`
-	ServerInstanceName string    `json:"server_instance_name"`
-	ActiveCount        int       `json:"active_count"`
-	IdleCount          int       `json:"idle_count"`
-	IdleInTxnCount     int       `json:"idle_in_txn_count"`
-	WaitingCount       int       `json:"waiting_count"`
-	TotalCount         int       `json:"total_count"`
+type PostgresSessionStateRow struct {
+	CaptureTimestamp time.Time `json:"capture_timestamp"`
+	ServerID         uuid.UUID `json:"server_id"`
+	ActiveCount      int       `json:"active_count"`
+	IdleCount        int       `json:"idle_count"`
+	IdleInTxnCount   int       `json:"idle_in_txn_count"`
+	WaitingCount     int       `json:"waiting_count"`
+	TotalCount       int       `json:"total_count"`
 }
 
-func (tl *TimescaleLogger) LogPostgresSessionStateCounts(ctx context.Context, instanceName string, active, idle, idleInTxn, waiting, total int) error {
-	sig := pgFnv64(instanceName, active, idle, idleInTxn, waiting, total)
+func (tl *TimescaleLogger) LogPostgresSessionStateCounts(ctx context.Context, serverID uuid.UUID, active, idle, idleInTxn, waiting, total int) error {
+	now := time.Now().UTC()
+
+	sig := pgFnv64(serverID, active, idle, idleInTxn, waiting, total)
+	key := "pg_sess_state|" + serverID.String()
 	tl.mu.Lock()
-	if tl.prevEnterpriseBatchHash == nil {
-		tl.prevEnterpriseBatchHash = make(map[string]uint64)
-	}
-	key := "pg_sess_state|" + instanceName
-	if prev, ok := tl.prevEnterpriseBatchHash[key]; ok && prev == sig {
+	if prev, ok := tl.prevPgSessionHash[serverID]; ok && prev == sig {
 		tl.mu.Unlock()
 		return nil
 	}
-	tl.prevEnterpriseBatchHash[key] = sig
+	tl.prevPgSessionHash[serverID] = sig
 	tl.mu.Unlock()
 
-	q := `
-		INSERT INTO postgres_session_state_counts (
-			capture_timestamp, server_instance_name,
-			active_count, idle_count, idle_in_txn_count, waiting_count, total_count
-		) VALUES ($1,$2,$3,$4,$5,$6,$7)
-	`
-	now := time.Now().UTC()
-	_, err := tl.pool.Exec(ctx, q, now, instanceName, active, idle, idleInTxn, waiting, total)
+	q := `INSERT INTO postgres_session_state_counts (capture_timestamp, server_id, active_count, idle_count, idle_in_txn_count, waiting_count, total_count)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	_, err := tl.pool.Exec(ctx, q, now, serverID, active, idle, idleInTxn, waiting, total)
+	_ = key
 	return err
 }
 
-func (tl *TimescaleLogger) GetPostgresSessionStateCountsHistory(ctx context.Context, instanceName string, limit int) ([]PostgresSessionStateCountRow, error) {
+func (tl *TimescaleLogger) GetPostgresSessionStateHistory(ctx context.Context, serverID uuid.UUID, limit int) ([]PostgresSessionStateRow, error) {
 	if limit <= 0 {
-		limit = 180
+		limit = 100
 	}
 	q := `
-		SELECT capture_timestamp, server_instance_name,
-		       active_count, idle_count, idle_in_txn_count, waiting_count, total_count
+		SELECT capture_timestamp, server_id, active_count, idle_count, idle_in_txn_count, waiting_count, total_count
 		FROM postgres_session_state_counts
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var out []PostgresSessionStateCountRow
+	var out []PostgresSessionStateRow
 	for rows.Next() {
-		var r PostgresSessionStateCountRow
-		if err := rows.Scan(
-			&r.CaptureTimestamp, &r.ServerInstanceName,
-			&r.ActiveCount, &r.IdleCount, &r.IdleInTxnCount, &r.WaitingCount, &r.TotalCount,
-		); err != nil {
+		var r PostgresSessionStateRow
+		if err := rows.Scan(&r.CaptureTimestamp, &r.ServerID, &r.ActiveCount, &r.IdleCount,
+			&r.IdleInTxnCount, &r.WaitingCount, &r.TotalCount); err != nil {
 			continue
 		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-func (r PostgresSessionStateCountRow) String() string {
-	return fmt.Sprintf("%s a=%d idle=%d iit=%d w=%d t=%d",
-		r.ServerInstanceName, r.ActiveCount, r.IdleCount, r.IdleInTxnCount, r.WaitingCount, r.TotalCount)
 }

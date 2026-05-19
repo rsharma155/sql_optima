@@ -8,14 +8,21 @@
 package handlers
 
 import (
+	"log/slog"
 	"context"
+	"encoding/json"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/service"
 	"github.com/rsharma155/sql_optima/internal/validation"
 )
+
+const maxTimeRange = 7 * 24 * time.Hour
 
 // ParseTimeRange extracts and normalizes from/to timestamps from query parameters.
 func ParseTimeRange(fromStr, toStr string) (time.Time, time.Time) {
@@ -24,6 +31,7 @@ func ParseTimeRange(fromStr, toStr string) (time.Time, time.Time) {
 	fromT := now.Add(-1 * time.Hour)
 
 	parse := func(s string, fallback time.Time) time.Time {
+		s = strings.TrimSpace(s)
 		if s == "" || s == "undefined" || s == "null" {
 			return fallback
 		}
@@ -42,10 +50,13 @@ func ParseTimeRange(fromStr, toStr string) (time.Time, time.Time) {
 		return fallback
 	}
 
-	if fromStr != "" {
+	fromProvided := strings.TrimSpace(fromStr) != "" && fromStr != "undefined" && fromStr != "null"
+	toProvided := strings.TrimSpace(toStr) != "" && toStr != "undefined" && toStr != "null"
+
+	if fromProvided {
 		fromT = parse(fromStr, fromT)
 	}
-	if toStr != "" {
+	if toProvided {
 		toT = parse(toStr, toT)
 	}
 
@@ -53,6 +64,11 @@ func ParseTimeRange(fromStr, toStr string) (time.Time, time.Time) {
 	if fromT.After(toT) || toT.Sub(fromT) < 10*time.Second {
 		toT = now
 		fromT = toT.Add(-1 * time.Hour)
+	}
+
+	// Cap to 7 days only when both endpoints were explicitly supplied
+	if fromProvided && toProvided && toT.Sub(fromT) > maxTimeRange {
+		fromT = toT.Add(-maxTimeRange)
 	}
 
 	// If the range is purely in the future (skew), cap to now
@@ -64,6 +80,97 @@ func ParseTimeRange(fromStr, toStr string) (time.Time, time.Time) {
 	}
 
 	return fromT, toT
+}
+
+func ParseServerID(r *http.Request, cfg *config.Config) (uuid.UUID, bool) {
+	// 1. Try server_id or instance or server query param (UUID)
+	for _, p := range []string{"server_id", "instance", "server"} {
+		val := r.URL.Query().Get(p)
+		if val != "" {
+			if id, err := uuid.Parse(val); err == nil {
+				return id, true
+			}
+			// If not UUID, try name lookup (case-insensitive)
+			if cfg != nil {
+				upperVal := strings.ToUpper(val)
+				for _, inst := range cfg.Instances {
+					if strings.ToUpper(inst.Name) == upperVal {
+						return inst.ServerID, true
+					}
+				}
+				slog.Info("[API] ParseServerID: instance name", "arg1", val, "arg2", len(cfg.Instances))
+			} else {
+				// cfg is nil — can't look up name; proceed with Nil UUID so the
+				// service layer can handle the call (e.g. return 500 for nil pool).
+				return uuid.Nil, true
+			}
+		}
+	}
+
+	// 2. Try mux vars
+	vars := mux.Vars(r)
+	for _, p := range []string{"id", "server_id", "instance"} {
+		val := vars[p]
+		if val != "" {
+			if id, err := uuid.Parse(val); err == nil {
+				return id, true
+			}
+			if cfg != nil {
+				upperVal := strings.ToUpper(val)
+				for _, inst := range cfg.Instances {
+					if strings.ToUpper(inst.Name) == upperVal {
+						return inst.ServerID, true
+					}
+				}
+			} else {
+				return uuid.Nil, true
+			}
+		}
+	}
+
+	return uuid.Nil, false
+}
+
+// instanceLookup is the result of resolveInstanceParam.
+type instanceLookup int
+
+const (
+	lookupMissing  instanceLookup = iota // no param provided
+	lookupNotFound instanceLookup = iota // param given but not found in config
+	lookupFound    instanceLookup = iota // resolved OK
+)
+
+// resolveInstanceParam resolves an instance query param to a UUID and name.
+// It distinguishes between a missing param (→ 400) and a provided but unknown
+// name (→ 404), which ParseServerID cannot.
+func resolveInstanceParam(r *http.Request, cfg *config.Config) (id uuid.UUID, name string, result instanceLookup) {
+	for _, p := range []string{"instance", "server_id", "server"} {
+		val := strings.TrimSpace(r.URL.Query().Get(p))
+		if val == "" {
+			continue
+		}
+		// Direct UUID — always accepted
+		if parsed, err := uuid.Parse(val); err == nil {
+			return parsed, val, lookupFound
+		}
+		// Validate instance name before config lookup — rejects XSS and SQL injection patterns
+		if err := validateInstanceName(val); err != nil {
+			return uuid.Nil, val, lookupMissing // treat invalid names as "missing" → 400
+		}
+		// Name lookup
+		if cfg != nil {
+			up := strings.ToUpper(val)
+			for _, inst := range cfg.Instances {
+				if strings.ToUpper(inst.Name) == up {
+					return inst.ServerID, inst.Name, lookupFound
+				}
+			}
+			return uuid.Nil, val, lookupNotFound
+		}
+		// No config — use the name as-is; callers treat this as not-found.
+		return uuid.Nil, val, lookupNotFound
+	}
+	return uuid.Nil, "", lookupMissing
 }
 
 func validateInstanceName(name string) error {
@@ -114,22 +221,22 @@ func instanceTypeFromDB(ctx context.Context, cfg *config.Config, metricsSvc *ser
 	return false
 }
 
-// splitCSV takes a comma-separated string and returns a slice of strings.
-// It ignores empty strings and trims surrounding whitespace from each item.
-func splitCSV(s string) []string {
-	if s == "" {
-		return nil // Return empty slice if the query parameter is missing or empty
-	}
-
-	parts := strings.Split(s, ",")
-	var result []string
-
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" { // Skip empty entries like "db1,,db2"
-			result = append(result, trimmed)
-		}
-	}
-
-	return result
+// SendJSON sends a successful JSON response with a standardized envelope.
+func SendJSON(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"data":    data,
+	})
 }
+
+// SendError sends a JSON error response with a standardized envelope.
+func SendError(w http.ResponseWriter, code int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": false,
+		"error":   message,
+	})
+}
+

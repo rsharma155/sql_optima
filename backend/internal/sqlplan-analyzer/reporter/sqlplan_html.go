@@ -717,18 +717,21 @@ func (r *HTMLReporter) renderPlanViewerTab(plan *models.PlanAnalysis) string {
 		levels := make(map[int][]*models.Operator)
 		r.collectLevels(root, 0, levels)
 
-		// Get sorted depth keys
+		// Get sorted depth keys in descending order (SSMS style: leaves on left, root on right)
 		var depths []int
 		for d := range levels {
 			depths = append(depths, d)
 		}
-		sort.Ints(depths)
+		sort.Slice(depths, func(i, j int) bool {
+			return depths[i] > depths[j]
+		})
 
 		sb.WriteString(`<div class="pv-scroll"><div class="pv-hflow">`)
 
 		for idx, depth := range depths {
 			ops := levels[depth]
 			if idx > 0 {
+				// Arrow pointing from child (left) to parent (right)
 				sb.WriteString(`<div class="pv-arrow-col"><div class="pv-arr">&#x25B6;</div></div>`)
 			}
 			sb.WriteString(`<div class="pv-col">`)

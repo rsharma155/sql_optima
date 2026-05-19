@@ -11,15 +11,15 @@
 <div class="page-view active dashboard-sky-theme qa-page-modern">
     <div class="page-title flex-between dashboard-page-title-compact">
         <div class="dashboard-title-line" style="flex:1; min-width:0;">
-            <h1><i class="fa-solid fa-magnifying-glass-chart"></i> SQL Server Query Analysis <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Query Analysis" title="Learn more about this dashboard"></i></h1>
-            <span class="subtitle">Instance: <span id="qaInstanceName">--</span></span>
+            <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-magnifying-glass-chart"></i> SQL Server Query Analysis <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Query Analysis" title="Learn more about this dashboard"></i></h1>
+            <span class="subtitle" style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px; display:block;">Instance: <span id="qaInstanceName" class="text-accent">--</span> <span id="qaDataWarning" class="text-warning ml-2" style="display:none; font-weight:600;"><i class="fa-solid fa-circle-exclamation"></i> No Query Store data detected: Ensure Query Store is enabled on your target databases and that user workload is active for the selected time range.</span></span>
         </div>
         <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.5rem; flex-wrap:nowrap; justify-content:flex-end;">
             <div style="display:flex; align-items:center; gap:0.4rem; background:rgba(255,255,255,0.05); padding:0.2rem 0.5rem; border-radius:6px; border:1px solid var(--border-color); flex-shrink:0;">
                 <label class="text-muted" for="qaFrom" style="font-size:0.65rem; margin:0; font-weight:600; text-transform:uppercase;">From</label>
-                <input type="datetime-local" id="qaFrom" class="form-control form-control-sm" style="max-width:130px; height:1.6rem; font-size:0.7rem; border:none; background:transparent; padding:0;" />
+                <input type="datetime-local" id="qaFrom" class="form-control form-control-sm" style="width:9.5rem; font-size:0.7rem; border:none; background:transparent; color:inherit; padding:0;" />
                 <label class="text-muted" for="qaTo" style="font-size:0.65rem; margin:0; font-weight:600; text-transform:uppercase;">To</label>
-                <input type="datetime-local" id="qaTo" class="form-control form-control-sm" style="max-width:130px; height:1.6rem; font-size:0.7rem; border:none; background:transparent; padding:0;" />
+                <input type="datetime-local" id="qaTo" class="form-control form-control-sm" style="width:9.5rem; font-size:0.7rem; border:none; background:transparent; color:inherit; padding:0;" />
                 <button type="button" class="btn btn-xs btn-primary" id="qaApplyRange" style="height:1.5rem; padding:0 0.5rem; font-size:0.65rem; min-width:auto;"><i class="fa-solid fa-filter" style="font-size:0.6rem;"></i> Apply</button>
             </div>
             <button class="btn btn-xs btn-outline text-accent" data-action="call" data-fn="qaRefreshAll" style="height:1.6rem; min-width:auto; padding:0 0.5rem;"><i class="fa-solid fa-refresh"></i> Refresh</button>
@@ -27,17 +27,10 @@
         </div>
     </div>
 
-    <div id="qaDataWarning" class="alert alert-warning mt-2 mb-2" style="display:none; font-size:0.75rem; padding:0.5rem 1rem; border-radius:8px;">
-        <i class="fa-solid fa-circle-exclamation"></i> <strong>No Query Store data detected:</strong> Ensure Query Store is enabled on your target databases and that user workload is active for the selected time range.
-    </div>
-
     <!-- Enhanced Filters -->
     <div class="mt-2 flex-between" style="padding:0 0.5rem;">
         <div style="display:flex; align-items:center; gap:1.5rem;">
             <!-- Removed checkboxes as requested -->
-        </div>
-        <div class="text-muted" style="font-size:0.65rem;">
-            <i class="fa-solid fa-circle-info"></i> Metrics calculated for selected time range.
         </div>
     </div>
 
@@ -93,22 +86,20 @@
         </div>
     </div>
 
-    <!-- Trend Charts Row -->
-    <div class="charts-grid mt-3" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
-        <div class="chart-card glass-panel" style="padding:1rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Total Query Workload</h3></div>
-            <div class="chart-container" style="height:200px;"><canvas id="qaWorkloadChart"></canvas></div>
+    <!-- Trend Charts + Contribution in 3-column row to keep everything above the fold -->
+    <div class="charts-grid mt-3" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem;">
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Total Query Workload</h3></div>
+            <div class="chart-container" style="height:90px;"><canvas id="qaWorkloadChart"></canvas></div>
         </div>
-        <div class="chart-card glass-panel" style="padding:1rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Throughput & Latency (P95/Avg)</h3></div>
-            <div class="chart-container" style="height:200px;"><canvas id="qaLatencyChart"></canvas></div>
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Throughput & Latency (P95/Avg)</h3></div>
+            <div class="chart-container" style="height:90px;"><canvas id="qaLatencyChart"></canvas></div>
         </div>
-    </div>
-
-    <!-- Contribution Chart -->
-    <div class="glass-panel mt-3" style="padding:1.25rem;">
-        <div class="card-header mb-3"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-chart-column text-accent"></i> Top Queries by CPU Contribution (Top 10)</h3></div>
-        <div class="chart-container" style="height:140px;"><canvas id="qaContributionChart"></canvas></div>
+        <div class="chart-card glass-panel" style="padding:0.75rem;">
+            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;"><i class="fa-solid fa-chart-column text-accent"></i> Top 10 CPU Contribution</h3></div>
+            <div class="chart-container" style="height:90px;"><canvas id="qaContributionChart"></canvas></div>
+        </div>
     </div>
 
     <!-- Query Analysis Summary Strip -->
@@ -137,7 +128,6 @@
             <button class="qa-tab-btn active" data-tab="top-queries"><i class="fa-solid fa-ranking-star"></i> Top Queries</button>
             <button class="qa-tab-btn" data-tab="regressions"><i class="fa-solid fa-arrow-trend-up text-danger"></i> Regressions</button>
             <button class="qa-tab-btn" data-tab="instability"><i class="fa-solid fa-bolt text-warning"></i> Plan Instability</button>
-            <button class="qa-tab-btn" data-tab="live"><i class="fa-solid fa-satellite-dish text-accent"></i> Live Sessions</button>
         </div>
 
         <div id="top-queries" class="qa-tab-panel" style="display:block; padding:1rem;">
@@ -161,16 +151,13 @@
             <div id="qaInstabilityBody"></div>
         </div>
 
-        <div id="live" class="qa-tab-panel" style="padding:1rem;">
-            <div id="qaLiveBody"></div>
-        </div>
     </div>
 </div>
 
 <style>
     .qa-page-modern { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
     .qa-kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.4rem; }
-    .qa-kpi-card { padding: 0.5rem; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; min-height: 90px; }
+    .qa-kpi-card { padding: 0.5rem; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; min-height: 70px; }
     .qa-kpi-info { display: flex; flex-direction: column; align-items: center; }
     .qa-kpi-label { font-size: 0.55rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); }
     .qa-kpi-value { font-size: 1.1rem; font-weight: 800; margin-top: 0.1rem; }

@@ -5,17 +5,29 @@ Until 1.0, releases may include breaking changes. We still aim to keep changes d
 
 ## Unreleased
 
-### Latest Changes
-- **Query V2 Pipeline**: Implemented hash-based delta tracking for SQL Server and PostgreSQL query metrics, enabled via `ENABLE_QUERY_V2_PIPELINE=true`.
-- **Collector Engine Refactor**: Unified internal collectors into a domain-driven architecture.
-- **PostgreSQL Refactor**: Modularized `pg_stats` to enhance monitoring resilience.
-- **Rule Engine Expansion**: Expanded rule engine logic for improved best-practice coverage and advisory scoring.
+No unreleased changes.
 
-- **SQL Server Locks Dashboard**: Added full stack support for SQL Server locks monitoring, including new API endpoints, `sqlserver_blocking_logger`, and detailed UI pages (`sqlserver_locks.html`, `sqlserver_LocksDashboard.js`).
-- **PostgreSQL Incident Feed & Connectivity**: Introduced `pg_incident_feed`, `pg_incident_collector`, and `pg_connection_utilization_handler` for advanced Postgres observability.
-- **Data Export Features**: Added CSV export handlers (`csv_export`, `pg_export`, `sqlserver_export`).
-- **Schema & Migrations Reorganization**: Significant restructure of TimescaleDB setup scripts, dropping older scripts and adding V2 upgrades (`07_ms_blocking_v2_upgrade.sql`, `08_pg_control_center_v2.sql`, `09_pg_locks_blocking_upgrade.sql`).
-- **Storage/Hot Layer Refactoring**: Extensive updates across the Timescale storage logger layer to accommodate new intelligence metrics (memory, blocking, deadlocks).
+## 0.4.0 (2026-05-19)
+
+### New features
+- **Query V2 Pipeline**: Hash-based delta tracking for SQL Server and PostgreSQL query metrics; computes per-query deltas between collection cycles for trend analysis. Enabled by default (`ENABLE_QUERY_V2_PIPELINE=true`).
+- **SQL Server Locks & Blocking Dashboard**: Full-stack locks monitoring — new API endpoints, `sqlserver_blocking_logger`, and UI pages (`sqlserver_LocksDashboard.js`, `sqlserver_LocksDrilldown.js`, `sqlserver_LocksDrilldownDetailed.js`).
+- **PostgreSQL Incident Feed & Connectivity**: New `pg_incident_feed` handler and `pg_connection_utilization_handler` for advanced Postgres observability; incident feed route (`pg-incident`).
+- **Data Export (CSV)**: CSV export handlers for both engines (`csv_export.go`, `pg_export.go`, `sqlserver_export.go`).
+- **SQL Server Dashboard redesign**: Optimized real-time triage view with 4-column KPI layout, per-section time-range selection capped at 7 days, and live delta metrics.
+- **New SQL Server routes**: `sqlserver-health-v2`, `sqlserver-waits`, `sqlserver-workload`, `sqlserver-locks`, `sqlserver-locks-drilldown`, `query-analysis`, `watched-queries`, `sqlserver-plan-analyzer`.
+- **New PostgreSQL routes**: `pg-waits`, `pg-backup-dr`, `pg-security`, `pg-stat-statements`.
+
+### Refactors
+- **Collector Engine**: Unified internal collectors into a domain-driven architecture (`application/`, `domain/`, `infrastructure/sqlserver/`, `infrastructure/timescaledb/`, `postgres/`).
+- **PostgreSQL collector modularization**: Split `pg_stats` into focused single-responsibility collectors (`pg_comprehensive_collector.go`, `pg_snapshot_collector.go`, `pg_locks_blocking/`, etc.) to isolate failures and improve resilience.
+- **Rule Engine Expansion**: 15+ new best-practice rule evaluators for both PG and SQL Server; rules are now signal-aware and evaluate against historical TimescaleDB snapshots.
+- **Storage/Hot Layer**: Extensive updates across the TimescaleDB storage logger layer for new intelligence metrics (memory, blocking, deadlocks).
+
+### Build
+- Updated Go runtime to **1.26.1** (`go.mod`).
+- Updated Docker build image to `golang:1.26`.
+- Reordered Dockerfile `COPY` commands to support local module replacement.
 ## 0.3.0 (2026-04-22)
 
 - **SQL Server Micro-Architecture**: Massive refactor of the SQL Server repository. Split the monolithic `mssql_stats.go` into 14 domain-specific files (e.g., `sqlserver_query_store.go`, `sqlserver_ag_health.go`) following DDD principles.
@@ -23,7 +35,7 @@ Until 1.0, releases may include breaking changes. We still aim to keep changes d
 - **Push-based OS Collector**: Introduced `os_collector`, a lightweight Go agent for host-level telemetry (CPU, Memory, Load, Postgres process stats) that pushes data to the backend via `POST /api/os/metrics`.
 - **Enhanced Rules Engine (V2)**: Refactored the advisory system to be "signal-aware," allowing rules to evaluate against historical snapshots in TimescaleDB using the `expr` language. Added 15+ new best-practice rules for both PG and SQL Server.
 - **Storage & Index Health**: Fully integrated historical dashboards surfacing index usage deltas, unused index candidates, and table growth projections.
-- **Tech Stack Updates**: Updated to Go 1.25.7; added `github.com/expr-lang/expr` for dynamic rule evaluation and `github.com/shirou/gopsutil` for host metrics.
+- **Tech Stack Updates**: Updated to Go 1.25.7 (bumped to 1.26.1 in 0.4.0); added `github.com/expr-lang/expr` for dynamic rule evaluation and `github.com/shirou/gopsutil` for host metrics.
 
 ## 0.2.1
 - **Bug fix — Alert Ack/Resolve 400 error**: `AcknowledgeAlert` and `ResolveAlert` handlers now treat the request body as optional; an empty POST body no longer returns `400 Bad Request`.

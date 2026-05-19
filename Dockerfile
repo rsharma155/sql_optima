@@ -20,6 +20,7 @@ ENV SQL_OPTIMA_SQL_SCRIPTS_DIR=/srv/sql_scripts
 COPY --from=build /src/infrastructure/sql_scripts /srv/sql_scripts
 COPY --from=build /src/config.yaml ./
 COPY --from=build /src/frontend ./frontend
+COPY --from=build /src/backend/internal/intel/templates ./backend/internal/intel/templates
 COPY --from=build /sql-optima ./backend/sql-optima
 WORKDIR /srv/backend
 COPY --from=build --chown=nonroot:nonroot /src/backend/logs ./logs

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -27,24 +28,30 @@ type latencyEntry struct {
 	meanMs float64
 }
 
-// UpsertPgssQueryDim upserts query dimension metadata into pgss_query_dim.
-// On conflict it updates last_seen and enriches db_name/username/query_type if not yet set.
-func (tl *TimescaleLogger) UpsertPgssQueryDim(ctx context.Context, instanceName string, rows []PostgresQueryStatsSnapRow) error {
+// LogPostgresQueryStats logs raw query performance snapshots.
+func (tl *TimescaleLogger) LogPostgresQueryStats(ctx context.Context, serverID uuid.UUID, rows []PostgresQueryStatsSnapRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	const q = `
-		INSERT INTO pgss_query_dim
-		    (server_instance_name, query_id, query_text, db_name, username, query_type, first_seen, last_seen)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-		ON CONFLICT (server_instance_name, query_id) DO UPDATE SET
-		    last_seen  = NOW(),
-		    db_name    = COALESCE(EXCLUDED.db_name,    pgss_query_dim.db_name),
-		    username   = COALESCE(EXCLUDED.username,   pgss_query_dim.username),
-		    query_type = COALESCE(EXCLUDED.query_type, pgss_query_dim.query_type)`
+		INSERT INTO postgres_query_stats (
+			capture_timestamp, server_id, query_id, db_name, username, query_type,
+			calls, total_time_ms, mean_time_ms, rows, temp_blks_read, temp_blks_written,
+			blk_read_time_ms, blk_write_time_ms, shared_blks_hit, shared_blks_read,
+			shared_blks_dirtied, shared_blks_written, wal_bytes, wal_records, wal_fpi,
+			total_plan_time, mean_plan_time, plans
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`
+
+	now := time.Now().UTC()
 	batch := &pgx.Batch{}
 	for _, r := range rows {
-		batch.Queue(q, instanceName, r.QueryID, r.QueryText, r.DbName, r.UserName, r.QueryType)
+		batch.Queue(q,
+			now, serverID, r.QueryID, r.DbName, r.UserName, r.QueryType,
+			r.Calls, r.TotalTimeMs, r.MeanTimeMs, r.Rows, r.TempBlksRead, r.TempBlksWritten,
+			r.BlkReadTimeMs, r.BlkWriteTimeMs, r.SharedBlksHit, r.SharedBlksRead,
+			r.SharedBlksDirtied, r.SharedBlksWritten, r.WalBytes, r.WalRecords, r.WalFpi,
+			r.TotalPlanTime, r.MeanPlanTime, r.Plans,
+		)
 	}
 	br := tl.pool.SendBatch(ctx, batch)
 	defer br.Close()
@@ -56,31 +63,131 @@ func (tl *TimescaleLogger) UpsertPgssQueryDim(ctx context.Context, instanceName 
 	return nil
 }
 
-// ComputeAndStorePgssDelta1m computes per-query deltas between the latest two snapshots
-// and writes them to pgss_delta_1m for the dashboard time-series.
-func (tl *TimescaleLogger) ComputeAndStorePgssDelta1m(ctx context.Context, instanceName string, currentTS time.Time) error {
-	// Find the previous snapshot timestamp
-	var prevTS *time.Time
-	err := tl.pool.QueryRow(ctx,
-		`SELECT MAX(capture_timestamp) FROM postgres_query_stats
-		 WHERE UPPER(server_instance_name) = UPPER($1) AND capture_timestamp < $2`,
-		instanceName, currentTS,
-	).Scan(&prevTS)
-	if err != nil || prevTS == nil {
-		return nil // No previous snapshot yet, skip delta
+// LogPostgresStatStatementsDelta logs differential query metrics.
+func (tl *TimescaleLogger) LogPostgresStatStatementsDelta(ctx context.Context, serverID uuid.UUID, deltas []PostgresStatStatementsDeltaRow) error {
+	if len(deltas) == 0 {
+		return nil
 	}
+	const q = `
+		INSERT INTO pgss_delta_1m (
+			capture_timestamp, server_id, query_id, db_name, username, query_type,
+			calls, total_exec_time, rows, shared_blks_hit, shared_blks_read,
+			shared_blks_dirtied, shared_blks_written, temp_blks_read, temp_blks_written,
+			blk_read_time, blk_write_time, wal_bytes, total_plan_time
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`
 
-	prevMap, err := tl.loadPostgresQueryStatsSnapshot(ctx, instanceName, *prevTS)
+	batch := &pgx.Batch{}
+	for _, d := range deltas {
+		batch.Queue(q,
+			d.CaptureTimestamp, serverID, d.QueryID, d.DatabaseName, d.UserName, "O",
+			d.CallsDelta, d.TotalTimeDeltaMs, d.RowsDelta, d.SharedBlksHitDelta, d.SharedBlksReadDelta,
+			d.SharedBlksDirtiedDelta, d.SharedBlksWrittenDelta, d.TempBlksReadDelta, d.TempBlksWrittenDelta,
+			d.BlkReadTimeDeltaMs, d.BlkWriteTimeDeltaMs, d.WalBytesDelta, d.TotalPlanTimeDelta,
+		)
+	}
+	br := tl.pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for range deltas {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LogPGTimescaleLock logs detailed lock events.
+func (tl *TimescaleLogger) LogPGTimescaleLock(ctx context.Context, serverID uuid.UUID, rows []PostgresLockRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	const q = `
+		INSERT INTO monitor.pg_lock_snapshot (
+			capture_timestamp, server_id, pid, locktype, mode, granted,
+			relation_oid, relation_name, transactionid, waiting_seconds
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
+
+	batch := &pgx.Batch{}
+	for _, r := range rows {
+		batch.Queue(q,
+			r.CollectedAt, serverID, r.PID, r.LockType, r.Mode, r.Granted,
+			r.RelationOID, r.RelationName, r.TransactionID, r.WaitingSeconds)
+	}
+	br := tl.pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for range rows {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// UpsertPgssQueryDim upserts query dimension metadata into pgss_query_dim.
+func (tl *TimescaleLogger) UpsertPgssQueryDim(ctx context.Context, serverID uuid.UUID, rows []PostgresQueryStatsSnapRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	const q = `
+		INSERT INTO pgss_query_dim
+		    (server_id, query_id, query_text, db_name, username, query_type, first_seen, last_seen)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+		ON CONFLICT (server_id, query_id) DO UPDATE SET
+		    last_seen  = NOW(),
+		    db_name    = COALESCE(EXCLUDED.db_name,    pgss_query_dim.db_name),
+		    username   = COALESCE(EXCLUDED.username,   pgss_query_dim.username),
+		    query_type = COALESCE(EXCLUDED.query_type, pgss_query_dim.query_type)`
+	batch := &pgx.Batch{}
+	for _, r := range rows {
+		batch.Queue(q, serverID, r.QueryID, r.QueryText, r.DbName, r.UserName, r.QueryType)
+	}
+	br := tl.pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for range rows {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ComputeAndStorePgssDelta1m computes per-query deltas between the latest two snapshots.
+// The currentTS hint is unused — we always resolve the two most recent distinct
+// capture_timestamps directly from the table, because LogPostgresQueryStats captures
+// time.Now() independently and an exact-match lookup against a separately-captured
+// time.Now() will always return an empty map.
+func (tl *TimescaleLogger) ComputeAndStorePgssDelta1m(ctx context.Context, serverID uuid.UUID, _ time.Time) error {
+	tsRows, err := tl.pool.Query(ctx,
+		`SELECT DISTINCT capture_timestamp FROM postgres_query_stats
+		 WHERE server_id = $1 ORDER BY capture_timestamp DESC LIMIT 2`,
+		serverID)
+	if err != nil {
+		return err
+	}
+	defer tsRows.Close()
+	var timestamps []time.Time
+	for tsRows.Next() {
+		var ts time.Time
+		if err := tsRows.Scan(&ts); err != nil {
+			continue
+		}
+		timestamps = append(timestamps, ts)
+	}
+	if len(timestamps) < 2 {
+		return nil
+	}
+	currTS, prevTS := timestamps[0], timestamps[1]
+
+	prevMap, err := tl.loadPostgresQueryStatsSnapshot(ctx, serverID, prevTS)
 	if err != nil {
 		return fmt.Errorf("loading previous snapshot: %w", err)
 	}
-	currMap, err := tl.loadPostgresQueryStatsSnapshot(ctx, instanceName, currentTS)
+	currMap, err := tl.loadPostgresQueryStatsSnapshot(ctx, serverID, currTS)
 	if err != nil {
 		return fmt.Errorf("loading current snapshot: %w", err)
 	}
 
 	const q = `INSERT INTO pgss_delta_1m (
-		capture_timestamp, server_instance_name, query_id,
+		capture_timestamp, server_id, query_id,
 		db_name, username, app_name, query_type,
 		calls, total_exec_time, rows,
 		shared_blks_hit, shared_blks_read, temp_blks_written,
@@ -89,17 +196,17 @@ func (tl *TimescaleLogger) ComputeAndStorePgssDelta1m(ctx context.Context, insta
 
 	batch := &pgx.Batch{}
 	count := 0
-	for qid, curr := range currMap {
-		base, ok := prevMap[qid]
+	for key, curr := range currMap {
+		base, ok := prevMap[key]
 		if !ok {
-			continue // skip first-seen queries to avoid inflated deltas from full cumulative values
+			continue
 		}
 		d := subSnap(base, curr)
 		if d.Calls <= 0 && d.TotalTimeMs <= 0 {
 			continue
 		}
 		batch.Queue(q,
-			currentTS, instanceName, qid,
+			currTS, serverID, curr.QueryID,
 			d.DbName, d.UserName, "", d.QueryType,
 			d.Calls, d.TotalTimeMs, d.Rows,
 			d.SharedBlksHit, d.SharedBlksRead, d.TempBlksWritten,
@@ -120,9 +227,112 @@ func (tl *TimescaleLogger) ComputeAndStorePgssDelta1m(ctx context.Context, insta
 	return nil
 }
 
-// PgssWorkloadPoint is a single time-series point for the workload overview charts.
+func (tl *TimescaleLogger) loadPostgresQueryStatsSnapshot(ctx context.Context, serverID uuid.UUID, ts time.Time) (map[string]PostgresQueryStatsSnapRow, error) {
+	rows, err := tl.pool.Query(ctx, `
+		SELECT query_id, COALESCE(db_name,''), COALESCE(username,''), COALESCE(query_type,''),
+		       calls, total_time_ms, rows, shared_blks_hit, shared_blks_read, temp_blks_written, 
+		       wal_bytes, total_plan_time, shared_blks_dirtied, shared_blks_written, 
+		       temp_blks_read, wal_records, wal_fpi, plans
+		FROM postgres_query_stats
+		WHERE server_id = $1 AND capture_timestamp = $2`, serverID, ts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]PostgresQueryStatsSnapRow)
+	for rows.Next() {
+		var r PostgresQueryStatsSnapRow
+		if err := rows.Scan(
+			&r.QueryID, &r.DbName, &r.UserName, &r.QueryType,
+			&r.Calls, &r.TotalTimeMs, &r.Rows, &r.SharedBlksHit, &r.SharedBlksRead, &r.TempBlksWritten,
+			&r.WalBytes, &r.TotalPlanTime, &r.SharedBlksDirtied, &r.SharedBlksWritten,
+			&r.TempBlksRead, &r.WalRecords, &r.WalFpi, &r.Plans,
+		); err != nil {
+			continue
+		}
+		// Use composite key because query_id is NOT unique per server (it's unique per db/user/query)
+		key := fmt.Sprintf("%d|%s|%s", r.QueryID, r.DbName, r.UserName)
+		out[key] = r
+	}
+	return out, nil
+}
+
+func subSnap(base, curr PostgresQueryStatsSnapRow) PostgresQueryStatsSnapRow {
+	d := curr
+	d.Calls = curr.Calls - base.Calls
+	d.TotalTimeMs = curr.TotalTimeMs - base.TotalTimeMs
+	d.Rows = curr.Rows - base.Rows
+	d.SharedBlksHit = curr.SharedBlksHit - base.SharedBlksHit
+	d.SharedBlksRead = curr.SharedBlksRead - base.SharedBlksRead
+	d.SharedBlksDirtied = curr.SharedBlksDirtied - base.SharedBlksDirtied
+	d.SharedBlksWritten = curr.SharedBlksWritten - base.SharedBlksWritten
+	d.TempBlksRead = curr.TempBlksRead - base.TempBlksRead
+	d.TempBlksWritten = curr.TempBlksWritten - base.TempBlksWritten
+	d.WalBytes = curr.WalBytes - base.WalBytes
+	d.WalRecords = curr.WalRecords - base.WalRecords
+	d.WalFpi = curr.WalFpi - base.WalFpi
+	d.TotalPlanTime = curr.TotalPlanTime - base.TotalPlanTime
+	d.Plans = curr.Plans - base.Plans
+
+	// Clamp negatives (happens if stats are reset)
+	if d.Calls < 0 { d.Calls = 0 }
+	if d.TotalTimeMs < 0 { d.TotalTimeMs = 0 }
+	if d.Rows < 0 { d.Rows = 0 }
+	if d.SharedBlksHit < 0 { d.SharedBlksHit = 0 }
+	if d.SharedBlksRead < 0 { d.SharedBlksRead = 0 }
+	if d.SharedBlksDirtied < 0 { d.SharedBlksDirtied = 0 }
+	if d.SharedBlksWritten < 0 { d.SharedBlksWritten = 0 }
+	if d.TempBlksRead < 0 { d.TempBlksRead = 0 }
+	if d.TempBlksWritten < 0 { d.TempBlksWritten = 0 }
+	if d.WalBytes < 0 { d.WalBytes = 0 }
+	if d.WalRecords < 0 { d.WalRecords = 0 }
+	if d.WalFpi < 0 { d.WalFpi = 0 }
+	if d.TotalPlanTime < 0 { d.TotalPlanTime = 0 }
+	if d.Plans < 0 { d.Plans = 0 }
+
+	if d.Calls > 0 {
+		d.MeanTimeMs = d.TotalTimeMs / float64(d.Calls)
+		d.MeanPlanTime = d.TotalPlanTime / float64(d.Calls)
+	}
+	return d
+}
+
+func (tl *TimescaleLogger) LogPgIndexDefinitions(ctx context.Context, serverID uuid.UUID, rows []IndexDefinitionCatalogRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	const q = `
+		INSERT INTO pg_index_definitions (
+			server_id, database_name, schema_name, table_name, index_name,
+			key_columns, include_columns, filter_definition, is_unique, is_pk, index_type, capture_timestamp
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+		ON CONFLICT (server_id, database_name, schema_name, index_name) DO UPDATE SET
+			table_name = EXCLUDED.table_name,
+			key_columns = EXCLUDED.key_columns,
+			include_columns = EXCLUDED.include_columns,
+			filter_definition = EXCLUDED.filter_definition,
+			is_unique = EXCLUDED.is_unique,
+			is_pk = EXCLUDED.is_pk,
+			index_type = EXCLUDED.index_type,
+			capture_timestamp = EXCLUDED.capture_timestamp`
+
+	batch := &pgx.Batch{}
+	for _, r := range rows {
+		batch.Queue(q, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName,
+			r.KeyColumns, r.IncludeColumns, r.FilterDefinition.String, r.IsUnique, r.IsPK, r.IndexType)
+	}
+	br := tl.pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for range rows {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type PgssWorkloadPoint struct {
-	Timestamp          time.Time `json:"ts"`
+	Timestamp          time.Time `json:"capture_timestamp"`
 	QueryLoadMsSec     float64   `json:"query_load_ms_sec"`
 	QPS                float64   `json:"qps"`
 	RowsSec            float64   `json:"rows_sec"`
@@ -138,8 +348,7 @@ type PgssWorkloadPoint struct {
 	CpuSaturationMsSec float64   `json:"cpu_saturation_ms_sec"`
 }
 
-// GetPgssWorkloadTimeSeries returns per-minute workload metrics from pgss_delta_1m.
-func (tl *TimescaleLogger) GetPgssWorkloadTimeSeries(ctx context.Context, instanceName string, from, to time.Time) ([]PgssWorkloadPoint, error) {
+func (tl *TimescaleLogger) GetPgssWorkloadTimeSeries(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]PgssWorkloadPoint, error) {
 	const q = `
 		SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
 			SUM(total_exec_time),
@@ -151,10 +360,10 @@ func (tl *TimescaleLogger) GetPgssWorkloadTimeSeries(ctx context.Context, instan
 			SUM(total_plan_time),
 			SUM(temp_blks_written)
 		FROM pgss_delta_1m
-		WHERE UPPER(server_instance_name) = UPPER($1) AND capture_timestamp >= $2 AND capture_timestamp <= $3
+		WHERE server_id = $1 AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		GROUP BY bucket
 		ORDER BY bucket`
-	rows, err := tl.pool.Query(ctx, q, instanceName, from, to)
+	rows, err := tl.pool.Query(ctx, q, serverID, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +410,6 @@ func (tl *TimescaleLogger) GetPgssWorkloadTimeSeries(ctx context.Context, instan
 	return points, rows.Err()
 }
 
-// PgssTopQuery represents a single row in the top queries table.
 type PgssTopQuery struct {
 	QueryID      int64    `json:"query_id"`
 	Query        string   `json:"query"`
@@ -222,14 +430,12 @@ type PgssTopQuery struct {
 	Flags        []string `json:"flags"`
 }
 
-// PgssFilterOptions holds distinct dimension values for populating filter dropdowns.
 type PgssFilterOptions struct {
 	Databases []string `json:"databases"`
 	Users     []string `json:"users"`
 	AppNames  []string `json:"app_names"`
 }
 
-// PgssDbBreakdown is a per-database workload summary row.
 type PgssDbBreakdown struct {
 	DbName         string  `json:"db_name"`
 	TotalExecMs    float64 `json:"total_exec_ms"`
@@ -240,7 +446,6 @@ type PgssDbBreakdown struct {
 	UniqueQueryIDs int64   `json:"unique_query_ids"`
 }
 
-// PgssUserBreakdown is a per-login workload summary row.
 type PgssUserBreakdown struct {
 	UserName       string  `json:"username"`
 	TotalExecMs    float64 `json:"total_exec_ms"`
@@ -250,11 +455,9 @@ type PgssUserBreakdown struct {
 	UniqueQueryIDs int64   `json:"unique_query_ids"`
 }
 
-// GetPgssTopQueries returns top queries from the delta table for a time window, sorted by the given metric.
-// Optional filters: dbName, userName, appName, queryType (empty = all).
 func (tl *TimescaleLogger) GetPgssTopQueries(
 	ctx context.Context,
-	instanceName string,
+	serverID uuid.UUID,
 	from, to time.Time,
 	sortBy string,
 	limit int,
@@ -281,8 +484,7 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 		orderCol = "total_plan"
 	}
 
-	// Build optional filter predicates
-	args := []interface{}{instanceName, from, to}
+	args := []interface{}{serverID, from, to}
 	argIdx := 4
 	var filterClauses []string
 	if dbName != "" {
@@ -309,11 +511,11 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 	if len(filterClauses) > 0 {
 		extraWhere = "AND " + strings.Join(filterClauses, " AND ")
 	}
-	
+
 	hideSysIdx := argIdx
 	args = append(args, hideSystem)
 	argIdx++
-	
+
 	limitArg := argIdx
 	args = append(args, limit)
 
@@ -333,7 +535,7 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 				SUM(d.wal_bytes) AS total_wal,
 				SUM(d.total_plan_time) AS total_plan
 			FROM pgss_delta_1m d
-			WHERE UPPER(d.server_instance_name) = UPPER($1)
+			WHERE d.server_id = $1
 			  AND d.capture_timestamp >= $2 AND d.capture_timestamp <= $3
 			  %s
 			GROUP BY d.query_id, d.db_name, d.username, d.app_name, d.query_type
@@ -359,7 +561,7 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 			a.total_plan / NULLIF(a.total_exec_time, 0)
 		FROM agg a
 		CROSS JOIN grand g
-		LEFT JOIN pgss_query_dim q ON UPPER(q.server_instance_name) = UPPER($1) AND q.query_id = a.query_id
+		LEFT JOIN pgss_query_dim q ON q.server_id = $1 AND q.query_id = a.query_id
 		WHERE (NOT $%d OR (
 			COALESCE(q.query_text, '') NOT LIKE '%%%%/* SQL_OPTIMA */%%%%'
 			AND COALESCE(q.query_text, '') NOT ILIKE '%%%%pg_catalog%%%%'
@@ -419,8 +621,7 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 	return results, pgRows.Err()
 }
 
-// GetPgssFilterOptions returns distinct db_name, username, app_name values for a time window.
-func (tl *TimescaleLogger) GetPgssFilterOptions(ctx context.Context, instanceName string, from, to time.Time) (*PgssFilterOptions, error) {
+func (tl *TimescaleLogger) GetPgssFilterOptions(ctx context.Context, serverID uuid.UUID, from, to time.Time) (*PgssFilterOptions, error) {
 	if tl == nil || tl.pool == nil {
 		return &PgssFilterOptions{}, nil
 	}
@@ -430,10 +631,10 @@ func (tl *TimescaleLogger) GetPgssFilterOptions(ctx context.Context, instanceNam
 			ARRAY_AGG(DISTINCT username ORDER BY username) FILTER (WHERE username IS NOT NULL AND username <> ''),
 			ARRAY_AGG(DISTINCT app_name ORDER BY app_name) FILTER (WHERE app_name IS NOT NULL AND app_name <> '')
 		FROM pgss_delta_1m
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND capture_timestamp >= $2 AND capture_timestamp <= $3`
 	var dbs, users, apps []string
-	err := tl.pool.QueryRow(ctx, q, instanceName, from, to).Scan(&dbs, &users, &apps)
+	err := tl.pool.QueryRow(ctx, q, serverID, from, to).Scan(&dbs, &users, &apps)
 	if err != nil {
 		return &PgssFilterOptions{}, nil
 	}
@@ -451,8 +652,21 @@ func orEmpty(s []string) []string {
 	return s
 }
 
-// GetPgssDbBreakdown returns per-database workload totals for the By Database tab.
-func (tl *TimescaleLogger) GetPgssDbBreakdown(ctx context.Context, instanceName string, from, to time.Time) ([]PgssDbBreakdown, error) {
+// GetPgssHasData returns true if pgss_delta_1m has any rows for the given server
+// within the last 24 hours, indicating the collector has run at least twice.
+func (tl *TimescaleLogger) GetPgssHasData(ctx context.Context, serverID uuid.UUID) bool {
+	if tl == nil || tl.pool == nil {
+		return false
+	}
+	var n int
+	err := tl.pool.QueryRow(ctx,
+		`SELECT 1 FROM pgss_delta_1m WHERE server_id = $1 AND capture_timestamp >= NOW() - INTERVAL '24 hours' LIMIT 1`,
+		serverID,
+	).Scan(&n)
+	return err == nil
+}
+
+func (tl *TimescaleLogger) GetPgssDbBreakdown(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]PgssDbBreakdown, error) {
 	const q = `
 		WITH agg AS (
 			SELECT
@@ -463,7 +677,7 @@ func (tl *TimescaleLogger) GetPgssDbBreakdown(ctx context.Context, instanceName 
 				SUM(shared_blks_read)                                          AS total_read,
 				COUNT(DISTINCT query_id)                                       AS unique_queries
 			FROM pgss_delta_1m
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 			GROUP BY db_name
 		),
@@ -482,7 +696,7 @@ func (tl *TimescaleLogger) GetPgssDbBreakdown(ctx context.Context, instanceName 
 		ORDER BY a.total_exec_ms DESC
 		LIMIT 20`
 
-	pgRows, err := tl.pool.Query(ctx, q, instanceName, from, to)
+	pgRows, err := tl.pool.Query(ctx, q, serverID, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -498,8 +712,7 @@ func (tl *TimescaleLogger) GetPgssDbBreakdown(ctx context.Context, instanceName 
 	return out, pgRows.Err()
 }
 
-// GetPgssUserBreakdown returns per-login workload totals for the By User tab.
-func (tl *TimescaleLogger) GetPgssUserBreakdown(ctx context.Context, instanceName string, from, to time.Time) ([]PgssUserBreakdown, error) {
+func (tl *TimescaleLogger) GetPgssUserBreakdown(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]PgssUserBreakdown, error) {
 	const q = `
 		WITH agg AS (
 			SELECT
@@ -508,7 +721,7 @@ func (tl *TimescaleLogger) GetPgssUserBreakdown(ctx context.Context, instanceNam
 				SUM(calls)                                                     AS total_calls,
 				COUNT(DISTINCT query_id)                                       AS unique_queries
 			FROM pgss_delta_1m
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 			GROUP BY username
 		),
@@ -524,7 +737,7 @@ func (tl *TimescaleLogger) GetPgssUserBreakdown(ctx context.Context, instanceNam
 		ORDER BY a.total_exec_ms DESC
 		LIMIT 20`
 
-	pgRows, err := tl.pool.Query(ctx, q, instanceName, from, to)
+	pgRows, err := tl.pool.Query(ctx, q, serverID, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -540,32 +753,28 @@ func (tl *TimescaleLogger) GetPgssUserBreakdown(ctx context.Context, instanceNam
 	return out, pgRows.Err()
 }
 
-// PgssLatencyPoint holds latency percentile approximations for a time bucket.
 type PgssLatencyPoint struct {
-	Timestamp time.Time `json:"ts"`
+	Timestamp time.Time `json:"capture_timestamp"`
 	P50       float64   `json:"p50"`
 	P95       float64   `json:"p95"`
 	P99       float64   `json:"p99"`
 	MaxExec   float64   `json:"max_exec"`
 }
 
-// GetPgssLatencyTimeSeries approximates latency percentiles from mean_exec_time per query.
-// True percentiles require PG17+ histogram buckets; this uses weighted approximation.
-func (tl *TimescaleLogger) GetPgssLatencyTimeSeries(ctx context.Context, instanceName string, from, to time.Time) ([]PgssLatencyPoint, error) {
+func (tl *TimescaleLogger) GetPgssLatencyTimeSeries(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]PgssLatencyPoint, error) {
 	const q = `
 		SELECT capture_timestamp, query_id, calls, mean_exec_time
 		FROM pgss_delta_1m
-		WHERE UPPER(server_instance_name) = UPPER($1) AND capture_timestamp >= $2 AND capture_timestamp <= $3
+		WHERE server_id = $1 AND capture_timestamp >= $2 AND capture_timestamp <= $3
 			AND calls > 0
 		ORDER BY capture_timestamp, mean_exec_time`
 
-	rows, err := tl.pool.Query(ctx, q, instanceName, from, to)
+	rows, err := tl.pool.Query(ctx, q, serverID, from, to)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	// Group by timestamp bucket
 	buckets := make(map[time.Time][]latencyEntry)
 	for rows.Next() {
 		var ts time.Time
@@ -581,7 +790,6 @@ func (tl *TimescaleLogger) GetPgssLatencyTimeSeries(ctx context.Context, instanc
 		return nil, err
 	}
 
-	// Sort bucket keys
 	keys := make([]time.Time, 0, len(buckets))
 	for k := range buckets {
 		keys = append(keys, k)
@@ -591,7 +799,6 @@ func (tl *TimescaleLogger) GetPgssLatencyTimeSeries(ctx context.Context, instanc
 	var points []PgssLatencyPoint
 	for _, ts := range keys {
 		entries := buckets[ts]
-		// Sort by mean latency for percentile approximation
 		sort.Slice(entries, func(i, j int) bool { return entries[i].meanMs < entries[j].meanMs })
 
 		var totalCalls int64
@@ -618,7 +825,6 @@ func (tl *TimescaleLogger) GetPgssLatencyTimeSeries(ctx context.Context, instanc
 	return points, nil
 }
 
-// weightedPercentile computes an approximate percentile from sorted (by meanMs) entries weighted by calls.
 func weightedPercentile(entries []latencyEntry, totalCalls int64, pct float64) float64 {
 	target := int64(math.Ceil(float64(totalCalls) * pct))
 	var cumulative int64
@@ -634,7 +840,6 @@ func weightedPercentile(entries []latencyEntry, totalCalls int64, pct float64) f
 	return 0
 }
 
-// PgssRegression represents a query that degraded between two time windows.
 type PgssRegression struct {
 	QueryID    int64     `json:"query_id"`
 	Query      string    `json:"query"`
@@ -645,8 +850,7 @@ type PgssRegression struct {
 	DetectedAt time.Time `json:"detected_at"`
 }
 
-// GetPgssRegressions compares the last 30m vs previous 30m and returns queries where mean_exec_time increased >50%.
-func (tl *TimescaleLogger) GetPgssRegressions(ctx context.Context, instanceName string) ([]PgssRegression, error) {
+func (tl *TimescaleLogger) GetPgssRegressions(ctx context.Context, serverID uuid.UUID) ([]PgssRegression, error) {
 	now := time.Now().UTC()
 	mid := now.Add(-30 * time.Minute)
 	start := now.Add(-60 * time.Minute)
@@ -657,7 +861,7 @@ func (tl *TimescaleLogger) GetPgssRegressions(ctx context.Context, instanceName 
 				SUM(total_exec_time) / NULLIF(SUM(calls), 0) AS avg_ms,
 				SUM(calls) AS total_calls
 			FROM pgss_delta_1m
-			WHERE UPPER(server_instance_name) = UPPER($1) AND capture_timestamp >= $2 AND capture_timestamp < $3
+			WHERE server_id = $1 AND capture_timestamp >= $2 AND capture_timestamp < $3
 			GROUP BY query_id
 			HAVING SUM(calls) > 0
 		),
@@ -666,7 +870,7 @@ func (tl *TimescaleLogger) GetPgssRegressions(ctx context.Context, instanceName 
 				SUM(total_exec_time) / NULLIF(SUM(calls), 0) AS avg_ms,
 				SUM(calls) AS total_calls
 			FROM pgss_delta_1m
-			WHERE UPPER(server_instance_name) = UPPER($1) AND capture_timestamp >= $3 AND capture_timestamp <= $4
+			WHERE server_id = $1 AND capture_timestamp >= $3 AND capture_timestamp <= $4
 			GROUP BY query_id
 			HAVING SUM(calls) > 0
 		)
@@ -677,13 +881,13 @@ func (tl *TimescaleLogger) GetPgssRegressions(ctx context.Context, instanceName 
 			((c.avg_ms - p.avg_ms) / NULLIF(p.avg_ms, 0)) * 100.0
 		FROM curr c
 		JOIN prev p ON p.query_id = c.query_id
-		LEFT JOIN pgss_query_dim q ON UPPER(q.server_instance_name) = UPPER($1) AND q.query_id = c.query_id
+		LEFT JOIN pgss_query_dim q ON q.server_id = $1 AND q.query_id = c.query_id
 		WHERE p.avg_ms > 0 AND ((c.avg_ms - p.avg_ms) / p.avg_ms) > 0.5
 		  AND COALESCE(q.query_text, '') NOT LIKE '%%/* SQL_OPTIMA */%%'
 		ORDER BY ((c.avg_ms - p.avg_ms) / NULLIF(p.avg_ms, 0)) DESC
 		LIMIT 20`
 
-	rows, err := tl.pool.Query(ctx, q, instanceName, start, mid, now)
+	rows, err := tl.pool.Query(ctx, q, serverID, start, mid, now)
 	if err != nil {
 		return nil, err
 	}
@@ -706,7 +910,6 @@ func (tl *TimescaleLogger) GetPgssRegressions(ctx context.Context, instanceName 
 	return results, rows.Err()
 }
 
-// PgssSummary holds aggregate KPI values for the summary strip.
 type PgssSummary struct {
 	QueryLoadMsSec     float64
 	QPS                float64
@@ -718,8 +921,7 @@ type PgssSummary struct {
 	UniqueQueryCount   int64
 }
 
-// GetPgssSummary returns aggregate KPI metrics for the incident summary strip.
-func (tl *TimescaleLogger) GetPgssSummary(ctx context.Context, instanceName string, from, to time.Time) (*PgssSummary, error) {
+func (tl *TimescaleLogger) GetPgssSummary(ctx context.Context, serverID uuid.UUID, from, to time.Time) (*PgssSummary, error) {
 	intervalSec := to.Sub(from).Seconds()
 	if intervalSec <= 0 {
 		intervalSec = 3600
@@ -735,11 +937,11 @@ func (tl *TimescaleLogger) GetPgssSummary(ctx context.Context, instanceName stri
 			COALESCE(SUM(wal_bytes), 0),
 			COUNT(DISTINCT query_id)
 		FROM pgss_delta_1m
-		WHERE UPPER(server_instance_name) = UPPER($1) AND capture_timestamp >= $2 AND capture_timestamp <= $3`
+		WHERE server_id = $1 AND capture_timestamp >= $2 AND capture_timestamp <= $3`
 
 	var totalExec, totalCalls, blksHit, blksRead, tempBlks, walBytes float64
 	var uniqueQueries int64
-	if err := tl.pool.QueryRow(ctx, q, instanceName, from, to).Scan(
+	if err := tl.pool.QueryRow(ctx, q, serverID, from, to).Scan(
 		&totalExec, &totalCalls, &blksHit, &blksRead, &tempBlks, &walBytes, &uniqueQueries,
 	); err != nil {
 		return nil, err
@@ -760,16 +962,15 @@ func (tl *TimescaleLogger) GetPgssSummary(ctx context.Context, instanceName stri
 		s.CacheHitPct = 100.0
 	}
 
-	// Approximate P99 from per-query mean latencies weighted by calls
 	const p99q = `
 		SELECT calls, mean_exec_time
 		FROM pgss_delta_1m
-		WHERE UPPER(server_instance_name) = UPPER($1) AND capture_timestamp >= $2 AND capture_timestamp <= $3
+		WHERE server_id = $1 AND capture_timestamp >= $2 AND capture_timestamp <= $3
 			AND calls > 0
 		ORDER BY mean_exec_time`
-	rows, err := tl.pool.Query(ctx, p99q, instanceName, from, to)
+	rows, err := tl.pool.Query(ctx, p99q, serverID, from, to)
 	if err != nil {
-		return s, nil // return partial summary without p99
+		return s, nil
 	}
 	defer rows.Close()
 

@@ -8,8 +8,8 @@
 package handlers
 
 import (
+	"log/slog"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 
@@ -55,7 +55,7 @@ func (h *AdminCollectorHandlers) ListConfigs(w http.ResponseWriter, r *http.Requ
 	}
 	configs, err := repo.ListAll(r.Context())
 	if err != nil {
-		log.Printf("[AdminCollectorHandlers] ListConfigs error: %v", err)
+		slog.Error("[AdminCollectorHandlers] ListConfigs error", "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -92,7 +92,7 @@ func (h *AdminCollectorHandlers) UpdateConfig(w http.ResponseWriter, r *http.Req
 		updatedBy = claims.Username
 	}
 
-	if err := h.repo.UpdateFrequency(r.Context(), id, input.FrequencySeconds, updatedBy); err != nil {
+	if err := repo.UpdateFrequency(r.Context(), id, input.FrequencySeconds, updatedBy); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

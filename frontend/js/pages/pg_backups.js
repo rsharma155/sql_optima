@@ -48,7 +48,7 @@ window.PgBackupsView = async function() {
 
     // 3. Set Refresh Interval
     if (window.pgBackupsInterval) clearInterval(window.pgBackupsInterval);
-    window.pgBackupsInterval = setInterval(() => {
+    window.pgBackupsInterval = window.registerInterval(() => {
         if (window.appState.activeViewId === 'pg-backups') {
             refreshPgBackupData(inst.name);
         } else {

@@ -10,64 +10,59 @@
 package hot
 
 import (
+	"log/slog"
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
-// ────────────────────────────────────────────────
 // Row types (storage-layer DTOs)
-// ────────────────────────────────────────────────
 
-// SqlServerQueryRegressionRow is the storage-layer DTO for sqlserver_query_regressions.
 type SqlServerQueryRegressionRow struct {
-	CaptureTime    time.Time
-	InstanceName   string
-	DatabaseName   string
-	QueryHash      string
-	QueryText      string
-	RegressionType string
-	PreviousAvg    float64
-	CurrentAvg     float64
-	PercentChange  float64
-	PlanChanged    bool
+	CaptureTime    time.Time `json:"capture_time"`
+	ServerID       uuid.UUID `json:"server_id"`
+	DatabaseName   string    `json:"database_name"`
+	QueryHash      string    `json:"query_hash"`
+	QueryText      string    `json:"query_text"`
+	RegressionType string    `json:"regression_type"`
+	PreviousAvg    float64   `json:"previous_avg"`
+	CurrentAvg     float64   `json:"current_avg"`
+	PercentChange  float64   `json:"percent_change"`
+	PlanChanged    bool      `json:"plan_changed"`
 }
 
-// SqlServerPlanInstabilityRow is the storage-layer DTO for sqlserver_plan_instability.
 type SqlServerPlanInstabilityRow struct {
-	CaptureTime       time.Time
-	InstanceName      string
-	DatabaseName      string
-	QueryHash         string
-	QueryText         string
-	PlanCount         int
-	LastExecutionTime time.Time
+	CaptureTime       time.Time `json:"capture_time"`
+	ServerID          uuid.UUID `json:"server_id"`
+	DatabaseName      string    `json:"database_name"`
+	QueryHash         string    `json:"query_hash"`
+	QueryText         string    `json:"query_text"`
+	PlanCount         int       `json:"plan_count"`
+	LastExecutionTime time.Time `json:"last_execution_time"`
 }
 
-// SqlServerWatchedQueryRow is the storage-layer DTO for sqlserver_watched_queries.
 type SqlServerWatchedQueryRow struct {
-	ID             int
-	InstanceName   string
-	DatabaseName   string
-	QueryHash      string
-	ObjectID       sql.NullInt32
-	Name           string
-	QueryText      string
-	CreatedAt      time.Time
-	LastExecutedAt sql.NullTime
+	ID             int           `json:"id"`
+	ServerID       uuid.UUID     `json:"server_id"`
+	DatabaseName   string        `json:"database_name"`
+	QueryHash      string        `json:"query_hash"`
+	ObjectID       sql.NullInt32 `json:"object_id,omitempty"`
+	Name           string        `json:"name"`
+	QueryText      string        `json:"query_text"`
+	CreatedAt      time.Time     `json:"created_at"`
+	LastExecutedAt sql.NullTime  `json:"last_executed_at,omitempty"`
 }
 
-// SqlServerWatchedSnapshotRow is the storage-layer DTO for sqlserver_watched_query_snapshots.
 type SqlServerWatchedSnapshotRow struct {
-	SnapshotTime      time.Time
+	CaptureTimestamp  time.Time
 	WatchedID         int
-	InstanceName      string
+	ServerID          uuid.UUID
 	Executions        int64
 	AvgDurationMs     float64
 	AvgCpuMs          float64
@@ -81,7 +76,6 @@ type SqlServerWatchedSnapshotRow struct {
 	WaitStats         interface{} // Map or Slice for JSONB
 }
 
-// SqlServerWatchedEventRow is the storage-layer DTO for sqlserver_watched_query_events.
 type SqlServerWatchedEventRow struct {
 	ID        int
 	WatchedID int
@@ -90,17 +84,14 @@ type SqlServerWatchedEventRow struct {
 	Notes     string
 }
 
-// ────────────────────────────────────────────────
 // Regression writes & reads
-// ────────────────────────────────────────────────
 
-// LogSqlServerQueryRegressions batch-inserts regression detection results.
 func (tl *TimescaleLogger) LogSqlServerQueryRegressions(ctx context.Context, rows []SqlServerQueryRegressionRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	const q = `INSERT INTO sqlserver_query_regressions
-		(capture_time, server_instance_name, database_name, query_hash, query_text,
+		(capture_timestamp, server_id, database_name, query_hash, query_text,
 		 regression_type, previous_avg, current_avg, percent_change, plan_changed)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
 
@@ -110,7 +101,7 @@ func (tl *TimescaleLogger) LogSqlServerQueryRegressions(ctx context.Context, row
 		if h, err := strconv.ParseUint(strings.TrimPrefix(r.QueryHash, "0x"), 16, 64); err == nil {
 			qh = int64(h)
 		}
-		batch.Queue(q, r.CaptureTime, r.InstanceName, r.DatabaseName, qh,
+		batch.Queue(q, r.CaptureTime, r.ServerID, r.DatabaseName, qh,
 			r.QueryText, r.RegressionType, r.PreviousAvg, r.CurrentAvg, r.PercentChange, r.PlanChanged)
 	}
 	br := tl.pool.SendBatch(ctx, batch)
@@ -123,32 +114,31 @@ func (tl *TimescaleLogger) LogSqlServerQueryRegressions(ctx context.Context, row
 	return nil
 }
 
-// GetSqlServerQueryRegressions returns recent regression rows for an instance.
-func (tl *TimescaleLogger) GetSqlServerQueryRegressions(ctx context.Context, instance string, limit int) ([]SqlServerQueryRegressionRow, error) {
+func (tl *TimescaleLogger) GetSqlServerQueryRegressions(ctx context.Context, serverID uuid.UUID, limit int) ([]SqlServerQueryRegressionRow, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	const q = `SELECT capture_time, server_instance_name, database_name, query_hash, query_text,
+	const q = `SELECT capture_timestamp, server_id, database_name, query_hash, query_text,
 		regression_type, previous_avg, current_avg, percent_change, plan_changed
 		FROM sqlserver_query_regressions
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND query_text NOT LIKE '%/* SQL_OPTIMA */%'
-		ORDER BY capture_time DESC
+		ORDER BY capture_timestamp DESC
 		LIMIT $2`
 
-	rows, err := tl.pool.Query(ctx, q, instance, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("GetSqlServerQueryRegressions: %w", err)
 	}
 	defer rows.Close()
 
-	var results []SqlServerQueryRegressionRow
+	results := make([]SqlServerQueryRegressionRow, 0)
 	for rows.Next() {
 		var r SqlServerQueryRegressionRow
 		var qh int64
-		if err := rows.Scan(&r.CaptureTime, &r.InstanceName, &r.DatabaseName, &qh,
+		if err := rows.Scan(&r.CaptureTime, &r.ServerID, &r.DatabaseName, &qh,
 			&r.QueryText, &r.RegressionType, &r.PreviousAvg, &r.CurrentAvg, &r.PercentChange, &r.PlanChanged); err != nil {
-			log.Printf("[TSLogger] GetSqlServerQueryRegressions scan: %v", err)
+			slog.Info("[TSLogger] GetSqlServerQueryRegressions scan", "err", err)
 			continue
 		}
 		r.QueryHash = fmt.Sprintf("0x%X", uint64(qh))
@@ -157,26 +147,22 @@ func (tl *TimescaleLogger) GetSqlServerQueryRegressions(ctx context.Context, ins
 	return results, rows.Err()
 }
 
-// CountSqlServerRegressionsInWindow returns the number of regressions for an instance in a time window.
-func (tl *TimescaleLogger) CountSqlServerRegressionsInWindow(ctx context.Context, instance string, since time.Time) (int, error) {
+func (tl *TimescaleLogger) CountSqlServerRegressionsInWindow(ctx context.Context, serverID uuid.UUID, since time.Time) (int, error) {
 	var count int
 	err := tl.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM sqlserver_query_regressions WHERE UPPER(server_instance_name) = UPPER($1) AND capture_time >= $2`,
-		instance, since).Scan(&count)
+		`SELECT COUNT(*) FROM sqlserver_query_regressions WHERE server_id = $1 AND capture_timestamp >= $2`,
+		serverID, since).Scan(&count)
 	return count, err
 }
 
-// ────────────────────────────────────────────────
 // Plan instability writes & reads
-// ────────────────────────────────────────────────
 
-// LogSqlServerPlanInstability batch-inserts plan instability detection results.
 func (tl *TimescaleLogger) LogSqlServerPlanInstability(ctx context.Context, rows []SqlServerPlanInstabilityRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	const q = `INSERT INTO sqlserver_plan_instability
-		(capture_time, server_instance_name, database_name, query_hash, query_text, plan_count, last_execution_time)
+		(capture_timestamp, server_id, database_name, query_hash, query_text, plan_count, last_execution_time)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`
 
 	batch := &pgx.Batch{}
@@ -185,7 +171,7 @@ func (tl *TimescaleLogger) LogSqlServerPlanInstability(ctx context.Context, rows
 		if h, err := strconv.ParseUint(strings.TrimPrefix(r.QueryHash, "0x"), 16, 64); err == nil {
 			qh = int64(h)
 		}
-		batch.Queue(q, r.CaptureTime, r.InstanceName, r.DatabaseName, qh,
+		batch.Queue(q, r.CaptureTime, r.ServerID, r.DatabaseName, qh,
 			r.QueryText, r.PlanCount, r.LastExecutionTime)
 	}
 	br := tl.pool.SendBatch(ctx, batch)
@@ -198,36 +184,35 @@ func (tl *TimescaleLogger) LogSqlServerPlanInstability(ctx context.Context, rows
 	return nil
 }
 
-// GetSqlServerPlanInstability returns recent plan instability rows for an instance.
-func (tl *TimescaleLogger) GetSqlServerPlanInstability(ctx context.Context, instance string, limit int) ([]SqlServerPlanInstabilityRow, error) {
+func (tl *TimescaleLogger) GetSqlServerPlanInstability(ctx context.Context, serverID uuid.UUID, limit int) ([]SqlServerPlanInstabilityRow, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	const q = `SELECT capture_time, server_instance_name, database_name, query_hash, query_text, plan_count, last_execution_time
+	const q = `SELECT capture_timestamp, server_id, database_name, query_hash, query_text, plan_count, last_execution_time
 		FROM (
 			SELECT DISTINCT ON (query_hash) 
-				capture_time, server_instance_name, database_name, query_hash, query_text, plan_count, last_execution_time
+				capture_timestamp, server_id, database_name, query_hash, query_text, plan_count, last_execution_time
 			FROM sqlserver_plan_instability
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND query_text NOT LIKE '%/* SQL_OPTIMA */%'
-			ORDER BY query_hash, capture_time DESC
+			ORDER BY query_hash, capture_timestamp DESC
 		) sub
-		ORDER BY capture_time DESC
+		ORDER BY capture_timestamp DESC
 		LIMIT $2`
 
-	rows, err := tl.pool.Query(ctx, q, instance, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("GetSqlServerPlanInstability: %w", err)
 	}
 	defer rows.Close()
 
-	var results []SqlServerPlanInstabilityRow
+	results := make([]SqlServerPlanInstabilityRow, 0)
 	for rows.Next() {
 		var r SqlServerPlanInstabilityRow
 		var qh int64
-		if err := rows.Scan(&r.CaptureTime, &r.InstanceName, &r.DatabaseName, &qh,
+		if err := rows.Scan(&r.CaptureTime, &r.ServerID, &r.DatabaseName, &qh,
 			&r.QueryText, &r.PlanCount, &r.LastExecutionTime); err != nil {
-			log.Printf("[TSLogger] GetSqlServerPlanInstability scan: %v", err)
+			slog.Info("[TSLogger] GetSqlServerPlanInstability scan", "err", err)
 			continue
 		}
 		r.QueryHash = fmt.Sprintf("0x%X", uint64(qh))
@@ -236,20 +221,16 @@ func (tl *TimescaleLogger) GetSqlServerPlanInstability(ctx context.Context, inst
 	return results, rows.Err()
 }
 
-// CountSqlServerPlanInstabilityInWindow returns the number of unstable queries for an instance in a time window.
-func (tl *TimescaleLogger) CountSqlServerPlanInstabilityInWindow(ctx context.Context, instance string, since time.Time) (int, error) {
+func (tl *TimescaleLogger) CountSqlServerPlanInstabilityInWindow(ctx context.Context, serverID uuid.UUID, since time.Time) (int, error) {
 	var count int
 	err := tl.pool.QueryRow(ctx,
-		`SELECT COUNT(DISTINCT query_hash) FROM sqlserver_plan_instability WHERE UPPER(server_instance_name) = UPPER($1) AND capture_time >= $2`,
-		instance, since).Scan(&count)
+		`SELECT COUNT(DISTINCT query_hash) FROM sqlserver_plan_instability WHERE server_id = $1 AND capture_timestamp >= $2`,
+		serverID, since).Scan(&count)
 	return count, err
 }
 
-// ────────────────────────────────────────────────
 // Watched queries CRUD
-// ────────────────────────────────────────────────
 
-// InsertSqlServerWatchedQuery adds a query to the watch list and returns the new ID.
 func (tl *TimescaleLogger) InsertSqlServerWatchedQuery(ctx context.Context, row SqlServerWatchedQueryRow) (int, error) {
 	var id int
 	var qh int64
@@ -257,15 +238,10 @@ func (tl *TimescaleLogger) InsertSqlServerWatchedQuery(ctx context.Context, row 
 		qh = int64(h)
 	}
 	err := tl.pool.QueryRow(ctx,
-		`INSERT INTO sqlserver_watched_queries (server_instance_name, database_name, query_hash, object_id, name, query_text)
+		`INSERT INTO sqlserver_watched_queries (server_id, database_name, query_hash, object_id, name, query_text)
 		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-		row.InstanceName, row.DatabaseName, qh, row.ObjectID, row.Name, row.QueryText,
+		row.ServerID, row.DatabaseName, qh, row.ObjectID, row.Name, row.QueryText,
 	).Scan(&id)
-
-	if err != nil && strings.Contains(err.Error(), "database_name") {
-		// Fallback for missing database_name column (migration not yet applied)
-		return tl.insertSqlServerWatchedQueryLegacy(ctx, row)
-	}
 
 	if err != nil {
 		return 0, fmt.Errorf("InsertSqlServerWatchedQuery: %w", err)
@@ -273,30 +249,11 @@ func (tl *TimescaleLogger) InsertSqlServerWatchedQuery(ctx context.Context, row 
 	return id, nil
 }
 
-func (tl *TimescaleLogger) insertSqlServerWatchedQueryLegacy(ctx context.Context, row SqlServerWatchedQueryRow) (int, error) {
-	var id int
-	var qh int64
-	if h, err := strconv.ParseUint(strings.TrimPrefix(row.QueryHash, "0x"), 16, 64); err == nil {
-		qh = int64(h)
-	}
-	err := tl.pool.QueryRow(ctx,
-		`INSERT INTO sqlserver_watched_queries (server_instance_name, query_hash, object_id, name, query_text)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		row.InstanceName, qh, row.ObjectID, row.Name, row.QueryText,
-	).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("InsertSqlServerWatchedQueryLegacy: %w", err)
-	}
-	return id, nil
-}
-
-// UpdateSqlServerWatchedQueryText updates the full SQL text for a watched query.
 func (tl *TimescaleLogger) UpdateSqlServerWatchedQueryText(ctx context.Context, id int, text string) error {
 	_, err := tl.pool.Exec(ctx, `UPDATE sqlserver_watched_queries SET query_text = $1 WHERE id = $2`, text, id)
 	return err
 }
 
-// DeleteSqlServerWatchedQuery removes a watched query by ID (cascades to snapshots + events).
 func (tl *TimescaleLogger) DeleteSqlServerWatchedQuery(ctx context.Context, id int) error {
 	tag, err := tl.pool.Exec(ctx, `DELETE FROM sqlserver_watched_queries WHERE id = $1`, id)
 	if err != nil {
@@ -308,21 +265,17 @@ func (tl *TimescaleLogger) DeleteSqlServerWatchedQuery(ctx context.Context, id i
 	return nil
 }
 
-func (tl *TimescaleLogger) ListSqlServerWatchedQueries(ctx context.Context, instance string) ([]SqlServerWatchedQueryRow, error) {
-	// Primary attempt with database_name
+func (tl *TimescaleLogger) ListSqlServerWatchedQueries(ctx context.Context, serverID uuid.UUID) ([]SqlServerWatchedQueryRow, error) {
 	const q = `
-		SELECT q.id, q.server_instance_name, COALESCE(q.database_name,'') as database_name, q.query_hash, q.object_id, q.name, 
+		SELECT q.id, q.server_id, COALESCE(q.database_name,'') as database_name, q.query_hash, q.object_id, q.name, 
 		       COALESCE(q.query_text,'') as query_text, q.created_at,
 		       (SELECT MAX(last_execution_time) FROM sqlserver_watched_query_snapshots s WHERE s.watched_id = q.id) as last_executed
 		FROM sqlserver_watched_queries q
-		WHERE UPPER(q.server_instance_name) = UPPER($1)
+		WHERE q.server_id = $1
 		ORDER BY q.created_at DESC`
 
-	rows, err := tl.pool.Query(ctx, q, instance)
+	rows, err := tl.pool.Query(ctx, q, serverID)
 	if err != nil {
-		if strings.Contains(err.Error(), "database_name") {
-			return tl.listSqlServerWatchedQueriesLegacy(ctx, instance)
-		}
 		return nil, fmt.Errorf("ListSqlServerWatchedQueries: %w", err)
 	}
 	defer rows.Close()
@@ -330,47 +283,21 @@ func (tl *TimescaleLogger) ListSqlServerWatchedQueries(ctx context.Context, inst
 	var results []SqlServerWatchedQueryRow
 	for rows.Next() {
 		var r SqlServerWatchedQueryRow
-		if err := rows.Scan(&r.ID, &r.InstanceName, &r.DatabaseName, &r.QueryHash, &r.ObjectID, &r.Name, &r.QueryText, &r.CreatedAt, &r.LastExecutedAt); err != nil {
-			log.Printf("[TSLogger] ListSqlServerWatchedQueries scan: %v", err)
+		var qh int64
+		if err := rows.Scan(&r.ID, &r.ServerID, &r.DatabaseName, &qh, &r.ObjectID, &r.Name, &r.QueryText, &r.CreatedAt, &r.LastExecutedAt); err != nil {
+			slog.Info("[TSLogger] ListSqlServerWatchedQueries scan", "err", err)
 			continue
 		}
+		r.QueryHash = fmt.Sprintf("0x%X", uint64(qh))
 		results = append(results, r)
 	}
 	return results, rows.Err()
 }
 
-func (tl *TimescaleLogger) listSqlServerWatchedQueriesLegacy(ctx context.Context, instance string) ([]SqlServerWatchedQueryRow, error) {
-	const q = `
-		SELECT q.id, q.server_instance_name, q.query_hash, q.object_id, q.name, 
-		       COALESCE(q.query_text,'') as query_text, q.created_at,
-		       (SELECT MAX(last_execution_time) FROM sqlserver_watched_query_snapshots s WHERE s.watched_id = q.id) as last_executed
-		FROM sqlserver_watched_queries q
-		WHERE UPPER(q.server_instance_name) = UPPER($1)
-		ORDER BY q.created_at DESC`
-
-	rows, err := tl.pool.Query(ctx, q, instance)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var results []SqlServerWatchedQueryRow
-	for rows.Next() {
-		var r SqlServerWatchedQueryRow
-		if err := rows.Scan(&r.ID, &r.InstanceName, &r.QueryHash, &r.ObjectID, &r.Name, &r.QueryText, &r.CreatedAt, &r.LastExecutedAt); err != nil {
-			continue
-		}
-		r.DatabaseName = "" // Field empty in legacy mode
-		results = append(results, r)
-	}
-	return results, nil
-}
-
-// GetSqlServerWatchedQuery returns a single watched query by ID.
 func (tl *TimescaleLogger) GetSqlServerWatchedQuery(ctx context.Context, id int) (*SqlServerWatchedQueryRow, error) {
 	var r SqlServerWatchedQueryRow
 	const q = `
-		SELECT q.id, q.server_instance_name, COALESCE(q.database_name,'') as database_name, q.query_hash, q.object_id, q.name, 
+		SELECT q.id, q.server_id, COALESCE(q.database_name,'') as database_name, q.query_hash, q.object_id, q.name, 
 		       COALESCE(q.query_text,'') as query_text,
 		       q.created_at,
 		       (SELECT MAX(last_execution_time) FROM sqlserver_watched_query_snapshots snap WHERE snap.watched_id = q.id) as last_executed
@@ -379,62 +306,35 @@ func (tl *TimescaleLogger) GetSqlServerWatchedQuery(ctx context.Context, id int)
 
 	var qh int64
 	err := tl.pool.QueryRow(ctx, q, id).Scan(
-		&r.ID, &r.InstanceName, &r.DatabaseName, &qh, &r.ObjectID, &r.Name, &r.QueryText, &r.CreatedAt, &r.LastExecutedAt,
+		&r.ID, &r.ServerID, &r.DatabaseName, &qh, &r.ObjectID, &r.Name, &r.QueryText, &r.CreatedAt, &r.LastExecutedAt,
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "database_name") {
-			return tl.getSqlServerWatchedQueryLegacy(ctx, id)
-		}
 		return nil, fmt.Errorf("GetSqlServerWatchedQuery(%d): %w", id, err)
 	}
 	r.QueryHash = fmt.Sprintf("0x%X", uint64(qh))
 	return &r, nil
 }
 
-func (tl *TimescaleLogger) getSqlServerWatchedQueryLegacy(ctx context.Context, id int) (*SqlServerWatchedQueryRow, error) {
-	var r SqlServerWatchedQueryRow
-	const q = `
-		SELECT q.id, q.server_instance_name, q.query_hash, q.object_id, q.name, 
-		       COALESCE(q.query_text,'') as query_text,
-		       q.created_at,
-		       (SELECT MAX(last_execution_time) FROM sqlserver_watched_query_snapshots snap WHERE snap.watched_id = q.id) as last_executed
-		FROM sqlserver_watched_queries q
-		WHERE q.id = $1`
-
-	var qh int64
-	err := tl.pool.QueryRow(ctx, q, id).Scan(
-		&r.ID, &r.InstanceName, &qh, &r.ObjectID, &r.Name, &r.QueryText, &r.CreatedAt, &r.LastExecutedAt,
-	)
-	if err != nil {
-		return nil, err
-	}
-	r.QueryHash = fmt.Sprintf("0x%X", uint64(qh))
-	r.DatabaseName = ""
-	return &r, nil
-}
-
-// CountSqlServerWatchedQueries returns the number of watched queries for an instance.
-func (tl *TimescaleLogger) CountSqlServerWatchedQueries(ctx context.Context, instance string) (int, error) {
+func (tl *TimescaleLogger) CountSqlServerWatchedQueries(ctx context.Context, serverID uuid.UUID) (int, error) {
 	var count int
 	err := tl.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM sqlserver_watched_queries WHERE UPPER(server_instance_name) = UPPER($1)`, instance,
+		`SELECT COUNT(*) FROM sqlserver_watched_queries WHERE server_id = $1`, serverID,
 	).Scan(&count)
 	return count, err
 }
 
-// LogSqlServerWatchedQuerySnapshot batch-inserts snapshot rows for watched queries.
 func (tl *TimescaleLogger) LogSqlServerWatchedQuerySnapshot(ctx context.Context, rows []SqlServerWatchedSnapshotRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	const q = `INSERT INTO sqlserver_watched_query_snapshots
-		(snapshot_time, watched_id, server_instance_name, executions, avg_duration_ms, avg_cpu_ms,
+		(capture_timestamp, watched_id, server_id, executions, avg_duration_ms, avg_cpu_ms,
 		 avg_reads, total_duration_ms, total_cpu_ms, plan_count, last_execution_time, query_plan, wait_stats)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`
 
 	batch := &pgx.Batch{}
 	for _, r := range rows {
-		batch.Queue(q, r.SnapshotTime, r.WatchedID, r.InstanceName, r.Executions, r.AvgDurationMs, r.AvgCpuMs,
+		batch.Queue(q, r.CaptureTimestamp, r.WatchedID, r.ServerID, r.Executions, r.AvgDurationMs, r.AvgCpuMs,
 			r.AvgReads, r.TotalDurationMs, r.TotalCpuMs, r.PlanCount, r.LastExecutionTime, r.QueryPlan, r.WaitStats)
 	}
 
@@ -442,14 +342,13 @@ func (tl *TimescaleLogger) LogSqlServerWatchedQuerySnapshot(ctx context.Context,
 	return res.Close()
 }
 
-// GetSqlServerWatchedQuerySnapshots returns time-series snapshots for a watched query in a time range.
 func (tl *TimescaleLogger) GetSqlServerWatchedQuerySnapshots(ctx context.Context, watchedID int, from, to time.Time) ([]SqlServerWatchedSnapshotRow, error) {
-	const q = `SELECT snapshot_time, watched_id, server_instance_name, executions,
+	const q = `SELECT capture_timestamp, watched_id, server_id, executions,
 		avg_duration_ms, avg_cpu_ms, avg_reads, total_duration_ms, total_cpu_ms,
 		plan_count, last_execution_time, COALESCE(query_plan, ''), wait_stats
 		FROM sqlserver_watched_query_snapshots
-		WHERE watched_id = $1 AND snapshot_time >= $2 AND snapshot_time <= $3
-		ORDER BY snapshot_time ASC`
+		WHERE watched_id = $1 AND capture_timestamp >= $2 AND capture_timestamp <= $3
+		ORDER BY capture_timestamp ASC`
 
 	rows, err := tl.pool.Query(ctx, q, watchedID, from, to)
 	if err != nil {
@@ -460,10 +359,10 @@ func (tl *TimescaleLogger) GetSqlServerWatchedQuerySnapshots(ctx context.Context
 	var results []SqlServerWatchedSnapshotRow
 	for rows.Next() {
 		var r SqlServerWatchedSnapshotRow
-		if err := rows.Scan(&r.SnapshotTime, &r.WatchedID, &r.InstanceName, &r.Executions,
+		if err := rows.Scan(&r.CaptureTimestamp, &r.WatchedID, &r.ServerID, &r.Executions,
 			&r.AvgDurationMs, &r.AvgCpuMs, &r.AvgReads, &r.TotalDurationMs,
 			&r.TotalCpuMs, &r.PlanCount, &r.LastExecutionTime, &r.QueryPlan, &r.WaitStats); err != nil {
-			log.Printf("[TSLogger] GetSqlServerWatchedQuerySnapshots scan: %v", err)
+			slog.Info("[TSLogger] GetSqlServerWatchedQuerySnapshots scan", "err", err)
 			continue
 		}
 		results = append(results, r)
@@ -471,11 +370,8 @@ func (tl *TimescaleLogger) GetSqlServerWatchedQuerySnapshots(ctx context.Context
 	return results, rows.Err()
 }
 
-// ────────────────────────────────────────────────
 // Watched query events
-// ────────────────────────────────────────────────
 
-// InsertSqlServerWatchedQueryEvent records an optimization event marker.
 func (tl *TimescaleLogger) InsertSqlServerWatchedQueryEvent(ctx context.Context, row SqlServerWatchedEventRow) error {
 	_, err := tl.pool.Exec(ctx,
 		`INSERT INTO sqlserver_watched_query_events (watched_id, event_time, event_type, notes)
@@ -488,7 +384,6 @@ func (tl *TimescaleLogger) InsertSqlServerWatchedQueryEvent(ctx context.Context,
 	return nil
 }
 
-// GetSqlServerWatchedQueryEvents returns all events for a watched query.
 func (tl *TimescaleLogger) GetSqlServerWatchedQueryEvents(ctx context.Context, watchedID int) ([]SqlServerWatchedEventRow, error) {
 	const q = `SELECT id, watched_id, event_time, event_type, COALESCE(notes,'')
 		FROM sqlserver_watched_query_events
@@ -505,7 +400,7 @@ func (tl *TimescaleLogger) GetSqlServerWatchedQueryEvents(ctx context.Context, w
 	for rows.Next() {
 		var r SqlServerWatchedEventRow
 		if err := rows.Scan(&r.ID, &r.WatchedID, &r.EventTime, &r.EventType, &r.Notes); err != nil {
-			log.Printf("[TSLogger] GetSqlServerWatchedQueryEvents scan: %v", err)
+			slog.Info("[TSLogger] GetSqlServerWatchedQueryEvents scan", "err", err)
 			continue
 		}
 		results = append(results, r)
@@ -513,12 +408,9 @@ func (tl *TimescaleLogger) GetSqlServerWatchedQueryEvents(ctx context.Context, w
 	return results, rows.Err()
 }
 
-// ────────────────────────────────────────────────
 // Query Analysis Summary (aggregated from existing tables)
-// ────────────────────────────────────────────────
 
-// GetSqlServerQueryAnalysisSummary aggregates KPI data from sqlserver_query_stats_history + regression/instability counts.
-func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context, instance string, hours int, excludeSystem bool) (*SqlServerQueryAnalysisSummaryRow, error) {
+func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context, serverID uuid.UUID, hours int, excludeSystem bool) (*SqlServerQueryAnalysisSummaryRow, error) {
 	var s SqlServerQueryAnalysisSummaryRow
 	if hours <= 0 {
 		hours = 24
@@ -550,7 +442,7 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		`
 	}
 
-	// 1. Core KPIs from history
+	// Core KPIs from history
 	q1 := fmt.Sprintf(`
 		SELECT 
 			COALESCE(SUM(qh.exec_delta), 0),
@@ -560,30 +452,30 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 			COALESCE(COUNT(DISTINCT qh.query_hash), 0)
 		FROM sqlserver_query_stats_history qh
 		LEFT JOIN sqlserver_query_classification_dim class
-		  ON class.instance_id = qh.instance_id
+		  ON class.server_id = qh.server_id
 		 AND class.query_hash = qh.query_hash
 		LEFT JOIN sqlserver_query_metrics_v2 qm
-		  ON qm.instance_id = qh.instance_id
+		  ON qm.server_id = qh.server_id
 		 AND qm.query_hash = qh.query_hash
-		WHERE qh.instance_id = $1
-		  AND qh.ts >= NOW() - ($2 * INTERVAL '1 hour')
+		WHERE qh.server_id = $1
+		  AND qh.capture_timestamp >= NOW() - ($2 * INTERVAL '1 hour')
 		  AND COALESCE(qm.is_user_workload, 1) = 1
 		  %s`, filterClause)
 
-	err := tl.pool.QueryRow(ctx, q1, instance, hours).Scan(&s.TotalExecutions, &s.AvgCPU, &s.AvgDuration, &s.AvgReads, &s.QueriesExecutedInRange)
+	err := tl.pool.QueryRow(ctx, q1, serverID, hours).Scan(&s.TotalExecutions, &s.AvgCPU, &s.AvgDuration, &s.AvgReads, &s.QueriesExecutedInRange)
 	if err != nil {
-		log.Printf("[TSLogger] GetSqlServerQueryAnalysisSummary history: %v", err)
+		slog.Info("[TSLogger] GetSqlServerQueryAnalysisSummary history", "err", err)
 	}
 
-	// 2. Top 10 CPU Share
+	// Top 10 CPU Share
 	if err := tl.pool.QueryRow(ctx, `
 		WITH total AS (
 			SELECT SUM(qh.cpu_delta_ms) as total_cpu
 			FROM sqlserver_query_stats_history qh
 			LEFT JOIN sqlserver_query_metrics_v2 qm
-			  ON qm.instance_id = qh.instance_id
+			  ON qm.server_id = qh.server_id
 			 AND qm.query_hash = qh.query_hash
-			WHERE qh.instance_id = $1 AND qh.ts >= NOW() - ($2 * INTERVAL '1 hour')
+			WHERE qh.server_id = $1 AND qh.capture_timestamp >= NOW() - ($2 * INTERVAL '1 hour')
 			  AND COALESCE(qm.is_user_workload, 1) = 1
 		),
 		top10 AS (
@@ -592,9 +484,9 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 				SELECT SUM(qh.cpu_delta_ms) as query_cpu
 				FROM sqlserver_query_stats_history qh
 				LEFT JOIN sqlserver_query_metrics_v2 qm
-				  ON qm.instance_id = qh.instance_id
+				  ON qm.server_id = qh.server_id
 				 AND qm.query_hash = qh.query_hash
-				WHERE qh.instance_id = $1 AND qh.ts >= NOW() - ($2 * INTERVAL '1 hour')
+				WHERE qh.server_id = $1 AND qh.capture_timestamp >= NOW() - ($2 * INTERVAL '1 hour')
 				  AND COALESCE(qm.is_user_workload, 1) = 1
 				GROUP BY qh.query_hash
 				ORDER BY query_cpu DESC
@@ -603,69 +495,67 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		)
 		SELECT COALESCE((top_cpu::float8 / NULLIF(total_cpu, 0)) * 100, 0)
 		FROM total, top10`,
-		instance, hours,
+		serverID, hours,
 	).Scan(&s.Top10CpuSharePct); err != nil {
-		log.Printf("[TSLogger] GetSqlServerQueryAnalysisSummary top10 cpu share: %v", err)
+		slog.Info("[TSLogger] GetSqlServerQueryAnalysisSummary top10 cpu share", "err", err)
 	}
 
-	// 3. Total Queries in Snapshot (User queries)
+	// Total Queries in Snapshot (User queries)
 	q3 := fmt.Sprintf(`
 		SELECT COUNT(DISTINCT s.query_hash)
 		FROM sqlserver_query_stats_snapshot_v2 s
 		LEFT JOIN sqlserver_query_classification_dim class
-		  ON class.instance_id = s.instance_id AND class.query_hash = s.query_hash
+		  ON class.server_id = s.server_id AND class.query_hash = s.query_hash
 		LEFT JOIN sqlserver_query_metrics_v2 qm
-		  ON qm.instance_id = s.instance_id 
+		  ON qm.server_id = s.server_id
 		 AND qm.query_hash = s.query_hash
-		WHERE s.instance_id = $1
+		WHERE s.server_id = $1
 		  AND COALESCE(qm.is_user_workload, 1) = 1
 		  %s`, filterClause)
-	_ = tl.pool.QueryRow(ctx, q3, instance).Scan(&s.TotalQueriesInQS)
+	_ = tl.pool.QueryRow(ctx, q3, serverID).Scan(&s.TotalQueriesInQS)
 
-	// 4. Queries with Single Execution in range
+	// Queries with Single Execution in range
 	_ = tl.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM (
 			SELECT qh.query_hash
 			FROM sqlserver_query_stats_history qh
 			LEFT JOIN sqlserver_query_metrics_v2 qm
-			  ON qm.instance_id = qh.instance_id
+			  ON qm.server_id = qh.server_id
 			 AND qm.query_hash = qh.query_hash
-			WHERE qh.instance_id = $1 AND qh.ts >= NOW() - ($2 * INTERVAL '1 hour')
+			WHERE qh.server_id = $1 AND qh.capture_timestamp >= NOW() - ($2 * INTERVAL '1 hour')
 			  AND COALESCE(qm.is_user_workload, 1) = 1
 			GROUP BY qh.query_hash
 			HAVING SUM(qh.exec_delta) = 1
 		) sub`,
-		instance, hours,
+		serverID, hours,
 	).Scan(&s.QueriesSingleExecution)
 
 	// Regression count (last 24h)
 	since24h := time.Now().UTC().Add(-24 * time.Hour)
-	s.Regressions24h, _ = tl.CountSqlServerRegressionsInWindow(ctx, instance, since24h)
+	s.Regressions24h, _ = tl.CountSqlServerRegressionsInWindow(ctx, serverID, since24h)
 
 	// Plan instability count (last 24h)
-	s.PlanChanges24h, _ = tl.CountSqlServerPlanInstabilityInWindow(ctx, instance, since24h)
+	s.PlanChanges24h, _ = tl.CountSqlServerPlanInstabilityInWindow(ctx, serverID, since24h)
 	s.QueriesWithMultiPlans = int64(s.PlanChanges24h)
 
 	return &s, nil
 }
 
-// SqlServerQueryAnalysisSummaryRow is the storage-layer DTO for the summary endpoint.
 type SqlServerQueryAnalysisSummaryRow struct {
-	TotalExecutions        int64
-	AvgDuration            float64
-	AvgCPU                 float64
-	AvgReads               float64
-	Regressions24h         int
-	PlanChanges24h         int
-	Top10CpuSharePct       float64
-	TotalQueriesInQS       int64
-	QueriesExecutedInRange int64
-	QueriesWithMultiPlans  int64
-	QueriesSingleExecution int64
+	TotalExecutions        int64   `json:"total_executions"`
+	AvgDuration            float64 `json:"avg_duration_ms"`
+	AvgCPU                 float64 `json:"avg_cpu_ms"`
+	AvgReads               float64 `json:"avg_reads"`
+	Regressions24h         int     `json:"regressions_24h"`
+	PlanChanges24h         int     `json:"plan_changes_24h"`
+	Top10CpuSharePct       float64 `json:"top_10_cpu_share_pct"`
+	TotalQueriesInQS       int64   `json:"total_queries_in_qs"`
+	QueriesExecutedInRange int64   `json:"queries_executed_in_range"`
+	QueriesWithMultiPlans  int64   `json:"queries_with_multi_plans"`
+	QueriesSingleExecution int64   `json:"queries_single_execution"`
 }
 
-// GetSqlServerTopQueriesFromInterval returns top queries from the existing sqlserver_query_stats_interval table.
-func (tl *TimescaleLogger) GetSqlServerTopQueriesFromInterval(ctx context.Context, instance, sortBy string, limit, hours int, excludeSystem bool) ([]SqlServerTopQueryIntervalRow, error) {
+func (tl *TimescaleLogger) GetSqlServerTopQueriesFromInterval(ctx context.Context, serverID uuid.UUID, sortBy string, limit, hours int, excludeSystem bool) ([]SqlServerTopQueryIntervalRow, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -729,10 +619,10 @@ func (tl *TimescaleLogger) GetSqlServerTopQueriesFromInterval(ctx context.Contex
 		       MAX(q.last_execution_time) as last_execution_time
 		FROM sqlserver_query_metrics_v2 q
 		LEFT JOIN sqlserver_query_classification_dim class
-		  ON class.instance_id = q.instance_id
+		  ON class.server_id = q.server_id
 		 AND class.query_hash = q.query_hash
-		WHERE q.instance_id = $1
-		  AND q.ts >= NOW() - ($3 * INTERVAL '1 hour')
+		WHERE q.server_id = $1
+		  AND q.capture_timestamp >= NOW() - ($3 * INTERVAL '1 hour')
 		  AND q.query_text_raw NOT LIKE '%%/* SQL_OPTIMA%%'
 		  AND q.statement_text NOT LIKE '%%sys.all_objects%%'
 		  AND q.statement_text NOT LIKE '%%sp_MShistory_cleanup%%'
@@ -744,20 +634,20 @@ func (tl *TimescaleLogger) GetSqlServerTopQueriesFromInterval(ctx context.Contex
 		ORDER BY %s
 		LIMIT $2`, filterClause, orderClause)
 
-	rows, err := tl.pool.Query(ctx, q, instance, limit, hours)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit, hours)
 	if err != nil {
 		return nil, fmt.Errorf("GetSqlServerTopQueriesFromInterval: %w", err)
 	}
 	defer rows.Close()
 
-	var results []SqlServerTopQueryIntervalRow
+	results := make([]SqlServerTopQueryIntervalRow, 0)
 	for rows.Next() {
 		var r SqlServerTopQueryIntervalRow
 		var qh int64
 		if err := rows.Scan(&qh, &r.QueryText, &r.DatabaseName,
 			&r.LoginName, &r.ApplicationName,
 			&r.Executions, &r.AvgCpuMs, &r.AvgDurationMs, &r.AvgReads, &r.TotalCpuMs, &r.LastExecutionTime); err != nil {
-			log.Printf("[TSLogger] GetSqlServerTopQueriesFromInterval scan: %v", err)
+			slog.Info("[TSLogger] GetSqlServerTopQueriesFromInterval scan", "err", err)
 			continue
 		}
 		r.QueryHash = fmt.Sprintf("0x%X", uint64(qh))
@@ -766,17 +656,52 @@ func (tl *TimescaleLogger) GetSqlServerTopQueriesFromInterval(ctx context.Contex
 	return results, rows.Err()
 }
 
-// SqlServerTopQueryIntervalRow is the storage-layer DTO for top queries from the interval table.
 type SqlServerTopQueryIntervalRow struct {
-	QueryHash          string
-	QueryText          string
-	DatabaseName       string
-	LoginName          string
-	ApplicationName    string
-	Executions         int64
-	AvgCpuMs           float64
-	AvgDurationMs      float64
-	AvgReads           float64
-	TotalCpuMs         float64
-	LastExecutionTime  *time.Time
+	QueryHash         string     `json:"query_hash"`
+	QueryText         string     `json:"query_text"`
+	DatabaseName      string     `json:"database_name"`
+	LoginName         string     `json:"login_name"`
+	ApplicationName   string     `json:"application_name"`
+	Executions        int64      `json:"executions"`
+	AvgCpuMs          float64    `json:"avg_cpu_ms"`
+	AvgDurationMs     float64    `json:"avg_duration_ms"`
+	AvgReads          float64    `json:"avg_reads"`
+	TotalCpuMs        float64    `json:"total_cpu_ms"`
+	LastExecutionTime *time.Time `json:"last_execution_time"`
+}
+
+func (tl *TimescaleLogger) GetSQLServerQueryTrend(ctx context.Context, serverID uuid.UUID, sqlHash string, from, to time.Time) (map[string]interface{}, error) {
+	var qh int64
+	if h, err := strconv.ParseUint(strings.TrimPrefix(sqlHash, "0x"), 16, 64); err == nil {
+		qh = int64(h)
+	}
+
+	q := `
+		SELECT capture_timestamp, exec_delta, cpu_delta_ms, duration_delta_ms, reads_delta
+		FROM sqlserver_query_stats_history
+		WHERE server_id = $1 AND query_hash = $2 AND capture_timestamp BETWEEN $3 AND $4
+		ORDER BY capture_timestamp ASC
+	`
+	rows, err := tl.pool.Query(ctx, q, serverID, qh, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var points []map[string]interface{}
+	for rows.Next() {
+		var ts time.Time
+		var exec, cpu, dur, reads int64
+		if err := rows.Scan(&ts, &exec, &cpu, &dur, &reads); err != nil {
+			continue
+		}
+		points = append(points, map[string]interface{}{
+			"ts":          ts,
+			"executions":  exec,
+			"cpu_ms":      cpu,
+			"duration_ms": dur,
+			"reads":       reads,
+		})
+	}
+	return map[string]interface{}{"time_series": points}, rows.Err()
 }

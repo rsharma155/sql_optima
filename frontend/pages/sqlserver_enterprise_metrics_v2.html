@@ -11,17 +11,19 @@
     /* Local overrides to align with other dashboards and reduce KPI size for single-row layout */
     .enterprise-kpi-grid {
         display: grid;
-        grid-template-columns: repeat(5, 1fr);
+        grid-template-columns: repeat(6, minmax(100px, 1fr));
         gap: 0.6rem;
+        overflow-x: auto;
+        padding-bottom: 4px;
     }
     .enterprise-kpi-card {
-        padding: 0.6rem 0.75rem;
+        padding: 0.45rem 0.75rem;
         display: flex;
         flex-direction: column;
         justify-content: center;
         position: relative;
         overflow: hidden;
-        min-height: 75px;
+        min-height: 54px;
         background: var(--bg-surface);
     }
     .enterprise-kpi-card .metric-header {
@@ -65,23 +67,32 @@
     }
 
     /* Media queries for responsiveness */
-    @media (max-width: 1200px) {
-        .enterprise-kpi-grid {
-            grid-template-columns: repeat(3, 1fr);
-        }
+    .charts-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.5rem;
     }
-    @media (max-width: 768px) {
-        .enterprise-kpi-grid {
-            grid-template-columns: repeat(2, 1fr);
-        }
-        .charts-grid {
-            grid-template-columns: 1fr !important;
-        }
+    @media (max-width: 900px) {
+        .charts-grid { grid-template-columns: 1fr !important; }
     }
-    @media (max-width: 480px) {
-        .enterprise-kpi-grid {
-            grid-template-columns: 1fr;
-        }
+
+    /* Chart container height — dynamically sized so all 6 charts fit on one screen.
+       Measured fixed overhead (no top header — it was removed):
+         views-container padding: 64px (2rem top + 2rem bottom)
+         page title block:        ~66px (padding + h1 + subtitle + border + margin)
+         mt-1 + KPI grid:         ~81px
+         mt-2:                      8px
+         3×card overhead:         ~132px (pad 16 + header 28 per card)
+         2×grid gaps:              16px
+         safety buffer:            33px
+       Total subtractor ≈ 400px; each of 3 chart rows gets an equal share of what remains. */
+    .chart-container-large {
+        height: clamp(80px, calc((100vh - 400px) / 3), 240px);
+    }
+
+    .tempdb-table-container {
+        height: clamp(80px, calc((100vh - 400px) / 3), 240px);
+        overflow-y: auto;
     }
 
     /* Indicator colors for the left border (matching other pages) */
@@ -90,17 +101,23 @@
     .enterprise-kpi-card.status-danger::before { background-color: var(--danger); }
     
     /* Override global status-healthy background if it leaks */
-    .enterprise-kpi-card.status-healthy, 
-    .enterprise-kpi-card.status-warning, 
+    .enterprise-kpi-card.status-healthy,
+    .enterprise-kpi-card.status-warning,
     .enterprise-kpi-card.status-danger {
         background: var(--bg-surface) !important;
+    }
+
+    /* Tighten page title so it doesn't eat vertical space */
+    .page-view.active .page-title.dashboard-page-title-compact {
+        padding: 0.25rem 0;
+        margin-bottom: 0.35rem;
     }
 </style>
 
 <div class="page-view active dashboard-sky-theme">
     <div class="page-title flex-between dashboard-page-title-compact">
         <div class="dashboard-title-line" style="flex:1; min-width:0;">
-            <h1><i class="fa-solid fa-chart-line text-accent"></i> SQL Server Enterprise Metrics <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Instance Dashboard" title="Learn more about this dashboard"></i></h1>
+            <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-chart-line text-accent"></i> SQL Server Enterprise Metrics <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Instance Dashboard" title="Learn more about this dashboard"></i></h1>
             <p class="subtitle">Instance: <span id="emInstanceName">--</span> | Standardized Time-Series Observability</p>
         </div>
         <div class="dashboard-page-title-actions" style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
@@ -116,68 +133,65 @@
     </div>
 
     <!-- Row 1: Real-time Health (Snapshot Cards) -->
-    <div class="enterprise-kpi-grid mt-2">
+    <div class="enterprise-kpi-grid mt-1">
         <div class="enterprise-kpi-card glass-panel" id="card-runnable" title="Number of tasks waiting for a CPU to become available. High values indicate CPU pressure.">
             <div class="metric-header"><span class="metric-title">Runnable Tasks <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Enterprise Metrics" data-metric="Runnable Tasks"></i></span></div>
             <div class="metric-value" id="val-runnable">--</div>
             <div class="sub">sys.dm_os_schedulers</div>
         </div>
         <div class="enterprise-kpi-card glass-panel" id="card-pending-grants" title="Queries waiting for workspace memory. High values indicate memory pressure or poorly tuned queries.">
-            <div class="metric-header"><span class="metric-title">Pending Memory Grants <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Memory Analyzer" data-metric="Grants Pending"></i></span></div>
+            <div class="metric-header"><span class="metric-title">Pending Grants <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Memory Analyzer" data-metric="Grants Pending"></i></span></div>
             <div class="metric-value" id="val-pending-grants">--</div>
             <div class="sub">dm_exec_query_memory_grants</div>
         </div>
-        <div class="enterprise-kpi-card glass-panel" id="card-latch-waits" title="Number of latch waits per second. Latches are internal synchronization objects for buffer pool and other memory structures.">
-            <div class="metric-header"><span class="metric-title">Latch Waits/sec <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Enterprise Metrics" data-metric="Latch Waits/sec"></i></span></div>
-            <div class="metric-value" id="val-latch-waits">--</div>
+        <div class="enterprise-kpi-card glass-panel" id="card-logins" title="Number of logins per second. Indicates connection churn or authentication pressure.">
+            <div class="metric-header"><span class="metric-title">Logins/sec <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Enterprise Metrics" data-metric="Logins/sec"></i></span></div>
+            <div class="metric-value" id="val-logins">--</div>
             <div class="sub">Perf Counter (Delta)</div>
         </div>
+        <div class="enterprise-kpi-card glass-panel" id="card-memory" title="Target vs Total Server Memory. If Total < Target, SQL Server wants more RAM but cannot get it from OS.">
+            <div class="metric-header"><span class="metric-title">Server Memory <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Enterprise Metrics" data-metric="Server Memory"></i></span></div>
+            <div class="metric-value" id="val-memory">--</div>
+            <div class="sub"><span id="val-memory-total">--</span> / <span id="val-memory-target">--</span> GB</div>
+        </div>
         <div class="enterprise-kpi-card glass-panel" id="card-plan-waste" title="Percentage of plan cache occupied by single-use plans. High values suggest 'Optimize for Ad Hoc Workloads' might be needed.">
-            <div class="metric-header"><span class="metric-title">Plan Cache Waste % <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Query Analysis" data-metric="Plan Changes"></i></span></div>
+            <div class="metric-header"><span class="metric-title">Plan Waste % <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Query Analysis" data-metric="Plan Changes"></i></span></div>
             <div class="metric-value" id="val-plan-waste">--</div>
             <div class="sub">sys.dm_exec_cached_plans</div>
         </div>
         <div class="enterprise-kpi-card glass-panel" id="card-log-waits" title="Waiting for transaction log writes. Indicates disk I/O pressure on the log volume.">
-            <div class="metric-header"><span class="metric-title">Log Waits (ms) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="TPS"></i></span></div>
+            <div class="metric-header"><span class="metric-title">Log Write Stall <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="TPS"></i></span></div>
             <div class="metric-value" id="val-log-waits">--</div>
-            <div class="sub">WRITELOG waits</div>
+            <div class="sub">WRITELOG waits (ms)</div>
         </div>
     </div>
 
-    <!-- Row 2: Bottleneck Detection -->
-    <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
-        <div class="chart-card glass-panel" style="padding:0.75rem;" title="Aggregate wait time per second across all wait categories.">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-hourglass-half text-accent"></i> Wait Stats Trend (Wait Time per Sec)</h3></div>
-            <div class="chart-container" style="height:220px;"><canvas id="chart-wait-stats"></canvas></div>
+    <!-- Rows 2–4: All six charts in a 2-column grid to fit in large screen with 3 rows -->
+    <div class="charts-grid mt-2">
+        <div class="chart-card glass-panel" style="padding:0.5rem;" title="Aggregate wait time per second across all wait categories.">
+            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;"><i class="fa-solid fa-hourglass-half text-accent"></i> Wait Stats Trend</h3></div>
+            <div class="chart-container chart-container-large"><canvas id="chart-wait-stats"></canvas></div>
         </div>
-        <div class="chart-card glass-panel" style="padding:0.75rem;" title="Batch Requests/sec vs SQL Compilations/sec. High compilations can cause CPU pressure.">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-bolt text-accent"></i> Throughput & Compilations</h3></div>
-            <div class="chart-container" style="height:220px;"><canvas id="chart-throughput"></canvas></div>
+        <div class="chart-card glass-panel" style="padding:0.5rem;" title="Batch Requests/sec vs SQL Compilations/sec.">
+            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;"><i class="fa-solid fa-bolt text-accent"></i> Throughput & Compilations</h3></div>
+            <div class="chart-container chart-container-large"><canvas id="chart-throughput"></canvas></div>
         </div>
-    </div>
-
-    <!-- Row 3: Resource Subsystems -->
-    <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
-        <div class="chart-card glass-panel" style="padding:0.75rem;" title="Average read and write latency per database file in milliseconds.">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-hdd text-accent"></i> File I/O Latency Trend (ms)</h3></div>
-            <div class="chart-container" style="height:220px;"><canvas id="chart-file-io"></canvas></div>
+        <div class="chart-card glass-panel" style="padding:0.5rem;" title="Average read and write latency per database file in milliseconds.">
+            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;"><i class="fa-solid fa-hdd text-accent"></i> File I/O Latency (ms)</h3></div>
+            <div class="chart-container chart-container-large"><canvas id="chart-file-io"></canvas></div>
         </div>
-        <div class="chart-card glass-panel" style="padding:0.75rem;" title="Distribution of plan cache memory across object types (Adhoc, Prepared, Proc, etc.).">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-layer-group text-accent"></i> Plan Cache Composition</h3></div>
-            <div class="chart-container" style="height:220px;"><canvas id="chart-plan-cache"></canvas></div>
+        <div class="chart-card glass-panel" style="padding:0.5rem;" title="Distribution of plan cache memory across object types (Adhoc, Prepared, Proc, etc.).">
+            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;"><i class="fa-solid fa-layer-group text-accent"></i> Plan Cache Composition</h3></div>
+            <div class="chart-container chart-container-large"><canvas id="chart-plan-cache"></canvas></div>
         </div>
-    </div>
-
-    <!-- Row 4: Memory + TempDB -->
-    <div class="charts-grid mt-3" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
-        <div class="chart-card glass-panel" style="padding:0.75rem;" title="Memory consumption of top SQL Server memory clerks over time.">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-memory text-accent"></i> Memory Clerk Growth & Grant Pressure</h3></div>
-            <div class="chart-container" style="height:220px;"><canvas id="chart-memory"></canvas></div>
+        <div class="chart-card glass-panel" style="padding:0.5rem;" title="Memory consumption of top SQL Server memory clerks over time.">
+            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;"><i class="fa-solid fa-memory text-accent"></i> Memory Clerks & Grants</h3></div>
+            <div class="chart-container chart-container-large"><canvas id="chart-memory"></canvas></div>
         </div>
-        <div class="chart-card glass-panel" style="padding:0.75rem;" title="Sessions currently using the most space in TempDB (Version Store, User Objects, Internal Objects).">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-fire text-accent"></i> TempDB Top Consumers</h3></div>
-            <div class="table-responsive" style="height:220px; overflow-y:auto;">
-                <table class="data-table" style="font-size:0.75rem;">
+        <div class="chart-card glass-panel" style="padding:0.5rem;" title="Sessions currently using the most space in TempDB.">
+            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;"><i class="fa-solid fa-fire text-accent"></i> TempDB Top Consumers</h3></div>
+            <div class="table-responsive tempdb-table-container">
+                <table class="data-table" style="font-size:0.72rem;">
                     <thead><tr><th>SPID</th><th>Allocated</th><th>User</th><th>Internal</th><th>Query</th></tr></thead>
                     <tbody id="tbody-tempdb-consumers">
                         <tr><td colspan="5" class="text-center text-muted">Loading...</td></tr>

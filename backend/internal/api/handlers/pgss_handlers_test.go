@@ -13,6 +13,10 @@ import (
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
+func parseTimeRangeReq(r *http.Request) (time.Time, time.Time) {
+	return ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+}
+
 // pgCfg returns a config with one postgres instance for testing.
 func pgCfg() *config.Config {
 	return &config.Config{
@@ -117,7 +121,7 @@ func TestPgssSummary_WrongType(t *testing.T) {
 
 func TestParseTimeRange_Defaults(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	from, to := parseTimeRange(req)
+	from, to := parseTimeRangeReq(req)
 	diff := to.Sub(from)
 	if diff < 59*time.Minute || diff > 61*time.Minute {
 		t.Fatalf("default range should be ~1 hour, got %v", diff)
@@ -126,7 +130,7 @@ func TestParseTimeRange_Defaults(t *testing.T) {
 
 func TestParseTimeRange_CustomValues(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test?from=2026-04-17T10:00:00Z&to=2026-04-17T12:00:00Z", nil)
-	from, to := parseTimeRange(req)
+	from, to := parseTimeRangeReq(req)
 	if from.Hour() != 10 || to.Hour() != 12 {
 		t.Fatalf("expected 10:00-12:00, got %v - %v", from, to)
 	}
@@ -134,7 +138,7 @@ func TestParseTimeRange_CustomValues(t *testing.T) {
 
 func TestParseTimeRange_SwapsInverted(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test?from=2026-04-17T14:00:00Z&to=2026-04-17T10:00:00Z", nil)
-	from, to := parseTimeRange(req)
+	from, to := parseTimeRangeReq(req)
 	if from.After(to) {
 		t.Fatal("from should not be after to when swapped")
 	}
@@ -142,7 +146,7 @@ func TestParseTimeRange_SwapsInverted(t *testing.T) {
 
 func TestParseTimeRange_CapsAt7Days(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test?from=2020-01-01T00:00:00Z&to=2026-04-17T00:00:00Z", nil)
-	from, to := parseTimeRange(req)
+	from, to := parseTimeRangeReq(req)
 	diff := to.Sub(from)
 	if diff > 7*24*time.Hour+time.Second {
 		t.Fatalf("range should be capped at 7 days, got %v", diff)
@@ -151,7 +155,7 @@ func TestParseTimeRange_CapsAt7Days(t *testing.T) {
 
 func TestParseTimeRange_InvalidIgnored(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test?from=not-a-date&to=also-bad", nil)
-	from, to := parseTimeRange(req)
+	from, to := parseTimeRangeReq(req)
 	// Should fall back to defaults (1 hour range)
 	diff := to.Sub(from)
 	if diff < 59*time.Minute || diff > 61*time.Minute {
@@ -410,7 +414,7 @@ func TestPgssTop_EmptySortDefaultsToTotalTime(t *testing.T) {
 
 func TestParseTimeRange_OnlyFromProvided(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test?from=2026-04-17T10:00:00Z", nil)
-	from, to := parseTimeRange(req)
+	from, to := parseTimeRangeReq(req)
 	if from.Hour() != 10 {
 		t.Fatalf("expected from=10:00, got %v", from)
 	}
@@ -425,7 +429,7 @@ func TestParseTimeRange_OnlyToProvided(t *testing.T) {
 	// is after to, so the swap fires and the 7-day cap may apply.
 	// Just verify from < to and range is valid.
 	req := httptest.NewRequest(http.MethodGet, "/test?to=2026-04-17T12:00:00Z", nil)
-	from, to := parseTimeRange(req)
+	from, to := parseTimeRangeReq(req)
 	if from.After(to) {
 		t.Fatalf("from should not be after to, got from=%v to=%v", from, to)
 	}
@@ -433,7 +437,7 @@ func TestParseTimeRange_OnlyToProvided(t *testing.T) {
 
 func TestParseTimeRange_WhitespaceTrimed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test?from=%202026-04-17T10:00:00Z%20&to=%202026-04-17T12:00:00Z%20", nil)
-	from, to := parseTimeRange(req)
+	from, to := parseTimeRangeReq(req)
 	if from.Hour() != 10 || to.Hour() != 12 {
 		t.Fatalf("expected trimmed times 10:00-12:00, got %v - %v", from, to)
 	}

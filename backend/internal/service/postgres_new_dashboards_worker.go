@@ -1,195 +1,100 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Background worker for the enhanced PostgreSQL dashboard metrics (v2).
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package service
 
 import (
+	"log/slog"
 	"context"
-	"log"
-	"sync"
+	"strings"
 	"time"
 
-	pg_backup_coll "github.com/rsharma155/sql_optima/internal/domain/postgres_backup_dr/collectors"
-	pg_obs_coll "github.com/rsharma155/sql_optima/internal/domain/postgres_observability/collectors"
-	pg_security_coll "github.com/rsharma155/sql_optima/internal/domain/postgres_security/collectors"
+	"github.com/rsharma155/sql_optima/internal/collectors"
+	"github.com/rsharma155/sql_optima/internal/collectors/postgres"
+	"github.com/rsharma155/sql_optima/internal/config"
 )
 
-func (s *MetricsService) StartPostgresNewDashboardsCollectors(ctx context.Context) {
-	log.Println("[PostgresWorker] Starting new dashboard collection loops...")
-	// Start 3 separate loops for different domains to handle different frequencies
-
-	// 1. Observability (Sessions, Waits, Load)
-	go s.startObservabilityLoop(ctx)
-
-	// 2. Backup & DR
-	go s.startBackupDRLoop(ctx)
-
-	// 3. Security
-	go s.startSecurityLoop(ctx)
+type PostgresNewDashboardsWorker struct {
+	cfg               *config.Config
+	snapshotCollector *collectors.PgSnapshotCollector
+	queryRouter       *postgres.QueryMetricsRouter
+	metricsSvc        *MetricsService
+	stopChan          chan struct{}
 }
 
-func (s *MetricsService) startObservabilityLoop(ctx context.Context) {
-	interval := s.FetchInterval(ctx, "Postgres Session Activity", 60*time.Second)
-	log.Printf("[PostgresWorker] Observability loop started with interval %v", interval)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+func NewPostgresNewDashboardsWorker(cfg *config.Config, snap *collectors.PgSnapshotCollector, router *postgres.QueryMetricsRouter, metricsSvc *MetricsService) *PostgresNewDashboardsWorker {
+	return &PostgresNewDashboardsWorker{
+		cfg:               cfg,
+		snapshotCollector: snap,
+		queryRouter:       router,
+		metricsSvc:        metricsSvc,
+		stopChan:          make(chan struct{}),
+	}
+}
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.runObservabilityCollection()
-			// Re-fetch interval in case it changed
-			newInterval := s.FetchInterval(ctx, "Postgres Session Activity", 60*time.Second)
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
-				log.Printf("[PostgresWorker] Observability loop interval updated to %v", interval)
+func (w *PostgresNewDashboardsWorker) Start(ctx context.Context) {
+	var interval time.Duration
+	if w.metricsSvc != nil {
+		interval = w.metricsSvc.GetCollectorInterval(ctx, "pg_new_dashboards_worker", 30*time.Second)
+	} else {
+		interval = 30 * time.Second
+	}
+	slog.Info("[PostgresWorker] Enhanced PG Dashboards worker started (%v interval)", "val", interval)
+	ticker := time.NewTicker(interval)
+
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-w.stopChan:
+				return
+			case <-ticker.C:
+				if w.metricsSvc != nil {
+					newInterval := w.metricsSvc.GetCollectorInterval(ctx, "pg_new_dashboards_worker", 30*time.Second)
+					if newInterval > 0 && newInterval != interval {
+						interval = newInterval
+						ticker.Reset(interval)
+					}
+				}
+				w.runIteration(ctx)
 			}
 		}
-	}
+	}()
 }
 
-func (s *MetricsService) runObservabilityCollection() {
-	if s.PgObservabilityRepo == nil {
-		log.Println("[PostgresWorker] Error: PgObservabilityRepo is nil")
-		return
-	}
+func (w *PostgresNewDashboardsWorker) Stop() {
+	close(w.stopChan)
+}
 
-	var wg sync.WaitGroup
-	for _, inst := range s.Config.Instances {
-		if inst.Type != "postgres" {
+func (w *PostgresNewDashboardsWorker) runIteration(ctx context.Context) {
+	for _, inst := range w.cfg.Instances {
+		if strings.ToLower(inst.Type) != "postgres" {
 			continue
 		}
-		wg.Add(1)
-		go func(instanceName string) {
-			defer wg.Done()
-			db, ok := s.PgRepo.GetConn(instanceName)
-			if !ok || db == nil {
-				log.Printf("[PostgresWorker] No connection for instance %s", instanceName)
+
+		go func(instance config.Instance) {
+			// 1. Snapshot Collection
+			if err := w.snapshotCollector.Collect(ctx, instance); err != nil {
+				slog.Error("[PostgresWorker] ERROR: Snapshot collection failed", "target", instance.Name, "err", err)
+			}
+
+			// 2. Query Metrics (Router handles extension detection)
+			db, err := config.ConnectToInstance(instance)
+			if err != nil {
+				slog.Error("[PostgresWorker] ERROR: Connection failed", "target", instance.Name, "err", err)
 				return
 			}
-			collector := pg_obs_coll.NewPostgresObservabilityCollector(s.PgObservabilityRepo, instanceName)
-			
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
+			defer db.Close()
 
-			if err := collector.CollectSessionActivity(ctx, db); err != nil {
-				log.Printf("[PostgresWorker] [%s] SessionActivity failed: %v", instanceName, err)
+			if err := w.queryRouter.Collect(ctx, instance, db); err != nil {
+				slog.Error("[PostgresWorker] ERROR: Query collection failed", "target", instance.Name, "err", err)
 			}
-			if err := collector.CollectWaitSummary(ctx, db); err != nil {
-				log.Printf("[PostgresWorker] [%s] WaitSummary failed: %v", instanceName, err)
-			}
-			if err := collector.CollectDBLoad(ctx, db); err != nil {
-				log.Printf("[PostgresWorker] [%s] DBLoad failed: %v", instanceName, err)
-			}
-			if err := collector.CollectQueryWaitProfile(ctx, db); err != nil {
-				log.Printf("[PostgresWorker] [%s] QueryWaitProfile failed: %v", instanceName, err)
-			}
-		}(inst.Name)
+		}(inst)
 	}
-	wg.Wait()
-}
-
-func (s *MetricsService) startBackupDRLoop(ctx context.Context) {
-	interval := s.FetchInterval(ctx, "Postgres Backup Archiver", 300*time.Second)
-	log.Printf("[PostgresWorker] BackupDR loop started with interval %v", interval)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.runBackupDRCollection()
-			newInterval := s.FetchInterval(ctx, "Postgres Backup Archiver", 300*time.Second)
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
-				log.Printf("[PostgresWorker] BackupDR loop interval updated to %v", interval)
-			}
-		}
-	}
-}
-
-func (s *MetricsService) runBackupDRCollection() {
-	if s.PgBackupRepo == nil {
-		log.Println("[PostgresWorker] Error: PgBackupRepo is nil")
-		return
-	}
-
-	var wg sync.WaitGroup
-	for _, inst := range s.Config.Instances {
-		if inst.Type != "postgres" {
-			continue
-		}
-		wg.Add(1)
-		go func(instanceName string) {
-			defer wg.Done()
-			db, ok := s.PgRepo.GetConn(instanceName)
-			if !ok || db == nil {
-				return
-			}
-			collector := pg_backup_coll.NewPostgresBackupCollector(s.PgBackupRepo, instanceName)
-			
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-
-			_ = collector.CollectArchiverStats(ctx, db)
-			_ = collector.CollectWALRate(ctx, db)
-			_ = collector.CollectBaseBackupHistory(ctx, db)
-		}(inst.Name)
-	}
-	wg.Wait()
-}
-
-func (s *MetricsService) startSecurityLoop(ctx context.Context) {
-	interval := s.FetchInterval(ctx, "Postgres Roles Snapshot", 900*time.Second)
-	log.Printf("[PostgresWorker] Security loop started with interval %v", interval)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.runSecurityCollection()
-			newInterval := s.FetchInterval(ctx, "Postgres Roles Snapshot", 900*time.Second)
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
-				log.Printf("[PostgresWorker] Security loop interval updated to %v", interval)
-			}
-		}
-	}
-}
-
-func (s *MetricsService) runSecurityCollection() {
-	if s.PgSecurityRepo == nil {
-		log.Println("[PostgresWorker] Error: PgSecurityRepo is nil")
-		return
-	}
-
-	var wg sync.WaitGroup
-	for _, inst := range s.Config.Instances {
-		if inst.Type != "postgres" {
-			continue
-		}
-		wg.Add(1)
-		go func(instanceName string) {
-			defer wg.Done()
-			db, ok := s.PgRepo.GetConn(instanceName)
-			if !ok || db == nil {
-				return
-			}
-			collector := pg_security_coll.NewPostgresSecurityCollector(s.PgSecurityRepo, instanceName)
-			
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-
-			_ = collector.CollectRoleSnapshot(ctx, db)
-			_ = collector.CollectDDLActivity(ctx, db)
-		}(inst.Name)
-	}
-	wg.Wait()
 }

@@ -13,29 +13,34 @@ import "time"
 
 // HealthV2DashboardResponse is the main container for the V2 dashboard data.
 type HealthV2DashboardResponse struct {
-	InstanceName string               `json:"instance_name"`
-	KPIs         HealthV2KPIs         `json:"kpis"`
-	WaitTrends   []WaitTrendPoint     `json:"wait_trends"`
-	IOLatency    []IOLatencyPoint     `json:"io_latency"`
-	Throughput   []ThroughputPoint    `json:"throughput"`
-	TempDB       TempDBHealth         `json:"tempdb"`
-	Problems     ActiveProblems       `json:"problems"`
-	LastUpdate   time.Time            `json:"last_update"`
+	InstanceName      string            `json:"instance_name"`
+	DatabaseName      string            `json:"database_name,omitempty"`
+	KPIs              HealthV2KPIs      `json:"kpis"`
+	WaitTrends        []WaitTrendPoint  `json:"wait_trends"`
+	IOLatency         []IOLatencyPoint  `json:"io_latency"`
+	Throughput        []ThroughputPoint `json:"throughput"`
+	TempDB            TempDBHealth      `json:"tempdb"`
+	Problems          ActiveProblems    `json:"problems"`
+	LastUpdate        time.Time         `json:"last_update"`
+	RefreshIntervalMs int               `json:"refresh_interval_ms"`
 }
 
 type HealthV2KPIs struct {
-	SqlCpuPct         float64 `json:"sql_cpu_pct"`
-	RunnableTasks     int     `json:"runnable_tasks"`
-	MemGrantsPending  int     `json:"mem_grants_pending"`
-	PageReadsPerSec   float64 `json:"page_reads_per_sec"`
-	LogWriteWaitMs    float64 `json:"log_write_wait_ms"`
-	BlockedSessions   int     `json:"blocked_sessions"`
-	UserConnections   int     `json:"user_connections"`
-	BatchRequests     float64 `json:"batch_requests"`
-	Compilations      float64 `json:"compilations"`
-	InstanceStatus    string  `json:"instance_status"` // "Healthy", "Warning", "Critical"
-	Edition           string  `json:"edition"`
-	Uptime            string  `json:"uptime"`
+	SqlCpuPct        float64 `json:"sql_cpu_pct"`
+	RunnableTasks    int     `json:"runnable_tasks"`
+	MemGrantsPending int     `json:"mem_grants_pending"`
+	PageReadsPerSec  float64 `json:"page_reads_per_sec"`
+	LogWriteWaitMs   float64 `json:"log_write_wait_ms"`
+	BlockedSessions  int     `json:"blocked_sessions"`
+	UserConnections  int     `json:"user_connections"`
+	BatchRequests    float64 `json:"batch_requests"`
+	Compilations          float64 `json:"compilations"`
+	LoginsPerSec          float64 `json:"logins_per_sec"`
+	TargetServerMemoryMB  float64 `json:"target_server_memory_mb"`
+	TotalServerMemoryMB   float64 `json:"total_server_memory_mb"`
+	InstanceStatus        string  `json:"instance_status"` // "Healthy", "Warning", "Critical"
+	Edition          string  `json:"edition"`
+	Uptime           string  `json:"uptime"`
 }
 
 type WaitTrendPoint struct {
@@ -49,12 +54,12 @@ type WaitTrendPoint struct {
 }
 
 type IOLatencyPoint struct {
-	Timestamp    time.Time `json:"timestamp"`
-	DataReadMs   float64   `json:"data_read_ms"`
-	DataWriteMs  float64   `json:"data_write_ms"`
-	LogWriteMs   float64   `json:"log_write_ms"`
-	ReadIOPS     int       `json:"read_iops"`
-	WriteIOPS    int       `json:"write_iops"`
+	Timestamp   time.Time `json:"timestamp"`
+	DataReadMs  float64   `json:"data_read_ms"`
+	DataWriteMs float64   `json:"data_write_ms"`
+	LogWriteMs  float64   `json:"log_write_ms"`
+	ReadIOPS    float64   `json:"read_iops"`
+	WriteIOPS   float64   `json:"write_iops"`
 }
 
 type ThroughputPoint struct {
@@ -65,12 +70,12 @@ type ThroughputPoint struct {
 }
 
 type TempDBHealth struct {
-	UserObjMB        float64 `json:"user_obj_mb"`
-	InternalObjMB    float64 `json:"internal_obj_mb"`
-	VersionStoreMB   float64 `json:"version_store_mb"`
-	FreeMB           float64 `json:"free_mb"`
-	LogUsedMB        float64 `json:"log_used_mb"`
-	ContentionFound  bool    `json:"contention_found"`
+	UserObjMB       float64 `json:"user_obj_mb"`
+	InternalObjMB   float64 `json:"internal_obj_mb"`
+	VersionStoreMB  float64 `json:"version_store_mb"`
+	FreeMB          float64 `json:"free_mb"`
+	LogUsedMB       float64 `json:"log_used_mb"`
+	ContentionFound bool    `json:"contention_found"`
 }
 
 type ActiveProblems struct {

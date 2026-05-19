@@ -9,14 +9,17 @@ package hot
 
 import (
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestDeadlockRateComputation_FirstObservation_ReturnsNotOk(t *testing.T) {
+	inst1 := uuid.New()
 	tl := &TimescaleLogger{
-		prevPgDeadlocksTotalAllDBs: make(map[string]int64),
+		prevPgDeadlocksTotalAllDBs: make(map[uuid.UUID]int64),
 	}
-	
-	rate, ok := tl.ComputePgDeadlockRate("inst1", 10, 60.0)
+
+	rate, ok := tl.ComputePgDeadlockRate(inst1, 10, 60.0)
 	if ok {
 		t.Fatalf("expected ok=false on first observation")
 	}
@@ -26,15 +29,16 @@ func TestDeadlockRateComputation_FirstObservation_ReturnsNotOk(t *testing.T) {
 }
 
 func TestDeadlockRateComputation_SixDeadlocksInSixtySeconds(t *testing.T) {
+	inst1 := uuid.New()
 	tl := &TimescaleLogger{
-		prevPgDeadlocksTotalAllDBs: make(map[string]int64),
+		prevPgDeadlocksTotalAllDBs: make(map[uuid.UUID]int64),
 	}
-	
+
 	// First observation
-	tl.ComputePgDeadlockRate("inst1", 10, 60.0)
-	
+	tl.ComputePgDeadlockRate(inst1, 10, 60.0)
+
 	// Second observation: 6 more deadlocks in 60s
-	rate, ok := tl.ComputePgDeadlockRate("inst1", 16, 60.0)
+	rate, ok := tl.ComputePgDeadlockRate(inst1, 16, 60.0)
 	if !ok {
 		t.Fatalf("expected ok=true on second observation")
 	}
@@ -45,15 +49,17 @@ func TestDeadlockRateComputation_SixDeadlocksInSixtySeconds(t *testing.T) {
 }
 
 func TestDeadlockRateComputation_CounterReset_ClampsToZero(t *testing.T) {
+	inst1 := uuid.New()
 	tl := &TimescaleLogger{
-		prevPgDeadlocksTotalAllDBs: make(map[string]int64),
+		prevPgDeadlocksTotalAllDBs: make(map[uuid.UUID]int64),
 	}
-	
-	// First observation: 100 deadlocks
-	tl.ComputePgDeadlockRate("inst1", 100, 60.0)
-	
-	// Second observation: 10 deadlocks (restart happened)
-	rate, ok := tl.ComputePgDeadlockRate("inst1", 10, 60.0)
+
+	// First observation: 10 deadlocks
+	tl.ComputePgDeadlockRate(inst1, 10, 60.0)
+
+	// Second observation: 5 deadlocks (restart or reset)
+	rate, ok := tl.ComputePgDeadlockRate(inst1, 5, 60.0)
+
 	if !ok {
 		t.Fatalf("expected ok=true on second observation even after reset")
 	}

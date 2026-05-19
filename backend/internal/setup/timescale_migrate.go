@@ -19,15 +19,14 @@ import (
 )
 
 // Ordered migration files under infrastructure/sql_scripts (or SQL_OPTIMA_SQL_SCRIPTS_DIR).
+// Order must match the step numbers shown in the frontend setup wizard (setup_schema_progress.js).
 var migrationScriptFiles = []string{
-	"01_timescale_schema.sql",
-	"06_seed_data.sql",
-	"02_rule_engine.sql",
-	"03_additional_pg_rules.sql",
-	"04_alert_engine.sql",
-	"05_os_metrics_collector.sql",
-	"06_sqlserver_enterprise_metrics_v2.sql",
-	"07_pg_instance_snapshot.sql",
+	"01_timescale_schema.sql",     // step 0
+	"02_rule_engine.sql",          // step 1
+	"03_additional_pg_rules.sql",  // step 2
+	"04_alert_engine.sql",         // step 3
+	"05_os_metrics_collector.sql", // step 4
+	"06_seed_data.sql",            // step 5
 }
 
 func MigrationScriptName(step int) (string, error) {

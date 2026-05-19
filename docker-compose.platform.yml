@@ -53,6 +53,8 @@ services:
     command:
       - postgres
       - -c
+      - max_connections=200
+      - -c
       - log_statement=none
       - -c
       - log_min_duration_statement=5000

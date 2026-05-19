@@ -2,20 +2,53 @@
  * SQL Optima — PostgreSQL Control Center (Overview)
  * Mission Control Revamp Template v2 (2026-05-07)
 -->
+<style>
+.cc-kpi-row {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+    overflow-x: auto;
+}
+.cc-kpi-row .glass-panel.metric-card-compact {
+    padding: 0.25rem 0.35rem;
+    min-width: 72px;
+}
+.cc-kpi-row .metric-label {
+    font-size: 0.52rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+.cc-kpi-row .metric-value {
+    font-size: 0.9rem;
+    line-height: 1.1;
+}
+.cc-kpi-row .metric-subtitle {
+    font-size: 0.48rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    max-width: 100%;
+}
+</style>
 <div class="page-view active dashboard-sky-theme">
     <!-- ROW 0: HEADER -->
     <div class="page-title flex-between dashboard-page-title-compact">
         <div class="dashboard-title-line">
-            <h1><i class="fa-solid fa-gauge-high"></i> Control Center <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Control Center" title="Learn more about this dashboard"></i></h1>
-            <span class="subtitle">Real-time health, throughput, and operational diagnostics</span>
+            <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-gauge-high"></i> Control Center <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" data-action="show-pg-dashboard-detail" data-dashboard="Control Center" title="Learn more about this dashboard"></i></h1>
+            <span class="subtitle" style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px; display:block;">Real-time health, throughput, and operational diagnostics</span>
         </div>
         <div class="flex-center dashboard-page-title-actions">
             <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgDashboardView"><i class="fa-solid fa-refresh"></i> Refresh</button>
         </div>
     </div>
 
-    <!-- ROW 1: MISSION CONTROL KPIs (10 Cards) -->
-    <div class="kpi-row">
+    <!-- ROW 1: MISSION CONTROL KPIs (12 Cards) -->
+    <div class="cc-kpi-row">
         <div class="glass-panel metric-card-compact h-kpi">
             <div class="metric-label">Health Score <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Health Score"></i></div>
             <div class="metric-value" id="stat-health-score">--</div>
@@ -65,6 +98,16 @@
             <div class="metric-label">Deadlocks/min</div>
             <div class="metric-value" id="stat-deadlocks">--</div>
             <span class="metric-subtitle">Concurrency failures</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi" id="kpi-card-xid">
+            <div class="metric-label">XID Wraparound <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="XID Wraparound"></i></div>
+            <div class="metric-value" id="stat-xid-pct">--</div>
+            <span class="metric-subtitle">% toward shutdown</span>
+        </div>
+        <div class="glass-panel metric-card-compact h-kpi">
+            <div class="metric-label">Dead Tuples % <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Dead Tuples"></i></div>
+            <div class="metric-value" id="stat-dead-tuple-pct">--</div>
+            <span class="metric-subtitle">Bloat indicator</span>
         </div>
     </div>
 

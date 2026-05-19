@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ---- Compile-time type guards for new structs ----
@@ -186,7 +188,7 @@ func TestPgssWorkloadPointHasTimeSeries(t *testing.T) {
 
 func TestUpsertPgssQueryDim_EmptyRows(t *testing.T) {
 	tl := &TimescaleLogger{} // nil pool — safe because empty rows short-circuits
-	err := tl.UpsertPgssQueryDim(context.TODO(), "test-instance", nil)
+	err := tl.UpsertPgssQueryDim(context.TODO(), uuid.New(), nil)
 	if err != nil {
 		t.Fatalf("expected nil error for empty rows, got %v", err)
 	}
@@ -441,7 +443,7 @@ func TestPgssSummaryHasUniqueQueryCount(t *testing.T) {
 func TestGetPgssFilterOptions_NilPool(t *testing.T) {
 	tl := &TimescaleLogger{} // nil pool
 	// Should return empty options, not panic
-	opts, _ := tl.GetPgssFilterOptions(context.TODO(), "test-instance",
+	opts, _ := tl.GetPgssFilterOptions(context.TODO(), uuid.New(),
 		time.Now().Add(-time.Hour), time.Now())
 	if opts == nil {
 		// nil is acceptable for nil pool
@@ -472,29 +474,11 @@ func TestSubSnap_PropagatesNewFields(t *testing.T) {
 
 // ---- UpsertPgssQueryDim with new signature — empty rows guard ----
 
-func TestUpsertPgssQueryDim_EmptyRowsNewSignature(t *testing.T) {
+func TestUpsertPgssQueryDim_InvalidServerID(t *testing.T) {
 	tl := &TimescaleLogger{}
-	err := tl.UpsertPgssQueryDim(context.TODO(), "test", nil)
+	err := tl.UpsertPgssQueryDim(context.TODO(), uuid.New(), nil)
 	if err != nil {
 		t.Fatalf("expected nil error for empty rows, got %v", err)
 	}
 }
 
-// ---- PGQueryMetricsDelta new fields ----
-
-func TestPGQueryMetricsDeltaHasNewFields(t *testing.T) {
-	d := PGQueryMetricsDelta{
-		SampleTime: time.Now(), InstanceName: "inst", QueryID: 1,
-		DbName: "app_db", UserName: "app_user", AppName: "", QueryType: "S",
-		DeltaCalls: 10, DeltaExecMs: 100.0, MeanExecMs: 10.0, DeltaPlanTime: 5.0,
-	}
-	if d.DbName != "app_db" {
-		t.Fatalf("DbName: want app_db, got %q", d.DbName)
-	}
-	if d.QueryType != "S" {
-		t.Fatalf("QueryType: want S, got %q", d.QueryType)
-	}
-	if d.MeanExecMs != 10.0 {
-		t.Fatalf("MeanExecMs: want 10.0, got %f", d.MeanExecMs)
-	}
-}

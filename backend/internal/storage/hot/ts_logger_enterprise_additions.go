@@ -12,21 +12,22 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
-func (tl *TimescaleLogger) LogPlanCacheHealth(ctx context.Context, instanceName string, row map[string]interface{}) error {
+func (tl *TimescaleLogger) LogPlanCacheHealth(ctx context.Context, serverID uuid.UUID, row map[string]interface{}) error {
 	if row == nil {
 		return nil
 	}
 	now := time.Now().UTC()
 	_, err := tl.pool.Exec(ctx, `
 		INSERT INTO sqlserver_plan_cache (
-			capture_timestamp, server_instance_name, cache_type,
+			capture_timestamp, server_id, cache_type,
 			total_cache_mb, single_use_cache_mb, single_use_cache_pct,
 			adhoc_cache_mb, prepared_cache_mb, proc_cache_mb
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-	`, now, instanceName, "standardized_v2",
+	`, now, serverID.String(), "standardized_v2", // server_id stores UUID string until schema migration
 		getFloat64(row, "total_cache_mb"),
 		getFloat64(row, "single_use_cache_mb"),
 		getFloat64(row, "single_use_cache_pct"),
@@ -37,7 +38,7 @@ func (tl *TimescaleLogger) LogPlanCacheHealth(ctx context.Context, instanceName 
 	return err
 }
 
-func (tl *TimescaleLogger) GetPlanCacheHealth(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetPlanCacheHealth(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 60
 	}
@@ -45,11 +46,11 @@ func (tl *TimescaleLogger) GetPlanCacheHealth(ctx context.Context, instanceName 
 		SELECT capture_timestamp, total_cache_mb, single_use_cache_mb, single_use_cache_pct,
 		       adhoc_cache_mb, prepared_cache_mb, proc_cache_mb
 		FROM sqlserver_plan_cache
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID.String(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +75,7 @@ func (tl *TimescaleLogger) GetPlanCacheHealth(ctx context.Context, instanceName 
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) LogMemoryGrantWaiters(ctx context.Context, instanceName string, rows []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogMemoryGrantWaiters(ctx context.Context, serverID uuid.UUID, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -83,11 +84,11 @@ func (tl *TimescaleLogger) LogMemoryGrantWaiters(ctx context.Context, instanceNa
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_memory_grant_waiters (
-				capture_timestamp, server_instance_name,
+				capture_timestamp, server_id,
 				session_id, request_id, database_name, login_name,
 				requested_memory_kb, granted_memory_kb, required_memory_kb, wait_time_ms, dop, query_text
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-		`, now, instanceName,
+		`, now, serverID,
 			int32(getInt64FromMap(r, "session_id")),
 			int32(getInt64FromMap(r, "request_id")),
 			getStr(r, "database_name"),
@@ -110,7 +111,7 @@ func (tl *TimescaleLogger) LogMemoryGrantWaiters(ctx context.Context, instanceNa
 	return nil
 }
 
-func (tl *TimescaleLogger) GetMemoryGrantWaiters(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetMemoryGrantWaiters(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -118,11 +119,11 @@ func (tl *TimescaleLogger) GetMemoryGrantWaiters(ctx context.Context, instanceNa
 		SELECT session_id, request_id, database_name, login_name,
 		       requested_memory_kb, granted_memory_kb, required_memory_kb, wait_time_ms, dop, query_text
 		FROM sqlserver_memory_grant_waiters
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +153,7 @@ func (tl *TimescaleLogger) GetMemoryGrantWaiters(ctx context.Context, instanceNa
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) LogTempdbTopConsumers(ctx context.Context, instanceName string, rows []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogTempdbTopConsumers(ctx context.Context, serverID uuid.UUID, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -161,11 +162,11 @@ func (tl *TimescaleLogger) LogTempdbTopConsumers(ctx context.Context, instanceNa
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_tempdb_top_consumers (
-				capture_timestamp, server_instance_name,
+				capture_timestamp, server_id,
 				session_id, database_name, login_name, host_name, program_name,
 				tempdb_mb, user_objects_mb, internal_objects_mb, query_text
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		`, now, instanceName,
+		`, now, serverID,
 			int32(getInt64FromMap(r, "session_id")),
 			getStr(r, "database_name"),
 			getStr(r, "login_name"),
@@ -187,7 +188,7 @@ func (tl *TimescaleLogger) LogTempdbTopConsumers(ctx context.Context, instanceNa
 	return nil
 }
 
-func (tl *TimescaleLogger) GetTempdbTopConsumers(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetTempdbTopConsumers(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -195,11 +196,11 @@ func (tl *TimescaleLogger) GetTempdbTopConsumers(ctx context.Context, instanceNa
 		SELECT session_id, database_name, login_name, host_name, program_name,
 		       tempdb_mb, user_objects_mb, internal_objects_mb, query_text
 		FROM sqlserver_tempdb_top_consumers
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +223,53 @@ func (tl *TimescaleLogger) GetTempdbTopConsumers(ctx context.Context, instanceNa
 			"user_objects_mb":     user,
 			"internal_objects_mb": internal,
 			"query_text":          qtxt,
+		})
+	}
+	return out, rows.Err()
+}
+
+func (tl *TimescaleLogger) GetSqlServerTempdbConsumers(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {
+	start, end, err := parseTimeRangeRFC3339(from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	q := `
+		SELECT session_id, database_name, login_name, host_name, program_name,
+		       tempdb_mb, user_objects_mb, internal_objects_mb, query_text, capture_timestamp
+		FROM sqlserver_tempdb_top_consumers
+		WHERE server_id = $1
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		ORDER BY capture_timestamp DESC
+		LIMIT 100
+	`
+	rows, err := tl.pool.Query(ctx, q, serverID, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []map[string]interface{}
+	for rows.Next() {
+		var sid int32
+		var db, login, host, program, qtxt string
+		var total, user, internal float64
+		var ts time.Time
+		if err := rows.Scan(&sid, &db, &login, &host, &program, &total, &user, &internal, &qtxt, &ts); err != nil {
+			continue
+		}
+		out = append(out, map[string]interface{}{
+			"session_id":          sid,
+			"database_name":       db,
+			"login_name":          login,
+			"host_name":           host,
+			"program_name":        program,
+			"tempdb_mb":           total,
+			"user_objects_mb":     user,
+			"internal_objects_mb": internal,
+			"query_text":          qtxt,
+			"capture_timestamp":   ts,
 		})
 	}
 	return out, rows.Err()

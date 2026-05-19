@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/domain/alerts"
 )
@@ -49,12 +50,12 @@ func TestRunOnce_EvaluatesAllInstances(t *testing.T) {
 			},
 		},
 	}
-	svc := NewAlertService(store, maintStore, []AlertEvaluator{ev})
+	svc := NewAlertService(store, maintStore, []AlertEvaluator{ev}, nil)
 	cfg := &config.Config{
 		Instances: []config.Instance{
-			{Name: "db-01", Type: "sqlserver"},
-			{Name: "db-02", Type: "sqlserver"},
-			{Name: "pg-01", Type: "postgres"}, // no evaluator matches
+			{Name: "db-01", Type: "sqlserver", ServerID: uuid.New()},
+			{Name: "db-02", Type: "sqlserver", ServerID: uuid.New()},
+			{Name: "pg-01", Type: "postgres", ServerID: uuid.New()}, // no evaluator matches
 		},
 	}
 
@@ -66,14 +67,14 @@ func TestRunOnce_EvaluatesAllInstances(t *testing.T) {
 	store.mu.Unlock()
 
 	if count != 2 {
-		t.Errorf("expected 2 alerts (one per sqlserver instance), got %d", count)
+		t.Errorf("expected 2 alerts (one per sqlserver serverID), got %d", count)
 	}
 }
 
 func TestStartAlertEvaluationLoop_NilPool(t *testing.T) {
 	// Should return immediately without panic when pool is nil
 	store := newMockAlertStore()
-	svc := NewAlertService(store, &mockMaintenanceStore{}, nil)
+	svc := NewAlertService(store, &mockMaintenanceStore{}, nil, nil)
 	cfg := &config.Config{
 		Instances: []config.Instance{{Name: "test-db", Type: "sqlserver"}},
 	}
@@ -88,6 +89,6 @@ func TestStartAlertEvaluationLoop_NilSvc(t *testing.T) {
 
 func TestStartAlertEvaluationLoop_NilCfg(t *testing.T) {
 	store := newMockAlertStore()
-	svc := NewAlertService(store, &mockMaintenanceStore{}, nil)
+	svc := NewAlertService(store, &mockMaintenanceStore{}, nil, nil)
 	StartAlertEvaluationLoop(context.Background(), nil, nil, svc, time.Second)
 }

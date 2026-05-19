@@ -60,7 +60,18 @@ func LoadInstancesFromServerRegistry(ctx context.Context, pool *pgxpool.Pool, km
 			continue
 		}
 
+		database := strings.TrimSpace(cred.Database)
+		if database == "" {
+			switch strings.ToLower(string(s2.DBType)) {
+			case "postgres":
+				database = "postgres"
+			case "sqlserver":
+				database = "master"
+			}
+		}
+
 		inst := config.Instance{
+			ServerID:               s2.ID,
 			Name:                   s2.Name,
 			Type:                   string(s2.DBType),
 			Host:                   s2.Host,
@@ -68,7 +79,7 @@ func LoadInstancesFromServerRegistry(ctx context.Context, pool *pgxpool.Pool, km
 			User:                   s2.Username,
 			Password:               cred.Password,
 			SSLMode:                strings.TrimSpace(string(s2.SSLMode)),
-			Database:               strings.TrimSpace(cred.Database),
+			Database:               database,
 			TrustServerCertificate: cred.TrustServerCertificate,
 		}
 		out = append(out, inst)

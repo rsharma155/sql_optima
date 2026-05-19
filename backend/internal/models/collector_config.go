@@ -17,4 +17,5 @@ type CollectorConfig struct {
 	IsActive         bool      `json:"is_active"`
 	UpdatedAt        time.Time `json:"updated_at"`
 	UpdatedBy        string    `json:"updated_by"`
+	RunOrder         *int      `json:"run_order"` // goroutine launch sequence from appserver.go; NULL = system/framework
 }

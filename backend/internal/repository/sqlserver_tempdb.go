@@ -8,12 +8,13 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
-	"log"
 )
 
 // CollectTempDBUsage fetches TempDB usage statistics
-func (c *SqlServerRepository) CollectTempDBUsage(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectTempDBUsage(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		/* SQL_OPTIMA */ SELECT   
 			ISNULL(DB_NAME(database_id), 'tempdb') AS database_name,
@@ -26,9 +27,11 @@ func (c *SqlServerRepository) CollectTempDBUsage(db *sql.DB) ([]map[string]inter
 		ORDER BY file_id
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[SQLSERVER] TempDB Usage Query Error: %v", err)
+		slog.Error("[SQLSERVER] TempDB Usage Query Error", "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -53,7 +56,7 @@ func (c *SqlServerRepository) CollectTempDBUsage(db *sql.DB) ([]map[string]inter
 }
 
 // CollectTempDBStats fetches detailed TempDB statistics
-func (c *SqlServerRepository) CollectTempDBStats(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectTempDBStats(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	// Query 1: TempDB file usage
 	fileQuery := `
 		/* SQL_OPTIMA */ SELECT   
@@ -69,7 +72,9 @@ func (c *SqlServerRepository) CollectTempDBStats(db *sql.DB) ([]map[string]inter
 		ORDER BY t.type
 	`
 
-	fileRows, err := db.Query(fileQuery)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	fileRows, err := db.QueryContext(ctx, fileQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +114,9 @@ func (c *SqlServerRepository) CollectTempDBStats(db *sql.DB) ([]map[string]inter
 			ORDER BY s.granted_memory_kb DESC
 		`
 
-		requestRows, err := db.Query(requestQuery)
+		ctx, cancel = WithQueryTimeout(ctx, 0)
+		defer cancel()
+		requestRows, err := db.QueryContext(ctx, requestQuery)
 		if err != nil {
 			return nil, err
 		}

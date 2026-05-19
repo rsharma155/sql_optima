@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Alert evaluator – PostgreSQL replication lag threshold detection.
+// Purpose: Evaluator for PostgreSQL replication lag.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -11,65 +11,74 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/rsharma155/sql_optima/internal/domain/alerts"
 )
 
-// PgReplicationLagEvaluator checks for PostgreSQL replication lag exceeding threshold.
 type PgReplicationLagEvaluator struct {
-	tsPool     *pgxpool.Pool
-	warningMB  float64
-	criticalMB float64
+	tsPool *pgxpool.Pool
 }
 
 func NewPgReplicationLagEvaluator(tsPool *pgxpool.Pool) *PgReplicationLagEvaluator {
-	return &PgReplicationLagEvaluator{
-		tsPool:     tsPool,
-		warningMB:  100, // 100 MB
-		criticalMB: 500, // 500 MB
-	}
+	return &PgReplicationLagEvaluator{tsPool: tsPool}
 }
 
 func (e *PgReplicationLagEvaluator) Engine() alerts.Engine { return alerts.EnginePostgres }
 
-func (e *PgReplicationLagEvaluator) Evaluate(ctx context.Context, instanceName string) ([]AlertEvaluatorResult, error) {
-	const q = `
-		SELECT COALESCE(max_lag_mb, 0)
-		FROM postgres_replication_stats
-		WHERE server_instance_name = $1
+func (e *PgReplicationLagEvaluator) Evaluate(ctx context.Context, serverID uuid.UUID) ([]AlertEvaluatorResult, error) {
+	q := `
+		SELECT replica_name, lag_mb, state, sync_state
+		FROM postgres_replication_lag_detail
+		WHERE server_id = $1
+		  AND capture_timestamp >= now() - interval '5 minutes'
 		ORDER BY capture_timestamp DESC
-		LIMIT 1`
+	`
+	rows, err := e.tsPool.Query(ctx, q, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-	var lagMB float64
-	if err := e.tsPool.QueryRow(ctx, q, instanceName).Scan(&lagMB); err != nil {
-		if isNoDataError(err) {
-			return nil, nil
+	var results []AlertEvaluatorResult
+	serverName := serverID.String()
+
+	seenReplicas := make(map[string]bool)
+	for rows.Next() {
+		var name, state, syncState string
+		var lagMB float64
+		if err := rows.Scan(&name, &lagMB, &state, &syncState); err != nil {
+			continue
 		}
-		return nil, fmt.Errorf("pg_replication_lag: %w", err)
+		if seenReplicas[name] {
+			continue
+		}
+		seenReplicas[name] = true
+
+		if lagMB >= 100.0 {
+			sev := alerts.SeverityWarning
+			if lagMB >= 1000.0 {
+				sev = alerts.SeverityCritical
+			}
+
+			results = append(results, AlertEvaluatorResult{
+				RuleName:    "PGReplicationLagHigh",
+				Category:    "Replication",
+				Severity:    sev,
+				Title:       fmt.Sprintf("PostgreSQL replication lag high on %s (%.1f MB)", name, lagMB),
+				Description: fmt.Sprintf("Replica %s is lagging by %.1f MB. State: %s, Sync: %s", name, lagMB, state, syncState),
+				Evidence: map[string]interface{}{
+					"replica_name": name,
+					"lag_mb":       lagMB,
+					"state":        state,
+					"sync_state":   syncState,
+				},
+				ServerID:   serverID,
+				ServerName: serverName,
+				Engine:     alerts.EnginePostgres,
+			})
+		}
 	}
 
-	var sev alerts.Severity
-	if lagMB >= e.criticalMB {
-		sev = alerts.SeverityCritical
-	} else if lagMB >= e.warningMB {
-		sev = alerts.SeverityWarning
-	} else {
-		return nil, nil
-	}
-
-	return []AlertEvaluatorResult{{
-		RuleName:     "pg_replication_lag",
-		Category:     "replication",
-		Severity:     sev,
-		Title:        fmt.Sprintf("PostgreSQL replication lag: %.1f MB", lagMB),
-		Description:  fmt.Sprintf("Replication lag on %s is %.1f MB (threshold: %.0f MB warning, %.0f MB critical)", instanceName, lagMB, e.warningMB, e.criticalMB),
-		InstanceName: instanceName,
-		Engine:       alerts.EnginePostgres,
-		Evidence: map[string]interface{}{
-			"lag_mb":      lagMB,
-			"warning_mb":  e.warningMB,
-			"critical_mb": e.criticalMB,
-		},
-	}}, nil
+	return results, nil
 }

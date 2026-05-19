@@ -1,8 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Service-layer methods for the enhanced pg_stat_statements dashboard,
-//
-//	orchestrating calls between the repository, TimescaleDB storage, and API handlers.
+// Purpose: PostgreSQL pg_stat_statements service layer for trend analysis.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -10,222 +8,164 @@
 package service
 
 import (
+	"log/slog"
 	"context"
-	"strings"
+	"fmt"
 	"time"
 
-	"github.com/rsharma155/sql_optima/internal/models"
+	"github.com/google/uuid"
+	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
-// GetPgssStatus checks whether query monitoring extensions (pgss or pgsm) are active.
-func (s *MetricsService) GetPgssStatus(ctx context.Context, instanceName string) models.PgssStatusResponse {
-	resp := models.PgssStatusResponse{Instance: instanceName}
+func (s *MetricsService) StartPostgresQueryStatsCollector(ctx context.Context) {
+	interval := s.GetCollectorInterval(ctx, "Postgres PGSS", 1*time.Minute)
+	slog.Info("[PGSS] Starting background collector (interval: %v)", "val", interval)
 
-	if s.PgRepo == nil {
-		resp.Message = "instance connection not available"
-		return resp
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Dynamic interval check
+				newInterval := s.GetCollectorInterval(ctx, "Postgres PGSS", 1*time.Minute)
+				if newInterval != interval && newInterval > 0 {
+					slog.Info("[PGSS] Frequency changed from", "arg1", interval, "arg2", newInterval)
+					interval = newInterval
+					ticker.Reset(interval)
+				}
+
+				if interval > 0 {
+					for _, inst := range s.Config.Instances {
+						if inst.Type == "postgres" {
+							if err := s.CollectPostgresQueryStats(ctx, inst.ServerID); err != nil {
+								slog.Error("[PGSS] ERROR: Failed to collect PGSS", "target", inst.Name, "err", err)
+							}
+						}
+					}
+				}
+			}
+		}
+	}()
+}
+
+func (s *MetricsService) CollectPostgresQueryStats(ctx context.Context, serverID uuid.UUID) error {
+	instanceName := ""
+	for _, inst := range s.Config.Instances {
+		if inst.ServerID == serverID {
+			instanceName = inst.Name
+			break
+		}
+	}
+	if instanceName == "" {
+		return fmt.Errorf("instance not found: %s", serverID)
 	}
 
 	db, ok := s.PgRepo.GetConn(instanceName)
-	if !ok || db == nil {
-		resp.Message = "instance connection not available"
-		return resp
+	if !ok {
+		return fmt.Errorf("no connection for %s", instanceName)
 	}
 
-	// Check shared_preload_libraries
-	var libs string
-	if err := db.QueryRowContext(ctx, "SHOW shared_preload_libraries").Scan(&libs); err == nil {
-		resp.SharedPreloadActive = strings.Contains(libs, "pg_stat_statements") || strings.Contains(libs, "pg_stat_monitor")
+	stats, err := s.PgRepo.FetchQuerySnapshot(ctx, instanceName, db)
+	if err != nil {
+		return err
 	}
 
-	// Check extension installed (statements or monitor)
-	var extName string
-	err := db.QueryRowContext(ctx, "SELECT extname FROM pg_extension WHERE extname IN ('pg_stat_monitor', 'pg_stat_statements') ORDER BY CASE WHEN extname = 'pg_stat_monitor' THEN 1 ELSE 2 END LIMIT 1").Scan(&extName)
-	if err == nil {
-		resp.ExtensionInstalled = true
-		if extName == "pg_stat_monitor" {
-			resp.Message = "Enhanced monitoring active (pg_stat_monitor)."
-		} else {
-			resp.Message = "Standard monitoring active (pg_stat_statements). pg_stat_monitor is optional but recommended."
-		}
-	} else {
-		resp.ExtensionInstalled = false
+	var hotRows []hot.PostgresQueryStatsSnapRow
+	for _, st := range stats {
+		hotRows = append(hotRows, hot.PostgresQueryStatsSnapRow{
+			QueryID:           st.QueryID,
+			QueryText:         st.Query,
+			DbName:            st.DbName,
+			UserName:          st.UserName,
+			QueryType:         st.QueryType,
+			Calls:             st.Calls,
+			TotalTimeMs:       st.TotalTime,
+			MeanTimeMs:        st.MeanTime,
+			Rows:              st.Rows,
+			TempBlksRead:      st.TempBlksRead,
+			TempBlksWritten:   st.TempBlksWritten,
+			BlkReadTimeMs:     st.BlkReadTime,
+			BlkWriteTimeMs:    st.BlkWriteTime,
+			SharedBlksHit:     st.SharedBlksHit,
+			SharedBlksRead:    st.SharedBlksRead,
+			SharedBlksDirtied: st.SharedBlksDirtied,
+			SharedBlksWritten: st.SharedBlksWritten,
+			WalBytes:          st.WalBytes,
+			WalRecords:        st.WalRecords,
+			WalFpi:            st.WalFpi,
+			TotalPlanTime:     st.TotalPlanTime,
+			MeanPlanTime:      st.MeanPlanTime,
+			Plans:             st.Plans,
+		})
 	}
 
-	resp.Ready = resp.SharedPreloadActive && resp.ExtensionInstalled
-	if !resp.Ready {
-		if !resp.SharedPreloadActive {
-			resp.Message = "Neither pg_stat_statements nor pg_stat_monitor found in shared_preload_libraries (requires restart)."
-		} else {
-			resp.Message = "Query stats extension not created. Run 'CREATE EXTENSION pg_stat_statements' (minimum) or 'CREATE EXTENSION pg_stat_monitor' (optional/enhanced)."
-		}
-	} else if s.tsLogger == nil {
-		resp.Ready = false 
-		resp.Message = "TimescaleDB not connected. Query performance charts require the metrics repository."
+	if err := s.tsLogger.LogPostgresQueryStats(ctx, serverID, hotRows); err != nil {
+		return err
 	}
-	return resp
+
+	// Compute and store deltas for Query Analysis dashboard
+	if err := s.tsLogger.ComputeAndStorePgssDelta1m(ctx, serverID, time.Now().UTC()); err != nil {
+		slog.Error("[PGSS] ERROR: Failed to compute deltas", "target", instanceName, "err", err)
+	}
+
+	return s.tsLogger.UpsertPgssQueryDim(ctx, serverID, hotRows)
 }
 
-// GetPgssWorkload returns per-minute workload time-series from the pgss_delta_1m table.
-func (s *MetricsService) GetPgssWorkload(ctx context.Context, instanceName string, from, to time.Time) ([]models.PgssWorkloadPoint, error) {
+func (s *MetricsService) GetPgssWorkloadTrend(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]hot.PgssWorkloadPoint, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	hotPts, err := s.tsLogger.GetPgssWorkloadTimeSeries(ctx, instanceName, from, to)
-	if err != nil {
-		return nil, err
-	}
-	pts := make([]models.PgssWorkloadPoint, len(hotPts))
-	for i, h := range hotPts {
-		pts[i] = models.PgssWorkloadPoint{
-			Timestamp: h.Timestamp, QueryLoadMsSec: h.QueryLoadMsSec,
-			QPS: h.QPS, RowsSec: h.RowsSec, CacheHitRatio: h.CacheHitRatio,
-			WalBytesSec: h.WalBytesSec, PlanningMsSec: h.PlanningMsSec,
-			ExecPct: h.ExecPct, PlanPct: h.PlanPct,
-			RowsPerQuery: h.RowsPerQuery, TempMbSec: h.TempMbSec,
-			BlksReadSec: h.BlksReadSec, TempBlksWrittenSec: h.TempBlksWrittenSec,
-			CpuSaturationMsSec: h.CpuSaturationMsSec,
-		}
-	}
-	return pts, nil
+	return s.tsLogger.GetPgssWorkloadTimeSeries(ctx, serverID, from, to)
 }
 
-// GetPgssLatency returns latency percentile approximations from pgss_delta_1m.
-func (s *MetricsService) GetPgssLatency(ctx context.Context, instanceName string, from, to time.Time) ([]models.PgssLatencyPoint, error) {
+func (s *MetricsService) GetPgssTopQueries(ctx context.Context, serverID uuid.UUID, from, to time.Time, sortBy string, limit int, db, user, app, qType string, hideSys bool) ([]hot.PgssTopQuery, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	hotPts, err := s.tsLogger.GetPgssLatencyTimeSeries(ctx, instanceName, from, to)
-	if err != nil {
-		return nil, err
-	}
-	pts := make([]models.PgssLatencyPoint, len(hotPts))
-	for i, h := range hotPts {
-		pts[i] = models.PgssLatencyPoint{
-			Timestamp: h.Timestamp, P50: h.P50, P95: h.P95, P99: h.P99, MaxExec: h.MaxExec,
-		}
-	}
-	return pts, nil
+	return s.tsLogger.GetPgssTopQueries(ctx, serverID, from, to, sortBy, limit, db, user, app, qType, hideSys)
 }
 
-// GetPgssTopQueries returns top queries from pgss_delta_1m for a time window.
-// Optional filters: dbName, userName, appName, queryType (empty = all).
-func (s *MetricsService) GetPgssTopQueries(ctx context.Context, instanceName string, from, to time.Time, sortBy string, limit int, dbName, userName, appName, queryType string, hideSystem bool) ([]models.PgssTopQuery, error) {
+func (s *MetricsService) GetPgssLatencyTrend(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]hot.PgssLatencyPoint, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	hotQ, err := s.tsLogger.GetPgssTopQueries(ctx, instanceName, from, to, sortBy, limit, dbName, userName, appName, queryType, hideSystem)
-	if err != nil {
-		return nil, err
-	}
-	q := make([]models.PgssTopQuery, len(hotQ))
-	for i, h := range hotQ {
-		q[i] = models.PgssTopQuery{
-			QueryID: h.QueryID, Query: h.Query,
-			DbName: h.DbName, UserName: h.UserName, AppName: h.AppName, QueryType: h.QueryType,
-			TotalTime: h.TotalTime, PctDBTime: h.PctDBTime,
-			Calls: h.Calls, AvgMs: h.AvgMs, RowsPerCall: h.RowsPerCall,
-			HitPct: h.HitPct, TempMB: h.TempMB, WalMB: h.WalMB,
-			ReadsPerCall: h.ReadsPerCall, PlanRatio: h.PlanRatio, Flags: h.Flags,
-		}
-	}
-	return q, nil
+	return s.tsLogger.GetPgssLatencyTimeSeries(ctx, serverID, from, to)
 }
 
-// GetPgssFilterOptions returns distinct db_name/username/app_name for filter dropdowns.
-func (s *MetricsService) GetPgssFilterOptions(ctx context.Context, instanceName string, from, to time.Time) (*models.PgssFilterOptions, error) {
-	if s.tsLogger == nil {
-		return &models.PgssFilterOptions{Instance: instanceName}, nil
-	}
-	opts, err := s.tsLogger.GetPgssFilterOptions(ctx, instanceName, from, to)
-	if err != nil || opts == nil {
-		return &models.PgssFilterOptions{Instance: instanceName}, nil
-	}
-	return &models.PgssFilterOptions{
-		Instance:  instanceName,
-		Databases: opts.Databases,
-		Users:     opts.Users,
-		AppNames:  opts.AppNames,
-	}, nil
-}
-
-// GetPgssDbBreakdown returns per-database workload totals.
-func (s *MetricsService) GetPgssDbBreakdown(ctx context.Context, instanceName string, from, to time.Time) ([]models.PgssDbBreakdown, error) {
+func (s *MetricsService) GetPgssRegressions(ctx context.Context, serverID uuid.UUID) ([]hot.PgssRegression, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	rows, err := s.tsLogger.GetPgssDbBreakdown(ctx, instanceName, from, to)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]models.PgssDbBreakdown, len(rows))
-	for i, r := range rows {
-		out[i] = models.PgssDbBreakdown{
-			DbName: r.DbName, TotalExecMs: r.TotalExecMs, PctOfServer: r.PctOfServer,
-			TotalCalls: r.TotalCalls, AvgMs: r.AvgMs, CacheHitPct: r.CacheHitPct,
-			UniqueQueryIDs: r.UniqueQueryIDs,
-		}
-	}
-	return out, nil
+	return s.tsLogger.GetPgssRegressions(ctx, serverID)
 }
 
-// GetPgssUserBreakdown returns per-login workload totals.
-func (s *MetricsService) GetPgssUserBreakdown(ctx context.Context, instanceName string, from, to time.Time) ([]models.PgssUserBreakdown, error) {
+func (s *MetricsService) GetPgssDbBreakdown(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]hot.PgssDbBreakdown, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	rows, err := s.tsLogger.GetPgssUserBreakdown(ctx, instanceName, from, to)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]models.PgssUserBreakdown, len(rows))
-	for i, r := range rows {
-		out[i] = models.PgssUserBreakdown{
-			UserName: r.UserName, TotalExecMs: r.TotalExecMs, PctOfServer: r.PctOfServer,
-			TotalCalls: r.TotalCalls, AvgMs: r.AvgMs, UniqueQueryIDs: r.UniqueQueryIDs,
-		}
-	}
-	return out, nil
+	return s.tsLogger.GetPgssDbBreakdown(ctx, serverID, from, to)
 }
 
-// GetPgssRegressions returns queries that degraded between the last 30m and previous 30m.
-func (s *MetricsService) GetPgssRegressions(ctx context.Context, instanceName string) ([]models.PgssRegression, error) {
+func (s *MetricsService) GetPgssUserBreakdown(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]hot.PgssUserBreakdown, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	hotR, err := s.tsLogger.GetPgssRegressions(ctx, instanceName)
-	if err != nil {
-		return nil, err
-	}
-	r := make([]models.PgssRegression, len(hotR))
-	for i, h := range hotR {
-		r[i] = models.PgssRegression{
-			QueryID: h.QueryID, Query: h.Query, PrevAvgMs: h.PrevAvgMs,
-			CurrAvgMs: h.CurrAvgMs, ChangePct: h.ChangePct, Status: h.Status,
-			DetectedAt: h.DetectedAt,
-		}
-	}
-	return r, nil
+	return s.tsLogger.GetPgssUserBreakdown(ctx, serverID, from, to)
 }
 
-// GetPgssSummary returns aggregate KPI metrics for the incident summary strip.
-func (s *MetricsService) GetPgssSummary(ctx context.Context, instanceName string, from, to time.Time) (*models.PgssSummaryResponse, error) {
+func (s *MetricsService) GetPgssFilterOptions(ctx context.Context, serverID uuid.UUID, from, to time.Time) (*hot.PgssFilterOptions, error) {
 	if s.tsLogger == nil {
-		return nil, nil
+		return &hot.PgssFilterOptions{}, nil
 	}
-	hotS, err := s.tsLogger.GetPgssSummary(ctx, instanceName, from, to)
-	if err != nil {
-		return nil, err
+	return s.tsLogger.GetPgssFilterOptions(ctx, serverID, from, to)
+}
+
+func (s *MetricsService) GetPgssSummary(ctx context.Context, serverID uuid.UUID, from, to time.Time) (*hot.PgssSummary, error) {
+	if s.tsLogger == nil {
+		return &hot.PgssSummary{}, nil
 	}
-	return &models.PgssSummaryResponse{
-		Instance:           instanceName,
-		QueryLoadMsSec:     hotS.QueryLoadMsSec,
-		QPS:                hotS.QPS,
-		P99Ms:              hotS.P99Ms,
-		CacheHitPct:        hotS.CacheHitPct,
-		TempMbSec:          hotS.TempMbSec,
-		WalMbSec:           hotS.WalMbSec,
-		CpuSaturationMsSec: hotS.CpuSaturationMsSec,
-		UniqueQueryCount:   hotS.UniqueQueryCount,
-	}, nil
+	return s.tsLogger.GetPgssSummary(ctx, serverID, from, to)
 }

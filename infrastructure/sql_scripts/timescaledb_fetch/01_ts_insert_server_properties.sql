@@ -5,7 +5,7 @@
 
 INSERT INTO sqlserver_server_properties (
     capture_timestamp,
-    server_instance_name,
+    server_id,
     cpu_count,
     hyperthread_ratio,
     socket_count,

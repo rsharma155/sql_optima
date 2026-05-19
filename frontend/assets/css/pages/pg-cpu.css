@@ -7,62 +7,70 @@
  * Copyright (c) 2026 Ravi Sharma
  * SPDX-License-Identifier: MIT
  */
-/* PostgreSQL CPU dashboard (pg_cpu) */
-.pg-cpu-bottom-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-    gap: 0.75rem;
-    align-items: stretch;
+
+/* OS Collector unavailable notice banner */
+.pg-cpu-os-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.55rem 0.9rem;
+    margin-bottom: 0.6rem;
+    border-radius: 0.45rem;
+    background: rgba(59, 130, 246, 0.07);
+    border: 1px solid rgba(59, 130, 246, 0.22);
+    color: var(--text-secondary, #94a3b8);
+    font-size: 0.72rem;
+    line-height: 1.55;
 }
-@media (max-width: 900px) {
-    .pg-cpu-bottom-grid {
-        grid-template-columns: 1fr;
-    }
+.pg-cpu-os-notice i {
+    color: #3b82f6;
+    margin-top: 0.15rem;
+    flex-shrink: 0;
+    font-size: 0.85rem;
 }
-.saturation-badge {
+.pg-cpu-os-notice strong {
+    color: var(--text-primary, #cbd5e1);
+}
+
+/* Cache hit ratio badge in card header */
+.pg-cpu-cache-badge {
     display: inline-block;
-    padding: 0.15rem 0.45rem;
+    padding: 0.15rem 0.5rem;
     border-radius: 0.35rem;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     font-weight: 700;
 }
-.saturation-badge--ok {
-    background: rgba(34, 197, 94, 0.2);
-    color: var(--success, #22c55e);
+.pg-cpu-cache-badge--ok {
+    background: rgba(34, 197, 94, 0.18);
+    color: #22c55e;
 }
-.saturation-badge--warn {
-    background: rgba(245, 158, 11, 0.2);
-    color: var(--warning, #f59e0b);
+.pg-cpu-cache-badge--warn {
+    background: rgba(245, 158, 11, 0.18);
+    color: #f59e0b;
 }
-.saturation-badge--danger {
-    background: rgba(239, 68, 68, 0.2);
-    color: var(--danger, #ef4444);
-}
-.saturation-badge--muted {
-    background: rgba(148, 163, 184, 0.2);
-    color: var(--text-secondary, #888);
+.pg-cpu-cache-badge--danger {
+    background: rgba(239, 68, 68, 0.18);
+    color: #ef4444;
 }
 
-.pg-cpu-second-row {
-    display: grid;
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-    gap: 0.75rem;
-    align-items: stretch;
+/* Queries table — query code cell */
+.pg-cpu-queries-table td code {
+    font-size: 0.72rem;
+    color: var(--text-secondary, #94a3b8);
+    cursor: default;
+    word-break: break-all;
 }
-.pg-cpu-third-row {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 0.75rem;
-}
-@media (max-width: 980px) {
-    .pg-cpu-second-row {
-        grid-template-columns: 1fr;
-    }
-}
-
 .pg-cpu-queries-table td .pg-cpu-query-link {
     color: var(--accent-blue, #3b82f6);
     text-decoration: underline;
     cursor: pointer;
 }
 
+/* Responsive grid adjustments */
+@media (max-width: 980px) {
+    .col-laptop-8 { grid-column: span 8; }
+    .col-laptop-4 { grid-column: span 4; }
+}
+@media (max-width: 768px) {
+    .col-tablet-12 { grid-column: span 12; }
+}

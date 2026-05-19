@@ -1,0 +1,45 @@
+name: memory_grant_pressure
+description: Memory grant pressure
+conditions:
+  - metric: memory_grants_pending
+    operator: ">"
+    value: 0
+logic: AND
+severity: high
+message: "Memory grants pending detected ({memory_grants_pending} waiters)."
+recommendation:
+  - "Investigate queries with large memory grants"
+  - "Review max server memory configuration"
+  - "Check os_available_memory_mb"
+  - "Consider enabling Resource Governor"
+
+---
+name: ple_collapse
+description: Page Life Expectancy collapse
+conditions:
+  - metric: ple_seconds
+    operator: "<"
+    value: 300
+logic: AND
+severity: critical
+message: "Page Life Expectancy is {ple_seconds} seconds (below 300 threshold)."
+recommendation:
+  - "Increase max server memory if RAM is available"
+  - "Check os_available_memory_mb"
+  - "Review buffer_cache_hit_ratio"
+  - "Evaluate physical memory pressure"
+
+---
+name: buffer_cache_hit_ratio_low
+description: Low buffer cache hit ratio
+conditions:
+  - metric: buffer_cache_hit_ratio
+    operator: "<"
+    value: 90
+logic: AND
+severity: high
+message: "Buffer cache hit ratio is {buffer_cache_hit_ratio}% (below 90%)."
+recommendation:
+  - "Review PLE in sqlserver_risk_health"
+  - "Check sql_memory_used_mb vs target"
+  - "Identify large table scans causing cache churn"

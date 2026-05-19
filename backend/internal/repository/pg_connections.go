@@ -8,12 +8,13 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
-	"log"
 )
 
 // CollectPgConnections fetches PostgreSQL connection stats
-func (c *PgRepository) CollectPgConnections(db *sql.DB) (int, int, int, error) {
+func (c *PgRepository) CollectPgConnections(ctx context.Context, db *sql.DB) (int, int, int, error) {
 	query := `
 		SELECT /* SQL_OPTIMA */   
 			COALESCE(SUM(CASE WHEN state = 'active' THEN 1 ELSE 0 END), 0) AS active_connections,
@@ -24,15 +25,17 @@ func (c *PgRepository) CollectPgConnections(db *sql.DB) (int, int, int, error) {
 	`
 
 	var active, idle, total int
-	err := db.QueryRow(query).Scan(&active, &idle, &total)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err := db.QueryRowContext(ctx, query).Scan(&active, &idle, &total)
 	if err != nil {
-		log.Printf("[PostgreSQL] Connection Stats Query Error: %v", err)
+		slog.Error("[PostgreSQL] Connection Stats Query Error", "err", err)
 	}
 	return active, idle, total, err
 }
 
 // CollectPgDatabases fetches list of databases
-func (c *PgRepository) CollectPgDatabases(db *sql.DB) ([]string, error) {
+func (c *PgRepository) CollectPgDatabases(ctx context.Context, db *sql.DB) ([]string, error) {
 	query := `
 		SELECT /* SQL_OPTIMA */   datname 
 		FROM pg_database 
@@ -40,9 +43,11 @@ func (c *PgRepository) CollectPgDatabases(db *sql.DB) ([]string, error) {
 		ORDER BY datname
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[PostgreSQL] Databases Query Error: %v", err)
+		slog.Error("[PostgreSQL] Databases Query Error", "err", err)
 		return nil, err
 	}
 	defer rows.Close()

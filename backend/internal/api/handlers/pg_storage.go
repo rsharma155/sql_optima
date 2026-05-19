@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: HTTP handlers for PostgreSQL storage, database sizes, and bloat analysis.
+// Purpose: PostgreSQL storage monitoring (databases, disks, bloat) API handlers.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -8,277 +8,77 @@
 package handlers
 
 import (
-	"encoding/json"
-	"log"
-	"net/http"
 	"strconv"
-	"time"
+	"encoding/json"
+	"net/http"
 
-	"github.com/rsharma155/sql_optima/internal/repository"
-	"github.com/rsharma155/sql_optima/internal/storage/hot"
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	"github.com/rsharma155/sql_optima/internal/service"
 )
 
-
-
-
-func (h *PostgresHandlers) Databases(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-
-	databases, err := h.metricsSvc.GetTimescalePostgresDatabases(r.Context(), instance)
-	if err != nil || len(databases) == 0 {
-		if err != nil {
-			log.Printf("[API] PG databases (timescale) error for %s: %v — falling back to live discovery", instance, err)
-		}
-		// Fallback to direct instance query
-		liveDbs, liveErr := h.metricsSvc.PgRepo.GetDatabases(instance)
-		if liveErr != nil {
-			log.Printf("[API] PG databases (live fallback) error for %s: %v", instance, liveErr)
-			w.Header().Set("X-Data-Source", "error")
-			json.NewEncoder(w).Encode(map[string]interface{}{"instance": instance, "databases": []string{}})
-			return
-		}
-		databases = liveDbs
-		w.Header().Set("X-Data-Source", "live")
-	} else {
-		w.Header().Set("X-Data-Source", "timescale")
-	}
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance":  instance,
-		"databases": databases,
-	})
+type PgStorageHandlers struct {
+	metricsSvc *service.MetricsService
 }
 
-// Disk returns the latest derived PostgreSQL disk metrics snapshot from TimescaleDB.
-func (h *PostgresHandlers) Disk(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
+func NewPgStorageHandlers(svc *service.MetricsService) *PgStorageHandlers {
+	return &PgStorageHandlers{metricsSvc: svc}
+}
 
-	rows, err := h.metricsSvc.GetTimescalePostgresDiskStats(instance, 200)
+func (h *PgStorageHandlers) GetDatabases(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
 	if err != nil {
-		log.Printf("[API] PG disk error for %s: %v", instance, err)
-		rows = []hot.PostgresDiskStatRow{}
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance": instance,
-		"stats":    rows,
-		"source":   "timescale",
-	})
-}
-
-type backupReportRequest struct {
-	Instance         string                 `json:"instance"`
-	Tool             string                 `json:"tool"`
-	BackupType       string                 `json:"backup_type"`
-	Status           string                 `json:"status"`
-	StartedAt        *time.Time             `json:"started_at,omitempty"`
-	FinishedAt       *time.Time             `json:"finished_at,omitempty"`
-	DurationSeconds  int64                  `json:"duration_seconds"`
-	WalArchivedUntil *time.Time             `json:"wal_archived_until,omitempty"`
-	Repo             string                 `json:"repo,omitempty"`
-	SizeBytes        int64                  `json:"size_bytes"`
-	ErrorMessage     string                 `json:"error_message,omitempty"`
-	Metadata         map[string]interface{} `json:"metadata,omitempty"`
-}
-
-func (h *PostgresHandlers) Storage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
 	}
 
-	limit := 100
-	rows, err := h.metricsSvc.GetLatestPostgresTableMaintenance(r.Context(), instance, limit)
+	res, err := h.metricsSvc.GetTimescalePostgresDatabases(r.Context(), id)
 	if err != nil {
-		log.Printf("[API] PG storage (timescale) error for %s: %v", instance, err)
-		json.NewEncoder(w).Encode(map[string]interface{}{"instance": instance, "tables": []interface{}{}, "indexes": []interface{}{}})
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-
-	w.Header().Set("X-Data-Source", "timescale")
-
-	// Map to expected UI format
-	type uiTable struct {
-		Schema              string     `json:"schema"`
-		Table               string     `json:"table"`
-		DatabaseName        string     `json:"database_name"`
-		TotalBytes          int64      `json:"total_bytes"`
-		DeadTuples          int64      `json:"dead_tuples"`
-		DeadPct             float64    `json:"dead_pct"`
-		LastAutovacuum      *time.Time `json:"last_autovacuum"`
-		VacuumLagSeconds    float64    `json:"vacuum_lag_seconds"`
-		EstimatedWasteMB    float64    `json:"estimated_waste_mb"`
-		Recommendation      string     `json:"recommendation"`
-	}
-
-	var uiTables []uiTable
-	now := time.Now().UTC()
-	for _, r := range rows {
-		lag := -1.0
-		if r.LastAutovacuum != nil {
-			lag = now.Sub(*r.LastAutovacuum).Seconds()
-		}
-		
-		waste := float64(r.TotalBytes) * (r.DeadPct / 100.0) / 1024.0 / 1024.0
-		rec := "Healthy"
-		if r.DeadPct > 20 {
-			rec = "Autovacuum Lagging / High Churn"
-		}
-
-		uiTables = append(uiTables, uiTable{
-			Schema:           r.SchemaName,
-			Table:            r.TableName,
-			DatabaseName:     r.DatabaseName,
-			TotalBytes:       r.TotalBytes,
-			DeadTuples:       r.DeadTuples,
-			DeadPct:          r.DeadPct,
-			LastAutovacuum:   r.LastAutovacuum,
-			VacuumLagSeconds: lag,
-			EstimatedWasteMB: waste,
-			Recommendation:   rec,
-		})
-	}
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance": instance,
-		"tables":   uiRowsToMap(uiTables), // Converting to compatible map if needed or just slice
-		"indexes":  []interface{}{},      // Index detail needs its own Timescale table
-		"source":   "timescale",
-	})
-}
-
-func uiRowsToMap(rows interface{}) interface{} {
-    return rows
-}
-
-
-func (h *PostgresHandlers) DatabaseSize(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-	json.NewEncoder(w).Encode(h.metricsSvc.PgRepo.GetDatabaseSizeStats(instance))
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-func (h *PostgresHandlers) BloatEstimates(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
+func (h *PgStorageHandlers) GetDiskStats(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid instance"})
-		return
-	}
+
 	limit := 100
 	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 500 {
-			limit = n
+		if val, err := strconv.Atoi(l); err == nil {
+			limit = val
 		}
 	}
-	rows, err := h.metricsSvc.PgRepo.GetBloatEstimates(instance, limit)
+
+	res, err := h.metricsSvc.GetTimescalePostgresDiskStats(id, limit)
 	if err != nil {
-		log.Printf("[API] PG bloat error for %s: %v", instance, err)
-		rows = []repository.PgBloatEstimate{}
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
-	if rows == nil {
-		rows = []repository.PgBloatEstimate{}
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance": instance,
-		"tables":   rows,
-	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-// IndexBloat returns PostgreSQL index bloat estimates for the requested instance.
-func (h *PostgresHandlers) IndexBloat(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid instance"})
-		return
-	}
-	limitStr := r.URL.Query().Get("limit")
-	limit := 100
-	if v, err := strconv.Atoi(limitStr); err == nil && v > 0 {
-		limit = v
-	}
-	indexes, err := h.metricsSvc.PgRepo.GetIndexBloat(instance, limit)
+func (h *PgStorageHandlers) GetTableMaint(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
 	if err != nil {
-		log.Printf("[API] PG index-bloat error for %s: %v", instance, err)
-		indexes = []repository.PgIndexBloat{}
+		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
-	if indexes == nil {
-		indexes = []repository.PgIndexBloat{}
+
+	res, err := h.metricsSvc.GetLatestPostgresTableMaint(r.Context(), id, 100)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance": instance,
-		"indexes":  indexes,
-	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }

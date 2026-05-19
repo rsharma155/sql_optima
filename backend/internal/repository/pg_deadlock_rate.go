@@ -8,6 +8,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -15,13 +16,13 @@ import (
 // FetchDeadlocksTotalAllDBs returns sum of deadlocks across all non-template client databases.
 // Counter is monotonically increasing (resets on server restart). Used by CC collector
 // to compute deadlocks_per_min via TimescaleLogger.ComputePgDeadlockRate().
-func (c *PgRepository) FetchDeadlocksTotalAllDBs(instanceName string) (int64, error) {
+func (c *PgRepository) FetchDeadlocksTotalAllDBs(ctx context.Context, instanceName string) (int64, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
-		if c.reconnectInstance(instanceName) {
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
@@ -42,7 +43,9 @@ func (c *PgRepository) FetchDeadlocksTotalAllDBs(instanceName string) (int64, er
 		  AND datname <> ''`
 
 	var total int64
-	err := db.QueryRow(query).Scan(&total)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err := db.QueryRowContext(ctx, query).Scan(&total)
 	if err != nil {
 		return 0, fmt.Errorf("failed to fetch aggregate deadlocks: %v", err)
 	}

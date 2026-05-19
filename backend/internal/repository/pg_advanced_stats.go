@@ -8,9 +8,10 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 )
@@ -36,7 +37,7 @@ type PgSettingSnapRow struct {
 	Source  string `json:"source"`
 }
 
-func (c *PgRepository) GetWaitEventCounts(instanceName string) ([]PgWaitEventCount, error) {
+func (c *PgRepository) GetWaitEventCounts(ctx context.Context, instanceName string) ([]PgWaitEventCount, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -53,7 +54,10 @@ func (c *PgRepository) GetWaitEventCounts(instanceName string) ([]PgWaitEventCou
 		GROUP BY 1,2
 		ORDER BY sessions_count DESC
 	`
-	rows, err := db.Query(q)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +74,7 @@ func (c *PgRepository) GetWaitEventCounts(instanceName string) ([]PgWaitEventCou
 	return out, rows.Err()
 }
 
-func (c *PgRepository) GetDbIOStats(instanceName string) ([]PgDbIOStat, error) {
+func (c *PgRepository) GetDbIOStats(ctx context.Context, instanceName string) ([]PgDbIOStat, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -88,7 +92,10 @@ func (c *PgRepository) GetDbIOStats(instanceName string) ([]PgDbIOStat, error) {
 		WHERE datname IS NOT NULL
 		  AND datname NOT IN ('template0','template1')
 	`
-	rows, err := db.Query(q)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +113,7 @@ func (c *PgRepository) GetDbIOStats(instanceName string) ([]PgDbIOStat, error) {
 }
 
 // GetSettingsSnapshot returns a curated set of settings for drift tracking.
-func (c *PgRepository) GetSettingsSnapshot(instanceName string) ([]PgSettingSnapRow, error) {
+func (c *PgRepository) GetSettingsSnapshot(ctx context.Context, instanceName string) ([]PgSettingSnapRow, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -160,7 +167,10 @@ func (c *PgRepository) GetSettingsSnapshot(instanceName string) ([]PgSettingSnap
 		WHERE name IN (%s)
 	`, placeholders)
 
-	rows, err := db.Query(q, args...)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +188,7 @@ func (c *PgRepository) GetSettingsSnapshot(instanceName string) ([]PgSettingSnap
 		return nil, err
 	}
 	if len(out) == 0 {
-		log.Printf("[POSTGRES] GetSettingsSnapshot returned 0 rows for %s", instanceName)
+		slog.Info("[POSTGRES] GetSettingsSnapshot returned 0 rows for", "val", instanceName)
 	}
 	return out, nil
 }

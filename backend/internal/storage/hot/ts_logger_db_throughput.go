@@ -12,10 +12,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
-func (tl *TimescaleLogger) LogDatabaseThroughput(ctx context.Context, instanceName string, dbStats []DatabaseThroughputRow) error {
+func (tl *TimescaleLogger) LogDatabaseThroughput(ctx context.Context, serverID uuid.UUID, dbStats []DatabaseThroughputRow) error {
 	if len(dbStats) == 0 {
 		return nil
 	}
@@ -25,13 +26,13 @@ func (tl *TimescaleLogger) LogDatabaseThroughput(ctx context.Context, instanceNa
 	for _, r := range dbStats {
 		batch.Queue(`
 			INSERT INTO sqlserver_database_throughput (
-				capture_timestamp, server_instance_name, database_name,
+				capture_timestamp, server_id, database_name,
 				user_seeks, user_scans, user_lookups, user_writes,
 				total_reads, total_writes, tps, batch_requests_per_sec,
 				reads, writes, bytes_read, bytes_written,
 				read_latency_ms, write_latency_ms
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
-			r.CaptureTimestamp, r.ServerInstanceName, r.DatabaseName,
+			r.CaptureTimestamp, serverID, r.DatabaseName,
 			r.UserSeeks, r.UserScans, r.UserLookups, r.UserWrites,
 			r.TotalReads, r.TotalWrites, r.TPS, r.BatchRequestsPerSec,
 			r.Reads, r.Writes, r.BytesRead, r.BytesWritten,
@@ -50,7 +51,7 @@ func (tl *TimescaleLogger) LogDatabaseThroughput(ctx context.Context, instanceNa
 	return nil
 }
 
-func (tl *TimescaleLogger) LogDatabaseThroughputFromMap(ctx context.Context, instanceName string, dbStats []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogDatabaseThroughputFromMap(ctx context.Context, serverID uuid.UUID, dbStats []map[string]interface{}) error {
 	if len(dbStats) == 0 {
 		return nil
 	}
@@ -61,13 +62,13 @@ func (tl *TimescaleLogger) LogDatabaseThroughputFromMap(ctx context.Context, ins
 	for _, r := range dbStats {
 		batch.Queue(`
 			INSERT INTO sqlserver_database_throughput (
-				capture_timestamp, server_instance_name, database_name,
+				capture_timestamp, server_id, database_name,
 				user_seeks, user_scans, user_lookups, user_writes,
 				total_reads, total_writes, tps, batch_requests_per_sec,
 				reads, writes, bytes_read, bytes_written,
 				read_latency_ms, write_latency_ms
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
-			now, instanceName,
+			now, serverID,
 			getStr(r, "database_name"),
 			getInt64FromMap(r, "user_seeks"),
 			getInt64FromMap(r, "user_scans"),
@@ -97,13 +98,11 @@ func (tl *TimescaleLogger) LogDatabaseThroughputFromMap(ctx context.Context, ins
 	return nil
 }
 
-func (tl *TimescaleLogger) GetDatabaseThroughputSummary(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetDatabaseThroughputSummary(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
-	// We compute deltas over a large window (24h) to ensure we always have a baseline.
-	// We then average the most recent rates (last 1 hour) for the dashboard.
 	query := `
 		WITH raw_stats AS (
 			SELECT 
@@ -118,7 +117,7 @@ func (tl *TimescaleLogger) GetDatabaseThroughputSummary(ctx context.Context, ins
 				LAG(total_writes) OVER (PARTITION BY database_name ORDER BY capture_timestamp) as prev_writes,
 				EXTRACT(EPOCH FROM (capture_timestamp - LAG(capture_timestamp) OVER (PARTITION BY database_name ORDER BY capture_timestamp))) as seconds_diff
 			FROM sqlserver_database_throughput
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND capture_timestamp >= NOW() - INTERVAL '24 hours'
 		),
 		deltas AS (
@@ -147,7 +146,7 @@ func (tl *TimescaleLogger) GetDatabaseThroughputSummary(ctx context.Context, ins
 		LIMIT $2
 	`
 
-	rows, err := tl.pool.Query(ctx, query, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, query, serverID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +176,7 @@ func (tl *TimescaleLogger) GetDatabaseThroughputSummary(ctx context.Context, ins
 	return results, rows.Err()
 }
 
-func (tl *TimescaleLogger) GetDatabaseThroughputTimeRange(ctx context.Context, instanceName string, start, end time.Time) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetDatabaseThroughputTimeRange(ctx context.Context, serverID uuid.UUID, start, end time.Time) ([]map[string]interface{}, error) {
 	query := `
 		SELECT 
 			capture_timestamp,
@@ -187,13 +186,13 @@ func (tl *TimescaleLogger) GetDatabaseThroughputTimeRange(ctx context.Context, i
 			total_reads,
 			total_writes
 		FROM sqlserver_database_throughput
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC
 	`
 
-	rows, err := tl.pool.Query(ctx, query, instanceName, start, end)
+	rows, err := tl.pool.Query(ctx, query, serverID, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +222,7 @@ func (tl *TimescaleLogger) GetDatabaseThroughputTimeRange(ctx context.Context, i
 }
 
 // GetBatchRequestsTrend returns a 1-minute bucketed time series of batch requests/sec or a specific range.
-func (tl *TimescaleLogger) GetBatchRequestsTrend(ctx context.Context, instanceName string, minutes int, from, to string) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetBatchRequestsTrend(ctx context.Context, serverID uuid.UUID, minutes int, from, to string) ([]map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -244,12 +243,12 @@ func (tl *TimescaleLogger) GetBatchRequestsTrend(ctx context.Context, instanceNa
 			SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
 			       AVG(batch_requests_per_sec) AS batch_requests_per_sec
 			FROM sqlserver_risk_health
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 			GROUP BY bucket
 			ORDER BY bucket ASC
 		`
-		rows, err = tl.pool.Query(ctx, q, instanceName, start, end)
+		rows, err = tl.pool.Query(ctx, q, serverID, start, end)
 	} else {
 		if minutes <= 0 {
 			minutes = 60
@@ -258,12 +257,12 @@ func (tl *TimescaleLogger) GetBatchRequestsTrend(ctx context.Context, instanceNa
 			SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
 			       AVG(batch_requests_per_sec) AS batch_requests_per_sec
 			FROM sqlserver_risk_health
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
 			GROUP BY bucket
 			ORDER BY bucket ASC
 		`
-		rows, err = tl.pool.Query(ctx, q, instanceName, minutes)
+		rows, err = tl.pool.Query(ctx, q, serverID, minutes)
 	}
 	if err != nil {
 		return nil, err

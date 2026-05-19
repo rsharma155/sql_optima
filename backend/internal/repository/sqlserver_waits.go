@@ -8,14 +8,15 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
-	"log"
 	"strings"
 )
 
 // CollectWaitStats returns current waits for user-database sessions only (Real-Time Diagnostics).
 // If database is non-empty, scopes to that DB only.
-func (c *SqlServerRepository) CollectWaitStats(db *sql.DB, database string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectWaitStats(ctx context.Context, db *sql.DB, database string) ([]map[string]interface{}, error) {
 	query := `
 		
 		SELECT  /* SQL_OPTIMA */  TOP 50
@@ -37,9 +38,12 @@ func (c *SqlServerRepository) CollectWaitStats(db *sql.DB, database string) ([]m
 		ORDER BY SUM(w.wait_duration_ms) DESC
 	`
 
-	rows, err := db.Query(query, strings.TrimSpace(database))
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, query, strings.TrimSpace(database))
 	if err != nil {
-		log.Printf("[SQLSERVER] Wait Stats (RTD) Query Error: %v", err)
+		slog.Error("[SQLSERVER] Wait Stats (RTD) Query Error", "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -61,7 +65,7 @@ func (c *SqlServerRepository) CollectWaitStats(db *sql.DB, database string) ([]m
 }
 
 // CollectWaitingTasks fetches waiting tasks from sys.dm_os_waiting_tasks
-func (c *SqlServerRepository) CollectWaitingTasks(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectWaitingTasks(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		SELECT  /* SQL_OPTIMA */  TOP 50
 			t.session_id,
@@ -79,7 +83,10 @@ func (c *SqlServerRepository) CollectWaitingTasks(db *sql.DB) ([]map[string]inte
 		ORDER BY t.wait_duration_ms DESC
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +110,7 @@ func (c *SqlServerRepository) CollectWaitingTasks(db *sql.DB) ([]map[string]inte
 }
 
 // CollectLatchStats fetches latch statistics from sys.dm_os_latch_stats
-func (c *SqlServerRepository) CollectLatchStats(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectLatchStats(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		SELECT   /* SQL_OPTIMA */  TOP 20 
 			latch_class, 
@@ -114,7 +121,10 @@ func (c *SqlServerRepository) CollectLatchStats(db *sql.DB) ([]map[string]interf
 		ORDER BY wait_time_ms DESC
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

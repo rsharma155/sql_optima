@@ -9,9 +9,10 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -29,22 +30,22 @@ func (c *SqlServerRepository) FetchBestPractices(instanceName string) models.Bes
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
-		log.Printf("No database connection for instance: %s", instanceName)
+		slog.Info("No database connection for instance", "val", instanceName)
 		return result
 	}
 
 	// Query 1: Instance Level Configurations
-	serverConfigs, err := c.queryServerConfigurations(db)
+	serverConfigs, err := c.queryServerConfigurations(context.Background(), db)
 	if err != nil {
-		log.Printf("Error querying server configurations: %v", err)
+		slog.Error("Error querying server configurations", "err", err)
 	} else {
 		result.ServerConfig = c.evaluateServerRules(serverConfigs)
 	}
 
 	// Query 2: Database Level Configurations
-	dbConfigs, err := c.queryDatabaseConfigurations(db)
+	dbConfigs, err := c.queryDatabaseConfigurations(context.Background(), db)
 	if err != nil {
-		log.Printf("Error querying database configurations: %v", err)
+		slog.Error("Error querying database configurations", "err", err)
 	} else {
 		result.DatabaseConfig = evaluateDatabaseRules(dbConfigs)
 	}
@@ -53,7 +54,7 @@ func (c *SqlServerRepository) FetchBestPractices(instanceName string) models.Bes
 }
 
 // queryServerConfigurations fetches server-level configuration settings
-func (c *SqlServerRepository) queryServerConfigurations(db *sql.DB) (map[string]string, error) {
+func (c *SqlServerRepository) queryServerConfigurations(ctx context.Context, db *sql.DB) (map[string]string, error) {
 	query := `
 		/* SQL_OPTIMA */ 
 		SELECT  
@@ -69,7 +70,9 @@ func (c *SqlServerRepository) queryServerConfigurations(db *sql.DB) (map[string]
 		)
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +91,7 @@ func (c *SqlServerRepository) queryServerConfigurations(db *sql.DB) (map[string]
 }
 
 // queryDatabaseConfigurations fetches database-level configuration settings
-func (c *SqlServerRepository) queryDatabaseConfigurations(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) queryDatabaseConfigurations(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		/* SQL_OPTIMA */ 
 		SELECT  
@@ -102,7 +105,9 @@ func (c *SqlServerRepository) queryDatabaseConfigurations(db *sql.DB) ([]map[str
 		  AND state_desc = 'ONLINE'
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +262,7 @@ func evaluateDatabaseRules(configs []map[string]interface{}) []models.DatabaseCo
 }
 
 // FetchGuardrails executes comprehensive guardrails audit for SQL Server
-func (c *SqlServerRepository) FetchGuardrails(instanceName string) models.GuardrailsResult {
+func (c *SqlServerRepository) FetchGuardrails(ctx context.Context, instanceName string) models.GuardrailsResult {
 	var result models.GuardrailsResult
 	result.InstanceName = instanceName
 	result.Timestamp = fmt.Sprintf("%d", time.Now().Unix())
@@ -267,18 +272,18 @@ func (c *SqlServerRepository) FetchGuardrails(instanceName string) models.Guardr
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
-		log.Printf("No database connection for instance: %s", instanceName)
+		slog.Info("No database connection for instance", "val", instanceName)
 		return result
 	}
 
-	result.StorageRisks = c.queryStorageRisks(db)
-	result.DiskSpace = c.queryDiskSpace(db)
-	result.LogHealth = c.queryLogHealth(db)
-	result.LogBackups = c.queryLogBackups(db)
-	result.LongTxns = c.queryLongRunningTransactions(db)
-	result.Autogrowth = c.queryAutogrowth(db)
-	result.TempDBConfig = c.queryTempDBConfig(db)
-	result.ResourceGov = c.queryResourceGovernor(db)
+	result.StorageRisks = c.queryStorageRisks(ctx, db)
+	result.DiskSpace = c.queryDiskSpace(ctx, db)
+	result.LogHealth = c.queryLogHealth(ctx, db)
+	result.LogBackups = c.queryLogBackups(ctx, db)
+	result.LongTxns = c.queryLongRunningTransactions(ctx, db)
+	result.Autogrowth = c.queryAutogrowth(ctx, db)
+	result.TempDBConfig = c.queryTempDBConfig(ctx, db)
+	result.ResourceGov = c.queryResourceGovernor(ctx, db)
 
 	result.HealthScore, result.HealthStatus = c.calculateHealthScore(result)
 	result.Summary = c.generateRiskSummary(result)
@@ -286,14 +291,62 @@ func (c *SqlServerRepository) FetchGuardrails(instanceName string) models.Guardr
 	return result
 }
 
-func (c *SqlServerRepository) queryStorageRisks(db *sql.DB) []models.StorageRisk {
+// FetchServerConfigChecks queries sys.configurations (NOT sys.databases) and returns
+// server-level best practice checks. Called by the service layer when the database-level
+// checks will be sourced from the sqlserver_database_catalog snapshot instead.
+func (c *SqlServerRepository) FetchServerConfigChecks(ctx context.Context, instanceName string) []models.ServerConfigCheck {
+	c.mutex.RLock()
+	db, ok := c.conns[strings.ToUpper(instanceName)]
+	c.mutex.RUnlock()
+	if !ok || db == nil {
+		return nil
+	}
+	cfgs, err := c.queryServerConfigurations(ctx, db)
+	if err != nil {
+		slog.Info("[BestPractices] FetchServerConfigChecks", "target", instanceName, "err", err)
+		return nil
+	}
+	return c.evaluateServerRules(cfgs)
+}
+
+// FetchGuardrailsExceptLogHealth runs all guardrail live queries except queryLogHealth.
+// LogHealth is populated separately by the caller using the sqlserver_database_catalog
+// snapshot so that sys.databases is not queried live for settings evaluation.
+func (c *SqlServerRepository) FetchGuardrailsExceptLogHealth(ctx context.Context, instanceName string) models.GuardrailsResult {
+	var result models.GuardrailsResult
+	result.InstanceName = instanceName
+	result.Timestamp = fmt.Sprintf("%d", time.Now().Unix())
+
+	c.mutex.RLock()
+	db, ok := c.conns[strings.ToUpper(instanceName)]
+	c.mutex.RUnlock()
+
+	if !ok || db == nil {
+		return result
+	}
+
+	result.StorageRisks = c.queryStorageRisks(ctx, db)
+	result.DiskSpace = c.queryDiskSpace(ctx, db)
+	// LogHealth intentionally omitted — caller populates from catalog snapshot.
+	result.LogBackups = c.queryLogBackups(ctx, db)
+	result.LongTxns = c.queryLongRunningTransactions(ctx, db)
+	result.Autogrowth = c.queryAutogrowth(ctx, db)
+	result.TempDBConfig = c.queryTempDBConfig(ctx, db)
+	result.ResourceGov = c.queryResourceGovernor(ctx, db)
+
+	return result
+}
+
+func (c *SqlServerRepository) queryStorageRisks(ctx context.Context, db *sql.DB) []models.StorageRisk {
 	query := `
 		/* SQL_OPTIMA */  SELECT DB_NAME(mf.database_id), mf.type_desc, mf.name, mf.physical_name, mf.size * 8 / 1024, LEFT(mf.physical_name, 1)
 		FROM sys.master_files mf WITH (NOLOCK)
 		WHERE mf.database_id > 4 AND mf.state_desc = 'ONLINE' AND mf.physical_name LIKE 'C:%'
 		ORDER BY mf.size DESC
 	`
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil
 	}
@@ -319,7 +372,9 @@ func (c *SqlServerRepository) queryStorageRisks(db *sql.DB) []models.StorageRisk
 		GROUP BY DB_NAME(database_id), LEFT(physical_name, 1)
 		HAVING COUNT(DISTINCT type_desc) > 1
 	`
-	rows2, err2 := db.Query(sameDriveQuery)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	rows2, err2 := db.QueryContext(ctx, sameDriveQuery)
+	cancel()
 	if err2 == nil {
 		defer rows2.Close()
 		for rows2.Next() {
@@ -341,7 +396,7 @@ func (c *SqlServerRepository) queryStorageRisks(db *sql.DB) []models.StorageRisk
 	return risks
 }
 
-func (c *SqlServerRepository) queryDiskSpace(db *sql.DB) []models.DiskSpaceInfo {
+func (c *SqlServerRepository) queryDiskSpace(ctx context.Context, db *sql.DB) []models.DiskSpaceInfo {
 	// Get disk space with log file sizes
 	query := `
 		/* SQL_OPTIMA */ 	
@@ -354,7 +409,9 @@ func (c *SqlServerRepository) queryDiskSpace(db *sql.DB) []models.DiskSpaceInfo 
 		LEFT JOIN sys.master_files mf ON LEFT(mf.physical_name, 1) = LEFT(vs.volume_mount_point, 1) AND mf.database_id > 4 AND mf.state_desc = 'ONLINE'
 		GROUP BY vs.volume_mount_point, vs.total_bytes, vs.available_bytes
 	`
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil
 	}
@@ -388,14 +445,16 @@ func (c *SqlServerRepository) queryDiskSpace(db *sql.DB) []models.DiskSpaceInfo 
 	return disks
 }
 
-func (c *SqlServerRepository) queryLogHealth(db *sql.DB) []models.LogHealthInfo {
+func (c *SqlServerRepository) queryLogHealth(ctx context.Context, db *sql.DB) []models.LogHealthInfo {
 	query := `
 		/* SQL_OPTIMA */ 
 		SELECT d.name, d.recovery_model_desc, d.log_reuse_wait_desc
 		FROM sys.databases d WITH (NOLOCK)
 		WHERE d.database_id > 4 AND d.state_desc = 'ONLINE'
 	`
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil
 	}
@@ -424,7 +483,9 @@ func (c *SqlServerRepository) queryLogHealth(db *sql.DB) []models.LogHealthInfo 
 		GROUP BY database_id
 		HAVING DB_NAME(database_id) IS NOT NULL
 	`
-	vlfRows, _ := db.Query(vlfQuery)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	vlfRows, _ := db.QueryContext(ctx, vlfQuery)
 	if vlfRows != nil {
 		defer vlfRows.Close()
 		vlfMap := make(map[string]int)
@@ -458,7 +519,7 @@ func (c *SqlServerRepository) queryLogHealth(db *sql.DB) []models.LogHealthInfo 
 	return logs
 }
 
-func (c *SqlServerRepository) queryLogBackups(db *sql.DB) []models.LogBackupInfo {
+func (c *SqlServerRepository) queryLogBackups(ctx context.Context, db *sql.DB) []models.LogBackupInfo {
 	query := `
 		/* SQL_OPTIMA */  	
 		SELECT  d.name, MAX(b.backup_finish_date), DATEDIFF(MINUTE, MAX(b.backup_finish_date), GETUTCDATE())
@@ -467,7 +528,9 @@ func (c *SqlServerRepository) queryLogBackups(db *sql.DB) []models.LogBackupInfo
 		WHERE d.database_id > 4 AND d.recovery_model_desc IN ('FULL', 'BULK_LOGGED') AND d.state_desc = 'ONLINE'
 		GROUP BY d.name
 	`
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil
 	}
@@ -505,7 +568,7 @@ func (c *SqlServerRepository) queryLogBackups(db *sql.DB) []models.LogBackupInfo
 	return backups
 }
 
-func (c *SqlServerRepository) queryLongRunningTransactions(db *sql.DB) []models.LongTxnInfo {
+func (c *SqlServerRepository) queryLongRunningTransactions(ctx context.Context, db *sql.DB) []models.LongTxnInfo {
 	query := `
 		/* SQL_OPTIMA */  
 		SELECT  TOP 20 r.session_id, s.login_name, DB_NAME(r.database_id), r.status, r.cpu_time,
@@ -515,7 +578,9 @@ func (c *SqlServerRepository) queryLongRunningTransactions(db *sql.DB) []models.
 		WHERE r.database_id > 4 AND r.total_elapsed_time / 1000 > 300
 		ORDER BY r.total_elapsed_time DESC
 	`
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil
 	}
@@ -551,13 +616,15 @@ func (c *SqlServerRepository) queryLongRunningTransactions(db *sql.DB) []models.
 	return txns
 }
 
-func (c *SqlServerRepository) queryAutogrowth(db *sql.DB) []models.AutogrowthInfo {
+func (c *SqlServerRepository) queryAutogrowth(ctx context.Context, db *sql.DB) []models.AutogrowthInfo {
 	query := `
 		SELECT /* SQL_OPTIMA */   DB_NAME(mf.database_id), mf.type_desc, mf.name, mf.is_percent_growth, mf.growth
 		FROM sys.master_files mf WITH (NOLOCK)
 		WHERE mf.database_id > 4 AND mf.growth > 0
 	`
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil
 	}
@@ -594,12 +661,14 @@ func (c *SqlServerRepository) queryAutogrowth(db *sql.DB) []models.AutogrowthInf
 	return ags
 }
 
-func (c *SqlServerRepository) queryTempDBConfig(db *sql.DB) models.TempDBInfo {
+func (c *SqlServerRepository) queryTempDBConfig(ctx context.Context, db *sql.DB) models.TempDBInfo {
 	var td models.TempDBInfo
 
 	query := `SELECT /* SQL_OPTIMA */   COUNT(*), SUM(size * 8 / 1024) FROM sys.master_files WITH (NOLOCK) WHERE database_id = 2 AND type_desc = 'DATA'`
 	var fc, ts sql.NullInt64
-	if err := db.QueryRow(query).Scan(&fc, &ts); err == nil {
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, query).Scan(&fc, &ts); err == nil {
 		if fc.Valid {
 			td.FileCount = int(fc.Int64)
 		}
@@ -609,7 +678,9 @@ func (c *SqlServerRepository) queryTempDBConfig(db *sql.DB) models.TempDBInfo {
 	}
 
 	fileQuery := `/* SQL_OPTIMA */  SELECT  name, size * 8 / 1024 FROM sys.master_files WITH (NOLOCK) WHERE database_id = 2 AND type_desc = 'DATA'`
-	rows, _ := db.Query(fileQuery)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, _ := db.QueryContext(ctx, fileQuery)
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -656,10 +727,12 @@ func (c *SqlServerRepository) queryTempDBConfig(db *sql.DB) models.TempDBInfo {
 	return td
 }
 
-func (c *SqlServerRepository) queryResourceGovernor(db *sql.DB) models.ResourceGovInfo {
+func (c *SqlServerRepository) queryResourceGovernor(ctx context.Context, db *sql.DB) models.ResourceGovInfo {
 	var rg models.ResourceGovInfo
 	query := `SELECT /* SQL_OPTIMA */   is_enabled FROM sys.resource_governor`
-	if err := db.QueryRow(query).Scan(&rg.IsEnabled); err != nil {
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	if err := db.QueryRowContext(ctx, query).Scan(&rg.IsEnabled); err != nil {
+	cancel()
 		rg.Severity = "UNKNOWN"
 		rg.Message = "Could not query RG"
 		return rg
@@ -825,4 +898,14 @@ func (c *SqlServerRepository) generateRiskSummary(result models.GuardrailsResult
 	}
 
 	return summary
+}
+
+// ComputeGuardrailsHealth is a public wrapper for calculateHealthScore, used by the service layer.
+func (c *SqlServerRepository) ComputeGuardrailsHealth(result models.GuardrailsResult) (int, string) {
+	return c.calculateHealthScore(result)
+}
+
+// SummariseGuardrailsRisks is a public wrapper for generateRiskSummary, used by the service layer.
+func (c *SqlServerRepository) SummariseGuardrailsRisks(result models.GuardrailsResult) []models.RiskSummary {
+	return c.generateRiskSummary(result)
 }

@@ -1,8 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: PostgreSQL incident feed collector — captures blocking events, long-running
-//          queries, and deadlock spikes per collection cycle into TimescaleDB.
-//          Eliminates live ad-hoc queries from the dashboard.
+// Purpose: Collector logic for PostgreSQL incident feed.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -10,106 +8,120 @@
 package service
 
 import (
+	"log/slog"
 	"context"
-	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
-// CollectPgIncidents performs a sweep of the monitored instance for operational incidents.
-func (s *MetricsService) CollectPgIncidents(instanceName string) {
-	if s.tsLogger == nil {
+func (s *MetricsService) CollectPgIncidents(serverID uuid.UUID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	instanceName := ""
+	for _, inst := range s.Config.Instances {
+		if inst.ServerID == serverID {
+			instanceName = inst.Name
+			break
+		}
+	}
+	if instanceName == "" {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-
-	now := time.Now().UTC()
-
-	// 1. Fetch data
-	locks, _ := s.PgRepo.FetchDetailedLocks(instanceName)
-	activeQueries, _ := s.PgRepo.GetActiveQueries(instanceName)
-	dlTotal, _ := s.PgRepo.FetchDeadlocksTotalAllDBs(instanceName)
-	
-	dlRate := 0.0
-	if s.tsLogger != nil {
-		if r, ok := s.tsLogger.ComputePgDeadlockRate(instanceName, dlTotal, 60.0); ok {
-			dlRate = r
-		}
+	db, ok := s.PgRepo.GetConn(instanceName)
+	if !ok {
+		return
 	}
 
-	// 2. Build rows
-	incidents := buildIncidentRows(instanceName, now, locks, activeQueries, dlRate)
+	now := time.Now().UTC()
+	locks, _ := s.PgRepo.FetchDetailedLocks(ctx, instanceName, db)
+	queries, _ := s.PgRepo.GetActiveQueries(instanceName)
 
-	// 3. Persist
-	if len(incidents) > 0 {
-		if err := s.tsLogger.LogPgIncidentFeed(ctx, incidents); err != nil {
-			log.Printf("[IncidentCollector] ERROR: Failed to log incidents for %s: %v", instanceName, err)
+	// Compute deadlock rate if possible (requires historical state)
+	deadlockRate := 0.0
+
+	rows := buildIncidentRows(serverID, now, locks, queries, deadlockRate)
+	if len(rows) > 0 {
+		if err := s.tsLogger.LogPgIncidentFeed(ctx, rows); err != nil {
+			slog.Error("[Incidents] ERROR LogPgIncidentFeed", "target", serverID, "err", err)
 		}
 	}
 }
 
-func buildIncidentRows(instanceName string, now time.Time, locks []repository.PGTimescaleLockInternal, queries []models.PgSession, deadlockRate float64) []hot.PgIncidentFeedRow {
-	var incidents []hot.PgIncidentFeedRow
+func buildIncidentRows(serverID uuid.UUID, now time.Time, locks []repository.PGTimescaleLockInternal, queries []models.PgSession, deadlockRate float64) []hot.PgIncidentFeedRow {
+	var out []hot.PgIncidentFeedRow
 
-	// 1. Check for blocking incidents
+	// 1. Blocking: any lock with a blocker creates an incident
+	blockerMap := make(map[int]int)
 	for _, l := range locks {
-		if l.WaitDurationMs > 0 && l.BlockedBy != 0 {
-			severity := "warning"
-			// In a more advanced implementation, we'd count how many are blocked by this PID.
-			
-			incidents = append(incidents, hot.PgIncidentFeedRow{
-				Ts:           now,
-				InstanceID:   instanceName,
-				IncidentType: "blocking",
-				Severity:     severity,
-				PID:          l.PID,
-				DurationMs:   l.WaitDurationMs,
-				Datname:      l.DatabaseName,
-				QuerySnippet: l.QueryText,
-			})
+		if l.BlockedBy > 0 {
+			blockerMap[l.BlockedBy]++
 		}
 	}
-
-	// 2. Check for long running queries
-	// threshold: 5 seconds (5000ms)
-	longQueryThresholdMs := 5000.0
-	for _, q := range queries {
-		if q.DurationMs > longQueryThresholdMs {
-			severity := "warning"
-			if q.DurationMs > 300000 { // 5 minutes
-				severity = "critical"
+	for pid, victims := range blockerMap {
+		var blocker repository.PGTimescaleLockInternal
+		for _, l := range locks {
+			if l.PID == pid {
+				blocker = l
+				break
 			}
-
-			incidents = append(incidents, hot.PgIncidentFeedRow{
-				Ts:           now,
-				InstanceID:   instanceName,
-				IncidentType: "long_query",
-				Severity:     severity,
-				PID:          q.PID,
-				DurationMs:   q.DurationMs,
-				Usename:      q.UserName,
-				Datname:      q.Database,
-				QuerySnippet: q.Query,
-			})
 		}
+		severity := "warning"
+		if victims >= 10 {
+			severity = "critical"
+		}
+		out = append(out, hot.PgIncidentFeedRow{
+			Ts:           now,
+			ServerID:     serverID,
+			IncidentType: "blocking",
+			Severity:     severity,
+			PID:          pid,
+			BlockedCount: victims,
+			Usename:      blocker.DatabaseName,
+			Datname:      blocker.DatabaseName,
+			QuerySnippet: blocker.QueryText,
+		})
 	}
 
-	// 3. Check for deadlocks
-	if deadlockRate > 0 {
-		incidents = append(incidents, hot.PgIncidentFeedRow{
+	// 2. Long Running Queries (>= 5 seconds; critical at >= 5 minutes)
+	const longQueryWarnMs = 5000.0
+	const longQueryCritMs = 300000.0
+	for _, q := range queries {
+		if q.DurationMs < longQueryWarnMs {
+			continue
+		}
+		severity := "warning"
+		if q.DurationMs >= longQueryCritMs {
+			severity = "critical"
+		}
+		out = append(out, hot.PgIncidentFeedRow{
 			Ts:           now,
-			InstanceID:   instanceName,
+			ServerID:     serverID,
+			IncidentType: "long_query",
+			Severity:     severity,
+			PID:          q.PID,
+			DurationMs:   q.DurationMs,
+			Usename:      q.UserName,
+			Datname:      q.Database,
+			QuerySnippet: q.Query,
+		})
+	}
+
+	// 3. Deadlocks
+	if deadlockRate > 0 {
+		out = append(out, hot.PgIncidentFeedRow{
+			Ts:           now,
+			ServerID:     serverID,
 			IncidentType: "deadlock",
 			Severity:     "critical",
 			DurationMs:   deadlockRate,
 		})
 	}
 
-	return incidents
+	return out
 }
-

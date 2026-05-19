@@ -9,7 +9,19 @@
  */
 
 window.PgReplicationView = async function() {
-    const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...', type: 'postgres'};
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+    if (!inst) {
+        window.routerOutlet.innerHTML = `<div class="page-view active"><div class="alert alert-warning">Select a PostgreSQL instance first.</div></div>`;
+        return;
+    }
+
+    // Redirect if this is a SQL Server instance
+    if (inst.type === 'sqlserver') {
+        if (typeof window.HADashboardView === 'function') {
+            return window.HADashboardView();
+        }
+    }
+
     const dbName = window.appState.currentDatabase || 'all';
 
     window.appState.activeViewId = 'pg-replication';
@@ -24,7 +36,7 @@ window.PgReplicationView = async function() {
 
     // 3. Set Refresh Interval
     if (window.pgReplicationInterval) clearInterval(window.pgReplicationInterval);
-    window.pgReplicationInterval = setInterval(() => {
+    window.pgReplicationInterval = window.registerInterval(() => {
         if (window.appState.activeViewId === 'pg-replication') {
             initPgReplication(inst.name);
         } else {

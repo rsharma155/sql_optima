@@ -42,11 +42,12 @@ export const sqlserverWorkload = {
             });
         });
 
+        const dynInterval = window.collectorConfig ? window.collectorConfig.getInterval("SQL Server Query Analysis", 30000) : 30000;
         if (this.refreshInterval) clearInterval(this.refreshInterval);
         this.refreshInterval = setInterval(() => {
             if (!this.isManualRange) this.setDefaultRange();
             this.refreshAll();
-        }, 30000);
+        }, dynInterval);
         
         await this.refreshAll();
     },
@@ -96,16 +97,16 @@ export const sqlserverWorkload = {
     },
 
     async loadSummary(from, to) {
-        const data = await api.get(`/api/sqlserver/workload/summary?instance=${this.instance}&from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}`);
+        const data = await api.get(`/api/sqlserver/workload/summary?instance=${this.instance}&from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}`) || {};
         const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-        set('wl-kpi-cpu', formatters.number(data.total_cpu_ms / 1000, 1));
-        set('wl-kpi-execs', formatters.compactNumber(data.total_executions));
-        set('wl-kpi-reads', formatters.compactNumber(data.total_logical_reads));
-        set('wl-kpi-mem', formatters.bytes(data.max_memory_grant_kb * 1024));
+        set('wl-kpi-cpu', formatters.number((data.total_cpu_ms || 0) / 1000, 1));
+        set('wl-kpi-execs', formatters.compactNumber(data.total_executions || 0));
+        set('wl-kpi-reads', formatters.compactNumber(data.total_logical_reads || 0));
+        set('wl-kpi-mem', formatters.bytes((data.max_memory_grant_kb || 0) * 1024));
     },
 
     async loadServerProperties() {
-        const data = await api.get(`/api/sqlserver/server-properties?instance=${encodeURIComponent(this.instance)}`);
+        const data = await api.get(`/api/sqlserver/server-properties?instance=${encodeURIComponent(this.instance)}`) || {};
         const p = data.server_properties || {};
         const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
         set('wl-prop-cpu', p.cpu_count || '--');
@@ -117,7 +118,7 @@ export const sqlserverWorkload = {
     },
 
     async loadSchedulerStats() {
-        const data = await api.get(`/api/sqlserver/cpu-scheduler-stats?instance=${encodeURIComponent(this.instance)}&limit=50`);
+        const data = await api.get(`/api/sqlserver/cpu-scheduler-stats?instance=${encodeURIComponent(this.instance)}&limit=50`) || {};
         const all = data.cpu_scheduler_stats || [];
         if (all.length === 0) return;
         const s = all[0];
@@ -164,14 +165,14 @@ export const sqlserverWorkload = {
     },
 
     async loadQaSummary(from, to) {
-        const data = await api.get(`/api/sqlserver/query-analysis/summary?instance=${encodeURIComponent(this.instance)}&from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}&exclude_system=true&database=all`);
+        const data = await api.get(`/api/sqlserver/query-analysis/summary?instance=${encodeURIComponent(this.instance)}&from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}&exclude_system=true&database=all`) || {};
         const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
         set('kpi-cpu-share', data.top_10_cpu_share_pct ? data.top_10_cpu_share_pct.toFixed(1) + '%' : '--');
         set('kpi-regressions', data.regressions_24h || 0);
     },
 
     async loadTrends(from, to) {
-        const resp = await api.get(`/api/sqlserver/workload/trends?instance=${this.instance}&from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}`);
+        const resp = await api.get(`/api/sqlserver/workload/trends?instance=${this.instance}&from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}`) || {};
         const data = resp.trends || [];
         const labels = data.map(p => new Date(p.timestamp));
         this.renderChart('wlCpuTrendChart', { type: 'line', labels, datasets: [{ label: 'CPU', data: data.map(p => p.cpu_ms / 1000), borderColor: '#ef4444', fill: true, backgroundColor: 'rgba(239, 68, 68, 0.1)', tension: 0.3, pointRadius: 0 }] });
@@ -182,7 +183,7 @@ export const sqlserverWorkload = {
     },
 
     async loadTopOffenders(from, to) {
-        const resp = await api.get(`/api/sqlserver/workload/top-queries?instance=${this.instance}&from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}&limit=20`);
+        const resp = await api.get(`/api/sqlserver/workload/top-queries?instance=${this.instance}&from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}&limit=20`) || {};
         const body = document.getElementById('wlTopQueriesBody');
         if (!body) return;
         body.innerHTML = (resp.top_offenders || []).map(q => `
@@ -208,7 +209,7 @@ export const sqlserverWorkload = {
                 api.get(`/api/sqlserver/workload/top-apps?instance=${this.instance}&from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}&limit=10`)
             ]);
             
-            const raw = timelineResp.app_load || [];
+            const raw = (timelineResp && timelineResp.app_load) || [];
             const appGroups = {};
             const labels = [...new Set(raw.map(r => r.bucket))].sort().map(b => new Date(b));
             raw.forEach(r => {
@@ -220,13 +221,16 @@ export const sqlserverWorkload = {
             }));
             this.renderChart('wlAppLoadChart', { type: 'line', labels, datasets });
 
-            const top = topResp.top_apps || [];
+            const top = (topResp && topResp.top_apps) || [];
             this.renderChart('wlTopAppsChart', { type: 'bar', labels: top.map(x => x.app_name), datasets: [{ label: 'CPU sec', data: top.map(x => x.total_cpu_ms / 1000), backgroundColor: 'rgba(59, 130, 246, 0.6)' }] });
 
-            const totalCpu = top.reduce((a, b) => a + b.total_cpu_ms, 0);
-            document.getElementById('wlAppTableBody').innerHTML = top.map(x => `
-                <tr><td>${this.escapeHtml(x.app_name)}</td><td>${(x.total_cpu_ms/1000).toFixed(1)}</td><td>${((x.total_cpu_ms/totalCpu)*100).toFixed(1)}%</td></tr>
-            `).join('');
+            const totalCpu = top.reduce((a, b) => a + (b.total_cpu_ms || 0), 0);
+            const body = document.getElementById('wlAppTableBody');
+            if (body) {
+                body.innerHTML = top.map(x => `
+                    <tr><td>${this.escapeHtml(x.app_name)}</td><td>${((x.total_cpu_ms || 0)/1000).toFixed(1)}</td><td>${totalCpu > 0 ? (((x.total_cpu_ms || 0)/totalCpu)*100).toFixed(1) : 0}%</td></tr>
+                `).join('');
+            }
         } catch (e) { console.error(e); }
     },
 
@@ -237,7 +241,7 @@ export const sqlserverWorkload = {
                 api.get(`/api/sqlserver/workload/top-logins?instance=${this.instance}&from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}&limit=10`)
             ]);
             
-            const raw = timelineResp.login_load || [];
+            const raw = (timelineResp && timelineResp.login_load) || [];
             const groups = {};
             const labels = [...new Set(raw.map(r => r.bucket))].sort().map(b => new Date(b));
             raw.forEach(r => {
@@ -249,13 +253,16 @@ export const sqlserverWorkload = {
             }));
             this.renderChart('wlLoginLoadChart', { type: 'line', labels, datasets });
 
-            const top = topResp.top_logins || [];
+            const top = (topResp && topResp.top_logins) || [];
             this.renderChart('wlTopLoginsChart', { type: 'bar', labels: top.map(x => x.login_name), datasets: [{ label: 'CPU sec', data: top.map(x => x.total_cpu_ms / 1000), backgroundColor: 'rgba(16, 185, 129, 0.6)' }] });
 
-            const totalCpu = top.reduce((a, b) => a + b.total_cpu_ms, 0);
-            document.getElementById('wlLoginTableBody').innerHTML = top.map(x => `
-                <tr><td>${this.escapeHtml(x.login_name)}</td><td>${(x.total_cpu_ms/1000).toFixed(1)}</td><td>${((x.total_cpu_ms/totalCpu)*100).toFixed(1)}%</td></tr>
-            `).join('');
+            const totalCpu = top.reduce((a, b) => a + (b.total_cpu_ms || 0), 0);
+            const body = document.getElementById('wlLoginTableBody');
+            if (body) {
+                body.innerHTML = top.map(x => `
+                    <tr><td>${this.escapeHtml(x.login_name)}</td><td>${((x.total_cpu_ms || 0)/1000).toFixed(1)}</td><td>${totalCpu > 0 ? (((x.total_cpu_ms || 0)/totalCpu)*100).toFixed(1) : 0}%</td></tr>
+                `).join('');
+            }
         } catch (e) { console.error(e); }
     },
 
@@ -263,6 +270,11 @@ export const sqlserverWorkload = {
         const ctx = document.getElementById(id);
         if (!ctx) return;
         if (this.charts[id]) this.charts[id].destroy();
+        // Use time axis only when labels are Date objects; use category axis otherwise.
+        const hasDateLabels = Array.isArray(config.labels) && config.labels.length > 0 && config.labels[0] instanceof Date;
+        const xScale = hasDateLabels
+            ? { type: 'time', display: true, grid: { display: false }, ticks: { font: { size: 8 }, color: '#64748b' } }
+            : { display: true, grid: { display: false }, ticks: { font: { size: 8 }, color: '#64748b', maxRotation: 30 } };
         this.charts[id] = new Chart(ctx, {
             type: config.type,
             data: { labels: config.labels, datasets: config.datasets },
@@ -270,7 +282,7 @@ export const sqlserverWorkload = {
                 responsive: true, maintainAspectRatio: false,
                 plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, font: { size: 9 }, color: '#94a3b8' } } },
                 scales: {
-                    x: { type: 'time', display: true, grid: { display: false }, ticks: { font: { size: 8 }, color: '#64748b' } },
+                    x: xScale,
                     y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { font: { size: 8 }, color: '#64748b' } }
                 }
             }

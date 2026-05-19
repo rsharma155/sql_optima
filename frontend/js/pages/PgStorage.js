@@ -279,12 +279,23 @@ window.PgStorageView = async function() {
             setT('sub-unused-idx-size', k.unused_index_mb ? `${k.unused_index_mb.toFixed(1)} MB waste` : '0 MB');
 
             // Growth Trend Chart
-            if (sih.growth && sih.growth.length > 0) {
-                setTimeout(() => {
-                    const ctx = document.getElementById('pgGrowthTrendChart');
-                    if (ctx) {
-                        if (window.currentCharts?.pgGrowth) window.currentCharts.pgGrowth.destroy();
-                        window.currentCharts = window.currentCharts || {};
+            setTimeout(() => {
+                const ctx = document.getElementById('pgGrowthTrendChart');
+                if (ctx) {
+                    if (window.currentCharts?.pgGrowth) window.currentCharts.pgGrowth.destroy();
+                    window.currentCharts = window.currentCharts || {};
+                    if (!sih.growth || sih.growth.length === 0) {
+                        const p = ctx.parentElement;
+                        const w = p ? p.offsetWidth || 300 : 300;
+                        const h = p ? p.offsetHeight || 150 : 150;
+                        ctx.width = w; ctx.height = h;
+                        const c = ctx.getContext('2d');
+                        c.clearRect(0, 0, w, h);
+                        c.fillStyle = 'rgba(100,116,139,0.35)';
+                        c.font = '11px sans-serif';
+                        c.textAlign = 'center';
+                        c.fillText('No growth data yet — collected each cycle', w / 2, h / 2);
+                    } else {
                         window.currentCharts.pgGrowth = new Chart(ctx.getContext('2d'), {
                             type: 'line',
                             data: {
@@ -304,8 +315,8 @@ window.PgStorageView = async function() {
                             }
                         });
                     }
-                }, 100);
-            }
+                }
+            }, 100);
         }
 
         // --- 2. INDEX EFFICIENCY TREND ---
@@ -313,24 +324,35 @@ window.PgStorageView = async function() {
             const data = await idxUsageResp.value.json();
             if (!isStillActive()) return;
             const points = data.points || [];
-            if (points.length > 0) {
-                const timeMap = {};
-                points.forEach(p => {
-                    const t = new Date(p.time).toISOString().slice(0, 16);
-                    if (!timeMap[t]) timeMap[t] = { scans: 0, updates: 0, size: 0, count: 0 };
-                    timeMap[t].scans += (p.scans || 0);
-                    timeMap[t].updates += (p.updates || 0);
-                    timeMap[t].size += (p.index_size_mb || 0);
-                    timeMap[t].count++;
-                });
-                const sortedLabels = Object.keys(timeMap).sort();
+            const timeMap = {};
+            points.forEach(p => {
+                const t = new Date(p.time).toISOString().slice(0, 16);
+                if (!timeMap[t]) timeMap[t] = { scans: 0, updates: 0, size: 0, count: 0 };
+                timeMap[t].scans += (p.scans || 0);
+                timeMap[t].updates += (p.updates || 0);
+                timeMap[t].size += (p.index_size_mb || 0);
+                timeMap[t].count++;
+            });
+            const sortedLabels = Object.keys(timeMap).sort();
 
-                setTimeout(() => {
-                    const ctx = document.getElementById('pgIndexEfficiencyTrendChart');
-                    if (ctx) {
-                        if (window.currentCharts?.pgIdxEff) window.currentCharts.pgIdxEff.destroy();
-                        window.currentCharts = window.currentCharts || {};
-                        window.currentCharts.pgIdxEff = new Chart(ctx.getContext('2d'), {
+            setTimeout(() => {
+                const ctx = document.getElementById('pgIndexEfficiencyTrendChart');
+                if (ctx) {
+                    if (window.currentCharts?.pgIdxTrend) window.currentCharts.pgIdxTrend.destroy();
+                    window.currentCharts = window.currentCharts || {};
+                    if (sortedLabels.length === 0) {
+                        const p = ctx.parentElement;
+                        const w = p ? p.offsetWidth || 300 : 300;
+                        const h = p ? p.offsetHeight || 150 : 150;
+                        ctx.width = w; ctx.height = h;
+                        const c = ctx.getContext('2d');
+                        c.clearRect(0, 0, w, h);
+                        c.fillStyle = 'rgba(100,116,139,0.35)';
+                        c.font = '11px sans-serif';
+                        c.textAlign = 'center';
+                        c.fillText('No index usage data in this time range', w / 2, h / 2);
+                    } else {
+                        window.currentCharts.pgIdxTrend = new Chart(ctx.getContext('2d'), {
                             type: 'line',
                             data: {
                                 labels: sortedLabels.map(l => new Date(l).toLocaleString()),
@@ -350,57 +372,73 @@ window.PgStorageView = async function() {
                             }
                         });
                     }
-                }, 100);
-            }
+                }
+            }, 100);
         }
 
         // --- 3. OVERVIEW & CHARTS ---
         if (storageResp.status === 'fulfilled' && storageResp.value.ok) {
             const data = await storageResp.value.json();
             if (!isStillActive()) return;
-            const tables = data.tables || [];
-            
-            const worstDead = tables.reduce((best, t) => (!best || t.dead_pct > best.dead_pct) ? t : best, null);
-            if (worstDead) {
-                setT('val-worst-dead-pct', `${worstDead.dead_pct.toFixed(1)}%`);
-                setT('sub-worst-dead-pct', `${worstDead.schema}.${worstDead.table}`);
-            }
-
-            setTimeout(() => {
-                window.currentCharts = window.currentCharts || {};
-                const totalBloat = tables.length > 0 ? tables.reduce((sum, t) => sum + (t.dead_pct || 0), 0) / tables.length : 0;
-                const bloatCtx = document.getElementById('pgBloatChart');
-                if (bloatCtx) {
-                    if (window.currentCharts.pgBloat) window.currentCharts.pgBloat.destroy();
-                    window.currentCharts.pgBloat = new Chart(bloatCtx.getContext('2d'), {
-                        type: 'doughnut', data: {
-                            labels: ['Bloat', 'Live'], 
-                            datasets: [{ data: [totalBloat, 100-totalBloat], backgroundColor: [window.getCSSVar('--danger'), window.getCSSVar('--success')], borderWidth: 0 }]
-                        }, options: {responsive:true, maintainAspectRatio:false, cutout:'75%', plugins:{legend:{position:'bottom', labels:{boxWidth:10, font:{size:10}}}}}
-                    });
+            if (data) {
+                const tables = data.tables || [];
+                
+                const worstDead = tables.reduce((best, t) => (!best || t.dead_pct > best.dead_pct) ? t : best, null);
+                if (worstDead) {
+                    setT('val-worst-dead-pct', `${worstDead.dead_pct.toFixed(1)}%`);
+                    setT('sub-worst-dead-pct', `${worstDead.schema_name}.${worstDead.table_name}`);
                 }
-            }, 50);
+
+                setTimeout(() => {
+                    window.currentCharts = window.currentCharts || {};
+                    const totalBloat = tables.length > 0 ? tables.reduce((sum, t) => sum + (t.dead_pct || 0), 0) / tables.length : 0;
+                    const bloatCtx = document.getElementById('pgBloatChart');
+                    if (bloatCtx) {
+                        if (window.currentCharts.pgBloat) window.currentCharts.pgBloat.destroy();
+                        window.currentCharts.pgBloat = new Chart(bloatCtx.getContext('2d'), {
+                            type: 'doughnut', data: {
+                                labels: ['Bloat', 'Live'], 
+                                datasets: [{ data: [totalBloat, 100-totalBloat], backgroundColor: [window.getCSSVar('--danger'), window.getCSSVar('--success')], borderWidth: 0 }]
+                            }, options: {responsive:true, maintainAspectRatio:false, cutout:'75%', plugins:{legend:{position:'bottom', labels:{boxWidth:10, font:{size:10}}}}}
+                        });
+                    }
+                }, 50);
+            }
         }
 
         if (histResp.status === 'fulfilled' && histResp.value.ok) {
             const data = await histResp.value.json();
             if (!isStillActive()) return;
             const history = data.history || {};
+            const vacLabels = history.labels || [];
+            const vacWorkers = history.autovacuum_workers || [];
             setTimeout(() => {
                 const vacCtx = document.getElementById('pgVacChart');
                 if (vacCtx) {
                     if (window.currentCharts.pgVac) window.currentCharts.pgVac.destroy();
-                    window.currentCharts.pgVac = new Chart(vacCtx.getContext('2d'), {
-                        type: 'line', data: {
-                            labels: (history.labels || []).map(l => {
-                                try {
-                                    // Remove 'Z' or format for local time display
-                                    return new Date(l).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                                } catch (e) { return l; }
-                            }),
-                            datasets: [{ label:'Autovacuum workers', data: history.autovacuum_workers || [], borderColor: window.getCSSVar('--warning'), backgroundColor: 'rgba(245,158,11,0.15)', fill:true, tension:0.25, pointRadius:0 }]
-                        }, options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{ beginAtZero:true } } }
-                    });
+                    window.currentCharts = window.currentCharts || {};
+                    if (vacLabels.length === 0) {
+                        const p = vacCtx.parentElement;
+                        const w = p ? p.offsetWidth || 300 : 300;
+                        const h = p ? p.offsetHeight || 150 : 150;
+                        vacCtx.width = w; vacCtx.height = h;
+                        const c = vacCtx.getContext('2d');
+                        c.clearRect(0, 0, w, h);
+                        c.fillStyle = 'rgba(100,116,139,0.35)';
+                        c.font = '11px sans-serif';
+                        c.textAlign = 'center';
+                        c.fillText('No autovacuum history yet — collected each cycle', w / 2, h / 2);
+                    } else {
+                        window.currentCharts.pgVac = new Chart(vacCtx.getContext('2d'), {
+                            type: 'line', data: {
+                                labels: vacLabels.map(l => {
+                                    try { return new Date(l).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+                                    catch (e) { return l; }
+                                }),
+                                datasets: [{ label:'Autovacuum workers', data: vacWorkers, borderColor: window.getCSSVar('--warning'), backgroundColor: 'rgba(245,158,11,0.15)', fill:true, tension:0.25, pointRadius:0 }]
+                            }, options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{ beginAtZero:true } } }
+                        });
+                    }
                 }
             }, 50);
         }
@@ -413,14 +451,16 @@ window.PgStorageView = async function() {
             
             let html = '';
             if (filteredProg.length > 0) {
-                html = filteredProg.map(v => `
+                html = filteredProg.map(v => {
+                    const pct = v.heap_blks_total > 0 ? (v.heap_blks_scanned / v.heap_blks_total) * 100 : 0;
+                    return `
                     <tr>
                         <td>${v.pid}</td>
                         <td title="${esc(v.relation_name)}">${esc(v.relation_name)}</td>
                         <td>${esc(v.phase)}</td>
-                        <td>${Number(v.progress_pct || 0).toFixed(1)}%</td>
+                        <td>${pct.toFixed(1)}%</td>
                     </tr>
-                `).join('');
+                `}).join('');
             } else {
                 html = '<tr><td colspan="4" class="text-center text-muted">No vacuum progress running</td></tr>';
             }
@@ -441,20 +481,22 @@ window.PgStorageView = async function() {
             const badgeEl = document.getElementById('tabBadge-bloat');
             if (badgeEl) badgeEl.style.display = highBloatCount > 0 ? '' : 'none';
 
-            const html = rows.map(r => {
-                const vacLagSec = Number(r.vacuum_lag_seconds || 0);
-                const vacLagStr = vacLagSec < 0 ? 'Never' : vacLagSec < 86400 ? `${(vacLagSec/3600).toFixed(1)}h` : `${(vacLagSec/86400).toFixed(1)}d`;
-                return `<tr>
-                    <td><strong>${esc(r.schema)}.${esc(r.table)}</strong></td>
-                    <td>${esc(r.total_size || fmtBytes(r.total_bytes))}</td>
-                    <td><span class="badge ${r.dead_pct > 20 ? 'badge-danger' : 'badge-info'}">${r.dead_pct.toFixed(1)}%</span></td>
-                    <td>${Number(r.dead_tuples).toLocaleString()}</td>
-                    <td>${Number(r.estimated_waste_mb || 0).toFixed(1)} MB</td>
-                    <td class="text-muted small">${fmtTs(r.last_autovacuum)}</td>
-                    <td class="${vacLagSec > 86400 ? 'text-warning' : ''}">${vacLagStr}</td>
-                    <td class="small">${esc(r.recommendation)}</td>
-                </tr>`;
-            }).join('');
+            const html = rows.length > 0
+                ? rows.map(r => {
+                    const vacLagSec = Number(r.vacuum_lag_seconds || 0);
+                    const vacLagStr = vacLagSec < 0 ? 'Never' : vacLagSec < 86400 ? `${(vacLagSec/3600).toFixed(1)}h` : `${(vacLagSec/86400).toFixed(1)}d`;
+                    return `<tr>
+                        <td><strong>${esc(r.schema_name)}.${esc(r.table_name)}</strong></td>
+                        <td>${esc(r.total_pretty || fmtBytes(r.total_bytes))}</td>
+                        <td><span class="badge ${r.dead_pct > 20 ? 'badge-danger' : 'badge-info'}">${r.dead_pct.toFixed(1)}%</span></td>
+                        <td>${Number(r.dead_tuples).toLocaleString()}</td>
+                        <td>${Number(r.estimated_waste_mb || 0).toFixed(1)} MB</td>
+                        <td class="text-muted small">${fmtTs(r.last_autovacuum)}</td>
+                        <td class="${vacLagSec > 86400 ? 'text-warning' : ''}">${vacLagStr}</td>
+                        <td class="small">${esc(r.recommendation)}</td>
+                    </tr>`;
+                }).join('')
+                : '<tr><td colspan="8" class="text-center text-muted" style="padding:1.2rem;">No bloat data — run a live VACUUM ANALYZE or wait for autovacuum to populate statistics.</td></tr>';
             setH('pgBloatTbody', html);
         }
 
@@ -465,7 +507,7 @@ window.PgStorageView = async function() {
             if (!isStillActive()) return;
             let s = data.sessions || [];
             if (selectedDb && selectedDb !== 'all') {
-                s = s.filter(sess => sess.database_name === selectedDb);
+                s = s.filter(sess => (sess.database_name || sess.database) === selectedDb);
             }
             riskCount += s.length;
             setH('pgIdleTbody', s.map(sess => `
@@ -482,7 +524,7 @@ window.PgStorageView = async function() {
             if (!isStillActive()) return;
             let t = data.transactions || [];
             if (selectedDb && selectedDb !== 'all') {
-                t = t.filter(txn => txn.database_name === selectedDb);
+                t = t.filter(txn => (txn.database_name || txn.database) === selectedDb);
             }
             riskCount += t.length;
             setH('pgLongTxnTbody', t.map(txn => `
@@ -525,6 +567,39 @@ window.PgStorageView = async function() {
             state.allIndexes = data.indexes || [];
             renderIndexTable();
         }
+
+        // Fetch Trend for Indices
+        (async () => {
+            try {
+                const trendUrl = `/api/timescale/storage-index-health/index-usage-trend?engine=postgres&instance=${encodeURIComponent(instanceName)}&from=${fromIso}&to=${toIso}`;
+                const tResp = await window.apiClient.authenticatedFetch(trendUrl);
+                if (tResp.ok) {
+                    const tData = await tResp.json();
+                    const points = tData.points || [];
+                    setTimeout(() => {
+                        const trendCtx = document.getElementById('pgIndexEfficiencyTrendChart');
+                        if (trendCtx) {
+                            if (window.currentCharts.pgIdxTrend) window.currentCharts.pgIdxTrend.destroy();
+                            window.currentCharts.pgIdxTrend = new Chart(trendCtx.getContext('2d'), {
+                                type: 'line',
+                                data: {
+                                    labels: points.map(p => new Date(p.bucket).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})),
+                                    datasets: [
+                                        { label: 'Seeks', data: points.map(p => p.seeks), borderColor: '#3b82f6', tension: 0.3, pointRadius: 0, fill: true, backgroundColor: 'rgba(59, 130, 246, 0.1)' },
+                                        { label: 'Scans', data: points.map(p => p.scans), borderColor: '#f43f5e', tension: 0.3, pointRadius: 0, fill: true, backgroundColor: 'rgba(244, 63, 94, 0.1)' }
+                                    ]
+                                },
+                                options: { 
+                                    responsive: true, maintainAspectRatio: false,
+                                    scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } }, x: { grid: { display: false } } },
+                                    plugins: { legend: { display: true, position: 'top', align: 'end', labels: { boxWidth: 10, font: { size: 10 } } } }
+                                }
+                            });
+                        }
+                    }, 50);
+                }
+            } catch (e) { console.warn("Index trend fetch failed", e); }
+        })();
     };
 
     const renderIndexTable = () => {
@@ -549,7 +624,7 @@ window.PgStorageView = async function() {
         const html = idxs.map(ix => `
             <tr>
                 <td>${esc(ix.database_name)}</td>
-                <td>${esc(ix.table)}</td>
+                <td>${esc(ix.table_name)}</td>
                 <td><strong>${esc(ix.index_name)}</strong></td>
                 <td>${esc(ix.index_size)}</td>
                 <td>${Number(ix.idx_scans).toLocaleString()}</td>

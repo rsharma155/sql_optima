@@ -10,36 +10,35 @@
 package hot
 
 import (
+	"log/slog"
 	"context"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/domain"
 )
 
 // GetSqlServerWorkloadSummary aggregates KPI data for the requested time range.
-func (tl *TimescaleLogger) GetSqlServerWorkloadSummary(ctx context.Context, instanceID string, from, to time.Time) (*domain.SqlServerWorkloadSummary, error) {
+func (tl *TimescaleLogger) GetSqlServerWorkloadSummary(ctx context.Context, serverID uuid.UUID, from, to time.Time) (*domain.SqlServerWorkloadSummary, error) {
 	query := `
 		SELECT
-			COALESCE(SUM(qh.cpu_delta_ms), 0),
-			COALESCE(SUM(qh.exec_delta), 0),
-			COALESCE(SUM(qh.reads_delta), 0),
-			COALESCE(SUM(qh.rows_delta), 0),
-			COALESCE(MAX(qh.period_max_grant_kb), 0)
-		FROM sqlserver_query_stats_history qh
-		LEFT JOIN sqlserver_query_classification_dim class
-		  ON class.instance_id = qh.instance_id
-		 AND class.query_hash = qh.query_hash
-		WHERE qh.instance_id = $1
-		  AND qh.ts >= $2
-		  AND qh.ts <= $3
+			COALESCE(SUM(cpu_delta_ms), 0),
+			COALESCE(SUM(exec_delta), 0),
+			COALESCE(SUM(reads_delta), 0),
+			COALESCE(SUM(rows_delta), 0),
+			COALESCE(MAX(period_max_grant_kb), 0)
+		FROM sqlserver_query_stats_history
+		WHERE server_id = $1
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
 	`
 
 	var s domain.SqlServerWorkloadSummary
-	err := tl.pool.QueryRow(ctx, query, instanceID, from, to).Scan(
+	err := tl.pool.QueryRow(ctx, query, serverID, from, to).Scan(
 		&s.TotalCPUms, &s.TotalExecutions, &s.TotalLogicalReads, &s.TotalRows, &s.MaxMemoryGrantKB,
 	)
+
 	if err != nil {
 		return nil, fmt.Errorf("GetSqlServerWorkloadSummary: %w", err)
 	}
@@ -53,7 +52,7 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadSummary(ctx context.Context, inst
 }
 
 // GetSqlServerWorkloadTrends returns bucketed time-series data for workload visualization.
-func (tl *TimescaleLogger) GetSqlServerWorkloadTrends(ctx context.Context, instanceID string, from, to time.Time) ([]domain.SqlServerWorkloadTrendPoint, error) {
+func (tl *TimescaleLogger) GetSqlServerWorkloadTrends(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]domain.SqlServerWorkloadTrendPoint, error) {
 	// Dynamically determine bucket size based on range
 	duration := to.Sub(from)
 	bucketSize := "1 minute"
@@ -66,7 +65,7 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadTrends(ctx context.Context, insta
 
 	query := fmt.Sprintf(`
 		SELECT
-			time_bucket('%s', qh.ts) AS bucket,
+			time_bucket('%s', qh.capture_timestamp) AS bucket,
 			SUM(qh.cpu_delta_ms) AS cpu_ms,
 			SUM(qh.exec_delta) AS execs,
 			SUM(qh.reads_delta) AS reads,
@@ -77,20 +76,20 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadTrends(ctx context.Context, insta
 			SUM(qh.cpu_delta_ms) / NULLIF(SUM(qh.exec_delta), 0)::float AS avg_cpu,
 			SUM(qh.rows_delta) / NULLIF(SUM(qh.exec_delta), 0)::float AS avg_rows
 		FROM sqlserver_query_stats_history qh
-		WHERE qh.instance_id = $1
-		  AND qh.ts >= $2
-		  AND qh.ts <= $3
+		WHERE qh.server_id = $1
+		  AND qh.capture_timestamp >= $2
+		  AND qh.capture_timestamp <= $3
 		GROUP BY bucket
 		ORDER BY bucket ASC
 	`, bucketSize)
 
-	rows, err := tl.pool.Query(ctx, query, instanceID, from, to)
+	rows, err := tl.pool.Query(ctx, query, serverID, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("GetSqlServerWorkloadTrends: %w", err)
 	}
 	defer rows.Close()
 
-	var trends []domain.SqlServerWorkloadTrendPoint
+	trends := make([]domain.SqlServerWorkloadTrendPoint, 0)
 	for rows.Next() {
 		var p domain.SqlServerWorkloadTrendPoint
 		var avgCPU, avgRows *float64
@@ -99,7 +98,7 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadTrends(ctx context.Context, insta
 			&p.MaxGrantKB, &p.MaxDOP, &p.WorstQueryms, &avgCPU, &avgRows,
 		)
 		if err != nil {
-			log.Printf("[TSLogger] GetSqlServerWorkloadTrends scan error: %v", err)
+			slog.Error("[TSLogger] GetSqlServerWorkloadTrends scan error", "err", err)
 			continue
 		}
 		if avgCPU != nil {
@@ -115,79 +114,60 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadTrends(ctx context.Context, insta
 }
 
 // GetSqlServerWorkloadTopOffenders identifies queries causing the most load in the given period.
-func (tl *TimescaleLogger) GetSqlServerWorkloadTopOffenders(ctx context.Context, instanceID string, from, to time.Time, limit int) ([]domain.SqlServerWorkloadTopQuery, error) {
+// Reads from sqlserver_query_metrics_v2 which has enriched login/application data from plan enrichment.
+func (tl *TimescaleLogger) GetSqlServerWorkloadTopOffenders(ctx context.Context, serverID uuid.UUID, from, to time.Time, limit int) ([]domain.SqlServerWorkloadTopQuery, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 
 	query := `
-		WITH history_agg AS (
-			SELECT
-				qh.query_hash,
-				SUM(qh.cpu_delta_ms) AS total_cpu,
-				SUM(qh.exec_delta) AS total_exec,
-				SUM(qh.reads_delta) AS total_reads,
-				SUM(qh.rows_delta) AS total_rows,
-				MAX(qh.ts) AS last_seen
-			FROM sqlserver_query_stats_history qh
-			LEFT JOIN sqlserver_query_classification_dim class
-			  ON class.instance_id = qh.instance_id
-			 AND class.query_hash = qh.query_hash
-			WHERE qh.instance_id = $1
-			  AND qh.ts >= $2
-			  AND qh.ts <= $3
-			  AND COALESCE(class.classification, 'UNKNOWN') <> 'SYSTEM'
-			GROUP BY qh.query_hash
-		)
 		SELECT
-			h.query_hash,
-			COALESCE(MAX(s.statement_text), 'Plan Evicted'),
-			COALESCE(MAX(s.database_name), 'unknown'),
-			COALESCE(MAX(dim.login_name), 'unknown'),
-			COALESCE(MAX(dim.program_name), 'unknown'),
-			h.total_cpu,
-			h.total_exec,
-			h.total_reads,
-			h.total_rows,
-			h.last_seen
-		FROM history_agg h
-		LEFT JOIN sqlserver_query_stats_snapshot_v2 s
-		  ON s.instance_id = $1
-		 AND s.query_hash = h.query_hash
-		LEFT JOIN sqlserver_query_identity_dim dim
-		  ON dim.instance_id = $1
-		 AND dim.query_hash = h.query_hash
-		WHERE s.query_text_raw NOT LIKE '/* SQL_OPTIMA */%'
-		  AND s.query_text_raw NOT LIKE '%sys.dm_%'
-		  AND s.query_text_raw NOT LIKE '%sys.partitions%'
-		  AND s.query_text_raw NOT LIKE '%sys.plan_%'
-		  AND s.query_text_raw NOT LIKE '%backup%'
-		  AND s.query_text_raw NOT LIKE '%restore%'
-		  AND s.query_text_raw NOT LIKE '%is_ms_shipped%'
-		  AND UPPER(s.query_text_raw) NOT LIKE 'FETCH NEXT FROM %'
-		  AND UPPER(s.query_text_raw) NOT LIKE 'SET %'
-		  AND UPPER(s.query_text_raw) NOT LIKE 'DECLARE %'
-		  AND UPPER(s.query_text_raw) NOT LIKE '(@%'
-		  AND UPPER(s.query_text_raw) NOT LIKE 'CREATE %'
-		  AND UPPER(s.query_text_raw) NOT LIKE 'ALTER %'
-		  AND UPPER(s.query_text_raw) NOT LIKE 'CHECKPOINT%'
-		  AND UPPER(s.query_text_raw) NOT LIKE 'DBCC %'
-		  AND COALESCE(dim.login_name, '') <> 'dbmonitor_user'
-		  AND COALESCE(dim.program_name, '') NOT IN ('sql-optima', 'SQLServerMS', 'SQL Server Profiler', 'SQLAgent - TSQL JobStep')
-		  AND COALESCE(dim.program_name, '') NOT LIKE 'Microsoft SQL Server Management Studio%'
-		  AND COALESCE(dim.program_name, '') NOT LIKE 'SQLAgent%'
-		GROUP BY h.query_hash, h.total_cpu, h.total_exec, h.total_reads, h.total_rows, h.last_seen
-		ORDER BY h.total_cpu DESC
+			query_hash,
+			COALESCE(MAX(statement_text), 'Plan Evicted') AS query_text,
+			COALESCE(MAX(database_name), 'unknown') AS database_name,
+			COALESCE(MAX(login_name), 'unknown') AS login_name,
+			COALESCE(MAX(application_name), 'unknown') AS program_name,
+			SUM(total_cpu_ms) AS total_cpu,
+			SUM(total_executions) AS total_exec,
+			SUM(total_logical_reads) AS total_reads,
+			SUM(total_rows) AS total_rows,
+			MAX(last_execution_time) AS last_seen
+		FROM sqlserver_query_metrics_v2
+		WHERE server_id = $1
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		  AND is_user_workload = 1
+		  AND COALESCE(query_text_raw, '') NOT LIKE '/* SQL_OPTIMA */%'
+		  AND COALESCE(query_text_raw, '') NOT LIKE '%sys.dm_%'
+		  AND COALESCE(query_text_raw, '') NOT LIKE '%sys.partitions%'
+		  AND COALESCE(query_text_raw, '') NOT LIKE '%sys.plan_%'
+		  AND COALESCE(query_text_raw, '') NOT LIKE '%backup%'
+		  AND COALESCE(query_text_raw, '') NOT LIKE '%restore%'
+		  AND COALESCE(query_text_raw, '') NOT LIKE '%is_ms_shipped%'
+		  AND UPPER(COALESCE(query_text_raw, '')) NOT LIKE 'FETCH NEXT FROM %'
+		  AND UPPER(COALESCE(query_text_raw, '')) NOT LIKE 'SET %'
+		  AND UPPER(COALESCE(query_text_raw, '')) NOT LIKE 'DECLARE %'
+		  AND UPPER(COALESCE(query_text_raw, '')) NOT LIKE '(@%'
+		  AND UPPER(COALESCE(query_text_raw, '')) NOT LIKE 'CREATE %'
+		  AND UPPER(COALESCE(query_text_raw, '')) NOT LIKE 'ALTER %'
+		  AND UPPER(COALESCE(query_text_raw, '')) NOT LIKE 'CHECKPOINT%'
+		  AND UPPER(COALESCE(query_text_raw, '')) NOT LIKE 'DBCC %'
+		  AND COALESCE(login_name, '') <> 'dbmonitor_user'
+		  AND COALESCE(application_name, '') NOT IN ('sql-optima', 'SQLServerMS', 'SQL Server Profiler', 'SQLAgent - TSQL JobStep')
+		  AND COALESCE(application_name, '') NOT LIKE 'Microsoft SQL Server Management Studio%'
+		  AND COALESCE(application_name, '') NOT LIKE 'SQLAgent%'
+		GROUP BY query_hash
+		ORDER BY SUM(total_cpu_ms) DESC
 		LIMIT $4
 	`
 
-	rows, err := tl.pool.Query(ctx, query, instanceID, from, to, limit)
+	rows, err := tl.pool.Query(ctx, query, serverID, from, to, limit)
 	if err != nil {
 		return nil, fmt.Errorf("GetSqlServerWorkloadTopOffenders: %w", err)
 	}
 	defer rows.Close()
 
-	var offenders []domain.SqlServerWorkloadTopQuery
+	offenders := make([]domain.SqlServerWorkloadTopQuery, 0)
 	for rows.Next() {
 		var q domain.SqlServerWorkloadTopQuery
 		var qh int64
@@ -197,7 +177,7 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadTopOffenders(ctx context.Context,
 			&q.LastSeen,
 		)
 		if err != nil {
-			log.Printf("[TSLogger] GetSqlServerWorkloadTopOffenders scan error: %v", err)
+			slog.Error("[TSLogger] GetSqlServerWorkloadTopOffenders scan error", "err", err)
 			continue
 		}
 		q.QueryHash = fmt.Sprintf("0x%X", uint64(qh))
@@ -211,7 +191,8 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadTopOffenders(ctx context.Context,
 }
 
 // GetSqlServerWorkloadAppLoadTimeline returns CPU load timeline grouped by application.
-func (tl *TimescaleLogger) GetSqlServerWorkloadAppLoadTimeline(ctx context.Context, instanceID string, from, to time.Time) ([]map[string]interface{}, error) {
+// Reads from sqlserver_query_metrics_v2 which has enriched application_name from plan enrichment.
+func (tl *TimescaleLogger) GetSqlServerWorkloadAppLoadTimeline(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]map[string]interface{}, error) {
 	duration := to.Sub(from)
 	bucketSize := "5 minutes"
 	if duration > 24*time.Hour {
@@ -220,25 +201,19 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadAppLoadTimeline(ctx context.Conte
 
 	query := fmt.Sprintf(`
 		SELECT
-			time_bucket('%s', qh.ts) AS bucket,
-			COALESCE(dim.program_name, 'unknown') AS app_name,
-			SUM(qh.cpu_delta_ms) AS cpu_ms
-		FROM sqlserver_query_stats_history qh
-		LEFT JOIN sqlserver_query_identity_dim dim
-		  ON dim.instance_id = qh.instance_id
-		 AND dim.query_hash = qh.query_hash
-		LEFT JOIN sqlserver_query_classification_dim class
-		  ON class.instance_id = qh.instance_id
-		 AND class.query_hash = qh.query_hash
-		WHERE qh.instance_id = $1
-		  AND qh.ts >= $2
-		  AND qh.ts <= $3
-		  AND COALESCE(class.classification, 'UNKNOWN') <> 'SYSTEM'
+			time_bucket('%s', capture_timestamp) AS bucket,
+			COALESCE(application_name, 'unknown') AS app_name,
+			SUM(total_cpu_ms) AS cpu_ms
+		FROM sqlserver_query_metrics_v2
+		WHERE server_id = $1
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		  AND is_user_workload = 1
 		GROUP BY bucket, app_name
 		ORDER BY bucket ASC, cpu_ms DESC
 	`, bucketSize)
 
-	rows, err := tl.pool.Query(ctx, query, instanceID, from, to)
+	rows, err := tl.pool.Query(ctx, query, serverID, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +236,8 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadAppLoadTimeline(ctx context.Conte
 }
 
 // GetSqlServerWorkloadLoginLoadTimeline returns CPU load timeline grouped by login.
-func (tl *TimescaleLogger) GetSqlServerWorkloadLoginLoadTimeline(ctx context.Context, instanceID string, from, to time.Time) ([]map[string]interface{}, error) {
+// Reads from sqlserver_query_metrics_v2 which has enriched login_name from plan enrichment.
+func (tl *TimescaleLogger) GetSqlServerWorkloadLoginLoadTimeline(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]map[string]interface{}, error) {
 	duration := to.Sub(from)
 	bucketSize := "5 minutes"
 	if duration > 24*time.Hour {
@@ -270,25 +246,19 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadLoginLoadTimeline(ctx context.Con
 
 	query := fmt.Sprintf(`
 		SELECT
-			time_bucket('%s', qh.ts) AS bucket,
-			COALESCE(dim.login_name, 'unknown') AS login_name,
-			SUM(qh.cpu_delta_ms) AS cpu_ms
-		FROM sqlserver_query_stats_history qh
-		LEFT JOIN sqlserver_query_identity_dim dim
-		  ON dim.instance_id = qh.instance_id
-		 AND dim.query_hash = qh.query_hash
-		LEFT JOIN sqlserver_query_classification_dim class
-		  ON class.instance_id = qh.instance_id
-		 AND class.query_hash = qh.query_hash
-		WHERE qh.instance_id = $1
-		  AND qh.ts >= $2
-		  AND qh.ts <= $3
-		  AND COALESCE(class.classification, 'UNKNOWN') <> 'SYSTEM'
+			time_bucket('%s', capture_timestamp) AS bucket,
+			COALESCE(login_name, 'unknown') AS login_name,
+			SUM(total_cpu_ms) AS cpu_ms
+		FROM sqlserver_query_metrics_v2
+		WHERE server_id = $1
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		  AND is_user_workload = 1
 		GROUP BY bucket, login_name
 		ORDER BY bucket ASC, cpu_ms DESC
 	`, bucketSize)
 
-	rows, err := tl.pool.Query(ctx, query, instanceID, from, to)
+	rows, err := tl.pool.Query(ctx, query, serverID, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -311,29 +281,24 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadLoginLoadTimeline(ctx context.Con
 }
 
 // GetSqlServerWorkloadTopApps returns top applications by CPU consumption.
-func (tl *TimescaleLogger) GetSqlServerWorkloadTopApps(ctx context.Context, instanceID string, from, to time.Time, limit int) ([]map[string]interface{}, error) {
+// Reads from sqlserver_query_metrics_v2 which has enriched application_name from plan enrichment.
+func (tl *TimescaleLogger) GetSqlServerWorkloadTopApps(ctx context.Context, serverID uuid.UUID, from, to time.Time, limit int) ([]map[string]interface{}, error) {
 	query := `
 		SELECT
-			COALESCE(dim.program_name, 'unknown') AS app_name,
-			SUM(qh.cpu_delta_ms) AS total_cpu_ms,
-			SUM(qh.exec_delta) AS total_executions
-		FROM sqlserver_query_stats_history qh
-		LEFT JOIN sqlserver_query_identity_dim dim
-		  ON dim.instance_id = qh.instance_id
-		 AND dim.query_hash = qh.query_hash
-		LEFT JOIN sqlserver_query_classification_dim class
-		  ON class.instance_id = qh.instance_id
-		 AND class.query_hash = qh.query_hash
-		WHERE qh.instance_id = $1
-		  AND qh.ts >= $2
-		  AND qh.ts <= $3
-		  AND COALESCE(class.classification, 'UNKNOWN') <> 'SYSTEM'
+			COALESCE(application_name, 'unknown') AS app_name,
+			SUM(total_cpu_ms) AS total_cpu_ms,
+			SUM(total_executions) AS total_executions
+		FROM sqlserver_query_metrics_v2
+		WHERE server_id = $1
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		  AND is_user_workload = 1
 		GROUP BY app_name
 		ORDER BY total_cpu_ms DESC
 		LIMIT $4
 	`
 
-	rows, err := tl.pool.Query(ctx, query, instanceID, from, to, limit)
+	rows, err := tl.pool.Query(ctx, query, serverID, from, to, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -355,29 +320,24 @@ func (tl *TimescaleLogger) GetSqlServerWorkloadTopApps(ctx context.Context, inst
 }
 
 // GetSqlServerWorkloadTopLogins returns top logins by CPU consumption.
-func (tl *TimescaleLogger) GetSqlServerWorkloadTopLogins(ctx context.Context, instanceID string, from, to time.Time, limit int) ([]map[string]interface{}, error) {
+// Reads from sqlserver_query_metrics_v2 which has enriched login_name from plan enrichment.
+func (tl *TimescaleLogger) GetSqlServerWorkloadTopLogins(ctx context.Context, serverID uuid.UUID, from, to time.Time, limit int) ([]map[string]interface{}, error) {
 	query := `
 		SELECT
-			COALESCE(dim.login_name, 'unknown') AS login_name,
-			SUM(qh.cpu_delta_ms) AS total_cpu_ms,
-			SUM(qh.exec_delta) AS total_executions
-		FROM sqlserver_query_stats_history qh
-		LEFT JOIN sqlserver_query_identity_dim dim
-		  ON dim.instance_id = qh.instance_id
-		 AND dim.query_hash = qh.query_hash
-		LEFT JOIN sqlserver_query_classification_dim class
-		  ON class.instance_id = qh.instance_id
-		 AND class.query_hash = qh.query_hash
-		WHERE qh.instance_id = $1
-		  AND qh.ts >= $2
-		  AND qh.ts <= $3
-		  AND COALESCE(class.classification, 'UNKNOWN') <> 'SYSTEM'
+			COALESCE(login_name, 'unknown') AS login_name,
+			SUM(total_cpu_ms) AS total_cpu_ms,
+			SUM(total_executions) AS total_executions
+		FROM sqlserver_query_metrics_v2
+		WHERE server_id = $1
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		  AND is_user_workload = 1
 		GROUP BY login_name
 		ORDER BY total_cpu_ms DESC
 		LIMIT $4
 	`
 
-	rows, err := tl.pool.Query(ctx, query, instanceID, from, to, limit)
+	rows, err := tl.pool.Query(ctx, query, serverID, from, to, limit)
 	if err != nil {
 		return nil, err
 	}

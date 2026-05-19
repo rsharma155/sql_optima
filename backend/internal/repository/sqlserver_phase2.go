@@ -12,7 +12,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // FetchBlockingSessionsCount returns number of currently blocked requests.
@@ -21,7 +20,7 @@ func (c *SqlServerRepository) FetchBlockingSessionsCount(ctx context.Context, in
 	if db == nil {
 		return 0, fmt.Errorf("no connection for instance %s", instanceName)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
 
 	var n int
@@ -40,7 +39,7 @@ func (c *SqlServerRepository) FetchMemoryGrantsPending(ctx context.Context, inst
 	if db == nil {
 		return 0, fmt.Errorf("no connection for instance %s", instanceName)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
 
 	var n int
@@ -58,7 +57,7 @@ func (c *SqlServerRepository) FetchMemoryGrantsSummary(ctx context.Context, inst
 	if db == nil {
 		return nil, fmt.Errorf("no connection for instance %s", instanceName)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
 
 	var pending, active int
@@ -97,7 +96,7 @@ func (c *SqlServerRepository) FetchPerfCounters(ctx context.Context, instanceNam
 	if len(counterNames) == 0 {
 		return map[string]PerfCounterSample{}, nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 7*time.Second)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
 
 	// Build IN list safely with parameters
@@ -151,7 +150,7 @@ func (c *SqlServerRepository) FetchWaitStatsCumulative(ctx context.Context, inst
 	if db == nil {
 		return nil, fmt.Errorf("no connection for instance %s", instanceName)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 7*time.Second)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
 
 	rows, err := db.QueryContext(ctx, `
@@ -182,7 +181,7 @@ func (c *SqlServerRepository) FetchTempdbUsagePercent(ctx context.Context, insta
 	if db == nil {
 		return 0, fmt.Errorf("no connection for instance %s", instanceName)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 7*time.Second)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
 
 	// Use tempdb DMV without switching DB context.
@@ -217,7 +216,7 @@ func (c *SqlServerRepository) FetchMaxDBLogUsagePercent(ctx context.Context, ins
 	if db == nil {
 		return DBLogUsage{}, fmt.Errorf("no connection for instance %s", instanceName)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
 
 	// Discover online user DBs.
@@ -279,7 +278,7 @@ func (c *SqlServerRepository) FetchFailedLoginsLast5Min(ctx context.Context, ins
 	if db == nil {
 		return 0, fmt.Errorf("no connection for instance %s", instanceName)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 7*time.Second)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
 
 	// Convert ring buffer timestamp to wall-clock similarly to CPU ring buffer approach.

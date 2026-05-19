@@ -8,13 +8,14 @@
 package hot
 
 import (
+	"log/slog"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/rsharma155/sql_optima/internal/config"
@@ -65,6 +66,16 @@ func LoadPersistedTimescaleConfig(configPath string, secretMaterial []byte) (*Co
 	if strings.TrimSpace(ptc.Host) == "" || strings.TrimSpace(ptc.Port) == "" {
 		return nil, errors.New("persisted timescale config incomplete")
 	}
+
+	maxConnsStr := os.Getenv("TIMESCALEDB_MAX_CONNS")
+	if maxConnsStr == "" {
+		maxConnsStr = "25"
+	}
+	maxConns, err := strconv.Atoi(maxConnsStr)
+	if err != nil {
+		maxConns = 25
+	}
+
 	return &Config{
 		Host:     strings.TrimSpace(ptc.Host),
 		Port:     strings.TrimSpace(ptc.Port),
@@ -72,7 +83,7 @@ func LoadPersistedTimescaleConfig(configPath string, secretMaterial []byte) (*Co
 		Password: ptc.Password,
 		Database: strings.TrimSpace(ptc.Database),
 		SSLMode:  strings.TrimSpace(ptc.SSLMode),
-		MaxConns: 50,
+		MaxConns: int32(maxConns),
 	}, nil
 }
 
@@ -111,19 +122,19 @@ func SavePersistedTimescaleConfig(configPath string, secretMaterial []byte, c *C
 func ConnectMetricsTimescale(configPath string, jwtSecret []byte) (ts *HotStorage, usingEnvTimescale bool, err error) {
 	dockerMode := config.DeploymentIsDocker()
 	envOnly := dockerMode || strings.TrimSpace(os.Getenv("TIMESCALE_USE_ENV_ONLY")) == "1"
-	
+
 	persistedTS, perr := LoadPersistedTimescaleConfig(configPath, jwtSecret)
 	if perr != nil {
-		log.Printf("[timescale] persisted config read: %v", perr)
+		slog.Info("[timescale] persisted config read", "err", perr)
 	}
 	if persistedTS != nil {
 		var e error
 		ts, e = New(persistedTS)
 		if e != nil {
-			log.Printf("[WARNING] persisted Timescale connection failed: %v", e)
+			slog.Error("[WARNING] persisted Timescale connection failed", "err", e)
 			ts = nil
 		} else {
-			log.Println("[Info] Connected to TimescaleDB using UI-persisted credentials")
+			slog.Info("[Info] Connected to TimescaleDB using UI-persisted credentials")
 		}
 	}
 
@@ -132,7 +143,7 @@ func ConnectMetricsTimescale(configPath string, jwtSecret []byte) (ts *HotStorag
 		if err != nil {
 			return nil, false, fmt.Errorf("timescale env connection: %w", err)
 		}
-		log.Println("[Info] Connected to TimescaleDB using environment variables")
+		slog.Info("[Info] Connected to TimescaleDB using environment variables")
 		return ts, true, nil
 	}
 

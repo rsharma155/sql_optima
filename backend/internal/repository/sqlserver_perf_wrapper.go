@@ -8,74 +8,75 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 )
 
-func (c *SqlServerRepository) FetchLatchStats(instanceName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchLatchStats(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
 	db, _ := c.GetConn(instanceName)
 	if db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
-	return c.CollectLatchStats(db)
+	return c.CollectLatchStats(ctx, db)
 }
 
-func (c *SqlServerRepository) FetchWaitingTasks(instanceName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchWaitingTasks(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
 	db, _ := c.GetConn(instanceName)
 	if db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
-	return c.CollectWaitingTasks(db)
+	return c.CollectWaitingTasks(ctx, db)
 }
 
-func (c *SqlServerRepository) FetchMemoryGrants(instanceName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchMemoryGrants(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
 	db, _ := c.GetConn(instanceName)
 	if db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
-	return c.CollectMemoryGrants(db)
+	return c.CollectMemoryGrants(ctx, db)
 }
 
-func (c *SqlServerRepository) FetchProcedureStats(instanceName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchProcedureStats(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
 	db, _ := c.GetConn(instanceName)
 	if db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
-	return c.CollectProcedureStats(db)
+	return c.CollectProcedureStats(ctx, db)
 }
 
-func (c *SqlServerRepository) FetchFileIOLatency(instanceName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchFileIOLatency(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
 	db, _ := c.GetConn(instanceName)
 	if db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
-	return c.CollectFileIOLatency(db)
+	return c.CollectFileIOLatency(ctx, db)
 }
 
-func (c *SqlServerRepository) FetchSpinlockStats(instanceName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchSpinlockStats(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
 	db, _ := c.GetConn(instanceName)
 	if db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
-	return c.CollectSpinlockStats(db)
+	return c.CollectSpinlockStats(ctx, db)
 }
 
-func (c *SqlServerRepository) FetchMemoryClerks(instanceName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchMemoryClerks(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
 	db, _ := c.GetConn(instanceName)
 	if db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
-	return c.CollectMemoryClerks(db)
+	return c.CollectMemoryClerks(ctx, db)
 }
 
-func (c *SqlServerRepository) FetchTempdbStats(instanceName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchTempdbStats(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
 	db, _ := c.GetConn(instanceName)
 	if db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
-	return c.CollectTempDBStats(db)
+	return c.CollectTempDBStats(ctx, db)
 }
 
-func (c *SqlServerRepository) FetchSchedulerWG(instanceName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchSchedulerWG(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
 	db, _ := c.GetConn(instanceName)
 	if db == nil {
 		return nil, fmt.Errorf("connection not found")
@@ -96,7 +97,9 @@ func (c *SqlServerRepository) FetchSchedulerWG(instanceName string) ([]map[strin
 		ORDER BY cpu_usage_percent DESC, pool_name, group_name
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,8 @@ package domain
 
 import (
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // MSSQLQuerySnapshot represents a row from sys.dm_exec_query_stats
@@ -68,7 +70,7 @@ type PGActivityEnrichment struct {
 // MSSQLCombinedMetric is the enriched and ready-to-store metric
 type MSSQLCombinedMetric struct {
 	Timestamp          time.Time
-	InstanceID         string
+	ServerID           uuid.UUID
 	DatabaseName       string
 	LoginName          string
 	ApplicationName    string
@@ -89,7 +91,7 @@ type MSSQLCombinedMetric struct {
 // PGCombinedMetric is the enriched and ready-to-store metric
 type PGCombinedMetric struct {
 	Timestamp       time.Time
-	InstanceID      string
+	ServerID        uuid.UUID
 	DatabaseName    string
 	UserName        string
 	ApplicationName string

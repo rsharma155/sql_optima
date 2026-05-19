@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: PostgreSQL index catalog snapshots for Storage & Index Health duplicate/overlap detection (Timescale monitor.index_definitions).
+// Purpose: Collector for PostgreSQL index definitions to support index health analysis.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -8,120 +8,171 @@
 package collectors
 
 import (
+	"fmt"
+	"log/slog"
 	"context"
 	"database/sql"
-	"fmt"
-	"time"
+	"strings"
 
+	"github.com/rsharma155/sql_optima/internal/config"
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
-// CollectPostgresIndexDefinitions snapshots index key/include columns for duplicate/overlap analysis (daily cadence).
-// Requires PostgreSQL 11+ (uses pg_index.indnkeyattrs for INCLUDE indexes).
-func CollectPostgresIndexDefinitions(ctx context.Context, db *sql.DB) ([]IndexDefinitionCatalogRow, error) {
-	// Support older Postgres (< 11) where indnkeyattrs does not exist.
-	var hasIndNKeyAttrs bool
-	_ = db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='pg_index' AND column_name='indnkeyattrs')`).Scan(&hasIndNKeyAttrs)
+type PgIndexDefinitionCollector struct {
+	pgRepo   *repository.PgRepository
+	tsLogger *hot.TimescaleLogger
+}
 
-	nKeyCol := "i.indnatts" // Fallback
-	if hasIndNKeyAttrs {
-		nKeyCol = "i.indnkeyattrs"
+func NewPgIndexDefinitionCollector(pgRepo *repository.PgRepository, tsLogger *hot.TimescaleLogger) *PgIndexDefinitionCollector {
+	return &PgIndexDefinitionCollector{
+		pgRepo:   pgRepo,
+		tsLogger: tsLogger,
+	}
+}
+
+func (c *PgIndexDefinitionCollector) Collect(ctx context.Context, inst config.Instance) error {
+	instanceName := inst.Name
+	serverID := inst.ServerID
+
+	// 1. Fetch all databases
+	dbs, err := c.pgRepo.FetchDatabases(ctx, instanceName)
+	if err != nil {
+		slog.Error("[PgIndexDefinitionCollector] Failed to fetch databases", "target", instanceName, "err", err)
+		return err
 	}
 
-	q := fmt.Sprintf(` /* SQL_OPTIMA */ 
-		WITH base AS (
-			SELECT
-				current_database()::text AS db_name,
-				n.nspname::text AS schema_name,
-				t.relname::text AS table_name,
-				t.oid AS tbl_oid,
-				ic.relname::text AS index_name,
-				i.indkey,
-				COALESCE(NULLIF(%s::int, 0), cardinality(i.indkey::smallint[])) AS nkey,
-				NULLIF(btrim(COALESCE(pg_get_expr(i.indpred, i.indrelid, true), '')), '') AS filter_definition,
-				i.indisunique AS is_unique,
-				i.indisprimary AS is_pk,
-				am.amname::text AS index_type
-			FROM pg_index i
-			JOIN pg_class t ON t.oid = i.indrelid AND t.relkind = 'r'
-			JOIN pg_namespace n ON n.oid = t.relnamespace
-			JOIN pg_class ic ON ic.oid = i.indexrelid
-			JOIN pg_am am ON am.oid = ic.relam
-			WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-			  AND i.indisvalid
-			  AND ic.relname IS NOT NULL
-			  AND NOT EXISTS (
-				SELECT 1 FROM generate_subscripts(i.indkey, 1) AS g
-				WHERE (i.indkey::smallint[])[g] = 0
-			  )
-		)
-		SELECT
-			b.db_name,
-			b.schema_name,
-			b.table_name,
-			b.index_name,
-			COALESCE(string_agg(a.attname::text, ', ' ORDER BY u.pos) FILTER (WHERE u.pos <= b.nkey), '') AS key_columns,
-			COALESCE(string_agg(a.attname::text, ', ' ORDER BY u.pos) FILTER (WHERE u.pos > b.nkey), '') AS include_columns,
-			b.filter_definition,
-			b.is_unique,
-			b.is_pk,
-			b.index_type
-		FROM base b
-		CROSS JOIN LATERAL unnest(b.indkey::smallint[]) WITH ORDINALITY AS u(attnum, pos)
-		JOIN pg_attribute a ON a.attrelid = b.tbl_oid AND a.attnum = u.attnum AND NOT a.attisdropped
-		WHERE u.attnum > 0
-		GROUP BY b.db_name, b.schema_name, b.table_name, b.index_name, b.filter_definition, b.is_unique, b.is_pk, b.index_type, b.nkey
-		ORDER BY b.db_name, b.schema_name, b.table_name, b.index_name
-	`, nKeyCol)
-	rows, err := db.QueryContext(ctx, q)
+	for _, dbName := range dbs {
+		// 2. Connect to database
+		db, err := c.pgRepo.GetConnForDB(instanceName, dbName)
+		if err != nil {
+			slog.Error(fmt.Sprintf("[PgIndexDefinitionCollector] Failed to connect to %s/%s: %v", instanceName, dbName, err))
+			continue
+		}
+
+		// 3. Fetch index definitions
+		rows, err := c.fetchIndexDefinitions(ctx, db, dbName)
+		if err != nil {
+			slog.Error(fmt.Sprintf("[PgIndexDefinitionCollector] Failed to fetch index definitions for %s/%s: %v", instanceName, dbName, err))
+			continue
+		}
+
+		if len(rows) == 0 {
+			continue
+		}
+
+		// 4. Map to hot.IndexDefinitionCatalogRow
+		var hotRows []hot.IndexDefinitionCatalogRow
+		for _, r := range rows {
+			hotRows = append(hotRows, hot.IndexDefinitionCatalogRow{
+				DBName:         r.DBName,
+				SchemaName:     r.SchemaName,
+				TableName:      r.TableName,
+				IndexName:      r.IndexName,
+				KeyColumns:     r.KeyColumns,
+				IncludeColumns: r.IncludeColumns,
+				FilterDefinition: struct{ String string }{
+					String: r.FilterDefinition.String,
+				},
+				IsUnique:  r.IsUnique,
+				IsPK:      r.IsPK,
+				IndexType: r.IndexType,
+			})
+		}
+
+		// 5. Dedup and Store
+		sig := c.tsLogger.FingerprintIndexDefinitionRows(serverID, hotRows)
+		if c.tsLogger.EnterpriseSnapshotUnchanged(serverID, "pg_index_definitions", sig, dbName) {
+			continue
+		}
+
+		if err := c.tsLogger.LogPgIndexDefinitions(ctx, serverID, hotRows); err != nil {
+			slog.Error(fmt.Sprintf("[PgIndexDefinitionCollector] Failed to store index definitions for %s/%s: %v", instanceName, dbName, err))
+			continue
+		}
+
+		c.tsLogger.RememberEnterpriseSnapshot(serverID, "pg_index_definitions", sig, dbName)
+	}
+
+	return nil
+}
+
+type pgIndexRow struct {
+	DBName           string
+	SchemaName       string
+	TableName        string
+	IndexName        string
+	KeyColumns       string
+	IncludeColumns   string
+	FilterDefinition sql.NullString
+	IsUnique         bool
+	IsPK             bool
+	IndexType        string
+}
+
+func (c *PgIndexDefinitionCollector) fetchIndexDefinitions(ctx context.Context, db *sql.DB, dbName string) ([]pgIndexRow, error) {
+	query := `
+		SELECT 
+			$1 as db_name,
+			schemaname,
+			tablename,
+			indexname,
+			indexdef,
+			CASE WHEN indexdef LIKE '%UNIQUE%' THEN true ELSE false END as is_unique,
+			CASE WHEN indexdef LIKE '%PRIMARY KEY%' THEN true ELSE false END as is_pk
+		FROM pg_indexes
+		WHERE schemaname NOT IN ('pg_catalog', 'information_schema')`
+
+	rows, err := db.QueryContext(ctx, query, dbName)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var out []IndexDefinitionCatalogRow
+	var results []pgIndexRow
 	for rows.Next() {
-		var r IndexDefinitionCatalogRow
-		if err := rows.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.IndexName, &r.KeyColumns, &r.IncludeColumns, &r.FilterDefinition, &r.IsUnique, &r.IsPK, &r.IndexType); err != nil {
+		var r pgIndexRow
+		var def string
+		if err := rows.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.IndexName, &def, &r.IsUnique, &r.IsPK); err != nil {
 			continue
 		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// PersistPostgresIndexDefinitions writes catalog rows for engine=postgres.
-func PersistPostgresIndexDefinitions(ctx context.Context, tl *hot.TimescaleLogger, serverID string, rows []IndexDefinitionCatalogRow, capture time.Time) (inserted int, err error) {
-	return persistIndexDefinitions(ctx, tl, "postgres", serverID, rows, capture)
-}
-
-// PersistPostgresIndexDefinitionsWithChangeDetection writes catalog rows only if they have changed since the last snapshot.
-func PersistPostgresIndexDefinitionsWithChangeDetection(ctx context.Context, tl *hot.TimescaleLogger, serverID string, rows []IndexDefinitionCatalogRow, capture time.Time) (int, error) {
-	if len(rows) == 0 {
-		return 0, nil
-	}
-	hotRows := make([]hot.IndexDefinitionCatalogRow, len(rows))
-	for i, r := range rows {
-		hotRows[i] = hot.IndexDefinitionCatalogRow{
-			DBName:           r.DBName,
-			SchemaName:       r.SchemaName,
-			TableName:        r.TableName,
-			IndexName:        r.IndexName,
-			KeyColumns:       r.KeyColumns,
-			IncludeColumns:   r.IncludeColumns,
-			FilterDefinition: struct{ String string }{String: r.FilterDefinition.String},
-			IsUnique:         r.IsUnique,
-			IsPK:             r.IsPK,
-			IndexType:        r.IndexType,
+		// Basic parsing of indexdef
+		r.IndexType = "btree" // default
+		if strings.Contains(strings.ToUpper(def), " USING GIN ") {
+			r.IndexType = "gin"
+		} else if strings.Contains(strings.ToUpper(def), " USING GIST ") {
+			r.IndexType = "gist"
+		} else if strings.Contains(strings.ToUpper(def), " USING BRIN ") {
+			r.IndexType = "brin"
+		} else if strings.Contains(strings.ToUpper(def), " USING HASH ") {
+			r.IndexType = "hash"
 		}
+
+		// Very basic column extraction from indexdef
+		// indexdef: CREATE [UNIQUE] INDEX name ON schema.table USING type (col1, col2) [INCLUDE (col3)] [WHERE filter]
+		parts := strings.Split(def, "(")
+		if len(parts) >= 2 {
+			colPart := strings.Split(parts[1], ")")[0]
+			r.KeyColumns = colPart
+		}
+
+		if strings.Contains(strings.ToUpper(def), " INCLUDE ") {
+			incParts := strings.Split(def, "INCLUDE (")
+			if len(incParts) >= 2 {
+				incColPart := strings.Split(incParts[1], ")")[0]
+				r.IncludeColumns = incColPart
+			}
+		}
+
+		if strings.Contains(strings.ToUpper(def), " WHERE ") {
+			whereParts := strings.Split(def, " WHERE ")
+			if len(whereParts) >= 2 {
+				r.FilterDefinition.String = whereParts[1]
+				r.FilterDefinition.Valid = true
+			}
+		}
+
+		results = append(results, r)
 	}
-	sig := tl.FingerprintIndexDefinitionRows(serverID, hotRows)
-	if tl.EnterpriseSnapshotUnchanged(serverID, "pg_index_definitions", sig) {
-		return 0, nil
-	}
-	n, err := PersistPostgresIndexDefinitions(ctx, tl, serverID, rows, capture)
-	if err == nil {
-		tl.RememberEnterpriseSnapshot(serverID, "pg_index_definitions", sig)
-	}
-	return n, err
+	return results, rows.Err()
 }

@@ -7,14 +7,16 @@
 // SPDX-License-Identifier: MIT
 package models
 
+import "github.com/google/uuid"
+
 // SqlServerXeEvent represents one row/event parsed from sys.fn_xe_file_target_read_file output.
 // eventDataXML is stored as-is so the UI / drilldowns can reuse it later.
 type SqlServerXeEvent struct {
-	ServerInstanceName string `json:"server_instance_name"`
-	EventType          string `json:"event_type"`
-	EventTimestamp     string `json:"event_timestamp"`
-	EventDataXML       string `json:"event_data_xml"`
-	ParsedPayloadJSON  string `json:"parsed_payload_json"`
+	ServerID          uuid.UUID `json:"server_id"`
+	EventType         string    `json:"event_type"`
+	EventTimestamp    string    `json:"event_timestamp"`
+	EventDataXML      string    `json:"event_data_xml"`
+	ParsedPayloadJSON string    `json:"parsed_payload_json"`
 
 	FileName   string `json:"file_name"`
 	FileOffset int64  `json:"file_offset"`
@@ -22,7 +24,7 @@ type SqlServerXeEvent struct {
 
 // XeFileTargetState is persisted in SQLite so we can poll incrementally.
 type XeFileTargetState struct {
-	ServerInstanceName string
-	LastFileName       *string
-	LastOffset         *int64
+	ServerID     uuid.UUID
+	LastFileName *string
+	LastOffset   *int64
 }

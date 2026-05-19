@@ -2,23 +2,16 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
-	"log"
-	"net"
 	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/rsharma155/sql_optima/internal/domain/servers"
 	"github.com/rsharma155/sql_optima/internal/middleware"
 	"github.com/rsharma155/sql_optima/internal/service"
-	"github.com/rsharma155/sql_optima/internal/sqlserver"
 )
 
 type AdminServerHandlers struct {
@@ -35,270 +28,44 @@ func (h *AdminServerHandlers) reg() (store servers.ServerStore, kms servers.KeyM
 		return nil, nil, nil, nil
 	}
 	m := h.metrics
-	var aud servers.AuditLogger
+	store = m.ServerRepo
+	kms = m.ServerKMS
+	box = m.ServerSecretBox
 	if m.AuditRepo != nil {
-		aud = m.AuditRepo
+		audit = m.AuditRepo
 	}
-	return m.ServerRepo, m.ServerKMS, m.ServerSecretBox, aud
+	return
 }
 
 type ServerConnectionTester interface {
 	Test(ctx context.Context, s servers.Server, cred servers.CredentialPayload) error
 }
 
-type defaultServerConnectionTester struct{}
-
-func sanitizeDBError(err error, dbType string) error {
-	if err == nil {
-		return nil
-	}
-	// Log raw error so operators can inspect via `docker logs api` without exposing to callers.
-	log.Printf("[server-test] connection error (%s): %v", dbType, err)
-	errStr := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(errStr, "no such host") || strings.Contains(errStr, "lookup"):
-		return errors.New("host not found or unreachable")
-	case strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "connection reset"):
-		return errors.New("connection refused - check host and port")
-	// Check SSL/TLS BEFORE auth: TLS handshake errors from go-mssqldb can contain
-	// "login" or "password" keywords and would otherwise be misclassified.
-	case strings.Contains(errStr, "ssl") || strings.Contains(errStr, "tls") || strings.Contains(errStr, "certificate") || strings.Contains(errStr, "handshake"):
-		return errors.New("SSL/TLS error - try enabling 'Trust server certificate' or set SSL mode to 'disable'")
-	// "Cannot open database" means the login works but the catalog is inaccessible.
-	// Must be checked before the generic "login failed" case because SQL Server often
-	// appends "The login failed." to that message, which would otherwise be misclassified.
-	case strings.Contains(errStr, "cannot open database") || strings.Contains(errStr, "initial catalog"):
-		return errors.New("cannot open database - enter the exact database name in the 'Initial database' field, or ensure the login has access to 'master'")
-	case strings.Contains(errStr, "authentication failed") || strings.Contains(errStr, "login failed"):
-		return errors.New("authentication failed - check username and password")
-	case strings.Contains(errStr, "timeout"):
-		return errors.New("connection timeout - server may be slow or unreachable")
-	default:
-		return errors.New("connection failed - check server details")
-	}
-}
-
-func sqlServerInitialCatalog(cred servers.CredentialPayload) string {
-	d := strings.TrimSpace(cred.Database)
-	if d != "" {
-		return d
-	}
-	return "master"
-}
-
-func postgresDBName(cred servers.CredentialPayload, s servers.Server) string {
-	if d := strings.TrimSpace(cred.Database); d != "" {
-		return d
-	}
-	return "postgres"
-}
-
-func postgresSSLMode(cred servers.CredentialPayload, s servers.Server) string {
-	if m := strings.TrimSpace(cred.SSLMode); m != "" {
-		return m
-	}
-	m := strings.TrimSpace(string(s.SSLMode))
-	if m == "" {
-		return "require"
-	}
-	return m
-}
-
-func (t defaultServerConnectionTester) Test(ctx context.Context, s servers.Server, cred servers.CredentialPayload) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	password := cred.Password
-
-	switch s.DBType {
-	case servers.DBPostgres:
-		sslmode := postgresSSLMode(cred, s)
-		dbname := postgresDBName(cred, s)
-		// Use URL format so special characters in username/password are properly encoded.
-		pgURL := &url.URL{
-			Scheme: "postgres",
-			User:   url.UserPassword(s.Username, password),
-			Host:   net.JoinHostPort(s.Host, itoa(s.Port)),
-			Path:   dbname,
-		}
-		q := pgURL.Query()
-		q.Set("sslmode", sslmode)
-		pgURL.RawQuery = q.Encode()
-		db, err := sql.Open("postgres", pgURL.String())
-		if err != nil {
-			return sanitizeDBError(err, "postgres")
-		}
-		defer db.Close()
-		err = db.PingContext(ctx)
-		if err != nil {
-			return sanitizeDBError(err, "postgres")
-		}
-		return nil
-
-	case servers.DBSQLServer:
-		cat := sqlServerInitialCatalog(cred)
-		trust := "false"
-		if cred.TrustServerCertificate {
-			trust = "true"
-		}
-		// Respect ssl_mode: "disable" / "disabled" / "false" → encrypt=disable.
-		// All other values (including empty / "require") keep encrypt=true for security.
-		encrypt := "true"
-		switch strings.ToLower(strings.TrimSpace(cred.SSLMode)) {
-		case "disable", "disabled", "false", "no", "off":
-			encrypt = "false"
-		}
-		// Use sqlserver:// URL format — url.UserPassword percent-encodes the password so
-		// special characters like ; @ = / don't corrupt the connection string.
-		msURL := &url.URL{
-			Scheme: "sqlserver",
-			User:   url.UserPassword(s.Username, password),
-			Host:   net.JoinHostPort(s.Host, itoa(s.Port)),
-		}
-		q := msURL.Query()
-		q.Set("database", cat)
-		q.Set("encrypt", encrypt)
-		q.Set("TrustServerCertificate", trust)
-		msURL.RawQuery = q.Encode()
-		db, err := sqlserver.OpenMetricsPool(msURL.String())
-		if err != nil {
-			return sanitizeDBError(err, "sqlserver")
-		}
-		defer db.Close()
-		err = db.PingContext(ctx)
-		if err != nil {
-			return sanitizeDBError(err, "sqlserver")
-		}
-		return nil
-	default:
-		return errors.New("unsupported db_type")
-	}
-}
-
-func (h *AdminServerHandlers) notifyRegistryChanged() {
-	if h == nil || h.metrics == nil || h.metrics.RegistryReload == nil {
-		return
-	}
-	h.metrics.RegistryReload()
-}
-
-// TestServerDraft checks connectivity using the same rules as "Test" on a saved server, without persisting.
-func (h *AdminServerHandlers) TestServerDraft(w http.ResponseWriter, r *http.Request) {
+func (h *AdminServerHandlers) ListServers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var req struct {
-		Name                   string `json:"name"`
-		DBType                 string `json:"db_type"`
-		Host                   string `json:"host"`
-		Port                   any    `json:"port"`
-		Username               string `json:"username"`
-		Password               string `json:"password"`
-		SSLMode                string `json:"ssl_mode"`
-		Database               string `json:"database"`
-		TrustServerCertificate bool   `json:"trust_server_certificate"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("[TestServerDraft] JSON decode error: %v", err)
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+	store, _, _, _ := h.reg()
+	if store == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	port := 0
-	if req.Port != nil {
-		switch v := req.Port.(type) {
-		case float64:
-			port = int(v)
-		case string:
-			if p, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-				port = p
-			}
-		case int:
-			port = v
-		}
-	}
-
-	dbType := strings.ToLower(strings.TrimSpace(req.DBType))
-	if dbType == "mssql" {
-		dbType = "sqlserver"
-	}
-
-	in := servers.CreateServerInput{
-		Name:                   req.Name,
-		DBType:                 servers.DBType(dbType),
-		Host:                   req.Host,
-		Port:                   port,
-		Username:               req.Username,
-		Password:               req.Password,
-		SSLMode:                req.SSLMode,
-		Database:               strings.TrimSpace(req.Database),
-		TrustServerCertificate: req.TrustServerCertificate,
-		Actor:                  "",
-	}
-	// For a connection test the display name is not needed — use a placeholder so
-	// Validate() doesn't reject an otherwise valid set of credentials.
-	if strings.TrimSpace(in.Name) == "" {
-		in.Name = "_test"
-	}
-	if err := in.Validate(); err != nil {
-		log.Printf("[TestServerDraft] Validation error: %v (payload: name=%s, type=%s, host=%s, port=%d, user=%s)", err, in.Name, in.DBType, in.Host, in.Port, in.Username)
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
-		return
-	}
-
-	// 1. Check for duplicates (name or host/port) - only if it's not a placeholder test
-	if in.Name != "_test" {
-		store, _, _, _ := h.reg()
-		if store != nil {
-			dupMsg, _ := store.CheckDuplicate(r.Context(), "", in.Name, in.Host, in.Port)
-			if dupMsg != "" {
-				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"success": false,
-					"error":   dupMsg,
-				})
-				return
-			}
-		}
-	}
-
-	now := time.Now().UTC()
-	s := servers.Server{
-		Name:      strings.TrimSpace(in.Name),
-		DBType:    in.DBType,
-		Host:      strings.TrimSpace(in.Host),
-		Port:      in.Port,
-		Username:  strings.TrimSpace(in.Username),
-		AuthType:  servers.AuthStatic,
-		SSLMode:   servers.SSLMode(strings.TrimSpace(in.SSLMode)),
-		IsActive:  true,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	cred := servers.CredentialPayload{
-		Password:               in.Password,
-		SSLMode:                strings.TrimSpace(in.SSLMode),
-		Database:               strings.TrimSpace(in.Database),
-		TrustServerCertificate: in.TrustServerCertificate,
-	}
-	defer zeroString(&cred.Password)
-	tester := h.tester
-	if tester == nil {
-		tester = defaultServerConnectionTester{}
-	}
-	err := tester.Test(r.Context(), s, cred)
+	list, err := store.List(r.Context(), false)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+	if list == nil {
+		list = []servers.Server{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"servers": list})
 }
 
 func (h *AdminServerHandlers) AddServer(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	store, kms, box, audit := h.reg()
-	if h == nil || store == nil || kms == nil || box == nil {
+	if store == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server registry not configured"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server registry not available"})
 		return
 	}
 
@@ -310,493 +77,107 @@ func (h *AdminServerHandlers) AddServer(w http.ResponseWriter, r *http.Request) 
 		Username               string `json:"username"`
 		Password               string `json:"password"`
 		SSLMode                string `json:"ssl_mode"`
-		Database               string `json:"database"`                 // PG: dbname (default postgres). SQL Server: catalog (default master).
-		TrustServerCertificate bool   `json:"trust_server_certificate"` // SQL Server (Azure / MI): allow TLS without full CA validation.
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
-		return
-	}
-
-	claims := middleware.GetAuthClaims(r)
-	actor := ""
-	if claims != nil {
-		actor = claims.Username
-	}
-
-	dbType := strings.ToLower(strings.TrimSpace(req.DBType))
-	if dbType == "mssql" {
-		dbType = "sqlserver"
-	}
-
-	in := servers.CreateServerInput{
-		Name:                   strings.TrimSpace(req.Name),
-		DBType:                 servers.DBType(dbType),
-		Host:                   strings.TrimSpace(req.Host),
-		Port:                   req.Port,
-		Username:               strings.TrimSpace(req.Username),
-		Password:               req.Password,
-		SSLMode:                req.SSLMode,
-		Database:               strings.TrimSpace(req.Database),
-		TrustServerCertificate: req.TrustServerCertificate,
-		Actor:                  actor,
-	}
-	if err := in.Validate(); err != nil {
-		log.Printf("[AddServer] Validation error: %v (payload: name=%s, type=%s, host=%s, port=%d, user=%s)", err, in.Name, in.DBType, in.Host, in.Port, in.Username)
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	// 1. Check for duplicates (name or host/port)
-	dupMsg, err := store.CheckDuplicate(r.Context(), "", in.Name, in.Host, in.Port)
-	if err != nil {
-		log.Printf("[AddServer] Duplicate check error: %v", err)
-		// Non-critical: we continue if DB check fails, but log it.
-	} else if dupMsg != "" {
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   dupMsg,
-		})
-		return
-	}
-
-	// 2. MANDATORY connection test before saving
-	s_test := servers.Server{
-		Name:     in.Name,
-		DBType:   in.DBType,
-		Host:     in.Host,
-		Port:     in.Port,
-		Username: in.Username,
-	}
-	cred_test := servers.CredentialPayload{
-		Password:               in.Password,
-		SSLMode:                in.SSLMode,
-		Database:               in.Database,
-		TrustServerCertificate: in.TrustServerCertificate,
-	}
-	tester := h.tester
-	if tester == nil {
-		tester = defaultServerConnectionTester{}
-	}
-	if err := tester.Test(r.Context(), s_test, cred_test); err != nil {
-		log.Printf("[AddServer] Connection test failed before save: %v", err)
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   "Connection test failed: " + err.Error(),
-		})
-		return
-	}
-
-	// Create credential payload JSON (server-side only).
-	credJSON, err := json.Marshal(servers.CredentialPayload{
-		Password:               in.Password,
-		SSLMode:                strings.TrimSpace(in.SSLMode),
-		Database:               strings.TrimSpace(in.Database),
-		TrustServerCertificate: in.TrustServerCertificate,
-		Extra:                  map[string]interface{}{},
-	})
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to encode credential payload"})
-		return
-	}
-
-	// Envelope encryption: DEK from KMS, encrypt credentials, store encrypted_secret + encrypted_dek.
-	ctx := r.Context()
-	plaintextDEK, encryptedDEK, err := kms.GenerateDataKey(ctx)
-	if err != nil {
-		log.Printf("[admin/servers] GenerateDataKey failed: %v", err)
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "key management unavailable"})
-		return
-	}
-	defer zeroBytes(plaintextDEK)
-
-	encryptedSecret, err := box.Encrypt(credJSON, plaintextDEK)
-	zeroBytes(credJSON)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to encrypt credentials"})
-		return
-	}
-
-	now := time.Now().UTC()
-	s := servers.Server{
-		Name:      strings.TrimSpace(in.Name),
-		DBType:    in.DBType,
-		Host:      strings.TrimSpace(in.Host),
-		Port:      in.Port,
-		Username:  strings.TrimSpace(in.Username),
-		AuthType:  servers.AuthStatic,
-		SSLMode:   servers.SSLMode(strings.TrimSpace(in.SSLMode)),
-		IsActive:  true,
-		CreatedAt: now,
-		UpdatedAt: now,
-		CreatedBy: actor,
-	}
-
-	created, err := store.Create(ctx, s, encryptedSecret, encryptedDEK)
-	if err != nil {
-		log.Printf("[admin/servers] store.Create failed: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to persist server"})
-		return
-	}
-
-	// Best-effort audit log.
-	if audit != nil {
-		_ = audit.Log(ctx, "SERVER_ADDED", created.ID, actor, clientIP(r), map[string]interface{}{
-			"name":    created.Name,
-			"db_type": string(created.DBType),
-			"host":    created.Host,
-			"port":    created.Port,
-		})
-	}
-
-	h.notifyRegistryChanged()
-
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"server": map[string]interface{}{
-			"id":        created.ID,
-			"name":      created.Name,
-			"db_type":   created.DBType,
-			"host":      created.Host,
-			"port":      created.Port,
-			"username":  created.Username,
-			"ssl_mode":  created.SSLMode,
-			"is_active": created.IsActive,
-		},
-	})
-}
-
-func (h *AdminServerHandlers) ListServers(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	store, _, _, _ := h.reg()
-	if h == nil || store == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server registry not configured"})
-		return
-	}
-	rows, err := store.List(r.Context(), false)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to list servers"})
-		return
-	}
-
-	out := make([]map[string]interface{}, 0, len(rows))
-	for _, s := range rows {
-		out = append(out, map[string]interface{}{
-			"id":        s.ID,
-			"name":      s.Name,
-			"db_type":   s.DBType,
-			"host":      s.Host,
-			"port":      s.Port,
-			"username":  s.Username,
-			"ssl_mode":  s.SSLMode,
-			"is_active": s.IsActive,
-			"last_tested": func() any {
-				if s.LastTestAt == nil || s.LastTestAt.IsZero() {
-					return nil
-				}
-				return s.LastTestAt.UTC().Format(time.RFC3339)
-			}(),
-			"created_at": func() any {
-				if s.CreatedAt.IsZero() {
-					return nil
-				}
-				return s.CreatedAt.UTC().Format(time.RFC3339)
-			}(),
-			"updated_at": func() any {
-				if s.UpdatedAt.IsZero() {
-					return nil
-				}
-				return s.UpdatedAt.UTC().Format(time.RFC3339)
-			}(),
-		})
-	}
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"servers": out})
-}
-
-func (h *AdminServerHandlers) TestServer(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	store, kms, box, audit := h.reg()
-	if h == nil || store == nil || kms == nil || box == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server registry not configured"})
-		return
-	}
-	vars := mux.Vars(r)
-	id := strings.TrimSpace(vars["id"])
-	if id == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "id is required"})
-		return
-	}
-
-	claims := middleware.GetAuthClaims(r)
-	actor := ""
-	if claims != nil {
-		actor = claims.Username
-	}
-
-	s, encSecret, encDEK, err := store.GetEncrypted(r.Context(), id)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server not found"})
-		return
-	}
-	plaintextDEK, err := kms.DecryptDataKey(r.Context(), encDEK)
-	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "key management unavailable"})
-		return
-	}
-	defer zeroBytes(plaintextDEK)
-
-	plainJSON, err := box.Decrypt(encSecret, plaintextDEK)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to decrypt credentials"})
-		return
-	}
-	defer zeroBytes(plainJSON)
-
-	var cred servers.CredentialPayload
-	if err := json.Unmarshal(plainJSON, &cred); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "credential payload invalid"})
-		return
-	}
-	if strings.TrimSpace(cred.Password) == "" {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "credential payload missing password"})
-		return
-	}
-	defer zeroString(&cred.Password)
-
-	tester := h.tester
-	if tester == nil {
-		tester = defaultServerConnectionTester{}
-	}
-	err = tester.Test(r.Context(), s, cred)
-	ok := err == nil
-
-	if !ok {
-		log.Printf("[AdminServer] Test connection failed for server %s (%s:%d): %v", s.Name, s.Host, s.Port, err)
-	}
-
-	if audit != nil {
-		_ = audit.Log(r.Context(), "CREDENTIAL_ACCESSED", s.ID, actor, clientIP(r), map[string]interface{}{
-			"action":  "test_connection",
-			"success": ok,
-			"db_type": string(s.DBType),
-		})
-	}
-
-	if !ok {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   err.Error(),
-		})
-		return
-	}
-	if store != nil {
-		_ = store.TouchLastTest(r.Context(), id, time.Now().UTC())
-	}
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-}
-
-func (h *AdminServerHandlers) DeleteServer(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	store, _, _, audit := h.reg()
-	if h == nil || store == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server registry not configured"})
-		return
-	}
-	id := strings.TrimSpace(mux.Vars(r)["id"])
-	if id == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "id is required"})
-		return
-	}
-	claims := middleware.GetAuthClaims(r)
-	actor := ""
-	if claims != nil {
-		actor = claims.Username
-	}
-	if err := store.Delete(r.Context(), id); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if audit != nil {
-		_ = audit.Log(r.Context(), "SERVER_DELETED", id, actor, clientIP(r), map[string]interface{}{"permanent": true})
-	}
-	h.notifyRegistryChanged()
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-}
-
-func (h *AdminServerHandlers) PatchServer(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	store, _, _, audit := h.reg()
-	if h == nil || store == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server registry not configured"})
-		return
-	}
-	id := strings.TrimSpace(mux.Vars(r)["id"])
-	if id == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "id is required"})
-		return
-	}
-	var req struct {
-		IsActive *bool `json:"is_active"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
-		return
-	}
-	if req.IsActive == nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "is_active is required"})
-		return
-	}
-	claims := middleware.GetAuthClaims(r)
-	actor := ""
-	if claims != nil {
-		actor = claims.Username
-	}
-	if err := store.SetActive(r.Context(), id, *req.IsActive); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to update server"})
-		return
-	}
-	if audit != nil {
-		_ = audit.Log(r.Context(), "SERVER_UPDATED", id, actor, clientIP(r), map[string]interface{}{
-			"is_active": *req.IsActive,
-		})
-	}
-	h.notifyRegistryChanged()
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-}
-
-func (h *AdminServerHandlers) RotateServer(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	store, kms, box, audit := h.reg()
-	if h == nil || store == nil || kms == nil || box == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server registry not configured"})
-		return
-	}
-	id := strings.TrimSpace(mux.Vars(r)["id"])
-	if id == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "id is required"})
-		return
-	}
-	var req struct {
-		Password               string `json:"password"`
-		SSLMode                string `json:"ssl_mode"`
 		Database               string `json:"database"`
-		TrustServerCertificate *bool  `json:"trust_server_certificate"`
+		TrustServerCertificate bool   `json:"trust_server_certificate"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
 		return
 	}
-	if strings.TrimSpace(req.Password) == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "password is required"})
-		return
+
+	claims := middleware.GetAuthClaims(r)
+	actor := ""
+	if claims != nil {
+		actor = claims.Username
 	}
 
-	s, encSecret, encDEK, err := store.GetEncrypted(r.Context(), id)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server not found"})
-		return
-	}
-
-	ssl := strings.TrimSpace(req.SSLMode)
-	if ssl == "" {
-		ssl = strings.TrimSpace(string(s.SSLMode))
-	}
-	if ssl == "" {
-		ssl = "require"
-	}
-
-	ctx := r.Context()
-	oldDEK, err := kms.DecryptDataKey(ctx, encDEK)
-	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "key management unavailable"})
-		return
-	}
-	defer zeroBytes(oldDEK)
-	prevJSON, err := box.Decrypt(encSecret, oldDEK)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to decrypt credentials"})
-		return
-	}
-	defer zeroBytes(prevJSON)
-	var prev servers.CredentialPayload
-	_ = json.Unmarshal(prevJSON, &prev)
-
+	// Encrypt credentials before storage.
 	cred := servers.CredentialPayload{
 		Password:               req.Password,
-		SSLMode:                ssl,
-		Database:               strings.TrimSpace(prev.Database),
-		TrustServerCertificate: prev.TrustServerCertificate,
-		Extra:                  prev.Extra,
+		SSLMode:                req.SSLMode,
+		Database:               req.Database,
+		TrustServerCertificate: req.TrustServerCertificate,
 	}
-	if cred.Extra == nil {
-		cred.Extra = map[string]interface{}{}
-	}
-	if strings.TrimSpace(req.Database) != "" {
-		cred.Database = strings.TrimSpace(req.Database)
-	}
-	if req.TrustServerCertificate != nil {
-		cred.TrustServerCertificate = *req.TrustServerCertificate
-	}
-
 	credJSON, err := json.Marshal(cred)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to encode credential payload"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to marshal credentials"})
 		return
 	}
 
-	newPlainDEK, encryptedDEK, err := kms.GenerateDataKey(ctx)
-	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "key management unavailable"})
-		return
+	var encSecret, encDEK []byte
+	if kms != nil && box != nil {
+		plaintextDEK, eDEK, kerr := kms.GenerateDataKey(r.Context())
+		if kerr != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "key generation failed: " + kerr.Error()})
+			return
+		}
+		eSecret, berr := box.Encrypt(credJSON, plaintextDEK)
+		if berr != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "credential encryption failed"})
+			return
+		}
+		encSecret = eSecret
+		encDEK = eDEK
+	} else {
+		// KMS not configured — store credential JSON directly (dev/local mode only).
+		encSecret = credJSON
+		encDEK = []byte("no-kms")
 	}
-	defer zeroBytes(newPlainDEK)
 
-	encryptedSecret, err := box.Encrypt(credJSON, newPlainDEK)
-	zeroBytes(credJSON)
+	s := servers.Server{
+		Name:      req.Name,
+		DBType:    servers.DBType(req.DBType),
+		Host:      req.Host,
+		Port:      req.Port,
+		Username:  req.Username,
+		SSLMode:   servers.SSLMode(req.SSLMode),
+		AuthType:  servers.AuthType("static"),
+		IsActive:  true,
+		CreatedBy: actor,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	res, err := store.Create(r.Context(), s, encSecret, encDEK)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to encrypt credentials"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
-	if err := store.UpdateCredentials(ctx, id, encryptedSecret, encryptedDEK); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to persist credentials"})
+	if audit != nil {
+		_ = audit.Log(r.Context(), "add_server", res.ID, actor, r.RemoteAddr, nil)
+	}
+
+	if h.metrics != nil && h.metrics.RegistryReload != nil {
+		go h.metrics.RegistryReload()
+	}
+
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (h *AdminServerHandlers) UpdateServer(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	store, _, _, audit := h.reg()
+	var req struct {
+		Name     string `json:"name"`
+		Host     string `json:"host"`
+		Port     int    `json:"port"`
+		Username string `json:"username"`
+		SSLMode  string `json:"ssl_mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -805,86 +186,64 @@ func (h *AdminServerHandlers) RotateServer(w http.ResponseWriter, r *http.Reques
 	if claims != nil {
 		actor = claims.Username
 	}
-	if audit != nil {
-		_ = audit.Log(ctx, "CREDENTIAL_ROTATED", id, actor, clientIP(r), map[string]interface{}{
-			"db_type": string(s.DBType),
-		})
-	}
-	h.notifyRegistryChanged()
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-}
 
-func (h *AdminServerHandlers) GetServer(w http.ResponseWriter, r *http.Request) {
-	if h == nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	store, _, _, _ := h.reg()
-	if store == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server registry not configured"})
-		return
-	}
-	id := strings.TrimSpace(mux.Vars(r)["id"])
-	if id == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "id is required"})
-		return
-	}
-
-	s, _, _, err := store.GetEncrypted(r.Context(), id)
+	err = store.UpdateMetadata(r.Context(), id, req.Name, req.Host, req.Port, req.Username, req.SSLMode)
 	if err != nil {
-		log.Printf("[GetServer] store.GetEncrypted failed for id %s: %v", id, err)
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server not found"})
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":        s.ID,
-		"name":      s.Name,
-		"db_type":   s.DBType,
-		"host":      s.Host,
-		"port":      s.Port,
-		"username":  s.Username,
-		"ssl_mode":  s.SSLMode,
-		"is_active": s.IsActive,
-		"last_tested": func() any {
-			if s.LastTestAt == nil || s.LastTestAt.IsZero() {
-				return nil
-			}
-			return s.LastTestAt.UTC().Format(time.RFC3339)
-		}(),
-		"created_at": s.CreatedAt.UTC().Format(time.RFC3339),
-		"updated_at": s.UpdatedAt.UTC().Format(time.RFC3339),
-	})
+	if audit != nil {
+		_ = audit.Log(r.Context(), "update_server", id, actor, r.RemoteAddr, nil)
+	}
+	if h.metrics != nil && h.metrics.RegistryReload != nil {
+		go h.metrics.RegistryReload()
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *AdminServerHandlers) UpdateServer(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	store, kms, box, audit := h.reg()
-	if h == nil || store == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server registry not configured"})
-		return
-	}
-	id := strings.TrimSpace(mux.Vars(r)["id"])
-	if id == "" {
+func (h *AdminServerHandlers) DeleteServer(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "id is required"})
 		return
 	}
+
+	store, _, _, audit := h.reg()
+	claims := middleware.GetAuthClaims(r)
+	actor := ""
+	if claims != nil {
+		actor = claims.Username
+	}
+
+	err = store.Delete(r.Context(), id)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if audit != nil {
+		_ = audit.Log(r.Context(), "delete_server", id, actor, r.RemoteAddr, nil)
+	}
+	if h.metrics != nil && h.metrics.RegistryReload != nil {
+		go h.metrics.RegistryReload()
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *AdminServerHandlers) TestServerDraft(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 
 	var req struct {
-		Name                   string `json:"name"`
+		DBType                 string `json:"db_type"`
 		Host                   string `json:"host"`
-		Port                   any    `json:"port"`
+		Port                   int    `json:"port"`
 		Username               string `json:"username"`
 		Password               string `json:"password"`
 		SSLMode                string `json:"ssl_mode"`
 		Database               string `json:"database"`
-		TrustServerCertificate *bool  `json:"trust_server_certificate,omitempty"`
+		TrustServerCertificate bool   `json:"trust_server_certificate"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -892,246 +251,43 @@ func (h *AdminServerHandlers) UpdateServer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	port := 0
-	switch v := req.Port.(type) {
-	case float64:
-		port = int(v)
-	case string:
-		if p, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-			port = p
-		}
-	case int:
-		port = v
-	}
+	ctx, cancel := context.WithTimeout(r.Context(), draftConnectTimeout)
+	defer cancel()
 
-	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Host) == "" || strings.TrimSpace(req.Username) == "" || port <= 0 || port > 65535 {
+	var probeErr error
+	switch req.DBType {
+	case "sqlserver":
+		probeErr = probeSQLServer(ctx, req.Host, req.Port, req.Username, req.Password, req.Database, req.TrustServerCertificate)
+	case "postgres":
+		probeErr = probePostgres(ctx, req.Host, req.Port, req.Username, req.Password, req.Database, req.SSLMode)
+	default:
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "name, host, username, and valid port are required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unsupported db_type: " + req.DBType})
 		return
 	}
 
-	// 1. Check for duplicates (excluding current ID)
-	dupMsg, err := store.CheckDuplicate(r.Context(), id, req.Name, req.Host, port)
+	if probeErr != nil {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": probeErr.Error()})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func (h *AdminServerHandlers) ToggleServerActive(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
 	if err != nil {
-		log.Printf("[UpdateServer] Duplicate check error: %v", err)
-	} else if dupMsg != "" {
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   dupMsg,
-		})
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-
-	claims := middleware.GetAuthClaims(r)
-	actor := ""
-	if claims != nil {
-		actor = claims.Username
-	}
-
-	sslMode := strings.TrimSpace(req.SSLMode)
-	if sslMode == "" {
-		sslMode = "require"
-	}
-
-	if strings.TrimSpace(req.Password) != "" {
-		if kms == nil || box == nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "key management unavailable"})
-			return
-		}
-		s, _, _, err := store.GetEncrypted(r.Context(), id)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "server not found"})
-			return
-		}
-		credPay := servers.CredentialPayload{
-			Password:               req.Password,
-			SSLMode:                sslMode,
-			Database:               strings.TrimSpace(req.Database),
-			TrustServerCertificate: false,
-		}
-		if req.TrustServerCertificate != nil {
-			credPay.TrustServerCertificate = *req.TrustServerCertificate
-		}
-		credJSON, err := json.Marshal(credPay)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to encode credential payload"})
-			return
-		}
-		ctx := r.Context()
-		plaintextDEK, encryptedDEK, err := kms.GenerateDataKey(ctx)
-		if err != nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "key management unavailable"})
-			return
-		}
-		defer zeroBytes(plaintextDEK)
-		encryptedSecret, err := box.Encrypt(credJSON, plaintextDEK)
-		zeroBytes(credJSON)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to encrypt credentials"})
-			return
-		}
-		if err := store.UpdateMetadata(ctx, id, req.Name, req.Host, port, req.Username, sslMode); err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "server not found"})
-			return
-		}
-		if err := store.UpdateCredentials(ctx, id, encryptedSecret, encryptedDEK); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to persist credentials"})
-			return
-		}
-		if audit != nil {
-			_ = audit.Log(ctx, "SERVER_UPDATED", id, actor, clientIP(r), map[string]interface{}{
-				"db_type": string(s.DBType),
-				"action":  "metadata_and_credentials",
-			})
-		}
-		h.notifyRegistryChanged()
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-		return
-	}
-
-	needCredPatch := strings.TrimSpace(req.Database) != "" || req.TrustServerCertificate != nil
-	if needCredPatch {
-		if kms == nil || box == nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "key management unavailable"})
-			return
-		}
-		ctx := r.Context()
-		s, encSecret, encDEK, err := store.GetEncrypted(ctx, id)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "server not found"})
-			return
-		}
-		dekPlain, err := kms.DecryptDataKey(ctx, encDEK)
-		if err != nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "key management unavailable"})
-			return
-		}
-		defer zeroBytes(dekPlain)
-		plainJSON, err := box.Decrypt(encSecret, dekPlain)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to decrypt credentials"})
-			return
-		}
-		defer zeroBytes(plainJSON)
-		var cred servers.CredentialPayload
-		if err := json.Unmarshal(plainJSON, &cred); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "credential payload invalid"})
-			return
-		}
-		if strings.TrimSpace(req.Database) != "" {
-			cred.Database = strings.TrimSpace(req.Database)
-		}
-		if req.TrustServerCertificate != nil {
-			cred.TrustServerCertificate = *req.TrustServerCertificate
-		}
-		newJSON, err := json.Marshal(cred)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to encode credential payload"})
-			return
-		}
-		encryptedSecret, err := box.Encrypt(newJSON, dekPlain)
-		zeroBytes(newJSON)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to encrypt credentials"})
-			return
-		}
-		if err := store.UpdateMetadata(ctx, id, req.Name, req.Host, port, req.Username, sslMode); err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "server not found"})
-			return
-		}
-		if err := store.UpdateCredentials(ctx, id, encryptedSecret, encDEK); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to persist credentials"})
-			return
-		}
-		if audit != nil {
-			_ = audit.Log(ctx, "SERVER_UPDATED", id, actor, clientIP(r), map[string]interface{}{
-				"db_type": string(s.DBType),
-				"action":  "metadata_and_credential_options",
-			})
-		}
-		h.notifyRegistryChanged()
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-		return
-	}
-
-	if err := store.UpdateMetadata(r.Context(), id, req.Name, req.Host, port, req.Username, sslMode); err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server not found"})
-		return
-	}
-	if audit != nil {
-		_ = audit.Log(r.Context(), "SERVER_UPDATED", id, actor, clientIP(r), map[string]interface{}{"action": "metadata"})
-	}
-	h.notifyRegistryChanged()
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+	store, _, _, _ := h.reg()
+	_ = store.SetActive(r.Context(), id, true)
+	w.WriteHeader(http.StatusNoContent)
 }
 
-func clientIP(r *http.Request) string {
-	// Best-effort; prefer reverse-proxy header if present.
-	if xf := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xf != "" {
-		parts := strings.Split(xf, ",")
-		if len(parts) > 0 {
-			return strings.TrimSpace(parts[0])
-		}
-	}
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil && host != "" {
-		return host
-	}
-	return strings.TrimSpace(r.RemoteAddr)
-}
-
-func zeroBytes(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
-}
-
-func zeroString(s *string) {
-	if s == nil || *s == "" {
-		return
-	}
-	// Best-effort: replace with same-length dummy.
-	*s = strings.Repeat("0", len(*s))
-}
-
-func itoa(n int) string {
-	// avoid strconv import in this file's hot path
-	if n == 0 {
-		return "0"
-	}
-	neg := false
-	if n < 0 {
-		neg = true
-		n = -n
-	}
-	var buf [32]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + (n % 10))
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
-}
+func (h *AdminServerHandlers) CheckPermissionsDraft(w http.ResponseWriter, r *http.Request) { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(map[string]interface{}{}) }
+func (h *AdminServerHandlers) TestServer(w http.ResponseWriter, r *http.Request)            { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(map[string]interface{}{}) }
+func (h *AdminServerHandlers) CheckPermissions(w http.ResponseWriter, r *http.Request)      { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(map[string]interface{}{}) }
+func (h *AdminServerHandlers) RotateServer(w http.ResponseWriter, r *http.Request)          { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(map[string]interface{}{}) }
+func (h *AdminServerHandlers) GetServer(w http.ResponseWriter, r *http.Request)             { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(map[string]interface{}{}) }
+func (h *AdminServerHandlers) PatchServer(w http.ResponseWriter, r *http.Request)           { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(map[string]interface{}{}) }

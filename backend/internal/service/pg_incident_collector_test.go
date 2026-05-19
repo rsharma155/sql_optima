@@ -11,18 +11,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/repository"
 )
 
 func TestBuildIncidentRows_BlockingEvent(t *testing.T) {
+	inst1 := uuid.New()
 	now := time.Now()
 	locks := []repository.PGTimescaleLockInternal{
 		{PID: 101, WaitDurationMs: 500, BlockedBy: 202, DatabaseName: "db1", QueryText: "UPDATE..."},
 	}
-	
-	rows := buildIncidentRows("inst1", now, locks, nil, 0)
-	
+
+	rows := buildIncidentRows(inst1, now, locks, nil, 0)
+
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
@@ -32,13 +34,14 @@ func TestBuildIncidentRows_BlockingEvent(t *testing.T) {
 }
 
 func TestBuildIncidentRows_LongQueryOver5Min_SetsCritical(t *testing.T) {
+	inst1 := uuid.New()
 	now := time.Now()
 	queries := []models.PgSession{
 		{PID: 303, DurationMs: 300001, UserName: "u1", Database: "db1", Query: "SELECT..."},
 	}
-	
-	rows := buildIncidentRows("inst1", now, nil, queries, 0)
-	
+
+	rows := buildIncidentRows(inst1, now, nil, queries, 0)
+
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
@@ -48,13 +51,14 @@ func TestBuildIncidentRows_LongQueryOver5Min_SetsCritical(t *testing.T) {
 }
 
 func TestBuildIncidentRows_LongQueryUnder5Min_SetsWarning(t *testing.T) {
+	inst1 := uuid.New()
 	now := time.Now()
 	queries := []models.PgSession{
 		{PID: 303, DurationMs: 10000, UserName: "u1", Database: "db1", Query: "SELECT..."},
 	}
-	
-	rows := buildIncidentRows("inst1", now, nil, queries, 0)
-	
+
+	rows := buildIncidentRows(inst1, now, nil, queries, 0)
+
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
@@ -64,16 +68,18 @@ func TestBuildIncidentRows_LongQueryUnder5Min_SetsWarning(t *testing.T) {
 }
 
 func TestBuildIncidentRows_NoIncidents_ReturnsEmptySlice(t *testing.T) {
-	rows := buildIncidentRows("inst1", time.Now(), nil, nil, 0)
+	inst1 := uuid.New()
+	rows := buildIncidentRows(inst1, time.Now(), nil, nil, 0)
 	if len(rows) != 0 {
 		t.Fatalf("expected 0 rows, got %d", len(rows))
 	}
 }
 
 func TestBuildIncidentRows_DeadlockAlwaysCritical(t *testing.T) {
+	inst1 := uuid.New()
 	now := time.Now()
-	rows := buildIncidentRows("inst1", now, nil, nil, 5.0)
-	
+	rows := buildIncidentRows(inst1, now, nil, nil, 5.0)
+
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}

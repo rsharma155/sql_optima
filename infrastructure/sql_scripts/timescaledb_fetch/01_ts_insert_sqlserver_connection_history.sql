@@ -3,5 +3,5 @@
 -- Target Table: sqlserver_connection_history
 -- Description: Batch inserts connection stats grouped by login and database
 
-INSERT INTO sqlserver_connection_history (capture_timestamp, server_instance_name, login_name, database_name, active_connections, active_requests)
+INSERT INTO sqlserver_connection_history (capture_timestamp, server_id, login_name, database_name, active_connections, active_requests)
 VALUES ($1, $2, $3, $4, $5, $6);

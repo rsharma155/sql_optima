@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
@@ -146,7 +147,7 @@ func GetModifiedTables(ctx context.Context, dbq repository.Queryer, since time.T
 	return tables, rows.Err()
 }
 
-func persistIndexDefinitions(ctx context.Context, tl *hot.TimescaleLogger, engine, serverID string, rows []IndexDefinitionCatalogRow, capture time.Time) (inserted int, err error) {
+func persistIndexDefinitions(ctx context.Context, tl *hot.TimescaleLogger, engine string, serverID uuid.UUID, rows []IndexDefinitionCatalogRow, capture time.Time) (inserted int, err error) {
 	for _, r := range rows {
 		def := models.IndexDefinition{
 			Time:             capture.UTC(),
@@ -174,6 +175,6 @@ func persistIndexDefinitions(ctx context.Context, tl *hot.TimescaleLogger, engin
 	return inserted, nil
 }
 
-func PersistSQLServerIndexDefinitions(ctx context.Context, tl *hot.TimescaleLogger, serverID string, rows []IndexDefinitionCatalogRow, capture time.Time) (inserted int, err error) {
+func PersistSQLServerIndexDefinitions(ctx context.Context, tl *hot.TimescaleLogger, serverID uuid.UUID, rows []IndexDefinitionCatalogRow, capture time.Time) (inserted int, err error) {
 	return persistIndexDefinitions(ctx, tl, "sqlserver", serverID, rows, capture)
 }

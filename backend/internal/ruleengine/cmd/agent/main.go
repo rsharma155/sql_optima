@@ -8,15 +8,16 @@
 package main
 
 import (
+	"log/slog"
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/ruleengine/collectors"
 	"github.com/rsharma155/sql_optima/internal/ruleengine/engine"
 	"github.com/rsharma155/sql_optima/internal/ruleengine/postgres"
@@ -26,7 +27,7 @@ type Config struct {
 	PostgresConnStr  string
 	SQLServerConnStr string
 	PgCollectorStr   string
-	ServerID         int
+	ServerID         uuid.UUID
 	InstanceType     string
 	WorkerCount      int
 	PollInterval     time.Duration
@@ -38,31 +39,35 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	log.Printf("[Agent] Starting Rule Engine Agent for server_id=%d", cfg.ServerID)
+	slog.Info("[Agent] Starting Rule Engine Agent for server_id=", "val", cfg.ServerID)
 
 	pgClient, err := postgres.NewPGClient(ctx, cfg.PostgresConnStr)
 	if err != nil {
-		log.Fatalf("[Agent] Failed to create PG client: %v", err)
+		slog.Error("[Agent] Failed to create PG client", "err", err)
+	os.Exit(1)
 	}
 	defer pgClient.Close()
-	log.Printf("[Agent] PostgreSQL client connected")
+	slog.Info("[Agent] PostgreSQL client connected")
 
 	if cfg.InstanceType == "sqlserver" && cfg.SQLServerConnStr != "" {
 		sqlCol, err := collectors.NewSQLServerCollector(cfg.SQLServerConnStr)
 		if err != nil {
-			log.Fatalf("[Agent] Failed to create SQL Server collector: %v", err)
+			slog.Error("[Agent] Failed to create SQL Server collector", "err", err)
+	os.Exit(1)
 		}
 		defer sqlCol.Close()
-		log.Printf("[Agent] SQL Server collector connected")
+		slog.Info("[Agent] SQL Server collector connected")
 	} else if cfg.InstanceType == "postgres" && cfg.PgCollectorStr != "" {
 		pgCol, err := collectors.NewPostgresCollector(cfg.PgCollectorStr)
 		if err != nil {
-			log.Fatalf("[Agent] Failed to create PostgreSQL collector: %v", err)
+			slog.Error("[Agent] Failed to create PostgreSQL collector", "err", err)
+	os.Exit(1)
 		}
 		defer pgCol.Close()
-		log.Printf("[Agent] PostgreSQL collector connected")
+		slog.Info("[Agent] PostgreSQL collector connected")
 	} else {
-		log.Fatalf("[Agent] Invalid configuration: instance_type=%s", cfg.InstanceType)
+		slog.Error("[Agent] Invalid configuration: instance_type=", "val", cfg.InstanceType)
+	os.Exit(1)
 	}
 
 	runner := engine.NewRunner(pgClient, cfg.WorkerCount)
@@ -84,22 +89,22 @@ func main() {
 	run := func() {
 		err := runner.Start(ctx, cfg.ServerID, cfg.InstanceType)
 		if err != nil {
-			log.Printf("[Agent] Run failed: %v", err)
+			slog.Error("[Agent] Run failed", "err", err)
 		}
 	}
 
-	log.Printf("[Agent] Starting initial run...")
+	slog.Info("[Agent] Starting initial run...")
 	run()
 
-	log.Printf("[Agent] Polling every %v", cfg.PollInterval)
+	slog.Info("[Agent] Polling every", "val", cfg.PollInterval)
 
 	for {
 		select {
 		case <-ticker.C:
-			log.Printf("[Agent] Starting scheduled run...")
+			slog.Info("[Agent] Starting scheduled run...")
 			run()
 		case <-signalChan:
-			log.Printf("[Agent] Shutting down...")
+			slog.Info("[Agent] Shutting down...")
 			runner.Stop()
 			return
 		}
@@ -112,10 +117,11 @@ func parseFlags() *Config {
 		PollInterval: 5 * time.Minute,
 	}
 
+	var serverIDStr string
 	flag.StringVar(&cfg.PostgresConnStr, "postgres", "", "PostgreSQL connection string")
 	flag.StringVar(&cfg.SQLServerConnStr, "sqlserver", "", "SQL Server connection string")
 	flag.StringVar(&cfg.PgCollectorStr, "pg-collector", "", "PostgreSQL target connection string")
-	flag.IntVar(&cfg.ServerID, "server-id", 1, "Server ID for rule engine")
+	flag.StringVar(&serverIDStr, "server-id", "", "Server ID (UUID) for rule engine")
 	flag.StringVar(&cfg.InstanceType, "instance-type", "sqlserver", "Instance type: sqlserver or postgres")
 	flag.IntVar(&cfg.WorkerCount, "workers", 5, "Number of worker goroutines")
 	flag.DurationVar(&cfg.PollInterval, "interval", 5*time.Minute, "Polling interval")
@@ -130,6 +136,15 @@ func parseFlags() *Config {
 	if cfg.InstanceType == "" {
 		fmt.Println("-instance-type flag is required")
 		os.Exit(1)
+	}
+
+	if serverIDStr != "" {
+		id, err := uuid.Parse(serverIDStr)
+		if err != nil {
+			fmt.Printf("Invalid server-id (must be UUID): %v\n", err)
+			os.Exit(1)
+		}
+		cfg.ServerID = id
 	}
 
 	return cfg

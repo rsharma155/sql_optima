@@ -76,17 +76,30 @@ window.EnterpriseMetricsView = async function() {
         const snapshot = data.snapshot || {};
         const perf = data.perf_counters || [];
         
+        // Helper to set text content safely
+        const setVal = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = val;
+        };
+        
         // Runnable tasks (latest)
-        const runnable = snapshot.runnable_tasks_count ?? '--';
-        document.getElementById('val-runnable').textContent = runnable;
+        const runnable = snapshot.runnable_tasks ?? '--';
+        setVal('val-runnable', runnable);
         
         // Pending grants
-        const pendingGrants = snapshot.memory_grants_pending ?? '--';
-        document.getElementById('val-pending-grants').textContent = pendingGrants;
+        const pendingGrants = snapshot.mem_grants_pending ?? '--';
+        setVal('val-pending-grants', pendingGrants);
         
-        // Latch Waits/sec (latest in time range)
-        const latchWaits = perf.filter(p => p.counter_name === 'Latch Waits/sec').pop()?.value ?? 0;
-        document.getElementById('val-latch-waits').textContent = latchWaits.toFixed(1);
+        // Logins/sec (latest in time range)
+        const logins = data.throughput?.length > 0 ? data.throughput[data.throughput.length-1].logins_per_sec : 0;
+        setVal('val-logins', logins.toFixed(1));
+
+        // Server Memory
+        const memTotal = snapshot.total_server_memory_mb ? (snapshot.total_server_memory_mb / 1024).toFixed(1) : '--';
+        const memTarget = snapshot.target_server_memory_mb ? (snapshot.target_server_memory_mb / 1024).toFixed(1) : '--';
+        setVal('val-memory', memTotal === '--' ? '--' : (memTotal + ' GB'));
+        setVal('val-memory-total', memTotal);
+        setVal('val-memory-target', memTarget);
         
         // Plan waste (latest in time range)
         const cache = data.plan_cache || [];
@@ -94,7 +107,11 @@ window.EnterpriseMetricsView = async function() {
         const totalCache = latestCache.reduce((sum, c) => sum + (c.size_mb || 0), 0);
         const adhoc = latestCache.find(c => c.cache_type === 'Adhoc')?.size_mb || 0;
         const wastePct = totalCache > 0 ? (adhoc / totalCache * 100) : 0;
-        document.getElementById('val-plan-waste').textContent = wastePct.toFixed(1) + '%';
+        setVal('val-plan-waste', wastePct.toFixed(1) + '%');
+
+        // Log Write Stall
+        const logStall = data.file_io?.filter(f => f.file_type === 'LOG').pop()?.write_latency_ms ?? 0;
+        setVal('val-log-waits', logStall.toFixed(1));
 
         // Set card colors
         const setStatus = (id, val, warn, crit) => {
@@ -104,14 +121,21 @@ window.EnterpriseMetricsView = async function() {
         };
         setStatus('card-runnable', Number(runnable), 5, 20);
         setStatus('card-pending-grants', Number(pendingGrants), 1, 5);
-        setStatus('card-latch-waits', latchWaits, 10, 50);
+        setStatus('card-logins', logins, 5, 20);
         setStatus('card-plan-waste', wastePct, 20, 40);
+        setStatus('card-log-waits', logStall, 20, 100);
+
+        // Memory Pressure Logic: If Total < 90% of Target
+        if (memTotal !== '--' && memTarget !== '--' && Number(memTotal) < (Number(memTarget) * 0.9)) {
+            const memCard = document.getElementById('card-memory');
+            if (memCard) memCard.className = 'enterprise-kpi-card glass-panel status-warning';
+        }
 
         // 2. Wait Stats Chart (Stacked Area)
-        renderWaitStatsChart(data.wait_stats);
+        renderWaitStatsChart(data.wait_trends);
 
         // 3. Throughput Chart
-        renderThroughputChart(data.perf_counters);
+        renderThroughputChart(data.throughput);
 
         // 4. File IO Chart
         renderFileIOChart(data.file_io);
@@ -126,26 +150,26 @@ window.EnterpriseMetricsView = async function() {
         renderTempdbTable(data.tempdb_consumers);
     }
 
-    function renderWaitStatsChart(waits) {
+    function renderWaitStatsChart(trends) {
         const ctx = document.getElementById('chart-wait-stats');
-        if (!ctx || !waits || waits.length === 0) return;
+        if (!ctx || !trends || trends.length === 0) return;
 
-        // Group by timestamp and category
-        const groups = {};
-        const categories = new Set();
-        waits.forEach(w => {
-            const t = w.event_time;
-            groups[t] = groups[t] || {};
-            groups[t][w.wait_category] = (groups[t][w.wait_category] || 0) + (w.wait_time_ms || 0);
-            categories.add(w.wait_category);
-        });
+        const labels = trends.map(t => new Date(t.timestamp).toLocaleTimeString());
+        const categories = ['cpu', 'io', 'memory', 'locking', 'parallel', 'other'];
+        const colors = {
+            cpu: '#3b82f6',
+            io: '#10b981',
+            memory: '#8b5cf6',
+            locking: '#f59e0b',
+            parallel: '#06b6d4',
+            other: '#6b7280'
+        };
 
-        const sortedTimestamps = Object.keys(groups).sort();
-        const datasets = Array.from(categories).map((cat, idx) => ({
-            label: cat,
-            data: sortedTimestamps.map(t => groups[t][cat] || 0),
-            backgroundColor: getPaletteColor(idx, 0.5),
-            borderColor: getPaletteColor(idx, 1),
+        const datasets = categories.map(cat => ({
+            label: cat.toUpperCase(),
+            data: trends.map(t => t[cat] || 0),
+            backgroundColor: colors[cat] + '80', // 50% alpha
+            borderColor: colors[cat],
             fill: true,
             pointRadius: 0,
             tension: 0.2
@@ -153,7 +177,7 @@ window.EnterpriseMetricsView = async function() {
 
         window._emCharts.waits = new Chart(ctx, {
             type: 'line',
-            data: { labels: sortedTimestamps.map(t => new Date(t).toLocaleTimeString()), datasets },
+            data: { labels, datasets },
             options: {
                 responsive: true, maintainAspectRatio: false,
                 scales: { x: { display: true }, y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Wait Time (ms)' } } },
@@ -162,29 +186,28 @@ window.EnterpriseMetricsView = async function() {
         });
     }
 
-    function renderThroughputChart(perf) {
+    function renderThroughputChart(throughput) {
         const ctx = document.getElementById('chart-throughput');
-        if (!ctx || !perf || perf.length === 0) return;
+        if (!ctx || !throughput || throughput.length === 0) return;
 
-        const batch = perf.filter(p => p.counter_name === 'Batch Requests/sec');
-        const comp = perf.filter(p => p.counter_name === 'SQL Compilations/sec');
-        const recomp = perf.filter(p => p.counter_name === 'SQL Re-Compilations/sec');
-
-        const labels = batch.map(p => new Date(p.event_time).toLocaleTimeString());
+        const labels = throughput.map(p => new Date(p.timestamp).toLocaleTimeString());
 
         window._emCharts.throughput = new Chart(ctx, {
             type: 'line',
             data: {
                 labels,
                 datasets: [
-                    { label: 'Batch Requests', data: batch.map(p => p.value), borderColor: '#3b82f6', pointRadius: 0, tension: 0.2 },
-                    { label: 'Compilations', data: comp.map(p => p.value), borderColor: '#10b981', pointRadius: 0, tension: 0.2 },
-                    { label: 'Re-Compilations', data: recomp.map(p => p.value), borderColor: '#ef4444', borderDash: [5, 5], pointRadius: 0, tension: 0.2 }
+                    { label: 'Batch Requests', data: throughput.map(p => p.batch_requests), borderColor: '#3b82f6', pointRadius: 0, tension: 0.2 },
+                    { label: 'Logins/sec', data: throughput.map(p => p.logins_per_sec), borderColor: '#f59e0b', pointRadius: 0, tension: 0.2 },
+                    { label: 'Connections', data: throughput.map(p => p.connections), borderColor: '#10b981', pointRadius: 0, tension: 0.2, yAxisID: 'y1' }
                 ]
             },
             options: {
                 responsive: true, maintainAspectRatio: false,
-                scales: { y: { beginAtZero: true } },
+                scales: { 
+                    y: { beginAtZero: true, title: { display: true, text: 'Req/Sec' } },
+                    y1: { position: 'right', beginAtZero: true, title: { display: true, text: 'Count' }, grid: { drawOnChartArea: false } }
+                },
                 plugins: { legend: { position: 'top' } }
             }
         });
@@ -194,17 +217,33 @@ window.EnterpriseMetricsView = async function() {
         const ctx = document.getElementById('chart-file-io');
         if (!ctx || !io || io.length === 0) return;
 
-        // Group by database
+        // Group by database, excluding noise system DBs but keeping tempdb
         const dbGroups = {};
+        const systemDbsToIgnore = ['master', 'model', 'msdb'];
+        
+        // 1. Filter and group
         io.forEach(f => {
-            const db = f.database_name;
-            dbGroups[db] = dbGroups[db] || [];
-            dbGroups[db].push(f);
+            const db = f.database_name.toLowerCase();
+            if (systemDbsToIgnore.includes(db)) return;
+            
+            dbGroups[f.database_name] = dbGroups[f.database_name] || [];
+            dbGroups[f.database_name].push(f);
         });
 
-        const labels = io.filter(f => f.database_name === Object.keys(dbGroups)[0]).map(f => new Date(f.event_time).toLocaleTimeString());
-        const datasets = Object.keys(dbGroups).slice(0, 5).map((db, idx) => ({
-            label: db + ' Latency',
+        // 2. Sort by latest average latency to pick top 5
+        const sortedDbs = Object.keys(dbGroups).sort((a, b) => {
+            const lastA = dbGroups[a][dbGroups[a].length - 1];
+            const lastB = dbGroups[b][dbGroups[b].length - 1];
+            const latA = (lastA.read_latency_ms + lastA.write_latency_ms) / 2;
+            const latB = (lastB.read_latency_ms + lastB.write_latency_ms) / 2;
+            return latB - latA;
+        }).slice(0, 5);
+
+        if (sortedDbs.length === 0) return;
+
+        const labels = dbGroups[sortedDbs[0]].map(f => new Date(f.event_time).toLocaleTimeString());
+        const datasets = sortedDbs.map((db, idx) => ({
+            label: db,
             data: dbGroups[db].map(f => (f.read_latency_ms + f.write_latency_ms) / 2),
             borderColor: getPaletteColor(idx, 1),
             pointRadius: 0,
@@ -340,8 +379,8 @@ window.EnterpriseMetricsView = async function() {
                     <td>${(c.allocated_mb || 0).toFixed(1)} MB</td>
                     <td>${(c.user_objects_mb || 0).toFixed(1)} MB</td>
                     <td>${(c.internal_objects_mb || 0).toFixed(1)} MB</td>
-                    <td style="max-width: 300px;">
-                        <span class="code-snippet clickable-query" style="cursor: pointer; display: inline-block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;" 
+                    <td style="max-width: 500px;">
+                        <span class="code-snippet clickable-query" style="cursor: pointer; display: inline-block; max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;" 
                               title="Click to view full query"
                               data-action="show-query-modal-direct" data-key="${cacheKey}">
                             ${window.escapeHtml((c.query_text || '').substring(0, 100))}${c.query_text && c.query_text.length > 100 ? '...' : ''}

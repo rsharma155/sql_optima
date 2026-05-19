@@ -13,16 +13,17 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/rsharma155/sql_optima/internal/models"
 )
 
 // FetchBlockingSnapshots returns a detailed list of blocked and blocking sessions.
-func (c *SqlServerRepository) FetchBlockingSnapshots(db *sql.DB) ([]models.SQLServerBlockingSnapshot, error) {
+func (c *SqlServerRepository) FetchBlockingSnapshots(ctx context.Context, db *sql.DB) ([]models.SQLServerBlockingSnapshot, error) {
 	query := `
 		/* SQL_OPTIMA */
 		;WITH waiting_agg_raw AS (
@@ -154,9 +155,11 @@ func (c *SqlServerRepository) FetchBlockingSnapshots(db *sql.DB) ([]models.SQLSe
 		   OR s.session_id IN (SELECT blocking_session_id FROM waiting_agg);
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[SQLSERVER] FetchBlockingSnapshots Error: %v", err)
+		slog.Error("[SQLSERVER] FetchBlockingSnapshots Error", "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -176,7 +179,7 @@ func (c *SqlServerRepository) FetchBlockingSnapshots(db *sql.DB) ([]models.SQLSe
 			&waitRes, &r.PercentComplete,
 			&sqlHash, &planHash, &sqlText, &queryPlan,
 		); err != nil {
-			log.Printf("[SQLSERVER] FetchBlockingSnapshots Scan Error: %v", err)
+			slog.Error("[SQLSERVER] FetchBlockingSnapshots Scan Error", "err", err)
 			continue
 		}
 
@@ -203,7 +206,7 @@ func (c *SqlServerRepository) FetchBlockingSnapshots(db *sql.DB) ([]models.SQLSe
 }
 
 // FetchBlockingLocks returns detailed lock information for sessions involved in blocking.
-func (c *SqlServerRepository) FetchBlockingLocks(db *sql.DB) ([]models.SQLServerBlockingLock, error) {
+func (c *SqlServerRepository) FetchBlockingLocks(ctx context.Context, db *sql.DB) ([]models.SQLServerBlockingLock, error) {
 	query := `
 		/* SQL_OPTIMA */
 		SELECT 
@@ -233,7 +236,9 @@ func (c *SqlServerRepository) FetchBlockingLocks(db *sql.DB) ([]models.SQLServer
 		GROUP BY tl.request_session_id, tl.resource_type, tl.request_mode, tl.request_status, 
 		         tl.resource_associated_entity_id, tl.resource_database_id, tl.resource_description;
 	`
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +256,7 @@ func (c *SqlServerRepository) FetchBlockingLocks(db *sql.DB) ([]models.SQLServer
 }
 
 // FetchDeadlockEvents reads deadlock events from Extended Events
-func (c *SqlServerRepository) FetchDeadlockEvents(db *sql.DB) ([]models.SQLServerDeadlockEvent, error) {
+func (c *SqlServerRepository) FetchDeadlockEvents(ctx context.Context, db *sql.DB) ([]models.SQLServerDeadlockEvent, error) {
 	// First, find the actual file path/name from the session target
 	pathQuery := `
 		SELECT CAST(t.target_data AS XML).value('(/EventFileTarget/File/@name)[1]', 'nvarchar(max)')
@@ -260,7 +265,9 @@ func (c *SqlServerRepository) FetchDeadlockEvents(db *sql.DB) ([]models.SQLServe
 		WHERE s.name = 'dbamon_deadlocks' AND t.target_name = 'event_file'
 	`
 	var targetPath string
-	err := db.QueryRow(pathQuery).Scan(&targetPath)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err := db.QueryRowContext(ctx, pathQuery).Scan(&targetPath)
 	if err != nil || targetPath == "" {
 		// Fallback to default if we can't find it in dm_xe_session_targets (maybe session is stopped)
 		targetPath = "dbamon_deadlocks*.xel"
@@ -286,7 +293,9 @@ func (c *SqlServerRepository) FetchDeadlockEvents(db *sql.DB) ([]models.SQLServe
 		WHERE CAST(event_data AS XML).value('(/event/@timestamp)[1]', 'datetime2') > DATEADD(hour, -24, GETUTCDATE());
 	`, targetPath)
 
-	rows, err := db.Query(query)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, nil
 	}
@@ -304,10 +313,12 @@ func (c *SqlServerRepository) FetchDeadlockEvents(db *sql.DB) ([]models.SQLServe
 }
 
 // IsDeadlockXESessionEnabled checks if the deadlock XE session is active
-func (c *SqlServerRepository) IsDeadlockXESessionEnabled(db *sql.DB) (bool, error) {
+func (c *SqlServerRepository) IsDeadlockXESessionEnabled(ctx context.Context, db *sql.DB) (bool, error) {
 	checkQuery := `SELECT COUNT(*) FROM sys.server_event_sessions WHERE name = 'dbamon_deadlocks'`
 	var count int
-	err := db.QueryRow(checkQuery).Scan(&count)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	err := db.QueryRowContext(ctx, checkQuery).Scan(&count)
+	cancel()
 	if err != nil {
 		return false, err
 	}
@@ -315,10 +326,12 @@ func (c *SqlServerRepository) IsDeadlockXESessionEnabled(db *sql.DB) (bool, erro
 }
 
 // EnsureDeadlockXESession creates the XE session if missing
-func (c *SqlServerRepository) EnsureDeadlockXESession(db *sql.DB) error {
+func (c *SqlServerRepository) EnsureDeadlockXESession(ctx context.Context, db *sql.DB) error {
 	checkQuery := `SELECT 1 FROM sys.server_event_sessions WHERE name = 'dbamon_deadlocks'`
 	var exists int
-	err := db.QueryRow(checkQuery).Scan(&exists)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err := db.QueryRowContext(ctx, checkQuery).Scan(&exists)
 	if err == sql.ErrNoRows {
 		createSQL := `
 			CREATE EVENT SESSION [dbamon_deadlocks]
@@ -334,9 +347,11 @@ func (c *SqlServerRepository) EnsureDeadlockXESession(db *sql.DB) error {
 
 			ALTER EVENT SESSION [dbamon_deadlocks] ON SERVER STATE = START;
 		`
-		_, err = db.Exec(createSQL)
+		ctx, cancel = WithQueryTimeout(ctx, 0)
+		defer cancel()
+		_, err = db.ExecContext(ctx, createSQL)
 		if err != nil {
-			log.Printf("[SQLSERVER] Failed to create Deadlock XE session: %v", err)
+			slog.Error("[SQLSERVER] Failed to create Deadlock XE session", "err", err)
 			return err
 		}
 	}
@@ -348,7 +363,7 @@ func (c *SqlServerRepository) EnsureDeadlockXESession(db *sql.DB) error {
 // --------------------------------------------------------------------------
 
 // CollectBlockingChains returns aggregated blockers for Real-Time Diagnostics (user databases only; matches UI shape).
-func (c *SqlServerRepository) CollectBlockingChains(db *sql.DB, database string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectBlockingChains(ctx context.Context, db *sql.DB, database string) ([]map[string]interface{}, error) {
 	query := `
 		/* SQL_OPTIMA */ 
 		;WITH BlockingTree AS (
@@ -378,9 +393,11 @@ func (c *SqlServerRepository) CollectBlockingChains(db *sql.DB, database string)
 		ORDER BY Max_Wait_Time_ms DESC
 	`
 
-	rows, err := db.Query(query, strings.TrimSpace(database))
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query, strings.TrimSpace(database))
 	if err != nil {
-		log.Printf("[SQLSERVER] Blocking Query Error: %v", err)
+		slog.Error("[SQLSERVER] Blocking Query Error", "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -405,11 +422,13 @@ func (c *SqlServerRepository) CollectBlockingChains(db *sql.DB, database string)
 }
 
 // CollectLocks fetches lock statistics from sys.dm_tran_locks
-func (c *SqlServerRepository) CollectLocks(db *sql.DB) (int, int, map[string]int, error) {
+func (c *SqlServerRepository) CollectLocks(ctx context.Context, db *sql.DB) (int, int, map[string]int, error) {
 	totalLocksQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_tran_locks WHERE request_session_id > 50`
 	var totalLocks int
-	if err := db.QueryRow(totalLocksQuery).Scan(&totalLocks); err != nil {
-		log.Printf("[SQLSERVER] Total Locks Query Error: %v", err)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	if err := db.QueryRowContext(ctx, totalLocksQuery).Scan(&totalLocks); err != nil {
+	cancel()
+		slog.Error("[SQLSERVER] Total Locks Query Error", "err", err)
 	}
 
 	deadlockQuery := `
@@ -425,8 +444,10 @@ func (c *SqlServerRepository) CollectLocks(db *sql.DB) (int, int, map[string]int
 		SELECT COUNT(*) FROM CTE WHERE rn > 1
 	`
 	var deadlocks int
-	if err := db.QueryRow(deadlockQuery).Scan(&deadlocks); err != nil {
-		log.Printf("[SQLSERVER] Deadlock Query Error: %v", err)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, deadlockQuery).Scan(&deadlocks); err != nil {
+		slog.Error("[SQLSERVER] Deadlock Query Error", "err", err)
 	}
 
 	locksByDB := make(map[string]int)
@@ -436,7 +457,9 @@ func (c *SqlServerRepository) CollectLocks(db *sql.DB) (int, int, map[string]int
 		WHERE request_session_id > 50
 		GROUP BY resource_database_id
 	`
-	rows, err := db.Query(dbLockQuery)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, dbLockQuery)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -452,7 +475,7 @@ func (c *SqlServerRepository) CollectLocks(db *sql.DB) (int, int, map[string]int
 }
 
 // CollectSpinlockStats fetches spinlock statistics
-func (c *SqlServerRepository) CollectSpinlockStats(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectSpinlockStats(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		/* SQL_OPTIMA */ 
 		SELECT   TOP 20 
@@ -466,7 +489,9 @@ func (c *SqlServerRepository) CollectSpinlockStats(db *sql.DB) ([]map[string]int
 		ORDER BY spins DESC
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

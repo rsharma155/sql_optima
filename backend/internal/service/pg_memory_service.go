@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: PostgreSQL memory intelligence service layer.
+// Purpose: Background worker for PostgreSQL memory intelligence snapshots.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -9,106 +9,43 @@ package service
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-// CollectAndLogPgMemory handles the end-to-end memory metrics collection and storage cycle.
-func (s *MetricsService) CollectAndLogPgMemory(ctx context.Context, instanceName string) error {
-	log.Printf("[PgMemoryService] Starting collection for %s", instanceName)
-	if s.tsLogger == nil {
-		return fmt.Errorf("tsLogger is nil")
-	}
+func (s *MetricsService) CollectPostgresMemoryIntelligence(ctx context.Context) {
+	for _, inst := range s.Config.Instances {
+		if strings.ToLower(inst.Type) != "postgres" {
+			continue
+		}
 
-	// 1. Collect OS memory
-	hostSnap, err := s.PgRepo.CollectPgHostMemory(instanceName)
-	if err != nil {
-		log.Printf("[PgMemoryService] Failed to collect host memory for %s: %v", instanceName, err)
-	} else {
-		if err := s.tsLogger.LogPgHostMemory(ctx, hostSnap); err != nil {
-			log.Printf("[PgMemoryService] Failed to log host memory for %s: %v", instanceName, err)
+		// 1. Host memory — only available when the os_collector agent is running.
+		//    CollectPgHostMemory returns an error when no real OS data is available,
+		//    which keeps host_memory_samples clean (no fake hardcoded values).
+		hostMem, err := s.PgRepo.CollectPgHostMemory(inst.Name)
+		if err == nil && hostMem != nil {
+			_ = s.tsLogger.LogPgHostMemory(ctx, hostMem)
+		}
+
+		// 2. PG-internal memory stats (cache hit, connections, temp spill, bgwriter).
+		memStats, err := s.PgRepo.CollectPgMemoryStats(ctx, inst.Name)
+		if err == nil {
+			_ = s.tsLogger.LogPgMemoryStats(ctx, memStats)
+			// Compute derived metrics (cache hit ratio, spill rate, pressure) immediately
+			// after writing the raw sample so the dashboard query finds populated data.
+			_ = s.tsLogger.ComputeAndLogPgMemoryDerived(ctx, memStats.ServerID)
+		}
+
+		// 3. Memory configuration GUCs (shared_buffers, work_mem, etc.).
+		components, err := s.PgRepo.CollectPgMemoryComponents(ctx, inst.Name)
+		if err == nil {
+			_ = s.tsLogger.LogPgMemoryComponents(ctx, components)
 		}
 	}
-
-	// 2. Collect PG memory stats
-	pgSnap, err := s.PgRepo.CollectPgMemoryStats(ctx, instanceName)
-	if err != nil {
-		log.Printf("[PgMemoryService] Failed to collect PG memory stats for %s: %v", instanceName, err)
-	} else {
-		if err := s.tsLogger.LogPgMemoryStats(ctx, pgSnap); err != nil {
-			log.Printf("[PgMemoryService] Failed to log PG memory stats for %s: %v", instanceName, err)
-		} else {
-			log.Printf("[PgMemoryService] Successfully persisted PG memory stats for %s at %v", instanceName, pgSnap.Timestamp)
-		}
-	}
-
-	// 3. Collect configuration (less frequent - every 15 min)
-	// We'll use a simple time-based check here or just do it every time for now (it's cheap)
-	compSnap, err := s.PgRepo.CollectPgMemoryComponents(ctx, instanceName)
-	if err == nil {
-		if err := s.tsLogger.LogPgMemoryComponents(ctx, compSnap); err != nil {
-			log.Printf("[PgMemoryService] Failed to log PG memory components for %s: %v", instanceName, err)
-		}
-	}
-
-	// 4. Compute derived metrics
-	if err := s.tsLogger.ComputeAndLogPgMemoryDerived(ctx, instanceName); err != nil {
-		log.Printf("[PgMemoryService] Failed to compute derived metrics for %s: %v", instanceName, err)
-	}
-
-	return nil
 }
 
-// GetPgMemoryDashboardData returns all time-series data required for the memory dashboard.
-func (s *MetricsService) GetPgMemoryDashboardData(ctx context.Context, instanceName string, from, to time.Time) (map[string]interface{}, error) {
-	if s.tsLogger == nil {
-		return nil, fmt.Errorf("tsLogger not available")
-	}
-
-	data, err := s.tsLogger.GetPgMemoryTimeSeries(ctx, instanceName, from, to)
-	if err != nil {
-		return nil, err
-	}
-
-	// On-demand collection if data is missing or very old
-	series, ok := data["time_series"].([]map[string]interface{})
-	if !ok || len(series) == 0 {
-		log.Printf("[PgMemoryService] No time-series data for %s in range [%v - %v], triggering on-demand collection", instanceName, from, to)
-		if cerr := s.CollectAndLogPgMemory(ctx, instanceName); cerr != nil {
-			log.Printf("[PgMemoryService] On-demand collection failed for %s: %v", instanceName, cerr)
-			return nil, fmt.Errorf("on-demand collection failed: %w", cerr)
-		}
-		
-		// Re-fetch once after on-demand collection. 
-		// Use a much wider window for the re-fetch to ensure that even if there's clock/timezone skew,
-		// the user sees the data they just triggered.
-		nowUTC := time.Now().UTC()
-		wideTo := nowUTC.Add(5 * time.Minute)
-		wideFrom := from.Add(-1 * time.Hour)
-		
-		// If the requested 'from' was in the future (due to timezone skew), 
-		// ensure wideFrom covers 'now'.
-		if wideFrom.After(nowUTC) {
-			wideFrom = nowUTC.Add(-1 * time.Hour)
-		}
-		
-		data, err = s.tsLogger.GetPgMemoryTimeSeries(ctx, instanceName, wideFrom, wideTo)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Check if OS collector is configured
-	osConfigured := false
-	if s.ServerRepo != nil {
-		srv, err := s.ServerRepo.GetByName(ctx, instanceName)
-		if err == nil {
-			status, _ := s.GetOSCollectorStatus(ctx, srv.Host)
-			osConfigured = status
-		}
-	}
-
-	data["os_collector_configured"] = osConfigured
-	return data, nil
+func (s *MetricsService) GetPgMemoryTrend(ctx context.Context, serverID uuid.UUID, from, to time.Time) (map[string]interface{}, error) {
+	return s.tsLogger.GetPgMemoryTimeSeries(ctx, serverID, from, to)
 }

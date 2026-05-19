@@ -8,6 +8,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -31,7 +32,7 @@ type PgTopCpuQueryRow struct {
 }
 
 // GetCpuTimeByDatabase returns total_exec_time summed per database (same shape as mv_pg_cpu_by_db).
-func (c *PgRepository) GetCpuTimeByDatabase(instanceName string) ([]PgCpuDbRow, error) {
+func (c *PgRepository) GetCpuTimeByDatabase(ctx context.Context, instanceName string) ([]PgCpuDbRow, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -43,7 +44,7 @@ func (c *PgRepository) GetCpuTimeByDatabase(instanceName string) ([]PgCpuDbRow, 
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
-	version := c.GetPgVersion(instanceName)
+	version := c.GetPgVersion(ctx, instanceName)
 	timeCol := "total_exec_time"
 	if version < 130000 {
 		timeCol = "total_time"
@@ -58,7 +59,9 @@ func (c *PgRepository) GetCpuTimeByDatabase(instanceName string) ([]PgCpuDbRow, 
 		GROUP BY d.datname
 		ORDER BY total_exec_time_ms DESC`, timeCol, buildPgStatStatementsFilters())
 
-	rows, err := db.Query(q)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +79,7 @@ func (c *PgRepository) GetCpuTimeByDatabase(instanceName string) ([]PgCpuDbRow, 
 }
 
 // GetTopCpuQueries returns top statements by total_exec_time (same shape as mv_pg_top_cpu_queries).
-func (c *PgRepository) GetTopCpuQueries(instanceName string, limit int) ([]PgTopCpuQueryRow, error) {
+func (c *PgRepository) GetTopCpuQueries(ctx context.Context, instanceName string, limit int) ([]PgTopCpuQueryRow, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -95,7 +98,7 @@ func (c *PgRepository) GetTopCpuQueries(instanceName string, limit int) ([]PgTop
 		return nil, fmt.Errorf("pg_stat_statements extension not available")
 	}
 
-	version := c.GetPgVersion(instanceName)
+	version := c.GetPgVersion(ctx, instanceName)
 	timeCol := "total_exec_time"
 	if version < 130000 {
 		timeCol = "total_time"
@@ -114,7 +117,9 @@ func (c *PgRepository) GetTopCpuQueries(instanceName string, limit int) ([]PgTop
 		ORDER BY s.%s DESC
 		LIMIT $1`, timeCol, timeCol, buildPgStatStatementsFilters(), timeCol)
 
-	rows, err := db.Query(q, limit)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, q, limit)
 	if err != nil {
 		return nil, err
 	}

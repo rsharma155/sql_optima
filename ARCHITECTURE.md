@@ -37,7 +37,8 @@ This split makes it easier to:
   - TimescaleDB writer/reader for historical metrics, alert lifecycle, and server registry
   - **Alert engine** — background evaluators with fingerprint-based dedup, maintenance windows, and audit history; singleton execution via `pg_try_advisory_xact_lock`
   - **EXPLAIN analyzer** (`internal/explain/`) — PostgreSQL plan parser, diagnostics, metrics, rule engine, and report generator
-  - **Rules engine** (`internal/ruleengine/`) — best-practice checks for both engines
+  - **Rules engine** (`internal/ruleengine/`) — signal-aware best-practice checks for both engines using `expr-lang/expr`; 15+ evaluators per engine
+  - **Query V2 Pipeline** (`internal/collectors/domain/`) — hash-based delta tracking computes per-query deltas between collection cycles for SQL Server and PostgreSQL, enabling per-query trend analysis; enabled by default via `ENABLE_QUERY_V2_PIPELINE=true`
   - **Worker queue** (optional) — Asynq/Redis for distributed live + historical collection (`internal/queue/`)
   - **Credential encryption** — Vault Transit KMS or local envelope encryption fallback (`internal/security/`)
 
@@ -70,6 +71,17 @@ flowchart LR
 ```
 
 ## Key subsystems
+
+### Collector engine
+
+The collector engine (`internal/collectors/`) follows a domain-driven architecture:
+
+- `application/collect_cycle.go` — orchestration loop; drives all snapshot collectors on a configurable cadence
+- `domain/` — scheduler, rule evaluators, enrichment, sampler, snapshot models; the **Query V2** delta-tracking pipeline lives here
+- `infrastructure/sqlserver/` and `infrastructure/timescaledb/` — concrete writers that persist snapshots into TimescaleDB hypertables
+- `postgres/` — PostgreSQL-specific snapshot collectors (pg_stat_statements, control center, blocking, index/table usage)
+
+The `pg_stats` module is split into focused single-responsibility collectors (`pg_comprehensive_collector.go`, `pg_snapshot_collector.go`, `pg_locks_blocking/`, etc.) to isolate failures and improve resilience when individual metrics are unavailable.
 
 ### Alert engine
 - Evaluators produce alerts with a deterministic SHA-256 fingerprint per rule+instance.

@@ -1,8 +1,6 @@
-// Package repository handles all database connections and queries.
-// It provides data access layer for both SQL Server and PostgreSQL databases.
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: SQL Server live and historical telemetry fetcher including CPU, memory, PLE, waits, and file I/O metrics.
+// Purpose: SQL Server dashboard telemetry (STRICT STAGING ONLY).
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -10,299 +8,56 @@
 package repository
 
 import (
+	"log/slog"
 	"context"
-	"database/sql"
-	"fmt"
-	"log"
 	"strings"
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/models"
 )
 
-func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev models.DashboardMetrics) models.DashboardMetrics {
+func (c *SqlServerRepository) FetchLiveTelemetry(ctx context.Context, instanceName string, prev models.DashboardMetrics) models.DashboardMetrics {
 	var metrics models.DashboardMetrics
 	metrics.InstanceName = instanceName
-	metrics.DiskByDB = make(map[string]models.DiskStat)
-	metrics.LocksByDB = make(map[string]models.LockStat)
-	metrics.PrevWaitStats = make(map[string]float64)
-	metrics.PrevFileStats = make(map[string]models.FileIOStat)
+	metrics.MemHistory = prev.MemHistory
+	metrics.CPUHistory = prev.CPUHistory
 
-	c.mutex.RLock()
-	db, ok := c.conns[strings.ToUpper(instanceName)]
-	c.mutex.RUnlock()
-
-	if !ok || db == nil {
+	if c.LocalPool == nil {
+		slog.Error("[SQLSERVER] datasource error for %s: TimescaleDB not connected", "val", instanceName)
 		return metrics
 	}
 
-	metrics.MemHistory = prev.MemHistory
-	metrics.PLEHistory = prev.PLEHistory
-	// Preserve slower-moving histories computed on the historical ticker.
-	// The live ticker runs more frequently and would otherwise wipe these fields
-	// from the shared dashboard cache, causing charts (e.g. Disk I/O Latency) to appear empty.
-	metrics.WaitHistory = prev.WaitHistory
-	metrics.FileHistory = prev.FileHistory
-	for k, v := range prev.PrevWaitStats {
-		metrics.PrevWaitStats[k] = v
-	}
-	for k, v := range prev.PrevFileStats {
-		metrics.PrevFileStats[k] = v
+	serverID, ok := c.GetServerID(instanceName)
+	if !ok {
+		slog.Info("[SQLSERVER] instance %s not found in registry", "val", instanceName)
+		return metrics
 	}
 
-	cpuQuery := `
-	        /* SQL_OPTIMA */ 
-	        DECLARE @ts_now bigint = (SELECT ms_ticks FROM sys.dm_os_sys_info WITH (NOLOCK)); 
-	        SELECT TOP(256)
-	            ISNULL(SQLProcessUtilization, 0) AS [SQL_Server_CPU], 
-	            ISNULL(SystemIdle, 0) AS [System_Idle_CPU], 
-	            100 - ISNULL(SystemIdle, 0) - ISNULL(SQLProcessUtilization, 0) AS [Other_Process_CPU],
-	            CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETUTCDATE()), 120) AS [Event_Time]
-	        FROM ( 
-	            SELECT record.value('(./Record/@id)[1]', 'int') AS record_id, 
-	                record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') 
-	                AS [SystemIdle], 
-	                record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') 
-	                AS [SQLProcessUtilization], [timestamp] 
-	            FROM ( 
-	                SELECT [timestamp], CONVERT(xml, record) AS [record] 
-	                FROM sys.dm_os_ring_buffers WITH (NOLOCK)
-	                WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
-	                AND record LIKE N'%<SystemHealth>%'
-	            ) AS x 
-	        ) AS y 
-	        ORDER BY [timestamp] DESC;
-	        `
-	cpuRows, errCpu := db.Query(cpuQuery)
-	if errCpu == nil {
-		defer cpuRows.Close()
-		var buffer []models.CPUTick
-		for cpuRows.Next() {
-			var tick models.CPUTick
-			if err := cpuRows.Scan(&tick.SQLProcess, &tick.SystemIdle, &tick.OtherProcess, &tick.EventTime); err == nil {
-				buffer = append(buffer, tick)
-			}
-		}
-		for i, j := 0, len(buffer)-1; i < j; i, j = i+1, j-1 {
-			buffer[i], buffer[j] = buffer[j], buffer[i]
-		}
-		metrics.CPUHistory = buffer
-		if len(buffer) > 0 {
-			metrics.AvgCPULoad = buffer[len(buffer)-1].SQLProcess
-		}
-	}
+	// 1. Memory from Staging
+	mQuery := `
+		SELECT /* SQL_OPTIMA STAGING ONLY */ 
+			ISNULL(100.0 * (CAST(SUM(CASE WHEN metric_name = 'Total Physical Memory' THEN metric_value END) AS FLOAT) - 
+			CAST(SUM(CASE WHEN metric_name = 'Available Physical Memory' THEN metric_value END) AS FLOAT)) / 
+			NULLIF(CAST(SUM(CASE WHEN metric_name = 'Total Physical Memory' THEN metric_value END) AS FLOAT), 0), 0)
+		FROM staging.sqlserver_perf_system_raw 
+		WHERE server_id = $1 AND category = 'SYS_MEM'
+		  AND capture_timestamp = (SELECT max(capture_timestamp) FROM staging.sqlserver_perf_system_raw WHERE server_id = $1)`
 
-	sessionQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')`
-	_ = db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
+	_ = c.LocalPool.QueryRow(context.Background(), mQuery, serverID).Scan(&metrics.MemoryUsage)
 
-	connQuery := `
-		/* SQL_OPTIMA */ 
-		SELECT  
-			ISNULL(s.login_name, 'Unknown'),
-			ISNULL(DB_NAME(s.database_id), 'Unknown'),
-			COUNT(s.session_id) as active_connections,
-			SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as active_requests
-		FROM sys.dm_exec_sessions s WITH (NOLOCK)
-		WHERE is_user_process = 1
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
-		GROUP BY s.login_name, s.database_id
-	`
-	connRows, _ := db.Query(connQuery)
-	if connRows != nil {
-		defer connRows.Close()
-		for connRows.Next() {
-			var conn models.ConnectionStat
-			if err := connRows.Scan(&conn.LoginName, &conn.DatabaseName, &conn.ActiveConnections, &conn.ActiveRequests); err == nil {
-				metrics.ConnectionStats = append(metrics.ConnectionStats, conn)
-			}
-		}
-	}
+	// 2. Active Users from Staging
+	sessionQuery := `
+		SELECT /* SQL_OPTIMA STAGING ONLY */ 
+			COUNT(*) FILTER (WHERE session_status = 'running' AND login_name NOT IN ('dbmonitor_user', 'sql-optima'))
+		FROM staging.sqlserver_session_request_raw
+		WHERE server_id = $1
+		  AND capture_timestamp = (SELECT max(capture_timestamp) FROM staging.sqlserver_session_request_raw WHERE server_id = $1)`
+	_ = c.LocalPool.QueryRow(context.Background(), sessionQuery, serverID).Scan(&metrics.ActiveUsers)
 
-	metrics.LocksByDB = make(map[string]models.LockStat)
-	lockQuery := `
-		/* SQL_OPTIMA */ 
-		SELECT  
-			ISNULL(DB_NAME(resource_database_id), 'Unknown'),
-			COUNT(*),
-			SUM(CASE WHEN request_status = 'CONVERT' THEN 1 ELSE 0 END)
-		FROM sys.dm_tran_locks WITH (NOLOCK)
-		WHERE resource_database_id > 0
-		GROUP BY resource_database_id
-	`
-	lRows, errL := db.Query(lockQuery)
-	if errL == nil {
-		defer lRows.Close()
-		for lRows.Next() {
-			var dbName string
-			var l models.LockStat
-			if err := lRows.Scan(&dbName, &l.TotalLocks, &l.Deadlocks); err == nil {
-				metrics.LocksByDB[dbName] = l
-				metrics.TotalLocks += l.TotalLocks
-				metrics.Deadlocks += l.Deadlocks
-			}
-		}
-	}
-
-	blockDetQuery := `
-		/* SQL_OPTIMA */ 
-		SELECT  
-			r.session_id as blocked_session_id,
-			ISNULL(r.blocking_session_id, 0) as blocking_session_id,
-			ISNULL(DB_NAME(r.database_id), 'Unknown') as database_name,
-			ISNULL(r.wait_type, 'ONLINE') as wait_type,
-			r.wait_time as wait_time_ms,
-			ISNULL(t.text, 'Internal Pointer Buffer') as query_text,
-			ISNULL(s.status, 'running') as status,
-			ISNULL(s.host_name, 'Unknown') as host_name,
-			ISNULL(s.program_name, 'Unknown') as program_name
-		FROM sys.dm_exec_requests r WITH (NOLOCK)
-		JOIN sys.dm_exec_sessions s WITH (NOLOCK) ON r.session_id = s.session_id
-		CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
-		WHERE r.session_id > 50 AND r.session_id <> @@SPID
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
-	`
-	blockRows, errBlk := db.Query(blockDetQuery)
-	if errBlk == nil {
-		defer blockRows.Close()
-		for blockRows.Next() {
-			var b models.BlockStat
-			if err := blockRows.Scan(&b.BlockedSessionID, &b.BlockingSessionID, &b.DatabaseName, &b.WaitType, &b.WaitTimeMs, &b.QueryText, &b.Status, &b.HostName, &b.ProgramName); err == nil {
-				metrics.ActiveBlocks = append(metrics.ActiveBlocks, b)
-			}
-		}
-	}
-
-	memQuery := `
-		SELECT /* SQL_OPTIMA */   
-			ISNULL(100.0 * (CAST(total_physical_memory_kb AS FLOAT) - CAST(available_physical_memory_kb AS FLOAT)) / 
-			CAST(total_physical_memory_kb AS FLOAT), 0)
-		FROM sys.dm_os_sys_memory
-	`
-	errMem := db.QueryRow(memQuery).Scan(&metrics.MemoryUsage)
-	if errMem != nil {
-		metrics.MemoryUsage = 0
-	}
-
-	metrics.MemHistory = append(metrics.MemHistory, metrics.MemoryUsage)
-	if len(metrics.MemHistory) > 20 {
-		metrics.MemHistory = metrics.MemHistory[1:]
-	}
-
-	metrics.MemoryClerks = make([]models.MemoryStat, 0)
-	clerkQuery := `
-		/* SQL_OPTIMA */	
-		SELECT    
-			RTRIM(counter_name) as type,
-			CAST(cntr_value AS FLOAT) / 1024.0 as size_mb
-		FROM sys.dm_os_performance_counters
-		WHERE object_name LIKE '%Memory Manager%'
-		AND counter_name IN ('Total Server Memory (KB)', 'Target Server Memory (KB)', 'Connection Memory (KB)', 'Lock Memory (KB)')
-	`
-	memRows, errMemClerks := db.Query(clerkQuery)
-	if errMemClerks == nil {
-		defer memRows.Close()
-		for memRows.Next() {
-			var ms models.MemoryStat
-			if err := memRows.Scan(&ms.Type, &ms.SizeMB); err == nil {
-				metrics.MemoryClerks = append(metrics.MemoryClerks, ms)
-			}
-		}
-	}
-
-	pleQuery := `SELECT /* SQL_OPTIMA */   ISNULL(CAST(cntr_value AS FLOAT), 0) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE [counter_name] = N'Page life expectancy' AND [object_name] LIKE '%Buffer Manager%'`
-	var currentPLE float64
-	if err := db.QueryRow(pleQuery).Scan(&currentPLE); err == nil {
-		metrics.PLE = currentPLE
-		metrics.PLEHistory = append(metrics.PLEHistory, currentPLE)
-		if len(metrics.PLEHistory) > 960 {
-			metrics.PLEHistory = metrics.PLEHistory[1:]
-		}
-	}
-
-	if metrics.DiskByDB == nil {
-		metrics.DiskByDB = make(map[string]models.DiskStat)
-	}
-	diskQuery := `
-		/* SQL_OPTIMA */   	
-		SELECT 
-			ISNULL(DB_NAME(mf.database_id), 'Unknown') as db_name,
-			SUM(CASE WHEN mf.type=0 THEN mf.size * 8.0/1024.0 ELSE 0 END) as Data,
-			SUM(CASE WHEN mf.type=1 THEN mf.size * 8.0/1024.0 ELSE 0 END) as Log,
-			ISNULL(AVG(CAST(vs.available_bytes AS FLOAT) / 1024.0 / 1024.0), 0) as Free
-		FROM sys.master_files mf
-		OUTER APPLY sys.dm_os_volume_stats(mf.database_id, mf.file_id) vs
-		GROUP BY mf.database_id
-	`
-	dRows, errD := db.Query(diskQuery)
-	if errD == nil {
-		defer dRows.Close()
-		for dRows.Next() {
-			var dbName string
-			var d models.DiskStat
-			if err := dRows.Scan(&dbName, &d.DataMB, &d.LogMB, &d.FreeMB); err == nil {
-				metrics.DiskByDB[dbName] = d
-				metrics.DiskUsage.DataMB += d.DataMB
-				metrics.DiskUsage.LogMB += d.LogMB
-				// DiskUsage.FreeMB should ideally be total free on all involved volumes,
-				// but for the dashboard aggregate we can leave it or sum distinct volumes.
-			}
-		}
-	}
-
-	metrics.TopQueries = []models.QueryStat{}
-
-	runningSQL := `
-		/* SQL_OPTIMA */
-		SELECT    TOP 20
-			ISNULL(s.login_name, 'System') as login_name,
-			ISNULL(s.program_name, 'System') as program_name,
-			ISNULL(DB_NAME(r.database_id), 'Unknown') as database_name,
-			CASE WHEN r.sql_handle IS NOT NULL THEN ISNULL(t.text, 'Unknown') ELSE 'Unknown' END as query_text,
-			ISNULL(r.wait_type, 'RUNNING') as wait_type,
-			ISNULL(r.cpu_time, 0) as cpu_time_ms,
-			ISNULL(r.total_elapsed_time, 0) / 1000.0 as exec_time_ms,
-			ISNULL(r.logical_reads, 0) as logical_reads,
-			1 as execution_count
-		FROM sys.dm_exec_requests r
-		INNER JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
-		OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
-		WHERE s.is_user_process = 1
-		  AND r.session_id <> @@SPID
-		  AND (r.cpu_time > 50 OR r.total_elapsed_time > 5000000 OR r.logical_reads > 5000)
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
-		ORDER BY r.total_elapsed_time DESC
-	`
-	rows, err := db.Query(runningSQL)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var q models.QueryStat
-			var login, program, dbName sql.NullString
-
-			if err := rows.Scan(&login, &program, &dbName, &q.QueryText, &q.WaitType, &q.CPUTimeMs, &q.ExecTimeMs, &q.LogicalReads, &q.ExecutionCount); err == nil {
-				q.LoginName = login.String
-				q.ProgramName = program.String
-				q.DatabaseName = dbName.String
-				metrics.TopQueries = append(metrics.TopQueries, q)
-			}
-		}
-	}
-
-	// Top Queries are now fetched from TimescaleDB (sqlserver_query_metrics_v2)
-	// via the Service layer to reduce DMV overhead on the production instance.
-	metrics.TopQueries = []models.QueryStat{}
-
-	// Session Snapshots for attribution
-	if snapshots, err := CollectSessionSnapshot(context.Background(), db); err == nil {
+	// 3. Snapshot from Staging
+	if snapshots, err := c.CollectSessionSnapshotStaging(ctx, instanceName); err == nil {
 		metrics.SessionSnapshots = snapshots
-	} else {
-		log.Printf("[SQLSERVER] CollectSessionSnapshot failed for %s: %v", instanceName, err)
 	}
-
-	// queries.yml-driven dynamic sweep removed: all dashboard queries are now maintained in Go.
 
 	return metrics
 }
@@ -310,542 +65,67 @@ func (c *SqlServerRepository) FetchLiveTelemetry(instanceName string, prev model
 func (c *SqlServerRepository) FetchHistoricalTelemetry(instanceName string, prev models.DashboardMetrics) models.DashboardMetrics {
 	var metrics models.DashboardMetrics
 	metrics.InstanceName = instanceName
-	metrics.MemHistory = prev.MemHistory
-	metrics.PLEHistory = prev.PLEHistory
 	metrics.WaitHistory = prev.WaitHistory
 	metrics.FileHistory = prev.FileHistory
 
-	metrics.DiskByDB = make(map[string]models.DiskStat)
-	metrics.LocksByDB = make(map[string]models.LockStat)
-	metrics.PrevWaitStats = make(map[string]float64)
-	metrics.PrevFileStats = make(map[string]models.FileIOStat)
-	for k, v := range prev.PrevWaitStats {
-		metrics.PrevWaitStats[k] = v
-	}
-	for k, v := range prev.PrevFileStats {
-		metrics.PrevFileStats[k] = v
-	}
-
-	c.mutex.RLock()
-	db, ok := c.conns[strings.ToUpper(instanceName)]
-	c.mutex.RUnlock()
-
-	if !ok || db == nil {
+	if c.LocalPool == nil {
 		return metrics
 	}
 
-	wQuery := `SELECT /* SQL_OPTIMA */   wait_type, CAST(wait_time_ms AS FLOAT) FROM sys.dm_os_wait_stats WITH (NOLOCK) WHERE wait_type NOT IN ('DIRTY_PAGE_POLL', 'HADR_FILESTREAM_IOMGR_IOCOMPLETION', 'LAZYWRITER_SLEEP', 'LOGMGR_QUEUE', 'REQUEST_FOR_DEADLOCK_SEARCH', 'XE_DISPATCHER_WAIT', 'XE_TIMER_EVENT', 'SQLTRACE_BUFFER_FLUSH', 'SLEEP_TASK', 'BROKER_TO_FLUSH', 'SP_SERVER_DIAGNOSTICS_SLEEP') AND wait_time_ms > 0`
-	wRows, _ := db.Query(wQuery)
-	var wSnap models.WaitSnapshot
-	wSnap.Timestamp = time.Now().Format("2006-01-02 15:04:05")
-	if wRows != nil {
-		defer wRows.Close()
-		for wRows.Next() {
-			var wt string
-			var wtMs float64
-			if err := wRows.Scan(&wt, &wtMs); err == nil {
-				prevMs, exists := metrics.PrevWaitStats[wt]
-				metrics.PrevWaitStats[wt] = wtMs
-				if exists && wtMs >= prevMs {
-					deltaSec := (wtMs - prevMs) / 60.0
-					if strings.HasPrefix(wt, "PAGEIOLATCH") {
-						wSnap.DiskRead += deltaSec
-					} else if strings.HasPrefix(wt, "LCK_") {
-						wSnap.Blocking += deltaSec
-					} else if strings.HasPrefix(wt, "CXPACKET") || strings.HasPrefix(wt, "CXCONSUMER") {
-						wSnap.Parallelism += deltaSec
-					} else {
-						wSnap.Other += deltaSec
-					}
-				}
-			}
-		}
-	}
-	metrics.WaitHistory = append(metrics.WaitHistory, wSnap)
-	if len(metrics.WaitHistory) > 960 {
-		metrics.WaitHistory = metrics.WaitHistory[1:]
-	}
-
-	fQuery := `SELECT /* SQL_OPTIMA */   DB_NAME(vfs.database_id), mf.physical_name, mf.type_desc, vfs.num_of_reads, vfs.num_of_writes, vfs.io_stall_read_ms, vfs.io_stall_write_ms FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs JOIN sys.master_files AS mf WITH (NOLOCK) ON vfs.database_id = mf.database_id AND vfs.file_id = mf.file_id`
-	fRows, _ := db.Query(fQuery)
-	var fSnap models.FileIOSnapshot
-	fSnap.Timestamp = time.Now().Format("2006-01-02 15:04:05")
-	if fRows != nil {
-		defer fRows.Close()
-		for fRows.Next() {
-			var f models.FileIOStat
-			var r, w, sr, sw int64
-			if err := fRows.Scan(&f.DatabaseName, &f.PhysicalName, &f.FileType, &r, &w, &sr, &sw); err == nil {
-				key := f.DatabaseName + ":" + f.PhysicalName
-				f.NumOfReads = r
-				f.NumOfWrites = w
-				f.IoStallReadMs = sr
-				f.IoStallWriteMs = sw
-				metrics.PrevFileStats[key] = f
-				if prevF, exists := prev.PrevFileStats[key]; exists {
-					deltaR := float64(r - prevF.NumOfReads)
-					deltaW := float64(w - prevF.NumOfWrites)
-					deltaSR := float64(sr - prevF.IoStallReadMs)
-					deltaSW := float64(sw - prevF.IoStallWriteMs)
-					if deltaR > 0 {
-						f.ReadLatencyMs = deltaSR / deltaR
-					}
-					if deltaW > 0 {
-						f.WriteLatencyMs = deltaSW / deltaW
-					}
-					fSnap.Files = append(fSnap.Files, f)
-					metrics.FileStats = append(metrics.FileStats, f)
-				}
-			}
-		}
-	}
-	metrics.FileHistory = append(metrics.FileHistory, fSnap)
-	if len(metrics.FileHistory) > 240 {
-		metrics.FileHistory = metrics.FileHistory[1:]
-	}
-
-	return metrics
-}
-
-func (c *SqlServerRepository) FetchDashboardTelemetry(instanceName string, prev models.DashboardMetrics) models.DashboardMetrics {
-	var metrics models.DashboardMetrics
-	metrics.InstanceName = instanceName
-	metrics.MemHistory = prev.MemHistory
-	metrics.PLEHistory = prev.PLEHistory
-	metrics.WaitHistory = prev.WaitHistory
-	metrics.FileHistory = prev.FileHistory
-
-	metrics.PrevWaitStats = make(map[string]float64)
-	if prev.PrevWaitStats != nil {
-		for k, v := range prev.PrevWaitStats {
-			metrics.PrevWaitStats[k] = v
-		}
-	}
-
-	metrics.PrevFileStats = make(map[string]models.FileIOStat)
-	if prev.PrevFileStats != nil {
-		for k, v := range prev.PrevFileStats {
-			metrics.PrevFileStats[k] = v
-		}
-	}
-
-	metrics.DiskByDB = make(map[string]models.DiskStat)
-	metrics.LocksByDB = make(map[string]models.LockStat)
-
-	c.mutex.RLock()
-	db, ok := c.conns[strings.ToUpper(instanceName)]
-	c.mutex.RUnlock()
-
-	if !ok || db == nil {
+	serverID, ok := c.GetServerID(instanceName)
+	if !ok {
 		return metrics
 	}
 
-	// 1. CPU Usage (Extract fully chronological 256-minute Ring Buffer history dynamically dropping arbitrary Go array bindings)
-	cpuQuery := `
-	        /* SQL_OPTIMA */ 
-	        DECLARE @ts_now bigint = (SELECT ms_ticks FROM sys.dm_os_sys_info WITH (NOLOCK)); 
-	        SELECT TOP(256)
-	            ISNULL(SQLProcessUtilization, 0) AS [SQL_Server_CPU], 
-	            ISNULL(SystemIdle, 0) AS [System_Idle_CPU], 
-	            100 - ISNULL(SystemIdle, 0) - ISNULL(SQLProcessUtilization, 0) AS [Other_Process_CPU],
-	            CONVERT(varchar, DATEADD(ms, -1 * (@ts_now - [timestamp]), GETUTCDATE()), 120) AS [Event_Time]
-	        FROM ( 
-	            SELECT record.value('(./Record/@id)[1]', 'int') AS record_id, 
-	                record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') 
-	                AS [SystemIdle], 
-	                record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') 
-	                AS [SQLProcessUtilization], [timestamp] 
-	            FROM ( 
-	                SELECT [timestamp], CONVERT(xml, record) AS [record] 
-	                FROM sys.dm_os_ring_buffers WITH (NOLOCK)
-	                WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
-	                AND record LIKE N'%<SystemHealth>%'
-	            ) AS x 
-	        ) AS y 
-	        ORDER BY [timestamp] DESC;
-	        `
-	cpuRows, errCpu := db.Query(cpuQuery)
-	if errCpu == nil {
-		defer cpuRows.Close()
-		var buffer []models.CPUTick
-		for cpuRows.Next() {
-			var tick models.CPUTick
-			if err := cpuRows.Scan(&tick.SQLProcess, &tick.SystemIdle, &tick.OtherProcess, &tick.EventTime); err == nil {
-				buffer = append(buffer, tick)
-			}
-		}
-
-		// Map chronological sorting order (Reverse the DESC query output inside memory L-to-R for charting safely)
-		for i, j := 0, len(buffer)-1; i < j; i, j = i+1, j-1 {
-			buffer[i], buffer[j] = buffer[j], buffer[i]
-		}
-		metrics.CPUHistory = buffer
-		if len(buffer) > 0 {
-			metrics.AvgCPULoad = buffer[len(buffer)-1].SQLProcess
-		}
-	}
-
-	// 2. Active Sessions (sqlserver_active_sessions_by_status)
-	sessionQuery := `/* SQL_OPTIMA */ SELECT   COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND status = 'running' AND LOWER(ISNULL(login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima') AND LOWER(ISNULL(program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')`
-	_ = db.QueryRow(sessionQuery).Scan(&metrics.ActiveUsers)
-
-	// 2b. Connections grouping natively over physically bounded user target logical pools
-	connQuery := `
-		/* SQL_OPTIMA */
-		SELECT     
-			ISNULL(s.login_name, 'Unknown'),
-			ISNULL(DB_NAME(s.database_id), 'Unknown'),
-			COUNT(s.session_id) as active_connections,
-			SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as active_requests
-		FROM sys.dm_exec_sessions s WITH (NOLOCK)
-		WHERE is_user_process = 1
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
-		GROUP BY s.login_name, s.database_id
-	`
-	connRows, _ := db.Query(connQuery)
-	if connRows != nil {
-		defer connRows.Close()
-		for connRows.Next() {
-			var c models.ConnectionStat
-			if err := connRows.Scan(&c.LoginName, &c.DatabaseName, &c.ActiveConnections, &c.ActiveRequests); err == nil {
-				metrics.ConnectionStats = append(metrics.ConnectionStats, c)
-			}
-		}
-	}
-
-	// 3. Locks and Deadlocks grouped purely across target logical volumes dynamically
-	metrics.LocksByDB = make(map[string]models.LockStat)
-	lockQuery := `
-		/* SQL_OPTIMA */
-		SELECT  
-			ISNULL(DB_NAME(resource_database_id), 'Unknown'),
-			COUNT(*),
-			SUM(CASE WHEN request_status = 'CONVERT' THEN 1 ELSE 0 END)
-		FROM sys.dm_tran_locks WITH (NOLOCK)
-		WHERE resource_database_id > 0
-		GROUP BY resource_database_id
-	`
-	lRows, errL := db.Query(lockQuery)
-	if errL == nil {
-		defer lRows.Close()
-		for lRows.Next() {
-			var dbName string
-			var l models.LockStat
-			if err := lRows.Scan(&dbName, &l.TotalLocks, &l.Deadlocks); err == nil {
-				metrics.LocksByDB[dbName] = l
-				metrics.TotalLocks += l.TotalLocks
-				metrics.Deadlocks += l.Deadlocks
-			}
-		}
-	}
-
-	// 3b. Active Long Running & Blockers Hierarchy (Replaces rigid wait filtering)
-	blockDetQuery := `
-		/* SQL_OPTIMA */
-		SELECT  
-			r.session_id as blocked_session_id,
-			ISNULL(r.blocking_session_id, 0) as blocking_session_id,
-			ISNULL(DB_NAME(r.database_id), 'Unknown') as database_name,
-			ISNULL(r.wait_type, 'ONLINE') as wait_type,
-			r.wait_time as wait_time_ms,
-			ISNULL(t.text, 'Internal Pointer Buffer') as query_text,
-			ISNULL(s.status, 'running') as status,
-			ISNULL(s.host_name, 'Unknown') as host_name,
-			ISNULL(s.program_name, 'Unknown') as program_name
-		FROM sys.dm_exec_requests r WITH (NOLOCK)
-		JOIN sys.dm_exec_sessions s WITH (NOLOCK) ON r.session_id = s.session_id
-		CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
-		WHERE r.session_id > 50 AND r.session_id <> @@SPID
-		  AND LOWER(ISNULL(s.login_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
-		  AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
-	`
-	blockRows, errBlk := db.Query(blockDetQuery)
-	if errBlk == nil {
-		defer blockRows.Close()
-		for blockRows.Next() {
-			var b models.BlockStat
-			if err := blockRows.Scan(&b.BlockedSessionID, &b.BlockingSessionID, &b.DatabaseName, &b.WaitType, &b.WaitTimeMs, &b.QueryText, &b.Status, &b.HostName, &b.ProgramName); err == nil {
-				metrics.ActiveBlocks = append(metrics.ActiveBlocks, b)
-			}
-		}
-	}
-
-	// 4. Memory Pct (OS-based calculation)
-	memQuery := `
-		SELECT /* SQL_OPTIMA */   
-			ISNULL(100.0 * (CAST(total_physical_memory_kb AS FLOAT) - CAST(available_physical_memory_kb AS FLOAT)) / 
-			CAST(total_physical_memory_kb AS FLOAT), 0)
-		FROM sys.dm_os_sys_memory
-	`
-	errMem := db.QueryRow(memQuery).Scan(&metrics.MemoryUsage)
-	if errMem != nil {
-		metrics.MemoryUsage = 0
-	}
-
-	metrics.MemHistory = append(metrics.MemHistory, metrics.MemoryUsage)
-	if len(metrics.MemHistory) > 20 {
-		metrics.MemHistory = metrics.MemHistory[1:]
-	}
-
-	// Capture memory clerks exactly explicitly tracking native internal consumption footprints.
-	clerkQuery := `
-		/* SQL_OPTIMA */
-		SELECT  
-			RTRIM(counter_name) as type,
-			CAST(cntr_value AS FLOAT) / 1024.0 as size_mb
-		FROM sys.dm_os_performance_counters
-		WHERE object_name LIKE '%Memory Manager%'
-		AND counter_name IN ('Total Server Memory (KB)', 'Target Server Memory (KB)', 'Connection Memory (KB)', 'Lock Memory (KB)')
-	`
-	memRows, errMemClerks := db.Query(clerkQuery)
-	if errMemClerks == nil {
-		defer memRows.Close()
-		for memRows.Next() {
-			var ms models.MemoryStat
-			if err := memRows.Scan(&ms.Type, &ms.SizeMB); err == nil {
-				metrics.MemoryClerks = append(metrics.MemoryClerks, ms)
-			}
-		}
-	}
-
-	// 5b. Page Life Expectancy (PLE)
-	pleQuery := `/* SQL_OPTIMA */ SELECT    ISNULL(CAST(cntr_value AS FLOAT), 0) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE [counter_name] = N'Page life expectancy' AND [object_name] LIKE '%Buffer Manager%'`
-	var currentPLE float64
-	if err := db.QueryRow(pleQuery).Scan(&currentPLE); err == nil {
-		metrics.PLEHistory = append(metrics.PLEHistory, currentPLE)
-		if len(metrics.PLEHistory) > 960 {
-			metrics.PLEHistory = metrics.PLEHistory[1:]
-		}
-	}
-
-	// Wait Stats (Cumulative Deltas converting to ms/sec scaling across 60 sec loops)
-	wQuery := `/* SQL_OPTIMA */ SELECT   wait_type, CAST(wait_time_ms AS FLOAT) FROM sys.dm_os_wait_stats WITH (NOLOCK) WHERE wait_type NOT IN ('DIRTY_PAGE_POLL', 'HADR_FILESTREAM_IOMGR_IOCOMPLETION', 'LAZYWRITER_SLEEP', 'LOGMGR_QUEUE', 'REQUEST_FOR_DEADLOCK_SEARCH', 'XE_DISPATCHER_WAIT', 'XE_TIMER_EVENT', 'SQLTRACE_BUFFER_FLUSH', 'SLEEP_TASK', 'BROKER_TO_FLUSH', 'SP_SERVER_DIAGNOSTICS_SLEEP') AND wait_time_ms > 0`
-	wRows, _ := db.Query(wQuery)
 	var wSnap models.WaitSnapshot
 	wSnap.Timestamp = time.Now().Format("2006-01-02 15:04:05")
-	if wRows != nil {
+
+	var fSnap models.FileIOSnapshot
+	fSnap.Timestamp = time.Now().Format("2006-01-02 15:04:05")
+
+	// 1. Wait Stats from Staging
+	wQuery := `
+		SELECT /* SQL_OPTIMA STAGING ONLY */ metric_name, metric_value 
+		FROM staging.sqlserver_perf_system_raw 
+		WHERE server_id = $1 AND category = 'WAIT'
+		  AND capture_timestamp = (SELECT max(capture_timestamp) FROM staging.sqlserver_perf_system_raw WHERE server_id = $1)`
+
+	wRows, err := c.LocalPool.Query(context.Background(), wQuery, serverID)
+	if err == nil && wRows != nil {
 		defer wRows.Close()
 		for wRows.Next() {
 			var wt string
-			var wtMs float64
-			if err := wRows.Scan(&wt, &wtMs); err == nil {
-				prevMs, exists := metrics.PrevWaitStats[wt]
-				metrics.PrevWaitStats[wt] = wtMs
-				if exists && wtMs >= prevMs {
-					deltaSec := (wtMs - prevMs) / 60.0
-					if strings.HasPrefix(wt, "PAGEIOLATCH") {
-						wSnap.DiskRead += deltaSec
-					} else if strings.HasPrefix(wt, "LCK_") {
-						wSnap.Blocking += deltaSec
-					} else if strings.HasPrefix(wt, "CXPACKET") || strings.HasPrefix(wt, "CXCONSUMER") {
-						wSnap.Parallelism += deltaSec
-					} else {
-						wSnap.Other += deltaSec
-					}
+			var wtVal int64
+			if err := wRows.Scan(&wt, &wtVal); err == nil {
+				wtMs := float64(wtVal)
+				if strings.HasPrefix(wt, "PAGEIOLATCH") {
+					wSnap.DiskRead += wtMs
+				} else if strings.HasPrefix(wt, "LCK_") {
+					wSnap.Blocking += wtMs
 				}
 			}
 		}
 	}
-	metrics.WaitHistory = append(metrics.WaitHistory, wSnap)
-	if len(metrics.WaitHistory) > 960 {
-		metrics.WaitHistory = metrics.WaitHistory[1:]
-	}
 
-	// Virtual File IO Stats (Cumulative Deltas measuring latency scaling across 15 sec reads)
-	fQuery := `/* SQL_OPTIMA */ SELECT	   DB_NAME(vfs.database_id), mf.physical_name, mf.type_desc, vfs.num_of_reads, vfs.num_of_writes, vfs.io_stall_read_ms, vfs.io_stall_write_ms FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs JOIN sys.master_files AS mf WITH (NOLOCK) ON vfs.database_id = mf.database_id AND vfs.file_id = mf.file_id`
-	fRows, _ := db.Query(fQuery)
-	var fSnap models.FileIOSnapshot
-	fSnap.Timestamp = time.Now().Format("2006-01-02 15:04:05")
-	if fRows != nil {
+	// 2. File IO from Staging
+	fQuery := `
+		SELECT /* SQL_OPTIMA STAGING ONLY */ db_name, physical_name, type_desc, num_of_reads, num_of_writes, io_stall_read_ms, io_stall_write_ms 
+		FROM staging.sqlserver_io_raw 
+		WHERE server_id = $1 
+		  AND capture_timestamp = (SELECT max(capture_timestamp) FROM staging.sqlserver_io_raw WHERE server_id = $1)`
+
+	fRows, err := c.LocalPool.Query(context.Background(), fQuery, serverID)
+	if err == nil && fRows != nil {
 		defer fRows.Close()
 		for fRows.Next() {
 			var f models.FileIOStat
-			var r, w, sr, sw int64
-			if err := fRows.Scan(&f.DatabaseName, &f.PhysicalName, &f.FileType, &r, &w, &sr, &sw); err == nil {
-				key := f.DatabaseName + ":" + f.PhysicalName
-				f.NumOfReads = r
-				f.NumOfWrites = w
-				f.IoStallReadMs = sr
-				f.IoStallWriteMs = sw
-				metrics.PrevFileStats[key] = f
-				if prevF, exists := prev.PrevFileStats[key]; exists {
-					deltaR := float64(r - prevF.NumOfReads)
-					deltaW := float64(w - prevF.NumOfWrites)
-					deltaSR := float64(sr - prevF.IoStallReadMs)
-					deltaSW := float64(sw - prevF.IoStallWriteMs)
-					if deltaR > 0 {
-						f.ReadLatencyMs = deltaSR / deltaR
-					}
-					if deltaW > 0 {
-						f.WriteLatencyMs = deltaSW / deltaW
-					}
-					fSnap.Files = append(fSnap.Files, f)
-					metrics.FileStats = append(metrics.FileStats, f)
-				}
+			if err := fRows.Scan(&f.DatabaseName, &f.PhysicalName, &f.FileType, &f.NumOfReads, &f.NumOfWrites, &f.IoStallReadMs, &f.IoStallWriteMs); err == nil {
+				fSnap.Files = append(fSnap.Files, f)
 			}
 		}
 	}
+
+	metrics.WaitHistory = append(metrics.WaitHistory, wSnap)
 	metrics.FileHistory = append(metrics.FileHistory, fSnap)
-	if len(metrics.FileHistory) > 240 {
-		metrics.FileHistory = metrics.FileHistory[1:]
-	}
-
-	// 5. Disk Usage Profile (Aggregate of Data vs Log vs Free mapped entirely across physically isolated Data sources)
-	if metrics.DiskByDB == nil {
-		metrics.DiskByDB = make(map[string]models.DiskStat)
-	}
-	diskQuery := `
-		/* SQL_OPTIMA */ SELECT   
-			ISNULL(DB_NAME(database_id), 'Unknown'),
-			SUM(CASE WHEN type=0 THEN size * 8.0/1024.0 ELSE 0 END) as Data,
-			SUM(CASE WHEN type=1 THEN size * 8.0/1024.0 ELSE 0 END) as Log
-		FROM sys.master_files
-		GROUP BY database_id
-	`
-	dRows, errD := db.Query(diskQuery)
-	if errD == nil {
-		defer dRows.Close()
-		for dRows.Next() {
-			var dbName string
-			var d models.DiskStat
-			if err := dRows.Scan(&dbName, &d.DataMB, &d.LogMB); err == nil {
-				metrics.DiskByDB[dbName] = d
-				metrics.DiskUsage.DataMB += d.DataMB
-				metrics.DiskUsage.LogMB += d.LogMB
-			}
-		}
-	}
-
-	// 6. Top Active Queries - Significant Query Filter
-	// Capture queries meeting ANY of these criteria:
-	//   - cpu_time > 50 ms
-	//   - total_elapsed_time > 5 seconds (5000000 microseconds)
-	//   - logical_reads > 5000
-	//   - blocked sessions with wait_time > 5 seconds
-	// Note: total_elapsed_time is in MICROseconds in dm_exec_requests
-	// Filter out system sessions (is_user_process = 1) and own SPID
-	metrics.TopQueries = []models.QueryStat{}
-
-	// First, capture currently running queries with significant resource usage
-	runningSQL := `
-		/* SQL_OPTIMA */ SELECT   TOP 20
-			ISNULL(s.login_name, 'System') as login_name,
-			ISNULL(s.program_name, 'System') as program_name,
-			ISNULL(DB_NAME(r.database_id), 'Unknown') as database_name,
-			CASE WHEN r.sql_handle IS NOT NULL THEN ISNULL(t.text, 'Unknown') ELSE 'Unknown' END as query_text,
-			ISNULL(r.wait_type, 'RUNNING') as wait_type,
-			ISNULL(r.cpu_time, 0) as cpu_time_ms,
-			ISNULL(r.total_elapsed_time, 0) / 1000.0 as exec_time_ms,
-			ISNULL(r.logical_reads, 0) as logical_reads,
-			1 as execution_count
-		FROM sys.dm_exec_requests r
-		INNER JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
-		OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
-		WHERE s.is_user_process = 1
-		  AND r.session_id <> @@SPID
-		  AND (r.cpu_time > 50 OR r.total_elapsed_time > 5000000 OR r.logical_reads > 5000)
-		ORDER BY r.total_elapsed_time DESC
-	`
-	rows, err := db.Query(runningSQL)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var q models.QueryStat
-			var login, program, dbName sql.NullString
-
-			if err := rows.Scan(&login, &program, &dbName, &q.QueryText, &q.WaitType, &q.CPUTimeMs, &q.ExecTimeMs, &q.LogicalReads, &q.ExecutionCount); err == nil {
-				q.LoginName = login.String
-				q.ProgramName = program.String
-				q.DatabaseName = dbName.String
-				metrics.TopQueries = append(metrics.TopQueries, q)
-			}
-		}
-	}
-
-	// Also capture from plan cache for recent high-CPU queries meeting significant criteria
-	// Top Queries are now fetched from TimescaleDB (sqlserver_query_metrics_v2)
-	// via the Service layer to reduce DMV overhead on the production instance.
-	metrics.TopQueries = []models.QueryStat{}
-
-	// Session Snapshots for attribution
-	if snapshots, err := CollectSessionSnapshot(context.Background(), db); err == nil {
-		metrics.SessionSnapshots = snapshots
-	} else {
-		log.Printf("[SQLSERVER] CollectSessionSnapshot failed for %s: %v", instanceName, err)
-	}
-
-	// queries.yml-driven dynamic sweep removed: all dashboard queries are now maintained in Go.
-
 	return metrics
-}
-
-func (c *SqlServerRepository) FetchLiveKPIs(instanceName string) map[string]interface{} {
-	db, ok := c.GetConn(instanceName)
-	if !ok || db == nil {
-		return map[string]interface{}{"error": "no connection"}
-	}
-
-	result, err := c.CollectKPIs(context.Background(), db)
-	if err != nil {
-		log.Printf("[Live] KPIs query failed: %v", err)
-		return map[string]interface{}{"error": err.Error()}
-	}
-	return result
-}
-
-func (c *SqlServerRepository) FetchLiveRunningQueries(instanceName string, database string) ([]map[string]interface{}, error) {
-	db, ok := c.GetConn(instanceName)
-	if !ok || db == nil {
-		return nil, fmt.Errorf("no connection")
-	}
-	return c.CollectLiveRunningQueries(context.Background(), db, database)
-}
-
-func (c *SqlServerRepository) FetchLiveBlockingChains(instanceName string, database string) ([]map[string]interface{}, error) {
-	db, ok := c.GetConn(instanceName)
-	if !ok || db == nil {
-		return nil, fmt.Errorf("no connection")
-	}
-	return c.CollectBlockingChains(db, database)
-}
-
-func (c *SqlServerRepository) FetchLiveIOLatency(instanceName string) ([]map[string]interface{}, error) {
-	db, ok := c.GetConn(instanceName)
-	if !ok || db == nil {
-		return nil, fmt.Errorf("no connection")
-	}
-	return c.CollectFileIOLatencyForRTD(db)
-}
-
-func (c *SqlServerRepository) FetchLiveTempDBUsage(instanceName string) (map[string]interface{}, error) {
-	db, ok := c.GetConn(instanceName)
-	if !ok || db == nil {
-		return nil, fmt.Errorf("no connection")
-	}
-	results, err := c.CollectTempDBUsage(db)
-	if err != nil {
-		return nil, err
-	}
-
-	summary := map[string]interface{}{
-		"files": results,
-	}
-	return summary, nil
-}
-
-func (c *SqlServerRepository) FetchLiveWaitStats(instanceName string, database string) ([]map[string]interface{}, error) {
-	db, ok := c.GetConn(instanceName)
-	if !ok || db == nil {
-		return nil, fmt.Errorf("no connection")
-	}
-	return c.CollectWaitStats(db, database)
-}
-
-func (c *SqlServerRepository) FetchLiveConnectionsByApp(instanceName string, database string) ([]map[string]interface{}, error) {
-	db, ok := c.GetConn(instanceName)
-	if !ok || db == nil {
-		return nil, fmt.Errorf("no connection")
-	}
-	return c.CollectConnectionStats(db, database)
 }

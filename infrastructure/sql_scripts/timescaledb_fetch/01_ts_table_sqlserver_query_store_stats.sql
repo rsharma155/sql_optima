@@ -5,7 +5,7 @@
 
 CREATE TABLE IF NOT EXISTS sqlserver_query_store_stats (
     capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
+    server_id TEXT NOT NULL,
     database_name TEXT,
     query_hash TEXT,
     query_text TEXT,

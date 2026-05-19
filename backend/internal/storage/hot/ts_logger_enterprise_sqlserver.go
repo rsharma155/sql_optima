@@ -11,6 +11,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -20,14 +21,14 @@ import (
 // The goal is to serve dashboards from TimescaleDB (historical + low load) and only
 // fall back to direct DMV queries when TimescaleDB is unavailable.
 
-func (tl *TimescaleLogger) LogLatchWaits(ctx context.Context, instanceName string, rows []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogLatchWaits(ctx context.Context, serverID uuid.UUID, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	sig := fingerprintMapRows(instanceName, enterpriseKindLatchWaits, rows,
+	sig := fingerprintMapRows(serverID, enterpriseKindLatchWaits, rows,
 		[]string{"wait_type"},
 		[]string{"waiting_tasks_count", "wait_time_ms", "signal_wait_time_ms"})
-	if tl.EnterpriseSnapshotUnchanged(instanceName, enterpriseKindLatchWaits, sig) {
+	if tl.EnterpriseSnapshotUnchanged(serverID, enterpriseKindLatchWaits, sig) {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -35,9 +36,9 @@ func (tl *TimescaleLogger) LogLatchWaits(ctx context.Context, instanceName strin
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_latch_waits (
-				capture_timestamp, server_instance_name, wait_type, waiting_tasks_count, wait_time_ms, signal_wait_time_ms
+				capture_timestamp, server_id, wait_type, waiting_tasks_count, wait_time_ms, signal_wait_time_ms
 			) VALUES ($1, $2, $3, $4, $5, $6)
-		`, now, instanceName,
+		`, now, serverID,
 			getStr(r, "wait_type"),
 			getInt64FromMap(r, "waiting_tasks_count"),
 			getInt64FromMap(r, "wait_time_ms"),
@@ -51,22 +52,22 @@ func (tl *TimescaleLogger) LogLatchWaits(ctx context.Context, instanceName strin
 			return fmt.Errorf("latch waits insert failed at row %d: %w", i, err)
 		}
 	}
-	tl.RememberEnterpriseSnapshot(instanceName, enterpriseKindLatchWaits, sig)
+	tl.RememberEnterpriseSnapshot(serverID, enterpriseKindLatchWaits, sig)
 	return nil
 }
 
-func (tl *TimescaleLogger) GetLatchWaits(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetLatchWaits(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `
 		SELECT wait_type, waiting_tasks_count, wait_time_ms, signal_wait_time_ms
 		FROM sqlserver_latch_waits
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +90,7 @@ func (tl *TimescaleLogger) GetLatchWaits(ctx context.Context, instanceName strin
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) LogWaitingTasks(ctx context.Context, instanceName string, rows []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogWaitingTasks(ctx context.Context, serverID uuid.UUID, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -98,9 +99,9 @@ func (tl *TimescaleLogger) LogWaitingTasks(ctx context.Context, instanceName str
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_waiting_tasks (
-				capture_timestamp, server_instance_name, wait_type, resource_description, waiting_tasks_count, wait_duration_ms
+				capture_timestamp, server_id, wait_type, resource_description, waiting_tasks_count, wait_duration_ms
 			) VALUES ($1, $2, $3, $4, $5, $6)
-		`, now, instanceName,
+		`, now, serverID,
 			getStr(r, "wait_type"),
 			getStr(r, "resource_description"),
 			getInt64FromMap(r, "waiting_tasks_count"),
@@ -117,18 +118,18 @@ func (tl *TimescaleLogger) LogWaitingTasks(ctx context.Context, instanceName str
 	return nil
 }
 
-func (tl *TimescaleLogger) GetWaitingTasks(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetWaitingTasks(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `
 		SELECT wait_type, resource_description, waiting_tasks_count, wait_duration_ms
 		FROM sqlserver_waiting_tasks
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +153,7 @@ func (tl *TimescaleLogger) GetWaitingTasks(ctx context.Context, instanceName str
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) LogMemoryGrants(ctx context.Context, instanceName string, rows []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogMemoryGrants(ctx context.Context, serverID uuid.UUID, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -161,10 +162,10 @@ func (tl *TimescaleLogger) LogMemoryGrants(ctx context.Context, instanceName str
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_memory_grants (
-				capture_timestamp, server_instance_name, session_id, database_name, login_name,
+				capture_timestamp, server_id, session_id, database_name, login_name,
 				granted_memory_kb, used_memory_kb, dop, query_duration_sec
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		`, now, instanceName,
+		`, now, serverID,
 			int16(getInt64FromMap(r, "session_id")),
 			getStr(r, "database_name"),
 			getStr(r, "login_name"),
@@ -184,19 +185,19 @@ func (tl *TimescaleLogger) LogMemoryGrants(ctx context.Context, instanceName str
 	return nil
 }
 
-func (tl *TimescaleLogger) GetMemoryGrants(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetMemoryGrants(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `
 		SELECT session_id, database_name, login_name, granted_memory_kb, used_memory_kb, dop, query_duration_sec
 		FROM sqlserver_memory_grants
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND (login_name IS NULL OR login_name <> 'dbmonitor_user')
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -225,14 +226,14 @@ func (tl *TimescaleLogger) GetMemoryGrants(ctx context.Context, instanceName str
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) LogProcedureStats(ctx context.Context, instanceName string, rows []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogProcedureStats(ctx context.Context, serverID uuid.UUID, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	sig := fingerprintMapRows(instanceName, enterpriseKindProcedure, rows,
+	sig := fingerprintMapRows(serverID, enterpriseKindProcedure, rows,
 		[]string{"database_name", "schema_name", "object_name"},
 		[]string{"execution_count", "total_worker_time_ms", "total_elapsed_time_ms", "total_logical_reads", "total_physical_reads"})
-	if tl.EnterpriseSnapshotUnchanged(instanceName, enterpriseKindProcedure, sig) {
+	if tl.EnterpriseSnapshotUnchanged(serverID, enterpriseKindProcedure, sig) {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -240,10 +241,11 @@ func (tl *TimescaleLogger) LogProcedureStats(ctx context.Context, instanceName s
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_procedure_stats (
-				capture_timestamp, server_instance_name, database_name, schema_name, object_name,
-				execution_count, total_worker_time_ms, total_elapsed_time_ms, total_logical_reads, total_physical_reads
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-		`, now, instanceName,
+				capture_timestamp, server_id, database_name, schema_name, object_name,
+				execution_count, total_worker_time_ms, total_elapsed_time_ms, total_logical_reads, total_physical_reads,
+				query_hash
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		`, now, serverID,
 			getStr(r, "database_name"),
 			getStr(r, "schema_name"),
 			getStr(r, "object_name"),
@@ -252,6 +254,7 @@ func (tl *TimescaleLogger) LogProcedureStats(ctx context.Context, instanceName s
 			getFloat64(r, "total_elapsed_time_ms"),
 			getInt64FromMap(r, "total_logical_reads"),
 			getInt64FromMap(r, "total_physical_reads"),
+			getStr(r, "query_hash"),
 		)
 	}
 	br := tl.pool.SendBatch(ctx, batch)
@@ -261,22 +264,22 @@ func (tl *TimescaleLogger) LogProcedureStats(ctx context.Context, instanceName s
 			return fmt.Errorf("procedure stats insert failed at row %d: %w", i, err)
 		}
 	}
-	tl.RememberEnterpriseSnapshot(instanceName, enterpriseKindProcedure, sig)
+	tl.RememberEnterpriseSnapshot(serverID, enterpriseKindProcedure, sig)
 	return nil
 }
 
-func (tl *TimescaleLogger) GetProcedureStats(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetProcedureStats(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `
 		SELECT database_name, schema_name, object_name, execution_count, total_worker_time_ms, total_elapsed_time_ms, total_logical_reads
 		FROM sqlserver_procedure_stats
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +306,7 @@ func (tl *TimescaleLogger) GetProcedureStats(ctx context.Context, instanceName s
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) LogFileIOLatency(ctx context.Context, instanceName string, rows []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogFileIOLatency(ctx context.Context, serverID uuid.UUID, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -314,10 +317,10 @@ func (tl *TimescaleLogger) LogFileIOLatency(ctx context.Context, instanceName st
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_file_io (
-				capture_timestamp, server_instance_name, database_name, file_name, file_type,
+				capture_timestamp, server_id, database_name, file_name, file_type,
 				read_latency_ms, write_latency_ms, read_bytes_per_sec, write_bytes_per_sec
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		`, now, instanceName,
+		`, now, serverID.String(),
 			getStr(r, "database_name"),
 			getStr(r, "file_name"),
 			getStr(r, "file_type"),
@@ -337,18 +340,18 @@ func (tl *TimescaleLogger) LogFileIOLatency(ctx context.Context, instanceName st
 	return nil
 }
 
-func (tl *TimescaleLogger) GetFileIOLatency(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetFileIOLatency(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `
 		SELECT database_name, file_name, file_type, read_latency_ms, write_latency_ms
 		FROM sqlserver_file_io
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID.String(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +375,7 @@ func (tl *TimescaleLogger) GetFileIOLatency(ctx context.Context, instanceName st
 }
 
 // GetFileIOLatencyTrend returns bucketed avg read/write latency (ms) for the last N minutes or a specific range.
-func (tl *TimescaleLogger) GetFileIOLatencyTrend(ctx context.Context, instanceName string, minutes int, from, to string) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetFileIOLatencyTrend(ctx context.Context, serverID uuid.UUID, minutes int, from, to string) ([]map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -394,12 +397,12 @@ func (tl *TimescaleLogger) GetFileIOLatencyTrend(ctx context.Context, instanceNa
 			       AVG(read_latency_ms) AS read_latency_ms,
 			       AVG(write_latency_ms) AS write_latency_ms
 			FROM sqlserver_file_io
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 			GROUP BY bucket
 			ORDER BY bucket ASC
 		`
-		rows, err = tl.pool.Query(ctx, q, instanceName, start, end)
+		rows, err = tl.pool.Query(ctx, q, serverID.String(), start, end)
 	} else {
 		if minutes <= 0 {
 			minutes = 60
@@ -409,12 +412,12 @@ func (tl *TimescaleLogger) GetFileIOLatencyTrend(ctx context.Context, instanceNa
 			       AVG(read_latency_ms) AS read_latency_ms,
 			       AVG(write_latency_ms) AS write_latency_ms
 			FROM sqlserver_file_io
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
 			GROUP BY bucket
 			ORDER BY bucket ASC
 		`
-		rows, err = tl.pool.Query(ctx, q, instanceName, minutes)
+		rows, err = tl.pool.Query(ctx, q, serverID.String(), minutes)
 	}
 	if err != nil {
 		return nil, err
@@ -437,14 +440,14 @@ func (tl *TimescaleLogger) GetFileIOLatencyTrend(ctx context.Context, instanceNa
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) LogSpinlockStats(ctx context.Context, instanceName string, rows []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogSpinlockStats(ctx context.Context, serverID uuid.UUID, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	sig := fingerprintMapRows(instanceName, enterpriseKindSpinlock, rows,
+	sig := fingerprintMapRows(serverID, enterpriseKindSpinlock, rows,
 		[]string{"spinlock_type"},
 		[]string{"collisions", "spins", "sleep_time_ms"})
-	if tl.EnterpriseSnapshotUnchanged(instanceName, enterpriseKindSpinlock, sig) {
+	if tl.EnterpriseSnapshotUnchanged(serverID, enterpriseKindSpinlock, sig) {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -452,9 +455,9 @@ func (tl *TimescaleLogger) LogSpinlockStats(ctx context.Context, instanceName st
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_spinlock_stats (
-				capture_timestamp, server_instance_name, spinlock_type, collisions, spins, sleep_time_ms
+				capture_timestamp, server_id, spinlock_type, collisions, spins, sleep_time_ms
 			) VALUES ($1,$2,$3,$4,$5,$6)
-		`, now, instanceName,
+		`, now, serverID,
 			getStr(r, "spinlock_type"),
 			getInt64FromMap(r, "collisions"),
 			getInt64FromMap(r, "spins"),
@@ -468,22 +471,22 @@ func (tl *TimescaleLogger) LogSpinlockStats(ctx context.Context, instanceName st
 			return fmt.Errorf("spinlock stats insert failed at row %d: %w", i, err)
 		}
 	}
-	tl.RememberEnterpriseSnapshot(instanceName, enterpriseKindSpinlock, sig)
+	tl.RememberEnterpriseSnapshot(serverID, enterpriseKindSpinlock, sig)
 	return nil
 }
 
-func (tl *TimescaleLogger) GetSpinlockStats(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSpinlockStats(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `
 		SELECT spinlock_type, collisions, spins, sleep_time_ms
 		FROM sqlserver_spinlock_stats
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -505,14 +508,14 @@ func (tl *TimescaleLogger) GetSpinlockStats(ctx context.Context, instanceName st
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) LogMemoryClerks(ctx context.Context, instanceName string, rows []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogMemoryClerks(ctx context.Context, serverID uuid.UUID, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	sig := fingerprintMapRows(instanceName, enterpriseKindMemoryClerks, rows,
+	sig := fingerprintMapRows(serverID, enterpriseKindMemoryClerks, rows,
 		[]string{"clerk_name", "memory_node"},
 		[]string{"pages_mb", "virtual_memory_reserved_mb", "virtual_memory_committed_mb", "awe_memory_mb"})
-	if tl.EnterpriseSnapshotUnchanged(instanceName, enterpriseKindMemoryClerks, sig) {
+	if tl.EnterpriseSnapshotUnchanged(serverID, enterpriseKindMemoryClerks, sig) {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -520,10 +523,10 @@ func (tl *TimescaleLogger) LogMemoryClerks(ctx context.Context, instanceName str
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_memory_clerks (
-				capture_timestamp, server_instance_name, clerk_name, memory_node,
+				capture_timestamp, server_id, clerk_name, memory_node,
 				pages_mb, virtual_memory_reserved_mb, virtual_memory_committed_mb, awe_memory_mb
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-		`, now, instanceName,
+		`, now, serverID.String(),
 			getStr(r, "clerk_name"),
 			int16(getInt64FromMap(r, "memory_node")),
 			getFloat64(r, "pages_mb"),
@@ -539,22 +542,22 @@ func (tl *TimescaleLogger) LogMemoryClerks(ctx context.Context, instanceName str
 			return fmt.Errorf("memory clerks insert failed at row %d: %w", i, err)
 		}
 	}
-	tl.RememberEnterpriseSnapshot(instanceName, enterpriseKindMemoryClerks, sig)
+	tl.RememberEnterpriseSnapshot(serverID, enterpriseKindMemoryClerks, sig)
 	return nil
 }
 
-func (tl *TimescaleLogger) GetMemoryClerks(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetMemoryClerks(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `
 		SELECT capture_timestamp, clerk_name, memory_node, pages_mb, virtual_memory_reserved_mb, virtual_memory_committed_mb, awe_memory_mb
 		FROM sqlserver_memory_clerks
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID.String(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -582,8 +585,14 @@ func (tl *TimescaleLogger) GetMemoryClerks(ctx context.Context, instanceName str
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) LogTempdbFiles(ctx context.Context, instanceName string, rows []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogTempdbFiles(ctx context.Context, serverID uuid.UUID, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
+		return nil
+	}
+	sig := fingerprintMapRows(serverID, "tempdb_files", rows,
+		[]string{"file_name"},
+		[]string{"allocated_mb", "used_mb", "used_percent"})
+	if tl.EnterpriseSnapshotUnchanged(serverID, "tempdb_files", sig) {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -598,10 +607,10 @@ func (tl *TimescaleLogger) LogTempdbFiles(ctx context.Context, instanceName stri
 		}
 		batch.Queue(`
 			INSERT INTO sqlserver_tempdb_files (
-				capture_timestamp, server_instance_name, database_name, file_name, file_type,
+				capture_timestamp, server_id, database_name, file_name, file_type,
 				allocated_mb, used_mb, free_mb, max_size_mb, growth_mb, used_percent
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		`, now, instanceName,
+		`, now, serverID,
 			getStr(r, "database_name"),
 			getStr(r, "file_name"),
 			getStr(r, "file_type"),
@@ -620,21 +629,22 @@ func (tl *TimescaleLogger) LogTempdbFiles(ctx context.Context, instanceName stri
 			return fmt.Errorf("tempdb files insert failed at row %d: %w", i, err)
 		}
 	}
+	tl.RememberEnterpriseSnapshot(serverID, "tempdb_files", sig)
 	return nil
 }
 
-func (tl *TimescaleLogger) GetTempdbFiles(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetTempdbFiles(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `
 		SELECT database_name, file_name, file_type, allocated_mb, used_mb, free_mb, max_size_mb, growth_mb, used_percent
 		FROM sqlserver_tempdb_files
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -661,7 +671,7 @@ func (tl *TimescaleLogger) GetTempdbFiles(ctx context.Context, instanceName stri
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) LogSchedulerWG(ctx context.Context, instanceName string, rows []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogSchedulerWG(ctx context.Context, serverID uuid.UUID, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -670,9 +680,9 @@ func (tl *TimescaleLogger) LogSchedulerWG(ctx context.Context, instanceName stri
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_scheduler_wg (
-				capture_timestamp, server_instance_name, pool_name, group_name, active_requests, queued_requests, cpu_usage_percent
+				capture_timestamp, server_id, pool_name, group_name, active_requests, queued_requests, cpu_usage_percent
 			) VALUES ($1,$2,$3,$4,$5,$6,$7)
-		`, now, instanceName,
+		`, now, serverID,
 			getStr(r, "pool_name"),
 			getStr(r, "group_name"),
 			getInt64FromMap(r, "active_requests"),
@@ -690,18 +700,18 @@ func (tl *TimescaleLogger) LogSchedulerWG(ctx context.Context, instanceName stri
 	return nil
 }
 
-func (tl *TimescaleLogger) GetSchedulerWG(ctx context.Context, instanceName string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSchedulerWG(ctx context.Context, serverID uuid.UUID, limit int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `
 		SELECT pool_name, group_name, active_requests, queued_requests, cpu_usage_percent
 		FROM sqlserver_scheduler_wg
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT $2
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -8,6 +8,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -22,13 +23,13 @@ type PgConnectionUtilization struct {
 
 // FetchConnectionUtilization returns current used/max connections and saturation %.
 // A single query combines pg_settings and pg_stat_activity to avoid two round trips.
-func (c *PgRepository) FetchConnectionUtilization(instanceName string) (*PgConnectionUtilization, error) {
+func (c *PgRepository) FetchConnectionUtilization(ctx context.Context, instanceName string) (*PgConnectionUtilization, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
-		if c.reconnectInstance(instanceName) {
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
@@ -49,7 +50,9 @@ func (c *PgRepository) FetchConnectionUtilization(instanceName string) (*PgConne
 		FROM pg_stat_activity`
 
 	util := &PgConnectionUtilization{}
-	err := db.QueryRow(query).Scan(&util.MaxConnections, &util.ReservedForSuper, &util.UsedConnections)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err := db.QueryRowContext(ctx, query).Scan(&util.MaxConnections, &util.ReservedForSuper, &util.UsedConnections)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch connection utilization: %v", err)
 	}

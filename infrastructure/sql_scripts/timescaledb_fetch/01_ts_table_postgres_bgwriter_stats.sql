@@ -5,7 +5,7 @@
 
 CREATE TABLE IF NOT EXISTS postgres_bgwriter_stats (
     capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
+    server_id TEXT NOT NULL,
     checkpoints_timed BIGINT DEFAULT 0,
     checkpoints_req BIGINT DEFAULT 0,
     checkpoint_write_time DOUBLE PRECISION DEFAULT 0,
@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS postgres_bgwriter_stats (
     buffers_clean BIGINT DEFAULT 0,
     maxwritten_clean BIGINT DEFAULT 0,
     buffers_backend BIGINT DEFAULT 0,
+    buffers_backend_fsync BIGINT DEFAULT 0,
     buffers_alloc BIGINT DEFAULT 0,
+    stats_reset TIMESTAMPTZ,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );

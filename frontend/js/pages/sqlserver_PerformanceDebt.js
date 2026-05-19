@@ -89,7 +89,27 @@
             fixBlock.style.display = 'block';
             fixEl.textContent = fix;
             copyBtn.style.display = 'inline-block';
+            const isDropIndex = fix.toUpperCase().includes('DROP INDEX');
+            if (isDropIndex) {
+                copyBtn.style.color = 'var(--danger)';
+                copyBtn.title = 'DROP INDEX — requires ≥28 days of observation';
+            } else {
+                copyBtn.style.color = '';
+                copyBtn.title = '';
+            }
             copyBtn.onclick = async () => {
+                if (isDropIndex) {
+                    const ok = window.confirm(
+                        'WARNING — Irreversible Operation\n\n' +
+                        'This is a DROP INDEX statement.\n\n' +
+                        'Before executing, verify that:\n' +
+                        '• At least 28 days of monitoring show zero index usage\n' +
+                        '• SQL Server has not been restarted since monitoring began\n' +
+                        '• No monthly, quarterly, or batch jobs depend on this index\n\n' +
+                        'Copy the script?'
+                    );
+                    if (!ok) return;
+                }
                 try {
                     await navigator.clipboard.writeText(fix);
                     copyBtn.innerHTML = '<i class="fa-solid fa-check"></i> Copied';
@@ -189,8 +209,12 @@
             const key = window.escapeHtml(f.finding_key || '');
             const fix = f.fix_script || '';
             const hasFix = fix && String(fix).trim().length > 0;
+            const isDropIndex = hasFix && fix.toUpperCase().includes('DROP INDEX');
             const fid = 'fd-' + Math.random().toString(36).slice(2);
             window._perfDebtFindings[fid] = f;
+
+            const impact = f.impact_score;
+            const impactDisplay = (impact != null && impact !== '') ? (impact >= 10000 ? (impact / 1000).toFixed(1) + 'K' : Number(impact).toFixed(0)) : '--';
 
             let statusIcon = '<i class="fa-solid fa-circle-check" style="color:var(--success);"></i>';
             let rowStyle = '';
@@ -201,6 +225,10 @@
                 statusIcon = '<i class="fa-solid fa-triangle-exclamation" style="color:var(--warning);"></i>';
                 rowStyle = 'style="background:rgba(245,158,11,0.04);"';
             }
+
+            const fixBtn = hasFix
+                ? `<button class="btn btn-sm btn-outline ${isDropIndex ? 'text-danger' : 'text-accent'}" data-copy-fix="1" data-fix="${encodeURIComponent(fix)}" title="${isDropIndex ? 'DROP INDEX — requires 28-day observation gate' : 'Copy fix script'}"><i class="fa-regular fa-copy"></i></button>`
+                : `<span class="text-muted" title="No fix script available for this finding">N/A</span>`;
 
             return `
                 <tr ${rowStyle}>
@@ -213,12 +241,13 @@
                     <td class="perfdebt-col-object">
                         <div class="perfdebt-cell-ellipsis" title="${obj}">${obj}</div>
                     </td>
+                    <td class="perfdebt-col-impact" title="Impact score (writes saved, improvement score, or fragmentation × pages)">${impactDisplay}</td>
                     <td class="perfdebt-col-captured">${ts}</td>
                     <td class="perfdebt-col-rec">
                         <div class="perfdebt-cell-ellipsis" title="${rec}">${rec}</div>
                     </td>
                     <td class="perfdebt-col-fix">
-                        ${hasFix ? `<button class="btn btn-sm btn-outline text-accent" data-copy-fix="1" data-fix="${encodeURIComponent(fix)}" title="Copy fix script"><i class="fa-regular fa-copy"></i></button>` : `<span class="text-muted" title="No fix script available for this finding">N/A</span>`}
+                        ${fixBtn}
                     </td>
                 </tr>
             `;
@@ -231,6 +260,7 @@
                         <col class="perfdebt-col-status" />
                         <col class="perfdebt-col-finding" />
                         <col class="perfdebt-col-object" />
+                        <col class="perfdebt-col-impact" />
                         <col class="perfdebt-col-captured" />
                         <col class="perfdebt-col-rec" />
                         <col class="perfdebt-col-fix" />
@@ -240,6 +270,7 @@
                             <th class="perfdebt-col-status" style="text-align:center;">Status</th>
                             <th class="perfdebt-col-finding">Finding</th>
                             <th class="perfdebt-col-object">Object</th>
+                            <th class="perfdebt-col-impact" style="text-align:right;" title="Impact score: writes saved (unused indexes), improvement score (missing indexes), fragmentation × pages (fragmentation)">Impact</th>
                             <th class="perfdebt-col-captured">Captured</th>
                             <th class="perfdebt-col-rec">Recommendation</th>
                             <th class="perfdebt-col-fix" style="text-align:right;">Fix</th>
@@ -305,6 +336,19 @@
             const btn = e.target && e.target.closest ? e.target.closest('button[data-copy-fix]') : null;
             if (!btn) return;
             const fix = decodeURIComponent(btn.getAttribute('data-fix') || '');
+            if (fix.toUpperCase().includes('DROP INDEX')) {
+                const ok = window.confirm(
+                    'WARNING — Irreversible Operation\n\n' +
+                    'This is a DROP INDEX statement.\n\n' +
+                    'Before executing, verify that:\n' +
+                    '• At least 28 days of monitoring show zero index usage\n' +
+                    '• SQL Server has not been restarted since monitoring began\n' +
+                    '• No monthly, quarterly, or batch jobs depend on this index\n\n' +
+                    'Dropping an index cannot be undone without a rebuild (which can take hours on large tables).\n\n' +
+                    'Copy the script?'
+                );
+                if (!ok) return;
+            }
             try {
                 await navigator.clipboard.writeText(fix);
                 btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied';
@@ -348,24 +392,26 @@
                     .perfdebt-finding-link:focus { outline: none; border-color: var(--accent-blue); border-radius: 6px; padding: 0.1rem 0.25rem; }
                     .perfdebt-table col.perfdebt-col-status { width: 48px; max-width: 48px; }
                     .perfdebt-table col.perfdebt-col-finding { width: 11%; }
-                    .perfdebt-table col.perfdebt-col-object { width: 21%; min-width: 150px; }
-                    .perfdebt-table col.perfdebt-col-captured { width: 116px; }
-                    .perfdebt-table col.perfdebt-col-rec { width: 38%; min-width: 260px; }
+                    .perfdebt-table col.perfdebt-col-object { width: 19%; min-width: 130px; }
+                    .perfdebt-table col.perfdebt-col-impact { width: 72px; max-width: 72px; }
+                    .perfdebt-table col.perfdebt-col-captured { width: 110px; }
+                    .perfdebt-table col.perfdebt-col-rec { width: 36%; min-width: 240px; }
                     .perfdebt-table col.perfdebt-col-fix { width: 72px; max-width: 72px; }
                     .perfdebt-table .perfdebt-col-captured { white-space: nowrap; color: var(--text-secondary); font-size: 0.75rem; }
                     .perfdebt-table .perfdebt-col-status { text-align: center; width: 48px; }
+                    .perfdebt-table .perfdebt-col-impact { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
                     .perfdebt-table .perfdebt-col-fix { text-align: right; }
                 </style>
                 <div class="page-title flex-between">
                     <div>
                         <h1><i class="fa-solid fa-screwdriver-wrench text-accent"></i> Performance Debt</h1>
-                        <p class="subtitle">Instance: ${window.escapeHtml(instance.name)} | Maintenance & Risk (hourly snapshots)</p>
+                        <p class="subtitle">Instance: ${window.escapeHtml(instance.name)} | Maintenance & Risk (every 6 hours)</p>
                     </div>
                     <div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap; justify-content:flex-end;">
                         ${window.renderStatusStrip({ lastUpdateId: 'perfDebtLastRefresh', sourceBadgeId: 'perfDebtSourceBadge', includeHealth: false, includeFreshness: false, autoRefreshText: '' })}
                         <div class="flex-between" style="align-items:center; gap:0.5rem;">
-                            <span class="text-muted" style="font-size:0.8rem;">Lookback</span>
-                            <select id="perfDebtLookback" class="custom-select" style="width:auto; padding:0.4rem 0.6rem;">
+                            <span class="text-muted" style="font-size:0.8rem;" title="Controls how far back to fetch findings from TimescaleDB. Note: unused index drop recommendations require ≥28 days of continuous observation regardless of lookback window.">Lookback</span>
+                            <select id="perfDebtLookback" class="custom-select" style="width:auto; padding:0.4rem 0.6rem;" title="Controls how far back to fetch findings. Unused index recommendations require ≥28 days of observation — a short lookback does not shorten the required observation period.">
                                 <option value="2">2h</option>
                                 <option value="6">6h</option>
                                 <option value="24">24h</option>
@@ -441,7 +487,7 @@
             const dbQS = db ? `&database=${encodeURIComponent(db)}` : '';
             const url = `/api/sqlserver/performance-debt?instance=${encodeURIComponent(instance.name)}&lookback_hours=${encodeURIComponent(String(lookback))}${dbQS}`;
             const t0 = Date.now();
-            const resp = await fetch(url, { cache: 'no-store' });
+            const resp = await window.apiClient.authenticatedFetch(url, { cache: 'no-store' });
             window.updateSourceBadge('perfDebtSourceBadge', resp.headers.get('X-Data-Source'));
             let data;
             try {
@@ -500,6 +546,17 @@
                 const badgeClass = catSeverity === 'CRITICAL' ? 'badge-danger' : (catSeverity === 'WARNING' ? 'badge-warning' : 'badge-success');
                 const sectionId = 'perfdebt-sec-' + idx + '-' + Math.random().toString(36).slice(2, 11);
                 const collapsed = (sec !== 'Index Health'); // keep Index Health open by default
+
+                const observationBanner = (sec === 'Index Health') ? `
+                    <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.35);border-radius:8px;padding:0.55rem 0.9rem;margin-bottom:0.6rem;display:flex;align-items:flex-start;gap:0.55rem;font-size:0.78rem;">
+                        <i class="fa-solid fa-triangle-exclamation" style="color:var(--warning);margin-top:2px;flex-shrink:0;"></i>
+                        <span style="color:var(--text-secondary);"><strong style="color:var(--warning);">Observation window required:</strong>
+                        <code>sys.dm_db_index_usage_stats</code> resets to zero on every SQL Server restart — including planned maintenance and failovers.
+                        Index drop recommendations require <strong>≥ 28 days</strong> of continuous monitoring with zero usage to be actionable.
+                        Findings labelled "(Monitoring)" are not yet drop candidates. The copy button for DROP INDEX scripts shows a confirmation dialog.</span>
+                    </div>
+                ` : '';
+
                 return `
                     <div class="table-card glass-panel mt-3" style="padding:0.75rem;" data-perfdebt-panel="1">
                         <div class="card-header" data-perfdebt-toggle="1" data-perfdebt-target="${sectionId}" style="cursor:pointer;">
@@ -510,13 +567,14 @@
                             </h3>
                         </div>
                         <div id="${sectionId}" data-perfdebt-content="1" class="table-responsive ${collapsed ? 'hidden' : ''}" style="margin-top:0.5rem;">
+                            ${observationBanner}
                             ${renderTable(items, sec)}
                         </div>
                     </div>
                 `;
             }).join('');
 
-            body.innerHTML = html || `<div class="glass-panel" style="padding:1rem;"><div class="text-muted">No findings available.</div></div>`;
+            body.innerHTML = html || `<div class="glass-panel" style="padding:2rem; text-align:center;"><i class="fa-solid fa-check-circle" style="font-size:2rem; color:var(--success); opacity:0.5; margin-bottom:0.75rem; display:block;"></i><h4 style="color:var(--text-muted); font-size:0.85rem;">No Performance Debt Found</h4><p style="color:var(--text-muted); font-size:0.78rem; margin:0;">Either all metrics are healthy, or the collector has not yet generated findings for this instance. Try increasing the lookback window or wait for the next collection cycle.</p></div>`;
         }
 
         // If user changes global Target Database while staying on this page, refresh in-place.

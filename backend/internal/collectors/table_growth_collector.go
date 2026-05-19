@@ -11,6 +11,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
@@ -28,6 +29,6 @@ func CollectSQLServerTableGrowthSnapshot(ctx context.Context, dbq repository.Que
 
 // PersistSQLServerTableGrowthHistory is an alias of PersistSQLServerTableSizeHistory.
 // It writes one snapshot row per table into monitor.table_size_history.
-func PersistSQLServerTableGrowthHistory(ctx context.Context, tl *hot.TimescaleLogger, serverID string, rows []SqlServerTableUsageRow, capture time.Time) (int, error) {
+func PersistSQLServerTableGrowthHistory(ctx context.Context, tl *hot.TimescaleLogger, serverID uuid.UUID, rows []SqlServerTableUsageRow, capture time.Time) (int, error) {
 	return PersistSQLServerTableSizeHistory(ctx, tl, serverID, rows, capture)
 }

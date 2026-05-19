@@ -80,7 +80,7 @@ window.CNPGClusterTopologyView = async function() {
         checkbox.addEventListener('change', function() {
             if (this.checked) {
                 if (window.cnpgTopologyInterval) clearInterval(window.cnpgTopologyInterval);
-                window.cnpgTopologyInterval = setInterval(window.loadCNPGTopology, 15000);
+                window.cnpgTopologyInterval = window.registerInterval(window.loadCNPGTopology, 15000);
             } else {
                 clearInterval(window.cnpgTopologyInterval);
                 window.cnpgTopologyInterval = null;
@@ -89,7 +89,7 @@ window.CNPGClusterTopologyView = async function() {
     }
 
     await window.loadCNPGTopology();
-    window.cnpgTopologyInterval = setInterval(window.loadCNPGTopology, 15000);
+    window.cnpgTopologyInterval = window.registerInterval(window.loadCNPGTopology, 15000);
 };
 
 window.loadCNPGTopology = async function() {

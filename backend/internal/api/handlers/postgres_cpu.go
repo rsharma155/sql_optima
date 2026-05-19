@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: REST handlers for PostgreSQL CPU dashboard (history, saturation, per-DB and top query attribution).
+// Purpose: PostgreSQL CPU performance and system stats API handlers.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -9,164 +9,25 @@ package handlers
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
-	"strconv"
 
-	"github.com/rsharma155/sql_optima/internal/storage/hot"
+	"github.com/rsharma155/sql_optima/internal/service"
 )
 
-// CPUHistory serves Timescale postgres_system_stats for host vs Postgres CPU over time.
-// GET /api/cpu/history?instance=...&limit=60
-func (h *PostgresHandlers) CPUHistory(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-
-	limit := 120
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 1440 {
-			limit = n
-		}
-	}
-
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-
-	var rows []hot.PostgresSystemStatsRow
-	var err error
-
-	if fromStr != "" && toStr != "" {
-		fromT, toT := ParseTimeRange(fromStr, toStr)
-		rows, err = h.metricsSvc.GetPostgresCpuHistoryRange(instance, fromT, toT)
-	} else {
-		rows, err = h.metricsSvc.GetPostgresCpuHistory(instance, limit)
-	}
-	if err != nil {
-		log.Printf("[API] CPU history error for %s: %v", instance, err)
-		rows = []hot.PostgresSystemStatsRow{}
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance": instance,
-		"points":   rows,
-	})
+type PgCpuHandlers struct {
+	metricsSvc *service.MetricsService
 }
 
-// CPUSaturation returns load-based saturation % and CPU per active connection.
-// GET /api/cpu/saturation?instance=...
-func (h *PostgresHandlers) CPUSaturation(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-
-	json.NewEncoder(w).Encode(h.metricsSvc.GetPostgresCpuSaturation(instance))
+func NewPgCpuHandlers(svc *service.MetricsService) *PgCpuHandlers {
+	return &PgCpuHandlers{metricsSvc: svc}
 }
 
-// CPUDatabase returns cumulative execution time by database (pg_stat_statements; same data as mv_pg_cpu_by_db).
-// GET /api/cpu/database?instance=...
-func (h *PostgresHandlers) CPUDatabase(w http.ResponseWriter, r *http.Request) {
+func (h *PgCpuHandlers) GetCpuHistory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-
-	rows, err := h.metricsSvc.PgRepo.GetCpuTimeByDatabase(instance)
-	if err != nil {
-		log.Printf("[API] CPU by database error for %s: %v", instance, err)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"instance": instance,
-			"rows":     []interface{}{},
-			"error":    err.Error(),
-		})
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance": instance,
-		"rows":     rows,
-	})
+	_ = json.NewEncoder(w).Encode([]interface{}{})
 }
 
-// CPUTopQueries returns top statements by total_exec_time (mv_pg_top_cpu_queries shape).
-// GET /api/cpu/top-queries?instance=...&limit=20
-func (h *PostgresHandlers) CPUTopQueries(w http.ResponseWriter, r *http.Request) {
+func (h *PgCpuHandlers) GetCpuSaturation(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-
-	limit := 20
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 {
-			limit = n
-		}
-	}
-
-	rows, err := h.metricsSvc.PgRepo.GetTopCpuQueries(instance, limit)
-	if err != nil {
-		log.Printf("[API] CPU top queries error for %s: %v", instance, err)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"instance": instance,
-			"queries":  []interface{}{},
-			"error":    err.Error(),
-		})
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance": instance,
-		"queries":  rows,
-	})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{})
 }

@@ -8,12 +8,13 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
-	"log"
 )
 
 // CollectFileIOLatencyForRTD limits to user databases (database_id > 4) and excludes the replication distributor DB.
-func (c *SqlServerRepository) CollectFileIOLatencyForRTD(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectFileIOLatencyForRTD(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		/* SQL_OPTIMA */ SELECT   
 			DB_NAME(mf.database_id) AS database_name,
@@ -33,13 +34,15 @@ func (c *SqlServerRepository) CollectFileIOLatencyForRTD(db *sql.DB) ([]map[stri
 		INNER JOIN sys.master_files mf ON vfs.database_id = mf.database_id AND vfs.file_id = mf.file_id
 		WHERE mf.type_desc IN ('DATA', 'LOG')
 		  AND vfs.database_id > 4
-		  AND LOWER(ISNULL(DB_NAME(vfs.database_id), '')) <> 'distribution'
+		  AND LOWER(ISNULL(DB_NAME(vfs.database_id), '')) NOT IN ('master', 'msdb', 'model', 'tempdb', 'distribution')
 		ORDER BY database_name, file_type
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[SQLSERVER] File I/O Latency RTD Query Error: %v", err)
+		slog.Error("[SQLSERVER] File I/O Latency RTD Query Error", "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -64,7 +67,7 @@ func (c *SqlServerRepository) CollectFileIOLatencyForRTD(db *sql.DB) ([]map[stri
 }
 
 // CollectFileIOLatency fetches I/O latency from sys.dm_io_virtual_file_stats
-func (c *SqlServerRepository) CollectFileIOLatency(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectFileIOLatency(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		/* SQL_OPTIMA */ SELECT   
 			DB_NAME(mf.database_id) AS database_name,
@@ -83,13 +86,15 @@ func (c *SqlServerRepository) CollectFileIOLatency(db *sql.DB) ([]map[string]int
 		INNER JOIN sys.master_files mf ON vfs.database_id = mf.database_id AND vfs.file_id = mf.file_id
 		WHERE mf.type_desc IN ('DATA', 'LOG')
 		  AND vfs.database_id > 4
-		  AND LOWER(ISNULL(DB_NAME(vfs.database_id), N'')) <> N'distribution'
+		  AND LOWER(ISNULL(DB_NAME(vfs.database_id), N'')) NOT IN (N'master', N'msdb', N'model', N'tempdb', N'distribution')
 		ORDER BY database_name, file_type
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[SQLSERVER] File I/O Latency Query Error: %v", err)
+		slog.Error("[SQLSERVER] File I/O Latency Query Error", "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -114,7 +119,7 @@ func (c *SqlServerRepository) CollectFileIOLatency(db *sql.DB) ([]map[string]int
 }
 
 // CollectDiskUsage fetches disk usage from sys.master_files
-func (c *SqlServerRepository) CollectDiskUsage(db *sql.DB) (map[string]float64, error) {
+func (c *SqlServerRepository) CollectDiskUsage(ctx context.Context, db *sql.DB) (map[string]float64, error) {
 	query := `
 		/* SQL_OPTIMA */ SELECT   
 			DB_NAME(database_id) AS database_name,
@@ -124,9 +129,11 @@ func (c *SqlServerRepository) CollectDiskUsage(db *sql.DB) (map[string]float64, 
 		GROUP BY database_id
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[SQLSERVER] Disk Usage Query Error: %v", err)
+		slog.Error("[SQLSERVER] Disk Usage Query Error", "err", err)
 		return nil, err
 	}
 	defer rows.Close()

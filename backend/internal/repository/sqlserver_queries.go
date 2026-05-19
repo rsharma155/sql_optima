@@ -8,10 +8,10 @@
 package repository
 
 import (
+	"log/slog"
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 )
 
@@ -67,9 +67,12 @@ func (c *SqlServerRepository) CollectLongRunningQueries(ctx context.Context, db 
 		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		ORDER BY r.total_elapsed_time DESC`, minDurationMs)
 
+
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[SQLSERVER] CollectLongRunningQueries Error: %v", err)
+		slog.Error("[SQLSERVER] CollectLongRunningQueries Error", "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -129,6 +132,9 @@ func (c *SqlServerRepository) CollectLiveRunningQueries(ctx context.Context, db 
 		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		ORDER BY r.total_elapsed_time DESC`
 
+
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
 	rows, err := db.QueryContext(ctx, query, strings.TrimSpace(database))
 	if err != nil {
 		return nil, err
@@ -163,7 +169,7 @@ func (c *SqlServerRepository) CollectLiveRunningQueries(ctx context.Context, db 
 	return results, nil
 }
 
-func (c *SqlServerRepository) CollectProcedureStats(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectProcedureStats(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		/* SQL_OPTIMA */ SELECT   TOP 20 
 			DB_NAME(ps.database_id) AS database_name,
@@ -183,7 +189,9 @@ func (c *SqlServerRepository) CollectProcedureStats(db *sql.DB) ([]map[string]in
 		ORDER BY SUM(ps.total_worker_time) DESC
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

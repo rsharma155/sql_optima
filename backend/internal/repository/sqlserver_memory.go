@@ -8,31 +8,38 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
-	"log"
 )
 
 // CollectMemoryMetrics fetches memory statistics from sys.dm_os_performance_counters and sys.dm_os_sys_memory
-func (c *SqlServerRepository) CollectMemoryMetrics(db *sql.DB) (float64, error) {
+func (c *SqlServerRepository) CollectMemoryMetrics(ctx context.Context, db *sql.DB) (float64, error) {
 	// Page Life Expectancy (PLE)
 	pleQuery := `/* SQL_OPTIMA */ SELECT   cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Page life expectancy' AND object_name LIKE '%Buffer Manager%'`
 	var ple float64
-	if err := db.QueryRow(pleQuery).Scan(&ple); err != nil {
-		log.Printf("[SQLSERVER] PLE Query Error: %v", err)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, pleQuery).Scan(&ple); err != nil {
+		slog.Error("[SQLSERVER] PLE Query Error", "err", err)
 	}
 
 	// Buffer Pool Size
 	bufQuery := `/* SQL_OPTIMA */ SELECT   cntr_value / 1024 FROM sys.dm_os_performance_counters WHERE counter_name = 'Buffer Pool Size (KB)'`
 	var bufPoolSize float64
-	if err := db.QueryRow(bufQuery).Scan(&bufPoolSize); err != nil {
-		log.Printf("[SQLSERVER] Buffer Pool Query Error: %v", err)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, bufQuery).Scan(&bufPoolSize); err != nil {
+		slog.Error("[SQLSERVER] Buffer Pool Query Error", "err", err)
 	}
 
 	// Memory Clerk Count
 	clerkQuery := `/* SQL_OPTIMA */ SELECT   COUNT(DISTINCT memory_clerk_address) FROM sys.dm_os_memory_clerks`
 	var clerkCount int
-	if err := db.QueryRow(clerkQuery).Scan(&clerkCount); err != nil {
-		log.Printf("[SQLSERVER] Memory Clerk Query Error: %v", err)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, clerkQuery).Scan(&clerkCount); err != nil {
+		slog.Error("[SQLSERVER] Memory Clerk Query Error", "err", err)
 	}
 
 	// Calculate memory usage percentage
@@ -43,15 +50,17 @@ func (c *SqlServerRepository) CollectMemoryMetrics(db *sql.DB) (float64, error) 
 			CAST(total_physical_memory_kb AS FLOAT) * 100
 		FROM sys.dm_os_sys_memory
 	`
-	if err := db.QueryRow(memQuery).Scan(&memUsage); err != nil {
-		log.Printf("[SQLSERVER] Memory Usage Query Error: %v", err)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, memQuery).Scan(&memUsage); err != nil {
+		slog.Error("[SQLSERVER] Memory Usage Query Error", "err", err)
 	}
 
 	return memUsage, nil
 }
 
 // CollectMemoryClerks fetches memory clerk information
-func (c *SqlServerRepository) CollectMemoryClerks(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectMemoryClerks(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		/* SQL_OPTIMA */ SELECT   
 			type AS clerk_name,
@@ -66,7 +75,9 @@ func (c *SqlServerRepository) CollectMemoryClerks(db *sql.DB) ([]map[string]inte
 		ORDER BY pages_mb DESC
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +103,7 @@ func (c *SqlServerRepository) CollectMemoryClerks(db *sql.DB) ([]map[string]inte
 }
 
 // CollectMemoryGrants fetches memory grant information
-func (c *SqlServerRepository) CollectMemoryGrants(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectMemoryGrants(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	// Shape matches Timescale LogMemoryGrants: user DBs only (database_id > 4), user sessions.
 	query := `
 		/* SQL_OPTIMA */ SELECT   TOP 20
@@ -127,7 +138,9 @@ func (c *SqlServerRepository) CollectMemoryGrants(db *sql.DB) ([]map[string]inte
 		ORDER BY mg.granted_memory_kb DESC
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

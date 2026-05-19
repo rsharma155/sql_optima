@@ -8,14 +8,15 @@
 package repository
 
 import (
-	"log"
+	"log/slog"
+	"context"
 	"strings"
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/models"
 )
 
-func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetrics {
+func (c *SqlServerRepository) FetchAgentJobs(ctx context.Context, instanceName string) models.JobMetrics {
 	var metrics models.JobMetrics
 	metrics.InstanceName = instanceName
 	metrics.Timestamp = time.Now().Format("2006-01-02 15:04:05")
@@ -24,12 +25,12 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
-		log.Printf("[SQLSERVER] Agent Jobs Engine Ping Failed: Database pointer absolutely nil for %s", instanceName)
+		slog.Error("[SQLSERVER] Agent Jobs Engine Ping Failed: Database pointer absolutely nil for", "val", instanceName)
 		return metrics
 	}
 
 	if err := db.Ping(); err != nil {
-		log.Printf("[SQLSERVER] Agent Jobs Connection Loop broken on %s: %v", instanceName, err)
+		slog.Info("[SQLSERVER] Agent Jobs Connection Loop broken on", "target", instanceName, "err", err)
 		return metrics
 	}
 
@@ -41,8 +42,10 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 			SUM(CASE WHEN enabled = 0 THEN 1 ELSE 0 END) AS DisabledJobs
 		FROM msdb.dbo.sysjobs WITH (NOLOCK)
 	`
-	if err := db.QueryRow(summaryQuery).Scan(&metrics.Summary.TotalJobs, &metrics.Summary.EnabledJobs, &metrics.Summary.DisabledJobs); err != nil {
-		log.Printf("[SQLSERVER] FetchAgentJobs: Failed to fetch summary for %s: %v", instanceName, err)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, summaryQuery).Scan(&metrics.Summary.TotalJobs, &metrics.Summary.EnabledJobs, &metrics.Summary.DisabledJobs); err != nil {
+		slog.Error("[SQLSERVER] FetchAgentJobs: Failed to fetch summary", "target", instanceName, "err", err)
 		metrics.Summary.TotalJobs = -1 // Indicate error state
 		metrics.LastError = "failed to fetch job summary"
 		return metrics
@@ -50,8 +53,10 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 
 	// Pull running jobs explicit checks
 	runningQuery := `SELECT /* SQL_OPTIMA */   COUNT(*) FROM msdb.dbo.sysjobactivity WITH (NOLOCK) WHERE start_execution_date IS NOT NULL AND stop_execution_date IS NULL`
-	if err := db.QueryRow(runningQuery).Scan(&metrics.Summary.RunningJobs); err != nil {
-		log.Printf("[SQLSERVER] FetchAgentJobs: Failed to fetch running jobs for %s: %v", instanceName, err)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, runningQuery).Scan(&metrics.Summary.RunningJobs); err != nil {
+		slog.Error("[SQLSERVER] FetchAgentJobs: Failed to fetch running jobs", "target", instanceName, "err", err)
 		metrics.LastError = "failed to fetch running jobs"
 		return metrics
 	}
@@ -62,8 +67,10 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 		JOIN msdb.dbo.sysjobs j WITH (NOLOCK) ON h.job_id = j.job_id
 		WHERE h.run_status = 0 AND h.run_date >= CAST(CONVERT(VARCHAR(8), GETUTCDATE()-1, 112) AS INT) AND h.step_id = 0
 	`
-	if err := db.QueryRow(failedQuery).Scan(&metrics.Summary.FailedJobs); err != nil {
-		log.Printf("[SQLSERVER] FetchAgentJobs: Failed to fetch failed jobs for %s: %v", instanceName, err)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, failedQuery).Scan(&metrics.Summary.FailedJobs); err != nil {
+		slog.Error("[SQLSERVER] FetchAgentJobs: Failed to fetch failed jobs", "target", instanceName, "err", err)
 		metrics.LastError = "failed to fetch failed jobs"
 		return metrics
 	}
@@ -101,7 +108,9 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 		) max_h ON j.job_id = max_h.job_id
 		LEFT JOIN msdb.dbo.sysjobhistory h WITH (NOLOCK) ON max_h.instance_id = h.instance_id
 	`
-	listRows, errL := db.Query(listQuery)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	listRows, errL := db.QueryContext(ctx, listQuery)
 	if errL == nil {
 		defer listRows.Close()
 		for listRows.Next() {
@@ -124,7 +133,9 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 		JOIN msdb.dbo.sysjobschedules js WITH (NOLOCK) ON j.job_id = js.job_id
 		JOIN msdb.dbo.sysschedules s WITH (NOLOCK) ON js.schedule_id = s.schedule_id
 	`
-	schedRows, errS := db.Query(schedQuery)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	schedRows, errS := db.QueryContext(ctx, schedQuery)
 	if errS == nil {
 		defer schedRows.Close()
 		for schedRows.Next() {
@@ -153,7 +164,9 @@ func (c *SqlServerRepository) FetchAgentJobs(instanceName string) models.JobMetr
 		WHERE h.run_status = 0 AND h.step_id > 0
 		ORDER BY h.run_date DESC, h.run_time DESC
 	`
-	failRows, errF := db.Query(failQuery)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	failRows, errF := db.QueryContext(ctx, failQuery)
 	if errF == nil {
 		defer failRows.Close()
 		for failRows.Next() {

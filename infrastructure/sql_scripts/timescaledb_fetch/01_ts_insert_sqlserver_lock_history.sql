@@ -3,5 +3,5 @@
 -- Target Table: sqlserver_lock_history
 -- Description: Batch inserts lock counts and deadlock counts per database
 
-INSERT INTO sqlserver_lock_history (capture_timestamp, server_instance_name, database_name, total_locks, deadlocks)
+INSERT INTO sqlserver_lock_history (capture_timestamp, server_id, database_name, total_locks, deadlocks)
 VALUES ($1, $2, $3, $4, $5);

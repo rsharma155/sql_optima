@@ -79,6 +79,9 @@ type PgReplicationStat struct {
 	State          string  `json:"state"`
 	SyncState      string  `json:"sync_state"`
 	ReplayLagMB    float64 `json:"replay_lag_mb"`
+	WriteLagSec    float64 `json:"write_lag_sec"`
+	FlushLagSec    float64 `json:"flush_lag_sec"`
+	ReplayLagSec   float64 `json:"replay_lag_sec"`
 }
 
 type PgReplicationStats struct {

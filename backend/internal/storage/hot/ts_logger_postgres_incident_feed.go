@@ -1,7 +1,8 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
 // Purpose: Unified incident feed logger — persists blocking events, long queries,
-//          deadlock spikes to TimescaleDB for dashboard consumption.
+//
+//	deadlock spikes to TimescaleDB for dashboard consumption.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -12,14 +13,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 )
 
 type PgIncidentFeedRow struct {
-	Ts           time.Time       `json:"ts"`
-	InstanceID   string          `json:"instance_id"`
+	Ts           time.Time       `json:"capture_timestamp"`
+	ServerID     uuid.UUID       `json:"server_id" db:"server_id"`
 	IncidentType string          `json:"incident_type"`
 	Severity     string          `json:"severity"`
 	PID          int             `json:"pid,omitempty"`
@@ -39,7 +41,7 @@ func (tl *TimescaleLogger) LogPgIncidentFeed(ctx context.Context, rows []PgIncid
 
 	q := `
 		INSERT INTO monitor.pg_incident_feed_ts (
-			ts, instance_id, incident_type, severity, pid,
+			capture_timestamp, server_id, incident_type, severity, pid,
 			blocked_count, duration_ms, usename, datname,
 			query_snippet, detail_json
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -54,7 +56,7 @@ func (tl *TimescaleLogger) LogPgIncidentFeed(ctx context.Context, rows []PgIncid
 		}
 
 		batch.Queue(q,
-			r.Ts, r.InstanceID, r.IncidentType, r.Severity, r.PID,
+			r.Ts, r.ServerID, r.IncidentType, r.Severity, r.PID,
 			r.BlockedCount, r.DurationMs, r.Usename, r.Datname,
 			snippet, r.DetailJSON,
 		)
@@ -72,9 +74,9 @@ func (tl *TimescaleLogger) LogPgIncidentFeed(ctx context.Context, rows []PgIncid
 	return nil
 }
 
-// GetPgIncidentFeed returns the most recent incidents for an instance.
+// GetPgIncidentFeed returns the most recent incidents for an serverID.
 // lookbackMins controls the time window; limit caps total rows returned.
-func (tl *TimescaleLogger) GetPgIncidentFeed(ctx context.Context, instanceName string, lookbackMins int, limit int) ([]PgIncidentFeedRow, error) {
+func (tl *TimescaleLogger) GetPgIncidentFeed(ctx context.Context, serverID uuid.UUID, lookbackMins int, limit int) ([]PgIncidentFeedRow, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -86,17 +88,17 @@ func (tl *TimescaleLogger) GetPgIncidentFeed(ctx context.Context, instanceName s
 	defer cancel()
 
 	q := `
-		SELECT ts, instance_id, incident_type, severity, pid,
+		SELECT capture_timestamp, server_id, incident_type, severity, pid,
 		       blocked_count, duration_ms, usename, datname,
 		       query_snippet, detail_json
 		FROM monitor.pg_incident_feed_ts
-		WHERE UPPER(instance_id) = UPPER($1)
-		  AND ts >= NOW() - ($2 * INTERVAL '1 minute')
-		ORDER BY ts DESC
+		WHERE server_id = $1
+		  AND capture_timestamp >= NOW() - ($2 * INTERVAL '1 minute')
+		ORDER BY capture_timestamp DESC
 		LIMIT $3
 	`
 
-	rows, err := tl.pool.Query(ctx, q, instanceName, lookbackMins, limit)
+	rows, err := tl.pool.Query(ctx, q, serverID, lookbackMins, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +108,7 @@ func (tl *TimescaleLogger) GetPgIncidentFeed(ctx context.Context, instanceName s
 	for rows.Next() {
 		var r PgIncidentFeedRow
 		err := rows.Scan(
-			&r.Ts, &r.InstanceID, &r.IncidentType, &r.Severity, &r.PID,
+			&r.Ts, &r.ServerID, &r.IncidentType, &r.Severity, &r.PID,
 			&r.BlockedCount, &r.DurationMs, &r.Usename, &r.Datname,
 			&r.QuerySnippet, &r.DetailJSON,
 		)

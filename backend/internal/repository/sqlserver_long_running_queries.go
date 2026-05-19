@@ -8,9 +8,10 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -34,7 +35,7 @@ type LongRunningQueryStats struct {
 	RowCount             int64
 }
 
-func (c *SqlServerRepository) FetchLongRunningQueries(instanceName string, minDurationSeconds int) ([]LongRunningQueryStats, error) {
+func (c *SqlServerRepository) FetchLongRunningQueries(ctx context.Context, instanceName string, minDurationSeconds int) ([]LongRunningQueryStats, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
@@ -86,9 +87,11 @@ func (c *SqlServerRepository) FetchLongRunningQueries(instanceName string, minDu
 		AND LOWER(ISNULL(s.program_name, '')) NOT IN ('dbmonitor_user', 'sql-optima')
 		ORDER BY r.total_elapsed_time DESC`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[SQLSERVER] FetchLongRunningQueries Error for %s: %v", instanceName, err)
+		slog.Error("[SQLSERVER] FetchLongRunningQueries Error", "target", instanceName, "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -107,7 +110,7 @@ func (c *SqlServerRepository) FetchLongRunningQueries(instanceName string, minDu
 			&blockingSessionID, &s.Status, &cpuTime, &totalElapsed,
 			&reads, &writes, &grantedMemory, &rowCount,
 		); err != nil {
-			log.Printf("[SQLSERVER] FetchLongRunningQueries Scan Error: %v", err)
+			slog.Error("[SQLSERVER] FetchLongRunningQueries Scan Error", "err", err)
 			continue
 		}
 

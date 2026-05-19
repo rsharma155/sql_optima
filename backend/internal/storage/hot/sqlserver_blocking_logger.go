@@ -21,12 +21,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/rsharma155/sql_optima/internal/models"
 )
 
 // LogSQLServerBlockingSnapshots persists blocking snapshots to TimescaleDB
-func (tl *TimescaleLogger) LogSQLServerBlockingSnapshots(ctx context.Context, instanceID string, snapshots []models.SQLServerBlockingSnapshot) error {
+func (tl *TimescaleLogger) LogSQLServerBlockingSnapshots(ctx context.Context, serverID uuid.UUID, snapshots []models.SQLServerBlockingSnapshot) error {
 	if len(snapshots) == 0 {
 		return nil
 	}
@@ -34,7 +35,7 @@ func (tl *TimescaleLogger) LogSQLServerBlockingSnapshots(ctx context.Context, in
 	batch := &pgx.Batch{}
 	query := `
 		INSERT INTO sqlserver_blocking_snapshots (
-			ts, instance_id, session_id, blocking_session_id, wait_type, wait_duration_ms,
+			capture_timestamp, server_id, session_id, blocking_session_id, wait_type, wait_duration_ms,
 			database_name, sql_hash, plan_hash, login_name, host_name, program_name,
 			open_transaction_count, transaction_start_time, cpu_time, reads, writes, logical_reads,
 			transaction_isolation_level, memory_usage, transaction_log_bytes_used,
@@ -51,7 +52,7 @@ func (tl *TimescaleLogger) LogSQLServerBlockingSnapshots(ctx context.Context, in
 		}
 
 		batch.Queue(query,
-			s.Timestamp, instanceID, s.SessionID, s.BlockingSessionID, s.WaitType, s.WaitDurationMs,
+			s.Timestamp, serverID, s.SessionID, s.BlockingSessionID, s.WaitType, s.WaitDurationMs,
 			s.DatabaseName, sqlHash, planHash, s.LoginName, s.HostName, s.ProgramName,
 			s.OpenTransactionCount, s.TransactionStartTime, s.CpuTime, s.Reads, s.Writes, s.LogicalReads,
 			s.TransactionIsolationLevel, s.MemoryUsage, s.TransactionLogBytesUsed, s.TransactionLogBytesReserved,
@@ -68,7 +69,7 @@ func (tl *TimescaleLogger) LogSQLServerBlockingSnapshots(ctx context.Context, in
 }
 
 // LogSQLServerBlockingLocks persists detailed lock info to TimescaleDB
-func (tl *TimescaleLogger) LogSQLServerBlockingLocks(ctx context.Context, instanceID string, locks []models.SQLServerBlockingLock) error {
+func (tl *TimescaleLogger) LogSQLServerBlockingLocks(ctx context.Context, serverID uuid.UUID, locks []models.SQLServerBlockingLock) error {
 	if len(locks) == 0 {
 		return nil
 	}
@@ -76,12 +77,12 @@ func (tl *TimescaleLogger) LogSQLServerBlockingLocks(ctx context.Context, instan
 	batch := &pgx.Batch{}
 	query := `
 		INSERT INTO sqlserver_blocking_locks (
-			ts, instance_id, session_id, resource_type, request_mode, request_status, resource_description, wait_duration_ms
+			capture_timestamp, server_id, session_id, resource_type, request_mode, request_status, resource_description, wait_duration_ms
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`
 	for _, l := range locks {
 		batch.Queue(query,
-			l.Timestamp, instanceID, l.SessionID, l.ResourceType, l.RequestMode, l.RequestStatus, l.ResourceDescription, l.WaitDurationMs,
+			l.Timestamp, serverID, l.SessionID, l.ResourceType, l.RequestMode, l.RequestStatus, l.ResourceDescription, l.WaitDurationMs,
 		)
 	}
 
@@ -96,7 +97,7 @@ func (tl *TimescaleLogger) LogSQLServerBlockingLocks(ctx context.Context, instan
 // LogSQLServerDeadlockEvents persists deadlock events to TimescaleDB.
 // Uses ON CONFLICT DO NOTHING so re-runs after a service restart within the 24h XE
 // window do not produce duplicate rows (backed by idx_sqlserver_deadlock_events_dedup).
-func (tl *TimescaleLogger) LogSQLServerDeadlockEvents(ctx context.Context, instanceID string, events []models.SQLServerDeadlockEvent) error {
+func (tl *TimescaleLogger) LogSQLServerDeadlockEvents(ctx context.Context, serverID uuid.UUID, events []models.SQLServerDeadlockEvent) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -104,9 +105,9 @@ func (tl *TimescaleLogger) LogSQLServerDeadlockEvents(ctx context.Context, insta
 	batch := &pgx.Batch{}
 	query := `
 		INSERT INTO sqlserver_deadlock_events (
-			ts, instance_id, database_name, victim_session_id, victim_sql_hash, deadlock_graph
+			capture_timestamp, server_id, database_name, victim_session_id, victim_sql_hash, deadlock_graph
 		) VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (ts, instance_id, victim_session_id) DO NOTHING
+		ON CONFLICT (capture_timestamp, server_id, victim_session_id) DO NOTHING
 	`
 	for _, e := range events {
 		var victimHash int64
@@ -115,7 +116,7 @@ func (tl *TimescaleLogger) LogSQLServerDeadlockEvents(ctx context.Context, insta
 		}
 
 		batch.Queue(query,
-			e.Timestamp, instanceID, e.DatabaseName, e.VictimSessionID, victimHash, e.DeadlockGraph,
+			e.Timestamp, serverID, e.DatabaseName, e.VictimSessionID, victimHash, e.DeadlockGraph,
 		)
 	}
 
@@ -158,21 +159,21 @@ func (tl *TimescaleLogger) UpsertSQLServerQueryPlanDim(ctx context.Context, plan
 }
 
 // GetSQLServerBlockingKPIs returns current blocking KPIs
-func (tl *TimescaleLogger) GetSQLServerBlockingKPIs(ctx context.Context, instanceID string) (map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerBlockingKPIs(ctx context.Context, serverID uuid.UUID) (map[string]interface{}, error) {
 	query := `
 		WITH latest AS (
-			SELECT ts FROM sqlserver_blocking_snapshots WHERE instance_id = $1 ORDER BY ts DESC LIMIT 1
+			SELECT capture_timestamp FROM sqlserver_blocking_snapshots WHERE server_id = $1 ORDER BY capture_timestamp DESC LIMIT 1
 		),
 		current_snaps AS (
-			SELECT * FROM sqlserver_blocking_snapshots WHERE instance_id = $1 AND ts = (SELECT ts FROM latest)
+			SELECT * FROM sqlserver_blocking_snapshots WHERE server_id = $1 AND capture_timestamp = (SELECT capture_timestamp FROM latest)
 		)
 		SELECT 
 			COALESCE((SELECT COUNT(*) FROM current_snaps WHERE blocking_session_id != 0), 0) AS active_blocked_sessions,
 			COALESCE((SELECT COUNT(DISTINCT blocking_session_id) FROM current_snaps WHERE blocking_session_id != 0 AND blocking_session_id NOT IN (SELECT session_id FROM current_snaps WHERE blocking_session_id != 0)), 0) AS root_blockers,
 			COALESCE((SELECT MAX(wait_duration_ms) FROM current_snaps), 0) AS max_wait_duration_ms,
-			COALESCE((SELECT COUNT(*) FROM current_snaps WHERE transaction_start_time <= (SELECT ts FROM latest) - INTERVAL '1 minute'), 0) AS open_tran_over_1min,
-			COALESCE((SELECT COUNT(*) FROM sqlserver_deadlock_events WHERE instance_id = $1 AND ts >= NOW() - INTERVAL '24 hours'), 0) AS deadlocks_24h,
-			COALESCE((SELECT COUNT(DISTINCT ts) FROM sqlserver_blocking_snapshots WHERE instance_id = $1 AND ts >= NOW() - INTERVAL '24 hours' AND blocking_session_id != 0), 0) AS blocking_incidents_24h
+			COALESCE((SELECT COUNT(*) FROM current_snaps WHERE transaction_start_time <= (SELECT capture_timestamp FROM latest) - INTERVAL '1 minute'), 0) AS open_tran_over_1min,
+			COALESCE((SELECT COUNT(*) FROM sqlserver_deadlock_events WHERE server_id = $1 AND capture_timestamp >= NOW() - INTERVAL '24 hours'), 0) AS deadlocks_24h,
+			COALESCE((SELECT COUNT(DISTINCT capture_timestamp) FROM sqlserver_blocking_snapshots WHERE server_id = $1 AND capture_timestamp >= NOW() - INTERVAL '24 hours' AND blocking_session_id != 0), 0) AS blocking_incidents_24h
 	`
 
 	var kpi struct {
@@ -184,7 +185,7 @@ func (tl *TimescaleLogger) GetSQLServerBlockingKPIs(ctx context.Context, instanc
 		Incidents24h          int64
 	}
 
-	err := tl.pool.QueryRow(ctx, query, instanceID).Scan(
+	err := tl.pool.QueryRow(ctx, query, serverID).Scan(
 		&kpi.ActiveBlockedSessions, &kpi.RootBlockers, &kpi.MaxWaitDurationMs,
 		&kpi.OpenTranOver1Min, &kpi.Deadlocks24h, &kpi.Incidents24h,
 	)
@@ -193,32 +194,32 @@ func (tl *TimescaleLogger) GetSQLServerBlockingKPIs(ctx context.Context, instanc
 	}
 
 	return map[string]interface{}{
-		"active_blocked_sessions":   kpi.ActiveBlockedSessions,
-		"root_blockers":             kpi.RootBlockers,
-		"max_wait_duration_ms":      kpi.MaxWaitDurationMs,
-		"open_tran_over_1min":       kpi.OpenTranOver1Min,
-		"deadlocks_24h":             kpi.Deadlocks24h,
-		"blocking_incidents_24h":    kpi.Incidents24h,
+		"active_blocked_sessions": kpi.ActiveBlockedSessions,
+		"root_blockers":           kpi.RootBlockers,
+		"max_wait_duration_ms":    kpi.MaxWaitDurationMs,
+		"open_tran_over_1min":     kpi.OpenTranOver1Min,
+		"deadlocks_24h":           kpi.Deadlocks24h,
+		"blocking_incidents_24h":  kpi.Incidents24h,
 	}, nil
 }
 
 // GetSQLServerTopBlockingQueries returns top blocking queries by wait time
-func (tl *TimescaleLogger) GetSQLServerTopBlockingQueries(ctx context.Context, instanceID string, start, end time.Time) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerTopBlockingQueries(ctx context.Context, serverID uuid.UUID, start, end time.Time) ([]map[string]interface{}, error) {
 	query := `
 		SELECT 
 			s.sql_hash,
 			SUM(s.wait_duration_ms) AS total_wait_duration_ms,
-			COUNT(DISTINCT s.ts) AS incident_count,
+			COUNT(DISTINCT s.capture_timestamp) AS incident_count,
 			AVG(s.wait_duration_ms) AS avg_wait_duration_ms,
 			MAX(t.sql_text) AS query_text
 		FROM sqlserver_blocking_snapshots s
 		LEFT JOIN sqlserver_text_dim t ON s.sql_hash = t.sql_hash
-		WHERE s.instance_id = $1 AND s.ts BETWEEN $2 AND $3 AND s.blocking_session_id != 0
+		WHERE s.server_id = $1 AND s.capture_timestamp BETWEEN $2 AND $3 AND s.blocking_session_id != 0
 		GROUP BY s.sql_hash
 		ORDER BY total_wait_duration_ms DESC
 		LIMIT 20
 	`
-	rows, err := tl.pool.Query(ctx, query, instanceID, start, end)
+	rows, err := tl.pool.Query(ctx, query, serverID, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -226,14 +227,19 @@ func (tl *TimescaleLogger) GetSQLServerTopBlockingQueries(ctx context.Context, i
 
 	var results []map[string]interface{}
 	for rows.Next() {
-		var sqlHash, queryText sql.NullString
+		var sqlHash sql.NullInt64
+		var queryText sql.NullString
 		var totalWait, incidentCount int64
 		var avgWait float64
 		if err := rows.Scan(&sqlHash, &totalWait, &incidentCount, &avgWait, &queryText); err != nil {
 			continue
 		}
+		hashStr := ""
+		if sqlHash.Valid {
+			hashStr = fmt.Sprintf("0x%X", uint64(sqlHash.Int64))
+		}
 		results = append(results, map[string]interface{}{
-			"sql_hash":               sqlHash.String,
+			"sql_hash":               hashStr,
 			"total_wait_duration_ms": totalWait,
 			"incident_count":         incidentCount,
 			"avg_wait_duration_ms":   avgWait,
@@ -244,17 +250,17 @@ func (tl *TimescaleLogger) GetSQLServerTopBlockingQueries(ctx context.Context, i
 }
 
 // GetSQLServerMostBlockedDatabases returns databases with most blocking incidents
-func (tl *TimescaleLogger) GetSQLServerMostBlockedDatabases(ctx context.Context, instanceID string, start, end time.Time) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerMostBlockedDatabases(ctx context.Context, serverID uuid.UUID, start, end time.Time) ([]map[string]interface{}, error) {
 	query := `
 		SELECT 
 			database_name,
 			COUNT(*) AS incident_count
 		FROM sqlserver_blocking_snapshots
-		WHERE instance_id = $1 AND ts BETWEEN $2 AND $3 AND blocking_session_id != 0
+		WHERE server_id = $1 AND capture_timestamp BETWEEN $2 AND $3 AND blocking_session_id != 0
 		GROUP BY database_name
 		ORDER BY incident_count DESC
 	`
-	rows, err := tl.pool.Query(ctx, query, instanceID, start, end)
+	rows, err := tl.pool.Query(ctx, query, serverID, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +282,7 @@ func (tl *TimescaleLogger) GetSQLServerMostBlockedDatabases(ctx context.Context,
 }
 
 // GetSQLServerMostBlockedObjects returns objects with most blocking incidents
-func (tl *TimescaleLogger) GetSQLServerMostBlockedObjects(ctx context.Context, instanceID string, start, end time.Time) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerMostBlockedObjects(ctx context.Context, serverID uuid.UUID, start, end time.Time) ([]map[string]interface{}, error) {
 	// Handling NULLs with COALESCE and including total_wait as expected by frontend
 	// Using CAST to BIGINT to ensure Scan works correctly with Go int64
 	query := `
@@ -286,12 +292,12 @@ func (tl *TimescaleLogger) GetSQLServerMostBlockedObjects(ctx context.Context, i
 			CAST(COALESCE(SUM(COALESCE(wait_duration_ms, 0)), 0) AS BIGINT) AS total_wait,
 			COUNT(*) AS incident_count
 		FROM sqlserver_blocking_locks
-		WHERE instance_id = $1 AND ts BETWEEN $2 AND $3
+		WHERE server_id = $1 AND capture_timestamp BETWEEN $2 AND $3
 		GROUP BY object_name, lock_type
 		ORDER BY incident_count DESC
 		LIMIT 20
 	`
-	rows, err := tl.pool.Query(ctx, query, instanceID, start, end)
+	rows, err := tl.pool.Query(ctx, query, serverID, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -317,18 +323,18 @@ func (tl *TimescaleLogger) GetSQLServerMostBlockedObjects(ctx context.Context, i
 // GetSQLServerBlockingTimeline returns blocking incidents over time.
 // Returns both blocked_sessions count and total_wait_ms per minute bucket
 // so the frontend can toggle between "count" and "wait time" views.
-func (tl *TimescaleLogger) GetSQLServerBlockingTimeline(ctx context.Context, instanceID string, start, end time.Time) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerBlockingTimeline(ctx context.Context, serverID uuid.UUID, start, end time.Time) ([]map[string]interface{}, error) {
 	query := `
 		SELECT
-			time_bucket('1 minute', ts) AS bucket,
+			time_bucket('1 minute', capture_timestamp) AS bucket,
 			COUNT(DISTINCT session_id) AS blocked_sessions,
 			SUM(wait_duration_ms) AS total_wait_ms
 		FROM sqlserver_blocking_snapshots
-		WHERE instance_id = $1 AND ts BETWEEN $2 AND $3 AND blocking_session_id != 0
+		WHERE server_id = $1 AND capture_timestamp BETWEEN $2 AND $3 AND blocking_session_id != 0
 		GROUP BY bucket
 		ORDER BY bucket ASC
 	`
-	rows, err := tl.pool.Query(ctx, query, instanceID, start, end)
+	rows, err := tl.pool.Query(ctx, query, serverID, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -342,29 +348,29 @@ func (tl *TimescaleLogger) GetSQLServerBlockingTimeline(ctx context.Context, ins
 			continue
 		}
 		results = append(results, map[string]interface{}{
-			"ts":               bucket,
-			"blocked_sessions": count,
-			"total_wait_ms":    totalWaitMs,
+			"capture_timestamp": bucket,
+			"blocked_sessions":  count,
+			"total_wait_ms":     totalWaitMs,
 		})
 	}
-	return results, nil
+	return results, rows.Err()
 }
 
 // GetSQLServerBlockingDetails returns detailed snapshots for a time window
-func (tl *TimescaleLogger) GetSQLServerBlockingDetails(ctx context.Context, instanceID string, start, end time.Time) ([]models.SQLServerBlockingSnapshot, error) {
+func (tl *TimescaleLogger) GetSQLServerBlockingDetails(ctx context.Context, serverID uuid.UUID, start, end time.Time) ([]models.SQLServerBlockingSnapshot, error) {
 	query := `
 		SELECT 
-			s.ts, s.session_id, s.blocking_session_id, s.wait_type, s.wait_duration_ms,
+			s.capture_timestamp, s.session_id, s.blocking_session_id, s.wait_type, s.wait_duration_ms,
 			s.database_name, s.sql_hash, s.plan_hash, s.login_name, s.host_name, s.program_name,
 			s.open_transaction_count, s.transaction_start_time, s.cpu_time, s.reads, s.writes, s.logical_reads,
 			s.transaction_isolation_level, s.memory_usage, s.transaction_log_bytes_used,
 			s.transaction_log_bytes_reserved, s.wait_resource, s.percent_complete, t.sql_text
 		FROM sqlserver_blocking_snapshots s
 		LEFT JOIN sqlserver_text_dim t ON s.sql_hash = t.sql_hash
-		WHERE s.instance_id = $1 AND s.ts BETWEEN $2 AND $3
-		ORDER BY s.ts DESC, s.wait_duration_ms DESC
+		WHERE s.server_id = $1 AND s.capture_timestamp BETWEEN $2 AND $3
+		ORDER BY s.capture_timestamp DESC, s.wait_duration_ms DESC
 	`
-	rows, err := tl.pool.Query(ctx, query, instanceID, start, end)
+	rows, err := tl.pool.Query(ctx, query, serverID, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +393,7 @@ func (tl *TimescaleLogger) GetSQLServerBlockingDetails(ctx context.Context, inst
 			return results, fmt.Errorf("GetSQLServerBlockingDetails scan: %w", err)
 		}
 
-		r.InstanceID = instanceID
+		r.ServerID = serverID
 		r.WaitType = waitType.String
 		r.DatabaseName = dbName.String
 		r.LoginName = loginName.String
@@ -415,14 +421,14 @@ func (tl *TimescaleLogger) GetSQLServerBlockingDetails(ctx context.Context, inst
 }
 
 // GetSQLServerBlockingLocks returns lock details for a time window
-func (tl *TimescaleLogger) GetSQLServerBlockingLocks(ctx context.Context, instanceID string, start, end time.Time) ([]models.SQLServerBlockingLock, error) {
+func (tl *TimescaleLogger) GetSQLServerBlockingLocks(ctx context.Context, serverID uuid.UUID, start, end time.Time) ([]models.SQLServerBlockingLock, error) {
 	query := `
-		SELECT ts, session_id, resource_type, request_mode, request_status, resource_description, wait_duration_ms
+		SELECT capture_timestamp, session_id, resource_type, request_mode, request_status, resource_description, wait_duration_ms
 		FROM sqlserver_blocking_locks
-		WHERE instance_id = $1 AND ts BETWEEN $2 AND $3
-		ORDER BY ts DESC
+		WHERE server_id = $1 AND capture_timestamp BETWEEN $2 AND $3
+		ORDER BY capture_timestamp DESC
 	`
-	rows, err := tl.pool.Query(ctx, query, instanceID, start, end)
+	rows, err := tl.pool.Query(ctx, query, serverID, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -434,28 +440,28 @@ func (tl *TimescaleLogger) GetSQLServerBlockingLocks(ctx context.Context, instan
 		if err := rows.Scan(&l.Timestamp, &l.SessionID, &l.ResourceType, &l.RequestMode, &l.RequestStatus, &l.ResourceDescription, &l.WaitDurationMs); err != nil {
 			continue
 		}
-		l.InstanceID = instanceID
+		l.ServerID = serverID
 		results = append(results, l)
 	}
 	return results, nil
 }
 
 // GetSQLServerBlockingRecurrence returns historical blocking incidents for a specific SQL hash or login
-func (tl *TimescaleLogger) GetSQLServerBlockingRecurrence(ctx context.Context, instanceID string, sqlHash string, loginName string) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerBlockingRecurrence(ctx context.Context, serverID uuid.UUID, sqlHash string, loginName string) ([]map[string]interface{}, error) {
 	query := `
 		SELECT 
-			time_bucket('1 hour', ts) AS bucket,
-			COUNT(DISTINCT ts) AS incident_count,
+			time_bucket('1 hour', capture_timestamp) AS bucket,
+			COUNT(DISTINCT capture_timestamp) AS incident_count,
 			MAX(wait_duration_ms) AS max_wait_ms
 		FROM sqlserver_blocking_snapshots
-		WHERE instance_id = $1 
+		WHERE server_id = $1 
 		  AND (sql_hash = $2 OR login_name = $3)
 		  AND blocking_session_id = 0 -- We look for when they were the ROOT blocker
-		  AND ts >= NOW() - INTERVAL '7 days'
+		  AND capture_timestamp >= NOW() - INTERVAL '7 days'
 		GROUP BY bucket
 		ORDER BY bucket DESC
 	`
-	rows, err := tl.pool.Query(ctx, query, instanceID, sqlHash, loginName)
+	rows, err := tl.pool.Query(ctx, query, serverID, sqlHash, loginName)
 	if err != nil {
 		return nil, err
 	}
@@ -469,24 +475,24 @@ func (tl *TimescaleLogger) GetSQLServerBlockingRecurrence(ctx context.Context, i
 			continue
 		}
 		results = append(results, map[string]interface{}{
-			"ts":             bucket,
-			"incident_count": count,
-			"max_wait_ms":    maxWait,
+			"capture_timestamp": bucket,
+			"incident_count":    count,
+			"max_wait_ms":       maxWait,
 		})
 	}
 	return results, nil
 }
 
 // GetSQLServerDeadlockHistory returns deadlock events for a time window
-func (tl *TimescaleLogger) GetSQLServerDeadlockHistory(ctx context.Context, instanceID string, start, end time.Time) ([]models.SQLServerDeadlockEvent, error) {
+func (tl *TimescaleLogger) GetSQLServerDeadlockHistory(ctx context.Context, serverID uuid.UUID, start, end time.Time) ([]models.SQLServerDeadlockEvent, error) {
 	query := `
-		SELECT s.ts, s.database_name, s.victim_session_id, s.victim_sql_hash, s.deadlock_graph, t.sql_text
+		SELECT s.capture_timestamp, s.database_name, s.victim_session_id, s.victim_sql_hash, s.deadlock_graph, t.sql_text
 		FROM sqlserver_deadlock_events s
 		LEFT JOIN sqlserver_text_dim t ON s.victim_sql_hash = t.sql_hash
-		WHERE s.instance_id = $1 AND s.ts BETWEEN $2 AND $3
-		ORDER BY s.ts DESC
+		WHERE s.server_id = $1 AND s.capture_timestamp BETWEEN $2 AND $3
+		ORDER BY s.capture_timestamp DESC
 	`
-	rows, err := tl.pool.Query(ctx, query, instanceID, start, end)
+	rows, err := tl.pool.Query(ctx, query, serverID, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -500,7 +506,7 @@ func (tl *TimescaleLogger) GetSQLServerDeadlockHistory(ctx context.Context, inst
 		if err := rows.Scan(&e.Timestamp, &dbName, &e.VictimSessionID, &sqlHashVal, &graph, &sqlText); err != nil {
 			continue
 		}
-		e.InstanceID = instanceID
+		e.ServerID = serverID
 		e.DatabaseName = dbName.String
 		if sqlHashVal.Valid {
 			e.VictimSqlHash = fmt.Sprintf("0x%X", uint64(sqlHashVal.Int64))

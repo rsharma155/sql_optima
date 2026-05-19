@@ -10,20 +10,25 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"os"
 
 	"github.com/gorilla/mux"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/api/handlers"
+	"github.com/rsharma155/sql_optima/internal/config"
 	pg_backup_api "github.com/rsharma155/sql_optima/internal/domain/postgres_backup_dr/api"
 	pg_obs_api "github.com/rsharma155/sql_optima/internal/domain/postgres_observability/api"
 	pg_security_api "github.com/rsharma155/sql_optima/internal/domain/postgres_security/api"
-	"github.com/rsharma155/sql_optima/internal/config"
+	ha_api "github.com/rsharma155/sql_optima/internal/domain/sqlserver_ha_replication/api"
 	"github.com/rsharma155/sql_optima/internal/middleware"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
+
 
 func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service.MetricsService, loginLimiter *middleware.LoginRateLimiter, sec config.Security) {
 	r.HandleFunc("/api/health", HandleHealthLiveness).Methods("GET")
@@ -32,6 +37,10 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	}).Methods("GET")
 
 	r.HandleFunc("/api/auth/status", HandleAuthStatus(sec)).Methods("GET")
+
+	// SQL Server Intelligence Report — declared here so the /api/config closure below can reference it.
+	var irSvc *service.IntelligenceReportService
+	var irH *handlers.IntelligenceReportHandlers
 
 	if !sec.AuthRequired {
 		r.HandleFunc("/api/config", func(w http.ResponseWriter, req *http.Request) {
@@ -50,9 +59,16 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 				}
 				instances = append(instances, copyInst)
 			}
+
+			intelActive := false
+			if irSvc != nil {
+				intelActive = irSvc.CheckStatus(req.Context())
+			}
+
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"instances":     instances,
-				"feature_flags": cfg.FeatureFlags,
+				"instances":           instances,
+				"feature_flags":       cfg.FeatureFlags,
+				"intelligence_active": intelActive,
 			})
 		}).Methods("GET")
 	}
@@ -64,34 +80,59 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	widgetAdminH := handlers.NewWidgetAdminHandlers(metricsSvc)
 	sqlserverH := handlers.NewSqlServerHandlers(metricsSvc, cfg)
 	postgresH := handlers.NewPostgresHandlers(metricsSvc, cfg)
-	liveH := handlers.NewLiveHandlers(metricsSvc, cfg)
-	timescaleH := handlers.NewTimescaleHandlers(metricsSvc, cfg)
-	pgSihH := handlers.NewPgStorageIndexHealthHandlers(metricsSvc)
-	msSihH := handlers.NewSqlServerStorageIndexHealthHandlers(metricsSvc)
-	unifiedSihH := handlers.NewStorageIndexHealthTimescaleHandlers(metricsSvc)
+timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
+	pgSihH := handlers.NewPgStorageIndexHealthHandlers(metricsSvc, cfg)
+	msSihH := handlers.NewSqlServerStorageHandlers(metricsSvc, cfg)
+	unifiedSihH := handlers.NewStorageIndexHealthTimescaleHandlers(metricsSvc, cfg)
 	healthH := handlers.NewHealthHandlers(metricsSvc, cfg)
-	dashboardH := handlers.NewDashboardHandlers(metricsSvc, cfg)
-	queryH := handlers.NewQueryHandlers(metricsSvc, cfg)
+	dashboardH := handlers.NewDashboardHandlers(metricsSvc)
+	queryH := handlers.NewQueryHandlers(metricsSvc)
 	sqlserverQAH := handlers.NewSqlServerQueryAnalysisHandlers(metricsSvc, cfg)
-	sqlserverWQH := handlers.NewSqlServerWatchedQueryHandlers(metricsSvc, cfg)
+	sqlserverWQH := handlers.NewWatchedQueryHandlers(metricsSvc, cfg)
 	sqlserverWLH := handlers.NewSqlServerWorkloadHandlers(metricsSvc, cfg)
-	sqlserverPAH := handlers.NewSqlServerPlanAnalyzerHandlers(metricsSvc)
-	osMetricsH := handlers.NewOSMetricsHandler(metricsSvc)
+	sqlserverPAH := handlers.NewSqlServerPlanHandlers(metricsSvc, cfg)
+	osMetricsH := handlers.NewOSMetricsHandlers(metricsSvc)
+	sqlserverLockH := handlers.NewSqlServerLockHandlers(metricsSvc, cfg)
+	sqlserverWaitStatsH := handlers.NewSqlServerWaitStatsHandlers(metricsSvc, cfg)
+
+	// SQL Server Intelligence Report — initialize once TimescaleDB pool is confirmed available.
+	if pool := metricsSvc.GetTimescaleDBPool(); pool != nil {
+		irSvc = service.NewIntelligenceReportService(pool)
+		irH = handlers.NewIntelligenceReportHandlers(irSvc, cfg)
+	}
 
 	// New Postgres Domain Handlers
 	pgObsH := pg_obs_api.NewPostgresObservabilityHandler(metricsSvc)
 	pgBackupH := pg_backup_api.NewPostgresBackupHandler(metricsSvc)
 	pgSecurityH := pg_security_api.NewPostgresSecurityHandler(metricsSvc)
 
+	// SQL Server HA & Replication Domain Handler
+	sqlServerHAH := ha_api.NewHAReplicationHandler(metricsSvc)
+
 	mon := &monitoringHandlers{
-		SqlServer: sqlserverH, Postgres: postgresH, Live: liveH, Timescale: timescaleH,
+		SqlServer: sqlserverH, Postgres: postgresH, Timescale: timescaleH,
 		Health: healthH, Dashboard: dashboardH, Query: queryH,
 		PgSIH: pgSihH, SqlServerSIH: msSihH, UnifiedSIH: unifiedSihH,
 		SqlServerQueryAnalysis: sqlserverQAH, SqlServerWatchedQuery: sqlserverWQH,
 		SqlServerWorkload: sqlserverWLH, SqlServerPlanAnalyzer: sqlserverPAH,
-		PgObservability:   pgObsH,
-		PgBackup:          pgBackupH,
-		PgSecurity:        pgSecurityH,
+		SqlServerLocks: sqlserverLockH, SqlServerWaitStats: sqlserverWaitStatsH,
+		IntelligenceReport: irH,
+		PgObservability: pgObsH, PgBackup: pgBackupH, PgSecurity: pgSecurityH,
+		SQLServerHA: sqlServerHAH,
+		}
+
+	// ── Shared notifier (config loaded from DB at startup, hot-reloadable via admin panel) ──
+	sharedNotifier := service.NewNotifier(service.NotifierConfig{
+		WebhookURL:      os.Getenv("ALERT_WEBHOOK_URL"),
+		SlackWebhookURL: os.Getenv("SLACK_WEBHOOK_URL"),
+	}, slog.Default())
+
+	// ── Admin notification handler (wired to shared notifier) ──────────────────
+	var adminNotifH *handlers.AdminNotificationHandlers
+	if tsPool := metricsSvc.GetTimescaleDBPool(); tsPool != nil {
+		notifRepo := repository.NewNotificationConfigRepository(tsPool)
+		adminNotifH = handlers.NewAdminNotificationHandlers(notifRepo, sharedNotifier)
+		sharedNotifier.LoadFromDB(context.Background(), notifRepo)
 	}
 
 	// ── Alert engine wiring ────────────────────────────────────
@@ -99,8 +140,8 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	getAlertH := func() *handlers.AlertHandlers {
 		if alertH == nil {
 			if tsPool := metricsSvc.GetTimescaleDBPool(); tsPool != nil {
-				alertRepo := repository.NewAlertRepository(tsPool)
-				maintRepo := repository.NewAlertMaintenanceRepository(tsPool)
+				alertRepo := repository.NewTimescaleAlertStore(tsPool)
+				maintRepo := repository.NewAlertMaintenanceStore(tsPool)
 
 				evaluators := []service.AlertEvaluator{
 					service.NewSqlServerBlockingEvaluator(tsPool),
@@ -112,8 +153,13 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 					service.NewPgDiskSpaceEvaluator(tsPool),
 				}
 
-				alertSvc := service.NewAlertService(alertRepo, maintRepo, evaluators)
-				alertH = handlers.NewAlertHandlers(alertSvc, alertRepo, maintRepo)
+				alertSvc := service.NewAlertService(
+					alertRepo,
+					maintRepo,
+					evaluators,
+					sharedNotifier,
+				)
+				alertH = handlers.NewAlertHandlers(alertSvc, cfg)
 			}
 		}
 		return alertH
@@ -156,7 +202,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	} else {
 		registerMonitoringReadRoutes(openAPI, mon, rulesBP)
 		registerMonitoringElevatedRoutes(openAPI, sqlserverH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
-		
+
 		// Always register alert routes to prevent 404s; handlers will check if engine is available.
 		registerAlertReadRoutes(openAPI, getAlertH)
 		registerAlertMutationRoutes(openAPI, getAlertH)
@@ -189,9 +235,16 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 				}
 				instances = append(instances, copyInst)
 			}
+
+			intelActive := false
+			if irSvc != nil {
+				intelActive = irSvc.CheckStatus(req.Context())
+			}
+
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"instances":     instances,
-				"feature_flags": cfg.FeatureFlags,
+				"instances":           instances,
+				"feature_flags":       cfg.FeatureFlags,
+				"intelligence_active": intelActive,
 			})
 		}).Methods("GET")
 
@@ -245,4 +298,9 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	adminAPI.HandleFunc("/widgets", widgetAdminH.ListWidgets).Methods("GET")
 	adminAPI.HandleFunc("/collector-configs", adminCollectorH.ListConfigs).Methods("GET")
 	adminAPI.HandleFunc("/collector-configs/{id}", adminCollectorH.UpdateConfig).Methods("PUT")
+	if adminNotifH != nil {
+		adminAPI.HandleFunc("/notifications/config", adminNotifH.GetConfig).Methods("GET")
+		adminAPI.HandleFunc("/notifications/config", adminNotifH.UpdateConfig).Methods("PUT")
+		adminAPI.HandleFunc("/notifications/test", adminNotifH.TestNotification).Methods("POST")
+	}
 }

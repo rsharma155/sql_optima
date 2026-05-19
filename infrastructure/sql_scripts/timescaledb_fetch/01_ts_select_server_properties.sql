@@ -5,7 +5,7 @@
 
 SELECT 
     capture_timestamp,
-    server_instance_name,
+    server_id,
     cpu_count,
     hyperthread_ratio,
     socket_count,
@@ -18,6 +18,6 @@ SELECT
     max_workers_count,
     properties_hash
 FROM sqlserver_server_properties
-WHERE server_instance_name = $1
+WHERE server_id = $1
 ORDER BY capture_timestamp DESC
 LIMIT 1;

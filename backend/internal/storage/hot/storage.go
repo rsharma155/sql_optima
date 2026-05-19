@@ -8,12 +8,13 @@
 package hot
 
 import (
+	"log/slog"
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +67,11 @@ func DefaultConfig() *Config {
 	if port == "" {
 		port = getEnv("DB_PORT", "5432")
 	}
+	maxConnsStr := getEnv("TIMESCALEDB_MAX_CONNS", "25")
+	maxConns, err := strconv.Atoi(maxConnsStr)
+	if err != nil {
+		maxConns = 25
+	}
 	return &Config{
 		Host:     host,
 		Port:     port,
@@ -73,7 +79,7 @@ func DefaultConfig() *Config {
 		Password: getEnv("DB_PASSWORD", ""),
 		Database: getEnv("DB_NAME", "dbmonitor_metrics"),
 		SSLMode:  getEnv("TIMESCALEDB_SSLMODE", "disable"),
-		MaxConns: 50,
+		MaxConns: int32(maxConns),
 	}
 }
 
@@ -95,16 +101,15 @@ func New(cfg *Config) (*HotStorage, error) {
 		cfg = DefaultConfig()
 	}
 
-	log.Printf("[TimescaleDB] Attempting to connect (host=%s port=%s db=%s user_set=%v sslmode=%s)...",
-		cfg.Host, cfg.Port, cfg.Database, strings.TrimSpace(cfg.User) != "", cfg.SSLMode)
+	slog.Info(fmt.Sprintf("[TimescaleDB] Attempting to connect (host=%s port=%s db=%s user_set=%v sslmode=%s)...", cfg.Host, cfg.Port, cfg.Database, strings.TrimSpace(cfg.User) != "", cfg.SSLMode))
 
 	poolConfig, err := pgxpool.ParseConfig(cfg.connString())
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
 	}
 
-	poolConfig.MaxConns = cfg.MaxConns
-	poolConfig.MinConns = 5
+	poolConfig.MaxConns = int32(cfg.MaxConns)
+	poolConfig.MinConns = 2
 	poolConfig.MaxConnLifetime = 30 * time.Minute
 	poolConfig.MaxConnIdleTime = 10 * time.Minute
 	poolConfig.HealthCheckPeriod = 30 * time.Second
@@ -126,7 +131,7 @@ func New(cfg *Config) (*HotStorage, error) {
 	// Runtime migrations are intentionally disabled.
 	// TimescaleDB schema should be provisioned externally using `infrastructure/sql_scripts/01_timescale_schema.sql`.
 	// This avoids schema changes on API startup and prevents surprise load on shared Timescale instances.
-	log.Printf("[TimescaleDB] Connected (schema provisioned externally; runtime migrations disabled)")
+	slog.Info("[TimescaleDB] Connected (schema provisioned externally; runtime migrations disabled)")
 
 	return hs, nil
 }
@@ -166,13 +171,11 @@ func (s *HotStorage) GetMetricsForArchive(ctx context.Context, cutoff time.Time,
 		"sqlserver_database_throughput",
 		"monitor.sqlserver_query_store_snapshot",
 		"monitor.sqlserver_query_store_interval",
-		"postgres_bgwriter_stats",
-		"postgres_archiver_stats",
 	}
 
 	for _, table := range tables {
 		query := fmt.Sprintf(`
-			SELECT capture_timestamp, server_instance_name, 
+			SELECT capture_timestamp, server_id, 
 				   COALESCE($1::text, 'unknown_metric') as metric_name,
 				   COALESCE($2::float, 0) as metric_value,
 				   '{}'::jsonb as tags
@@ -183,7 +186,7 @@ func (s *HotStorage) GetMetricsForArchive(ctx context.Context, cutoff time.Time,
 
 		rows, err := s.pool.Query(ctx, query, table, 0, cutoff, limit/len(tables))
 		if err != nil {
-			log.Printf("[Archiver] Warning: failed to query %s: %v", table, err)
+			slog.Error("[Archiver] Warning: failed to query", "target", table, "err", err)
 			continue
 		}
 
@@ -210,15 +213,13 @@ func (s *HotStorage) DeleteChunksOlderThan(ctx context.Context, duration time.Du
 		"sqlserver_database_throughput",
 		"monitor.sqlserver_query_store_snapshot",
 		"monitor.sqlserver_query_store_interval",
-		"postgres_bgwriter_stats",
-		"postgres_archiver_stats",
 	}
 
 	for _, table := range tables {
 		query := fmt.Sprintf(`SELECT drop_chunks('%s', older_than => INTERVAL '%d seconds')`,
 			table, int(duration.Seconds()))
 		if _, err := s.pool.Exec(ctx, query); err != nil {
-			log.Printf("[Archiver] Warning: failed to drop chunks for %s: %v", table, err)
+			slog.Error("[Archiver] Warning: failed to drop chunks", "target", table, "err", err)
 		}
 	}
 	return nil

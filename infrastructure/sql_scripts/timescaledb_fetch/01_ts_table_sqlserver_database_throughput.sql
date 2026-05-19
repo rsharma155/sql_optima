@@ -5,7 +5,7 @@
 
 CREATE TABLE IF NOT EXISTS sqlserver_database_throughput (
     capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
+    server_id TEXT NOT NULL,
     database_name TEXT NOT NULL,
     user_seeks BIGINT DEFAULT 0,
     user_scans BIGINT DEFAULT 0,

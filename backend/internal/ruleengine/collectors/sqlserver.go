@@ -8,11 +8,11 @@
 package collectors
 
 import (
+	"log/slog"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -82,7 +82,7 @@ func (c *SQLServerCollector) scanRows(rows *sql.Rows) ([]map[string]interface{},
 	for rows.Next() {
 		err := rows.Scan(valuePtrs...)
 		if err != nil {
-			log.Printf("[SQLServerCollector] Scan error: %v", err)
+			slog.Error("[SQLServerCollector] Scan error", "err", err)
 			continue
 		}
 

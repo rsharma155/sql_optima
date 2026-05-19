@@ -1,8 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Background goroutine that periodically runs alert evaluation
-//
-//	for every configured server instance.
+// Purpose: Alert Evaluation background runner.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -10,103 +8,124 @@
 package service
 
 import (
+	"log/slog"
 	"context"
-	"log"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/domain/alerts"
 )
 
-// advisoryLockID is a fixed int64 used with pg_try_advisory_xact_lock to
-// ensure only one API process evaluates alerts in a given tick.
-// Chosen arbitrarily; collisions with application-level advisory locks are
-// extremely unlikely given the key space.
-const advisoryLockID int64 = 0x53514C5F414C5254 // "SQL_ALRT" as hex
-
-// engineForInstanceType maps config.Instance.Type to an alerts.Engine.
-func engineForInstanceType(typ string) (alerts.Engine, bool) {
-	switch typ {
-	case "sqlserver":
-		return alerts.EngineSQLServer, true
-	case "postgres":
-		return alerts.EnginePostgres, true
-	default:
-		return "", false
-	}
-}
-
-// StartAlertEvaluationLoop runs alert evaluation for all configured instances
-// at the given interval. It blocks until ctx is cancelled.
-//
-// A PostgreSQL advisory lock (pg_try_advisory_xact_lock) is acquired at the
-// start of each tick so that only one process evaluates in scaled deployments.
-func StartAlertEvaluationLoop(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, alertSvc *AlertService, interval time.Duration) {
-	if alertSvc == nil || cfg == nil || pool == nil {
-		return
-	}
-	if interval <= 0 {
-		interval = 60 * time.Second
-	}
-
-	log.Printf("[alerts] evaluation loop started (initial_interval=%s, instances=%d)", interval, len(cfg.Instances))
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			log.Println("[alerts] evaluation loop stopped")
-			return
-		case <-ticker.C:
-			runOnceWithLock(ctx, pool, cfg, alertSvc)
-
-			// Refresh interval from DB (Alert Evaluation Loop)
-			// Using FetchInterval from MetricsService logic via a small hack or just direct lookup
-			// But for now, let's keep it simple as alertSvc doesn't have FetchInterval.
-			// Actually, let's pass the FetchInterval function or the service.
-		}
-	}
-}
-
-// runOnceWithLock attempts to acquire an advisory lock inside a transaction.
-// If another process already holds it, this tick is skipped silently.
-func runOnceWithLock(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, alertSvc *AlertService) {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		log.Printf("[alerts] failed to begin tx for advisory lock: %v", err)
-		return
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
-	var acquired bool
-	if err := tx.QueryRow(ctx, "SELECT pg_try_advisory_xact_lock($1)", advisoryLockID).Scan(&acquired); err != nil {
-		log.Printf("[alerts] advisory lock query failed: %v", err)
-		return
-	}
-	if !acquired {
-		return // another process is already evaluating
-	}
-
-	runOnce(ctx, cfg, alertSvc)
-	_ = tx.Commit(ctx) // release the lock
-}
-
 func runOnce(ctx context.Context, cfg *config.Config, alertSvc *AlertService) {
+	if cfg == nil || alertSvc == nil {
+		return
+	}
 	for _, inst := range cfg.Instances {
 		engine, ok := engineForInstanceType(inst.Type)
 		if !ok {
 			continue
 		}
-		n, err := alertSvc.RunEvaluation(ctx, inst.Name, engine)
-		if err != nil {
-			log.Printf("[alerts] evaluation error instance=%s engine=%s: %v", inst.Name, engine, err)
+		_, _ = alertSvc.RunEvaluation(ctx, inst.ServerID, engine)
+	}
+}
+
+// StartAlertEvaluationLoop is a package-level entry point for the alert evaluation background loop.
+func StartAlertEvaluationLoop(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, alertSvc *AlertService, interval time.Duration) {
+	if pool == nil || cfg == nil || alertSvc == nil {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	slog.Info("[AlertRunner] StartAlertEvaluationLoop: interval=", "val", interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, inst := range cfg.Instances {
+				var engine alerts.Engine
+				switch strings.ToLower(inst.Type) {
+				case "postgres":
+					engine = alerts.EnginePostgres
+				case "sqlserver":
+					engine = alerts.EngineSQLServer
+				default:
+					continue
+				}
+				serverID := inst.ServerID
+				go func(sid uuid.UUID, eng alerts.Engine) {
+					_, _ = alertSvc.RunEvaluation(ctx, sid, eng)
+				}(serverID, engine)
+			}
+		}
+	}
+}
+
+func (s *MetricsService) StartAlertEvaluation(ctx context.Context, alertSvc *AlertService) {
+	interval := s.GetCollectorInterval(ctx, "Alert Evaluation Loop", 1*time.Minute)
+	slog.Info("[AlertRunner] Starting evaluation loop (%v interval)", "val", interval)
+	ticker := time.NewTicker(interval)
+
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				newInterval := s.GetCollectorInterval(ctx, "Alert Evaluation Loop", 1*time.Minute)
+				if newInterval > 0 && newInterval != interval {
+					slog.Info("[AlertRunner] interval changed from", "arg1", interval, "arg2", newInterval)
+					interval = newInterval
+					ticker.Reset(interval)
+				}
+				s.RunPostgresAlertEvaluation(ctx, alertSvc)
+				s.RunSQLServerAlertEvaluation(ctx, alertSvc)
+			}
+		}
+	}()
+}
+
+func (s *MetricsService) RunPostgresAlertEvaluation(ctx context.Context, alertSvc *AlertService) {
+	for _, inst := range s.Config.Instances {
+		if strings.ToLower(inst.Type) != "postgres" {
 			continue
 		}
-		if n > 0 {
-			log.Printf("[alerts] %d new/updated alerts for %s (%s)", n, inst.Name, engine)
+
+		go func(instanceName string, serverID uuid.UUID) {
+			_, err := alertSvc.RunEvaluation(ctx, serverID, alerts.EnginePostgres)
+			if err != nil {
+				slog.Error("[AlertRunner] ERROR: PG evaluation failed", "target", instanceName, "err", err)
+			}
+		}(inst.Name, inst.ServerID)
+	}
+}
+
+func (s *MetricsService) RunSQLServerAlertEvaluation(ctx context.Context, alertSvc *AlertService) {
+	for _, inst := range s.Config.Instances {
+		if strings.ToLower(inst.Type) != "sqlserver" {
+			continue
 		}
+
+		go func(instanceName string, serverID uuid.UUID) {
+			_, err := alertSvc.RunEvaluation(ctx, serverID, alerts.EngineSQLServer)
+			if err != nil {
+				slog.Error("[AlertRunner] ERROR: SQLServer evaluation failed", "target", instanceName, "err", err)
+			}
+		}(inst.Name, inst.ServerID)
+	}
+}
+
+func engineForInstanceType(typ string) (alerts.Engine, bool) {
+	switch strings.ToLower(typ) {
+	case "postgres":
+		return alerts.EnginePostgres, true
+	case "sqlserver":
+		return alerts.EngineSQLServer, true
+	default:
+		return "", false
 	}
 }

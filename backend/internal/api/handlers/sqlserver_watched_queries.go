@@ -1,8 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: HTTP handlers for the SQL Server Watched Query Analyzer — CRUD,
-//
-//	time-series snapshots, plan comparison, wait stats, and event markers.
+// Purpose: SQL Server user-watched queries API handlers.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -11,200 +9,180 @@ package handlers
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/config"
-	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/service"
+	"github.com/rsharma155/sql_optima/internal/storage/hot"
+	"github.com/rsharma155/sqlplan-analyzer"
 )
 
-// SqlServerWatchedQueryHandlers groups HTTP handlers for the Watched Query Analyzer.
-type SqlServerWatchedQueryHandlers struct {
+type WatchedQueryHandlers struct {
 	metricsSvc *service.MetricsService
 	cfg        *config.Config
 }
 
-// NewSqlServerWatchedQueryHandlers constructs a new handler set.
-func NewSqlServerWatchedQueryHandlers(metricsSvc *service.MetricsService, cfg *config.Config) *SqlServerWatchedQueryHandlers {
-	return &SqlServerWatchedQueryHandlers{metricsSvc: metricsSvc, cfg: cfg}
+func NewWatchedQueryHandlers(svc *service.MetricsService, cfg *config.Config) *WatchedQueryHandlers {
+	return &WatchedQueryHandlers{metricsSvc: svc, cfg: cfg}
 }
 
-// List returns all watched queries for an instance.
-func (h *SqlServerWatchedQueryHandlers) List(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
+func (h *WatchedQueryHandlers) parseID(r *http.Request) (uuid.UUID, bool) {
+	id, _, outcome := resolveInstanceParam(r, h.cfg)
+	if outcome != lookupFound {
+		return uuid.Nil, false
 	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
+	return id, true
+}
+
+func (h *WatchedQueryHandlers) resolve(w http.ResponseWriter, r *http.Request) (uuid.UUID, string, bool) {
+	id, name, outcome := resolveInstanceParam(r, h.cfg)
+	switch outcome {
+	case lookupMissing:
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "instance name or server_id required"})
+		return uuid.Nil, "", false
+	case lookupNotFound:
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
+		return uuid.Nil, "", false
+	}
+	return id, name, true
+}
+
+func (h *WatchedQueryHandlers) ListQueries(w http.ResponseWriter, r *http.Request) {
+	id, instanceName, ok := h.resolve(w, r)
+	if !ok {
 		return
 	}
 
-	wqs, err := h.metricsSvc.ListSqlServerWatchedQueries(r.Context(), instance)
+	w.Header().Set("Content-Type", "application/json")
+	if h.metricsSvc.GetTimescaleDBLogger() == nil {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"instance":        instanceName,
+			"watched_queries": []hot.SqlServerWatchedQueryRow{},
+		})
+		return
+	}
+
+	res, err := h.metricsSvc.ListSqlServerWatchedQueries(r.Context(), id)
 	if err != nil {
-		slog.Error("sqlserver_watched_queries_list", "instance", instance, "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance":        instance,
-		"watched_queries": wqs,
+	if res == nil {
+		res = []hot.SqlServerWatchedQueryRow{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"instance":        instanceName,
+		"watched_queries": res,
 	})
 }
 
-// Add adds a query to the watch list (POST body: {query_hash, name, query_text}).
-func (h *SqlServerWatchedQueryHandlers) Add(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
+func (h *WatchedQueryHandlers) GetDetail(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.URL.Query().Get("id"))
+	serverID, ok := h.parseID(r)
+	if !ok || id == 0 {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
 		return
 	}
 
-	var body struct {
-		QueryHash    string `json:"query_hash"`
-		Name         string `json:"name"`
-		QueryText    string `json:"query_text"`
-		DatabaseName string `json:"database_name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
-		return
-	}
-	if body.Name == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "name is required"})
-		return
-	}
-	if body.QueryHash == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "query_hash is required"})
-		return
-	}
-
-	id, err := h.metricsSvc.AddSqlServerWatchedQuery(r.Context(), instance, models.SqlServerWatchedQuery{
-		QueryHash:    body.QueryHash,
-		Name:         body.Name,
-		QueryText:    body.QueryText,
-		DatabaseName: body.DatabaseName,
-	})
+	wq, err := h.metricsSvc.GetSqlServerWatchedQuery(r.Context(), id)
 	if err != nil {
-		slog.Error("sqlserver_watched_query_add", "instance", instance, "error", err)
-
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "maximum") {
-			w.WriteHeader(http.StatusForbidden)
-		} else if strings.Contains(errMsg, "23505") || strings.Contains(errMsg, "unique constraint") {
-			w.WriteHeader(http.StatusConflict)
-		} else {
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-
-		json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
-		return
-	}
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":       id,
-		"instance": instance,
-	})
-}
-
-// Delete removes a watched query by ID (?id=N).
-func (h *SqlServerWatchedQueryHandlers) Delete(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil || id <= 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "valid id is required"})
-		return
-	}
-
-	if err := h.metricsSvc.DeleteSqlServerWatchedQuery(r.Context(), id); err != nil {
-		slog.Error("sqlserver_watched_query_delete", "id", id, "error", err)
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
-}
 
-// Detail returns a watched query with snapshots, events, plan info, and wait stats.
-func (h *SqlServerWatchedQueryHandlers) Detail(w http.ResponseWriter, r *http.Request) {
+	snapshots, _ := h.metricsSvc.ListWatchedQuerySnapshots(r.Context(), serverID, id)
+	events, _ := h.metricsSvc.ListWatchedQueryEvents(r.Context(), id)
+
 	w.Header().Set("Content-Type", "application/json")
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil || id <= 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "valid id is required"})
-		return
-	}
-
-	from, to := parseTimeRange(r)
-
-	wq, snaps, events, err := h.metricsSvc.GetSqlServerWatchedQueryDetail(r.Context(), id, from, to)
-	if err != nil {
-		slog.Error("sqlserver_watched_query_detail", "id", id, "error", err)
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"watched_query": wq,
-		"snapshots":     snaps,
+		"snapshots":     snapshots,
 		"events":        events,
 	})
 }
 
-// AddEvent records an optimization event marker (POST body: {event_type, notes}).
-func (h *SqlServerWatchedQueryHandlers) AddEvent(w http.ResponseWriter, r *http.Request) {
+func (h *WatchedQueryHandlers) GetPlanAnalysis(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.URL.Query().Get("id"))
+	snapTime := r.URL.Query().Get("snapshot_time")
+
+	snap, err := h.metricsSvc.GetWatchedQuerySnapshot(r.Context(), id, snapTime)
+	if err != nil || snap.QueryPlan == "" {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "plan XML not found for this snapshot"})
+		return
+	}
+
+	analysis, err := sqlplan.AnalyzeBytes([]byte(snap.QueryPlan))
+	if err != nil {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		return
+	}
+	htmlReport, _ := sqlplan.GenerateHTML(analysis)
+
 	w.Header().Set("Content-Type", "application/json")
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil || id <= 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "valid id is required"})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":      true,
+		"html_report":  htmlReport,
+		"health_score": analysis.HealthScore.OverallScore,
+	})
+}
+
+func (h *WatchedQueryHandlers) AddQuery(w http.ResponseWriter, r *http.Request) {
+	id, _, ok := h.resolve(w, r)
+	if !ok {
 		return
 	}
 
-	var body struct {
-		EventType string `json:"event_type"`
-		Notes     string `json:"notes"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	var req hot.SqlServerWatchedQueryRow
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
 		return
 	}
-	if body.EventType == "" {
+	if req.QueryHash == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "event_type is required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "query_hash required"})
 		return
 	}
+	req.ServerID = id
 
-	if err := h.metricsSvc.AddSqlServerWatchedQueryEvent(r.Context(), id, body.EventType, body.Notes); err != nil {
-		slog.Error("sqlserver_watched_query_add_event", "id", id, "error", err)
+	newID, err := h.metricsSvc.AddSqlServerWatchedQuery(r.Context(), id, req)
+	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"status": "created"})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]int{"id": newID})
+}
+
+func (h *WatchedQueryHandlers) DeleteQuery(w http.ResponseWriter, r *http.Request) {
+	qidStr := r.URL.Query().Get("id")
+	qid, err := strconv.Atoi(qidStr)
+	if err != nil || qid == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "valid id required"})
+		return
+	}
+
+	if err := h.metricsSvc.DeleteSqlServerWatchedQuery(r.Context(), qid); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func parseTimeRange(fromStr, toStr string) (time.Time, time.Time, error) {
+	from, _ := time.Parse(time.RFC3339, fromStr)
+	to, _ := time.Parse(time.RFC3339, toStr)
+	if to.IsZero() {
+		to = time.Now().UTC()
+	}
+	if from.IsZero() {
+		from = to.Add(-24 * time.Hour)
+	}
+	return from, to, nil
 }

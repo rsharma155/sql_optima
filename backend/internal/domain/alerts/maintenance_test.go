@@ -10,12 +10,14 @@ package alerts
 import (
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestMaintenanceWindow_IsActive(t *testing.T) {
 	mw := MaintenanceWindow{
-		StartsAt: time.Date(2026, 4, 16, 2, 0, 0, 0, time.UTC),
-		EndsAt:   time.Date(2026, 4, 16, 4, 0, 0, 0, time.UTC),
+		StartTime: time.Date(2026, 4, 16, 2, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 16, 4, 0, 0, 0, time.UTC),
 	}
 
 	tests := []struct {
@@ -40,11 +42,12 @@ func TestMaintenanceWindow_IsActive(t *testing.T) {
 }
 
 func TestMaintenanceWindow_Validate(t *testing.T) {
+	serverID := uuid.New()
 	base := MaintenanceWindow{
-		InstanceName: "prod-db-01",
-		Engine:       EnginePostgres,
-		StartsAt:     time.Now(),
-		EndsAt:       time.Now().Add(2 * time.Hour),
+		ServerID:  serverID,
+		Engine:    EnginePostgres,
+		StartTime: time.Now(),
+		EndTime:   time.Now().Add(2 * time.Hour),
 	}
 
 	t.Run("valid", func(t *testing.T) {
@@ -56,7 +59,7 @@ func TestMaintenanceWindow_Validate(t *testing.T) {
 
 	t.Run("missing instance", func(t *testing.T) {
 		mw := base
-		mw.InstanceName = ""
+		mw.ServerID = uuid.Nil
 		if err := mw.Validate(); err != ErrMissingInstanceName {
 			t.Errorf("expected ErrMissingInstanceName, got %v", err)
 		}
@@ -72,7 +75,7 @@ func TestMaintenanceWindow_Validate(t *testing.T) {
 
 	t.Run("ends before starts", func(t *testing.T) {
 		mw := base
-		mw.EndsAt = mw.StartsAt.Add(-1 * time.Hour)
+		mw.EndTime = mw.StartTime.Add(-1 * time.Hour)
 		if err := mw.Validate(); err == nil {
 			t.Error("expected error for invalid range")
 		}

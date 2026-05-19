@@ -8,18 +8,11 @@
 package hot
 
 import (
-	"context"
-	"database/sql"
-	"fmt"
-	"log"
-	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/rsharma155/sql_optima/internal/repository"
 )
 
 type TimescaleLogger struct {
@@ -30,30 +23,38 @@ type TimescaleLogger struct {
 	prevJobFailures         map[string]string
 	prevLongRunningHash     map[string]int64
 	prevMemoryPLE           float64
-	prevWaitHistory         map[string]map[string]float64
+	prevWaitHistory         map[uuid.UUID]map[string]float64
 	prevQueryStoreStats     map[string]int64
-	prevSchedulerStats      map[string]uint64
-	prevEnterpriseBatchHash map[string]uint64
+	prevSchedulerStats      map[uuid.UUID]uint64
+	prevEnterpriseBatchHash map[string]uint64 // Keep as string key for composite (serverID + kind)
 	// Postgres Control Center dedup/delta state
-	prevPgWalBytesTotal        map[string]uint64
-	prevPgXactTotal            map[string]uint64
-	prevPgControlCenterHash    map[string]uint64
-	prevPgSystemStatsHash      map[string]uint64
-	prevPgConnectionStatsHash  map[string]uint64
-	prevPgReplicationSlotsHash map[string]uint64
-	prevPgDeadlocksTotal       map[string]map[string]int64 // instance -> db -> last total
-	prevPgDeadlocksTotalAllDBs  map[string]int64            // instance -> aggregate total
-	prevPgWaitEventsHash       map[string]uint64
-	prevPgDbIOHash             map[string]uint64
-	prevPgSettingsHash         map[string]uint64
-	prevPgQueryStatsHash       map[string]uint64
-	prevPgStatDeltaHash        map[string]uint64
-	prevPgSessionHash          map[string]uint64
+	prevPgWalBytesTotal        map[uuid.UUID]uint64
+	prevPgXactTotal            map[uuid.UUID]uint64
+	prevPgControlCenterHash    map[uuid.UUID]uint64
+	prevPgReplicationSlotsHash map[uuid.UUID]uint64
+	prevPgDeadlocksTotal       map[uuid.UUID]map[string]int64 // serverID -> db -> last total
+	prevPgDeadlocksTotalAllDBs map[uuid.UUID]int64            // serverID -> aggregate total
+	prevPgWaitEventsHash       map[uuid.UUID]uint64
+	prevPgDbIOHash             map[uuid.UUID]uint64
+	prevPgSettingsHash         map[uuid.UUID]uint64
+	prevPgQueryStatsHash       map[uuid.UUID]uint64
+	prevPgStatDeltaHash        map[uuid.UUID]uint64
+	prevPgSessionHash          map[uuid.UUID]uint64
+	prevPgTblMaintHash         map[uuid.UUID]uint64
+	prevPgVacuumProgressHash   map[uuid.UUID]uint64
+	// Pulse Deduplication State
+	prevSQLServerTier1Hash map[uuid.UUID]map[int]uint64 // serverID -> sid -> hash
+	prevPgTier1Hash        map[uuid.UUID]map[int]uint64 // serverID -> pid -> hash
 	// SQL Server Memory Analyzer delta state
-	prevSpillByInstance map[string]spillDeltaState
+	prevSpillByInstance map[uuid.UUID]spillDeltaState
 	// SQL Server Performance Counter delta state
-	prevPerfCounters map[string]map[string]float64
-	prevPerfTime     map[string]time.Time
+	prevPerfCounters map[uuid.UUID]map[string]float64
+	prevPerfTime     map[uuid.UUID]time.Time
+	// Dedup state for disk_history, file_io, wait_stats_cumulative, and connection_history
+	prevDiskHashByKey map[string]uint64  // key: serverID+":"+dbName
+	prevCumulSnapHash map[uuid.UUID]uint64
+	prevFileIOHashKey map[string]uint64  // key: serverID+":"+dbName+":"+fileName
+	prevConnHashByKey map[string]uint64  // key: serverID+":"+dbName+":"+loginName
 }
 
 func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
@@ -64,595 +65,45 @@ func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
 		prevJobFailures:            make(map[string]string),
 		prevLongRunningHash:        make(map[string]int64),
 		prevMemoryPLE:              -1,
-		prevWaitHistory:            make(map[string]map[string]float64),
+		prevWaitHistory:            make(map[uuid.UUID]map[string]float64),
 		prevQueryStoreStats:        make(map[string]int64),
-		prevSchedulerStats:         make(map[string]uint64),
+		prevSchedulerStats:         make(map[uuid.UUID]uint64),
 		prevEnterpriseBatchHash:    make(map[string]uint64),
-		prevPgWalBytesTotal:        make(map[string]uint64),
-		prevPgXactTotal:            make(map[string]uint64),
-		prevPgControlCenterHash:    make(map[string]uint64),
-		prevPgSystemStatsHash:      make(map[string]uint64),
-		prevPgConnectionStatsHash:  make(map[string]uint64),
-		prevPgReplicationSlotsHash: make(map[string]uint64),
-		prevPgDeadlocksTotal:       make(map[string]map[string]int64),
-		prevPgDeadlocksTotalAllDBs:  make(map[string]int64),
-		prevPgWaitEventsHash:       make(map[string]uint64),
-		prevPgDbIOHash:             make(map[string]uint64),
-		prevPgSettingsHash:         make(map[string]uint64),
-		prevPgQueryStatsHash:       make(map[string]uint64),
-		prevPgStatDeltaHash:        make(map[string]uint64),
-		prevPgSessionHash:          make(map[string]uint64),
-		prevSpillByInstance:        make(map[string]spillDeltaState),
-		prevPerfCounters:           make(map[string]map[string]float64),
-		prevPerfTime:               make(map[string]time.Time),
+		prevPgWalBytesTotal:        make(map[uuid.UUID]uint64),
+		prevPgXactTotal:            make(map[uuid.UUID]uint64),
+		prevPgControlCenterHash:    make(map[uuid.UUID]uint64),
+		prevPgReplicationSlotsHash: make(map[uuid.UUID]uint64),
+		prevPgDeadlocksTotal:       make(map[uuid.UUID]map[string]int64),
+		prevPgDeadlocksTotalAllDBs: make(map[uuid.UUID]int64),
+		prevPgWaitEventsHash:       make(map[uuid.UUID]uint64),
+		prevPgDbIOHash:             make(map[uuid.UUID]uint64),
+		prevPgSettingsHash:         make(map[uuid.UUID]uint64),
+		prevPgQueryStatsHash:       make(map[uuid.UUID]uint64),
+		prevPgStatDeltaHash:        make(map[uuid.UUID]uint64),
+		prevPgSessionHash:          make(map[uuid.UUID]uint64),
+		prevPgTblMaintHash:         make(map[uuid.UUID]uint64),
+		prevPgVacuumProgressHash:   make(map[uuid.UUID]uint64),
+		prevSQLServerTier1Hash:     make(map[uuid.UUID]map[int]uint64),
+		prevPgTier1Hash:            make(map[uuid.UUID]map[int]uint64),
+		prevSpillByInstance:        make(map[uuid.UUID]spillDeltaState),
+		prevPerfCounters:           make(map[uuid.UUID]map[string]float64),
+		prevPerfTime:               make(map[uuid.UUID]time.Time),
+		prevDiskHashByKey:          make(map[string]uint64),
+		prevCumulSnapHash:          make(map[uuid.UUID]uint64),
+		prevFileIOHashKey:          make(map[string]uint64),
+		prevConnHashByKey:          make(map[string]uint64),
 	}
 }
 
-func (tl *TimescaleLogger) GetPrevWaitHistory(instanceName string) map[string]float64 {
+func (tl *TimescaleLogger) Pool() *pgxpool.Pool {
 	tl.mu.RLock()
 	defer tl.mu.RUnlock()
-	return tl.prevWaitHistory[instanceName]
+	return tl.pool
 }
 
-// ComputePerfCounterDeltas calculates the rate (per second) for cumulative counters.
-func (tl *TimescaleLogger) ComputePerfCounterDeltas(instanceName string, current map[string]repository.PerfCounterSample) map[string]float64 {
-	tl.mu.Lock()
-	defer tl.mu.Unlock()
-
-	now := time.Now()
-	prev, hasPrev := tl.prevPerfCounters[instanceName]
-	prevTime, hasTime := tl.prevPerfTime[instanceName]
-
-	rates := make(map[string]float64)
-	newPrev := make(map[string]float64)
-
-	var duration float64
-	if hasTime {
-		duration = now.Sub(prevTime).Seconds()
-	}
-
-	for name, sample := range current {
-		newPrev[name] = sample.Value
-
-		// 272696576 = PERF_100NSEC_TIMER (cumulative, needs delta)
-		// 272696320 = PERF_COUNTER_BULK_COUNT (cumulative, needs delta)
-		// 65792 = PERF_COUNTER_RAWCOUNT (instantaneous, should NOT be in isCumulative)
-		isCumulative := (sample.CntrType == 272696576 || sample.CntrType == 272696320)
-
-		if isCumulative && hasPrev && duration > 0 {
-			prevVal := prev[name]
-			if sample.Value >= prevVal {
-				rates[name] = (sample.Value - prevVal) / duration
-			} else {
-				// SQL Restarted?
-				rates[name] = 0
-			}
-		} else {
-			// Instantaneous counter (e.g. Page Life Expectancy, Buffer Cache Hit Ratio)
-			rates[name] = sample.Value
-		}
-	}
-
-	tl.prevPerfCounters[instanceName] = newPrev
-	tl.prevPerfTime[instanceName] = now
-
-	return rates
-}
-
-func (tl *TimescaleLogger) Ping(ctx context.Context) error {
-	return tl.pool.Ping(ctx)
-}
-
-func (tl *TimescaleLogger) Close() error {
-	tl.pool.Close()
-	return nil
-}
-
-func (tl *TimescaleLogger) ToSafeUTF8(s string) string {
-	if utf8.ValidString(s) {
-		return s
-	}
-	return strings.Map(func(r rune) rune {
-		if r == utf8.RuneError {
-			return ' '
-		}
-		return r
-	}, s)
-}
-
-type SQLServerMetricRow struct {
-	CaptureTimestamp time.Time `json:"capture_timestamp"`
-	ServerName       string    `json:"server_name"`
-	AvgCpuLoad       float64   `json:"avg_cpu_load"`
-	MemoryUsage      float64   `json:"memory_usage"`
-	ActiveUsers      int       `json:"active_users"`
-	TotalLocks       int       `json:"total_locks"`
-	Deadlocks        int       `json:"deadlocks"`
-	DataDiskMB       float64   `json:"data_disk_mb"`
-	LogDiskMB        float64   `json:"log_disk_mb"`
-	FreeDiskMB       float64   `json:"free_disk_mb"`
-	CpuWait          float64   `json:"cpu_wait"`
-	DiskWait         float64   `json:"disk_wait"`
-	LockWait         float64   `json:"lock_wait"`
-	NetworkWait      float64   `json:"network_wait"`
-}
-
-type PostgresThroughputRow struct {
-	CaptureTimestamp time.Time `json:"capture_timestamp"`
-	ServerName       string    `json:"server_name"`
-	DatabaseName     string    `json:"database_name"`
-	Tps              float64   `json:"tps"`
-	CacheHitPct      float64   `json:"cache_hit_pct"`
-	TxnDelta         int64     `json:"txn_delta"`
-	BlksReadDelta    int64     `json:"blks_read_delta"`
-	BlksHitDelta     int64     `json:"blks_hit_delta"`
-}
-
-type PostgresConnectionRow struct {
-	CaptureTimestamp  time.Time `json:"capture_timestamp"`
-	ServerName        string    `json:"server_name"`
-	TotalConnections  int       `json:"total_connections"`
-	ActiveConnections int       `json:"active_connections"`
-	IdleConnections   int       `json:"idle_connections"`
-}
-
-type PostgresSystemStatsRow struct {
-	CaptureTimestamp   time.Time `json:"capture_timestamp"`
-	ServerName         string    `json:"server_name"`
-	CPUUsage           float64   `json:"cpu_usage"`
-	MemoryUsage        float64   `json:"memory_usage"`
-	ActiveConnections  int       `json:"active_connections"`
-	IdleConnections    int       `json:"idle_connections"`
-	TotalConnections   int       `json:"total_connections"`
-	HostCpuPercent     float64   `json:"host_cpu_percent"`
-	PostgresCpuPercent float64   `json:"postgres_cpu_percent"`
-	Load1m             float64   `json:"load_1m"`
-	Load5m             float64   `json:"load_5m"`
-	Load15m            float64   `json:"load_15m"`
-	CpuCores           int       `json:"cpu_cores"`
-}
-
-// PgSystemStatsInsert is the payload for a postgres_system_stats Timescale row.
-// Metadata: used by the metrics collector to persist host vs. Postgres CPU and load.
-type PgSystemStatsInsert struct {
-	CPUUsage           float64
-	MemoryUsage        float64
-	ActiveConnections  int
-	IdleConnections    int
-	TotalConnections   int
-	HostCpuPercent     float64
-	PostgresCpuPercent float64
-	Load1m             float64
-	Load5m             float64
-	Load15m            float64
-	CpuCores           int
-}
-
-type PostgresReplicationSlotRow struct {
-	CaptureTimestamp   time.Time `json:"capture_timestamp"`
-	ServerInstanceName string    `json:"server_instance_name"`
-	SlotName           string    `json:"slot_name"`
-	SlotType           string    `json:"slot_type"`
-	Active             bool      `json:"active"`
-	Temporary          bool      `json:"temporary"`
-	RetainedWalMB      float64   `json:"retained_wal_mb"`
-	RestartLSN         string    `json:"restart_lsn"`
-	ConfirmedFlushLSN  string    `json:"confirmed_flush_lsn"`
-	Xmin               *int64    `json:"xmin,omitempty"`
-	CatalogXmin        *int64    `json:"catalog_xmin,omitempty"`
-}
-
-type QueryStoreStatsRow struct {
-	CaptureTimestamp  time.Time `json:"capture_timestamp"`
-	ServerName        string    `json:"server_name"`
-	DatabaseName      string    `json:"database_name"`
-	QueryHash         string    `json:"query_hash"`
-	QueryText         string    `json:"query_text"`
-	PlanID            int64     `json:"plan_id"`
-	IntervalID        int64     `json:"interval_id"`
-	Executions        int64     `json:"executions"`
-	AvgDurationMs     float64   `json:"avg_duration_ms"`
-	AvgCpuMs          float64   `json:"avg_cpu_ms"`
-	AvgLogicalReads   float64   `json:"avg_logical_reads"`
-	TotalCpuMs        float64   `json:"total_cpu_ms"`
-	LastExecutionTime time.Time `json:"last_execution_time"`
-}
-
-type LongRunningQueryRow struct {
-	CaptureTimestamp     time.Time `json:"capture_timestamp"`
-	ServerInstanceName   string    `json:"server_instance_name"`
-	SessionID            int       `json:"session_id"`
-	RequestID            int       `json:"request_id"`
-	DatabaseName         string    `json:"database_name"`
-	LoginName            string    `json:"login_name"`
-	HostName             string    `json:"host_name"`
-	ProgramName          string    `json:"program_name"`
-	QueryHash            string    `json:"query_hash"`
-	QueryText            string    `json:"query_text"`
-	WaitType             string    `json:"wait_type"`
-	BlockingSessionID    int       `json:"blocking_session_id"`
-	Status               string    `json:"status"`
-	CPUTimeMs            int64     `json:"cpu_time_ms"`
-	TotalElapsedTimeMs   int64     `json:"total_elapsed_time_ms"`
-	Reads                int64     `json:"reads"`
-	Writes               int64     `json:"writes"`
-	GrantedQueryMemoryMB int       `json:"granted_query_memory_mb"`
-	RowCount             int64     `json:"row_count"`
-}
-
-type AGHealthRow struct {
-	CaptureTimestamp     time.Time    `json:"capture_timestamp"`
-	ServerInstanceName   string       `json:"server_instance_name"`
-	AGName               string       `json:"ag_name"`
-	ReplicaServerName    string       `json:"replica_server_name"`
-	DatabaseName         string       `json:"database_name"`
-	ReplicaRole          string       `json:"replica_role"`
-	OperationalState     string       `json:"operational_state"`
-	ConnectedState       string       `json:"connected_state"`
-	SyncState            string       `json:"sync_state"`
-	SynchronizationState string       `json:"synchronization_state"`
-	SyncStateDesc        string       `json:"sync_state_desc"`
-	IsPrimaryReplica     bool         `json:"is_primary_replica"`
-	LogSendQueueKB       int64        `json:"log_send_queue_kb"`
-	RedoQueueKB          int64        `json:"redo_queue_kb"`
-	LogSendRateKB        int64        `json:"log_send_rate_kb"`
-	RedoRateKB           int64        `json:"redo_rate_kb"`
-	LastSentTime         sql.NullTime `json:"last_sent_time"`
-	LastReceivedTime     sql.NullTime `json:"last_received_time"`
-	LastHardenedTime     sql.NullTime `json:"last_hardened_time"`
-	LastRedoneTime       sql.NullTime `json:"last_redone_time"`
-	SecondaryLagSecs     int64        `json:"secondary_lag_secs"`
-}
-
-type DatabaseThroughputRow struct {
-	CaptureTimestamp    time.Time `json:"capture_timestamp"`
-	ServerInstanceName  string    `json:"server_instance_name"`
-	DatabaseName        string    `json:"database_name"`
-	UserSeeks           int64     `json:"user_seeks"`
-	UserScans           int64     `json:"user_scans"`
-	UserLookups         int64     `json:"user_lookups"`
-	UserWrites          int64     `json:"user_writes"`
-	TotalReads          int64     `json:"total_reads"`
-	TotalWrites         int64     `json:"total_writes"`
-	TPS                 float64   `json:"tps"`
-	BatchRequestsPerSec float64   `json:"batch_requests_per_sec"`
-	// New I/O throughput metrics
-	Reads          int64 `json:"reads"`
-	Writes         int64 `json:"writes"`
-	BytesRead      int64 `json:"bytes_read"`
-	BytesWritten   int64 `json:"bytes_written"`
-	ReadLatencyMs  int64 `json:"read_latency_ms"`
-	WriteLatencyMs int64 `json:"write_latency_ms"`
-}
-
-type PostgresBGWriterRow struct {
-	CaptureTimestamp    time.Time `json:"capture_timestamp"`
-	ServerInstanceName  string    `json:"server_instance_name"`
-	CheckpointsTimed    int64     `json:"checkpoints_timed"`
-	CheckpointsReq      int64     `json:"checkpoints_req"`
-	CheckpointWriteTime float64   `json:"checkpoint_write_time"`
-	CheckpointSyncTime  float64   `json:"checkpoint_sync_time"`
-	BuffersCheckpoint   int64     `json:"buffers_checkpoint"`
-	BuffersClean        int64     `json:"buffers_clean"`
-	MaxwrittenClean     int64     `json:"maxwritten_clean"`
-	BuffersBackend      int64     `json:"buffers_backend"`
-	BuffersAlloc        int64     `json:"buffers_alloc"`
-}
-
-type PostgresArchiverRow struct {
-	CaptureTimestamp   time.Time      `json:"capture_timestamp"`
-	ServerInstanceName string         `json:"server_instance_name"`
-	ArchivedCount      int64          `json:"archived_count"`
-	FailedCount        int64          `json:"failed_count"`
-	LastArchivedWal    sql.NullString `json:"last_archived_wal"`
-	LastFailedWal      sql.NullString `json:"last_failed_wal"`
-	FailedCountDelta   int64          `json:"failed_count_delta"`
-}
-
-type PostgresQueryDictionaryRow struct {
-	CaptureTimestamp   time.Time `json:"capture_timestamp"`
-	ServerInstanceName string    `json:"server_instance_name"`
-	QueryID            int64     `json:"query_id"`
-	QueryText          string    `json:"query_text"`
-	Encoding           string    `json:"encoding"`
-	FirstSeen          time.Time `json:"first_seen"`
-	LastSeen           time.Time `json:"last_seen"`
-	ExecutionCount     int64     `json:"execution_count"`
-}
-
-// PostgresQueryStatsSnapRow is one row in postgres_query_stats (snapshot of pg_stat_statements counters).
-type PostgresQueryStatsSnapRow struct {
-	QueryID           int64
-	QueryText         string
-	DbName            string // database name (pg_database.datname) — new
-	UserName          string // login role name (pg_roles.rolname) — new
-	QueryType         string // single-char code: S/I/U/D/E/O — new
-	Calls             int64
-	TotalTimeMs       float64
-	MeanTimeMs        float64
-	Rows              int64
-	TempBlksRead      int64
-	TempBlksWritten   int64
-	BlkReadTimeMs     float64
-	BlkWriteTimeMs    float64
-	SharedBlksHit     int64
-	SharedBlksRead    int64
-	SharedBlksDirtied int64
-	SharedBlksWritten int64
-	WalBytes          int64
-	WalRecords        int64
-	WalFpi            int64
-	TotalPlanTime     float64
-	MeanPlanTime      float64
-	Plans             int64
-}
-
-// PostgresQueryStatsDelta is per-query activity derived from two snapshots (end minus baseline).
-type PostgresQueryStatsDelta struct {
-	QueryID           int64
-	QueryText         string
-	DbName            string
-	UserName          string
-	QueryType         string
-	Calls             int64
-	TotalTimeMs       float64
-	MeanTimeMs        float64
-	Rows              int64
-	TempBlksRead      int64
-	TempBlksWritten   int64
-	BlkReadTimeMs     float64
-	BlkWriteTimeMs    float64
-	SharedBlksHit     int64
-	SharedBlksRead    int64
-	SharedBlksDirtied int64
-	SharedBlksWritten int64
-	WalBytes          int64
-	WalRecords        int64
-	WalFpi            int64
-	TotalPlanTime     float64
-	MeanPlanTime      float64
-	Plans             int64
-}
-
-type CPUSchedulerStatsRow struct {
-	CaptureTimestamp              time.Time `json:"capture_timestamp"`
-	ServerInstanceName            string    `json:"server_instance_name"`
-	MaxWorkersCount               int       `json:"max_workers_count"`
-	SchedulerCount                int       `json:"scheduler_count"`
-	CPUCount                      int       `json:"cpu_count"`
-	TotalRunnableTasksCount       int       `json:"total_runnable_tasks_count"`
-	TotalWorkQueueCount           int       `json:"total_work_queue_count"`
-	TotalCurrentWorkersCount      int       `json:"total_current_workers_count"`
-	AvgRunnableTasksCount         float64   `json:"avg_runnable_tasks_count"`
-	TotalActiveRequestCount       int       `json:"total_active_request_count"`
-	TotalQueuedRequestCount       int       `json:"total_queued_request_count"`
-	TotalBlockedTaskCount         int       `json:"total_blocked_task_count"`
-	RunnablePercent               float64   `json:"runnable_percent"`
-	WorkerThreadExhaustionWarning bool      `json:"worker_thread_exhaustion_warning"`
-	RunnableTasksWarning          bool      `json:"runnable_tasks_warning"`
-	BlockedTasksWarning           bool      `json:"blocked_tasks_warning"`
-	QueuedRequestsWarning         bool      `json:"queued_requests_warning"`
-	TotalPhysicalMemoryKB         int       `json:"total_physical_memory_kb"`
-	AvailablePhysicalMemoryKB     int       `json:"available_physical_memory_kb"`
-	SystemMemoryStateDesc         string    `json:"system_memory_state_desc"`
-	PhysicalMemoryPressureWarning bool      `json:"physical_memory_pressure_warning"`
-	TotalNodeCount                int       `json:"total_node_count"`
-	NodesOnlineCount              int       `json:"nodes_online_count"`
-	OfflineCPUCount               int       `json:"offline_cpu_count"`
-	OfflineCPUWarning             bool      `json:"offline_cpu_warning"`
-}
-
-type ServerPropertiesRow struct {
-	CaptureTimestamp   time.Time `json:"capture_timestamp"`
-	ServerInstanceName string    `json:"server_instance_name"`
-	CPUCount           int       `json:"cpu_count"`
-	HyperthreadRatio   float64   `json:"hyperthread_ratio"`
-	SocketCount        int       `json:"socket_count"`
-	CoresPerSocket     int       `json:"cores_per_socket"`
-	PhysicalMemoryGB   float64   `json:"physical_memory_gb"`
-	VirtualMemoryGB    float64   `json:"virtual_memory_gb"`
-	CPUType            string    `json:"cpu_type"`
-	HyperthreadEnabled bool      `json:"hyperthread_enabled"`
-	NUMANodes          int       `json:"numa_nodes"`
-	MaxWorkersCount    int       `json:"max_workers_count"`
-	PropertiesHash     string    `json:"properties_hash"`
-}
-
-func (tl *TimescaleLogger) GetLatestMetrics(ctx context.Context, instanceName string, dbType string) (map[string]interface{}, error) {
-	if dbType == "postgres" {
-		query := `SELECT capture_timestamp, cpu_usage, memory_usage, active_connections, total_connections,
-			COALESCE(host_cpu_percent, 0), COALESCE(postgres_cpu_percent, 0),
-			COALESCE(load_1m, 0), COALESCE(load_5m, 0), COALESCE(load_15m, 0), COALESCE(cpu_cores, 0)
-			FROM postgres_system_stats
-			WHERE UPPER(server_instance_name) = UPPER($1)
-			ORDER BY capture_timestamp DESC LIMIT 1`
-		var ts time.Time
-		var cpu, mem float64
-		var active, total int
-		var hostCPU, pgCPU, load1, load5, load15 float64
-		var cpuCores int
-		err := tl.pool.QueryRow(ctx, query, instanceName).Scan(&ts, &cpu, &mem, &active, &total,
-			&hostCPU, &pgCPU, &load1, &load5, &load15, &cpuCores)
-		if err != nil && err != pgx.ErrNoRows {
-			return nil, err
-		}
-		return map[string]interface{}{
-			"cpu_usage":            cpu,
-			"memory_usage":         mem,
-			"active_connections":   active,
-			"total_connections":    total,
-			"capture_timestamp":    ts,
-			"host_cpu_percent":     hostCPU,
-			"postgres_cpu_percent": pgCPU,
-			"load_1m":              load1,
-			"load_5m":              load5,
-			"load_15m":             load15,
-			"cpu_cores":            cpuCores,
-		}, nil
-	}
-
-	query := `SELECT capture_timestamp, avg_cpu_load, memory_usage, active_users, total_locks, deadlocks
-		FROM sqlserver_metrics
-		WHERE UPPER(server_instance_name) = UPPER($1)
-		ORDER BY capture_timestamp DESC LIMIT 1`
-	var ts time.Time
-	var cpu, mem float64
-	var users, locks, deadlocks int
-	err := tl.pool.QueryRow(ctx, query, instanceName).Scan(&ts, &cpu, &mem, &users, &locks, &deadlocks)
-	if err != nil && err != pgx.ErrNoRows {
-		return nil, err
-	}
-	return map[string]interface{}{
-		"avg_cpu_load": cpu,
-		"memory_usage": mem,
-		"active_users": users,
-		"total_locks":  locks,
-		"deadlocks":    deadlocks,
-		"timestamp":    ts,
-	}, nil
-}
-
-func (tl *TimescaleLogger) LogAllMetrics(ctx context.Context, instanceName string, metrics interface{}) error {
-	if err := tl.LogSystemMetrics(ctx, instanceName, metrics); err != nil {
-		log.Printf("[TSLogger] Failed to log system metrics: %v", err)
-	}
-	return nil
-}
-
-func (tl *TimescaleLogger) LogSystemMetrics(ctx context.Context, instanceName string, metrics interface{}) error {
-	return nil
-}
-
-func parseTimeRange(from, to string) (time.Time, time.Time, error) {
-	now := time.Now().UTC()
-	var start, end time.Time
-
-	if from != "" {
-		if t, err := parseRFC3339Flexible(from); err == nil {
-			start = t
-		} else {
-			start = now.Add(-1 * time.Hour)
-		}
-	} else {
-		start = now.Add(-1 * time.Hour)
-	}
-
-	if to != "" {
-		if t, err := parseRFC3339Flexible(to); err == nil {
-			end = t
-		} else {
-			end = now
-		}
-	} else {
-		end = now
-	}
-
-	return start, end, nil
-}
-
-// parseRFC3339Flexible parses timestamps from browsers (Date.toISOString uses fractional seconds)
-// and plain RFC3339. time.RFC3339 alone rejects values like "...T07:15:00.000Z".
-func parseRFC3339Flexible(s string) (time.Time, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return time.Time{}, fmt.Errorf("empty timestamp")
-	}
-	t, err := time.Parse(time.RFC3339Nano, s)
-	if err == nil {
-		return t, nil
-	}
-	return time.Parse(time.RFC3339, s)
-}
-
-// parseTimeRangeRFC3339 parses non-empty from/to as RFC3339 (with optional subsecond precision).
-func parseTimeRangeRFC3339(from, to string) (time.Time, time.Time, error) {
-	from = strings.TrimSpace(from)
-	to = strings.TrimSpace(to)
-	if from == "" || to == "" {
-		return time.Time{}, time.Time{}, fmt.Errorf("from and to are required")
-	}
-	start, err := parseRFC3339Flexible(from)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("from: %w", err)
-	}
-	end, err := parseRFC3339Flexible(to)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("to: %w", err)
-	}
-	if end.Before(start) {
-		return time.Time{}, time.Time{}, fmt.Errorf("to is before from")
-	}
-	return start, end, nil
-}
-
-// PostgresLockRow represents a historical lock event row for pg_ts_locks.
-type PostgresLockRow struct {
-	PID            int
-	DatabaseName   string
-	WaitEventType  string
-	WaitEvent      string
-	LockType       string
-	Mode           string
-	Granted        bool
-	QueryText      string
-	BlockedBy      int
-	WaitDurationMs float64
-}
-
-// PGQueryMetricsDelta represents the delta-based query metrics for PostgreSQL.
-type PGQueryMetricsDelta struct {
-	SampleTime       time.Time `json:"sample_time"`
-	InstanceName     string    `json:"instance_name"`
-	QueryID          int64     `json:"queryid"`
-	DbName           string    `json:"db_name"`    // new
-	UserName         string    `json:"username"`   // new
-	AppName          string    `json:"app_name"`   // new (empty for pgss path)
-	QueryType        string    `json:"query_type"` // new: S/I/U/D/E/O
-	DeltaCalls       int64     `json:"delta_calls"`
-	DeltaExecMs      float64   `json:"delta_exec_ms"`
-	DeltaRows        int64     `json:"delta_rows"`
-	DeltaSharedReads int64     `json:"delta_shared_reads"`
-	DeltaSharedHits  int64     `json:"delta_shared_hits"`
-	DeltaTempWritten int64     `json:"delta_temp_written"`
-	DeltaWalBytes    int64     `json:"delta_wal_bytes"`
-	DeltaPlanTime    float64   `json:"delta_plan_time"` // new
-	MeanExecMs       float64   `json:"mean_exec_ms"`    // new
-}
-
-// PostgresStatStatementsDeltaRow represents differential query metrics for pg_ts_stat_statements_delta.
-type PostgresStatStatementsDeltaRow struct {
-	QueryID           int64
-	DatabaseName      string
-	UserName          string
-	Calls             int64
-	TotalTimeMs       float64
-	Rows              int64
-	SharedBlksHit     int64
-	SharedBlksRead    int64
-	SharedBlksDirtied int64
-	SharedBlksWritten int64
-	TempBlksRead      int64
-	TempBlksWritten   int64
-	BlkReadTimeMs     float64
-	BlkWriteTimeMs    float64
-	WalBytes          float64
-}
-
-// PostgresInstanceSnapshotRow represents a health snapshot for pg_ts_instance_snapshot.
-type PostgresInstanceSnapshotRow struct {
-	HealthScore        int
-	TotalConnections   int
-	ActiveSessions     int
-	IdleSessions       int
-	WaitingSessions    int
-	BlockedSessions    int
-	LongestActiveMs    float64
-	TPS                float64
-	CacheHitRatio      float64
-	RWRatio            float64
-	AvgQueryLatencyMs  float64
-	WalGenRateMbps     float64
-	ReplicaLagSec      float64
-	MaxXidAge          int64
-	CheckpointReqRatio float64
+// GetPrevWaitHistory returns the cached wait history for an instance.
+func (tl *TimescaleLogger) GetPrevWaitHistory(serverID uuid.UUID) map[string]float64 {
+	tl.mu.RLock()
+	defer tl.mu.RUnlock()
+	return tl.prevWaitHistory[serverID]
 }

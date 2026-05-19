@@ -8,11 +8,12 @@
 package collectors
 
 import (
+	"log/slog"
 	"context"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
@@ -63,17 +64,17 @@ func CollectSQLServerTableSizeSnapshot(ctx context.Context, dbq repository.Query
 	return out, rows.Err()
 }
 
-func PersistSQLServerTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogger, serverID string, rows []SqlServerTableUsageRow, capture time.Time) (inserted int, err error) {
+func PersistSQLServerTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogger, serverID uuid.UUID, rows []SqlServerTableUsageRow, capture time.Time) (inserted int, err error) {
 	engine := "sqlserver"
 	for _, r := range rows {
 		// SQL Server: no cumulative scan counters. We still upsert 0 totals to keep uniform state table.
-		prev, err := tl.GetTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName)
+		prev, err := tl.GetTableUsageState(ctx, engine, serverID.String(), r.DBName, r.SchemaName, r.TableName)
 		if err != nil {
 			return inserted, fmt.Errorf("get table usage state: %w", err)
 		}
 		if prev == nil {
 			// seed state to zeros
-			if err := tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, 0, 0, 0, 0, r.TableSizeMB, r.IndexSizeMB, r.RowCount); err != nil {
+			if err := tl.UpsertTableUsageState(ctx, engine, serverID.String(), r.DBName, r.SchemaName, r.TableName, 0, 0, 0, 0, r.TableSizeMB, r.IndexSizeMB, r.RowCount); err != nil {
 				return inserted, fmt.Errorf("seed table usage state: %w", err)
 			}
 			continue
@@ -81,7 +82,7 @@ func PersistSQLServerTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogg
 
 		// Optimization: Skip insert if sizes and row count haven't changed.
 		if r.TableSizeMB == prev.TableSizeMB && r.IndexSizeMB == prev.IndexSizeMB && r.RowCount == prev.RowCount {
-			_ = tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, 0, 0, 0, 0, r.TableSizeMB, r.IndexSizeMB, r.RowCount)
+			_ = tl.UpsertTableUsageState(ctx, engine, serverID.String(), r.DBName, r.SchemaName, r.TableName, 0, 0, 0, 0, r.TableSizeMB, r.IndexSizeMB, r.RowCount)
 			continue
 		}
 
@@ -102,16 +103,16 @@ func PersistSQLServerTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogg
 			RowCount:     r.RowCount,
 		}
 		if err := tl.InsertTableUsageStat(ctx, stat); err != nil {
-			log.Printf("[Collector] table_usage_stats insert failed: %v", err)
+			slog.Error("[Collector] table_usage_stats insert failed", "err", err)
 			continue
 		}
 		inserted++
-		_ = tl.UpsertTableUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, 0, 0, 0, 0, r.TableSizeMB, r.IndexSizeMB, r.RowCount)
+		_ = tl.UpsertTableUsageState(ctx, engine, serverID.String(), r.DBName, r.SchemaName, r.TableName, 0, 0, 0, 0, r.TableSizeMB, r.IndexSizeMB, r.RowCount)
 	}
 	return inserted, nil
 }
 
-func PersistSQLServerTableSizeHistory(ctx context.Context, tl *hot.TimescaleLogger, serverID string, rows []SqlServerTableUsageRow, capture time.Time) (inserted int, err error) {
+func PersistSQLServerTableSizeHistory(ctx context.Context, tl *hot.TimescaleLogger, serverID uuid.UUID, rows []SqlServerTableUsageRow, capture time.Time) (inserted int, err error) {
 	engine := "sqlserver"
 	for _, r := range rows {
 		h := models.TableSizeHistory{
@@ -126,7 +127,7 @@ func PersistSQLServerTableSizeHistory(ctx context.Context, tl *hot.TimescaleLogg
 			RowCount:    r.RowCount,
 		}
 		if err := tl.InsertTableSizeHistory(ctx, h); err != nil {
-			log.Printf("[Collector] table_size_history insert failed: %v", err)
+			slog.Error("[Collector] table_size_history insert failed", "err", err)
 			continue
 		}
 		inserted++

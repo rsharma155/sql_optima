@@ -278,7 +278,7 @@
 
         tbody.innerHTML = sorted.map(u => {
             let risk = '<span class="badge badge-info">Low</span>';
-            if (u.rolsuper) risk = '<span class="badge badge-danger">Critical</span>';
+            if (u.rolsuper) risk = '<span class="badge badge-danger" title="Superusers bypass all permission checks and can execute OS commands. Minimum of 1-2 required.">Critical</span>';
             else if (u.rolcreaterole || u.rolreplication) risk = '<span class="badge badge-warning">High</span>';
 
             return `

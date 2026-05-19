@@ -347,8 +347,15 @@
                         <td>${r.created_at ? new Date(r.created_at).toLocaleString() : '--'}</td>
                         <td class="text-right font-mono">${fmtMs(r.avg_duration_ms)}</td>
                         <td class="text-right">${fmtNum(r.executions)}</td>
-                        <td class="text-center"><button class="btn btn-xs btn-outline" onclick="window._showPlanXml(${i})"><i class="fa-solid fa-file-code"></i> View</button></td>
+                        <td class="text-center"><button class="btn btn-xs btn-outline" data-action="show-plan-xml" data-idx="${i}"><i class="fa-solid fa-file-code"></i> View</button></td>
                     </tr>`).join('')}</tbody></table></div>`;
+                if (!body.dataset.planXmlBound) {
+                    body.dataset.planXmlBound = '1';
+                    body.addEventListener('click', (e) => {
+                        const btn = e.target?.closest?.('[data-action="show-plan-xml"]');
+                        if (btn) window._showPlanXml(Number(btn.dataset.idx));
+                    });
+                }
             } catch (err) { body.innerHTML = '<div class="text-danger p-2">Failed to load plan history.</div>'; }
         }
 
@@ -364,13 +371,14 @@
                     <h4 style="margin:0;"><i class="fa-solid fa-file-code text-accent"></i> Execution Plan XML (ID: ${plan.plan_id})</h4>
                     <div class="flex-row gap-2">
                         <button class="btn btn-xs btn-primary" id="wqCopyXml"><i class="fa-solid fa-copy"></i> Copy XML</button>
-                        <button class="btn btn-xs btn-outline" onclick="document.getElementById('wq-xml-modal').remove()"><i class="fa-solid fa-times"></i></button>
+                        <button class="btn btn-xs btn-outline" id="wq-xml-close-btn"><i class="fa-solid fa-times"></i></button>
                     </div>
                 </div>
                 <div style="flex:1; overflow:auto; padding:1rem;"><pre class="code-block" style="font-size:0.7rem; margin:0; height:100%;">${esc(plan.query_plan)}</pre></div>
             </div>`;
             document.body.appendChild(modal);
             document.getElementById('wqCopyXml').onclick = () => { navigator.clipboard.writeText(plan.query_plan); alert('Plan XML copied.'); };
+            document.getElementById('wq-xml-close-btn')?.addEventListener('click', () => modal.remove());
         };
 
         async function fetchWaits(queryHash, dbName) {

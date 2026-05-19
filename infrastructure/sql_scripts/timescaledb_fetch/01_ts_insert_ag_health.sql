@@ -4,7 +4,7 @@
 -- Description: Batch inserts AlwaysOn Availability Group health metrics
 
 INSERT INTO sqlserver_ag_health (
-    capture_timestamp, server_instance_name, ag_name, replica_server_name, database_name,
+    capture_timestamp, server_id, ag_name, replica_server_name, database_name,
     replica_role, synchronization_state, synchronization_state_desc, is_primary_replica,
     log_send_queue_kb, redo_queue_kb, log_send_rate_kb, redo_rate_kb,
     last_sent_time, last_received_time, last_hardened_time, last_redone_time, secondary_lag_seconds

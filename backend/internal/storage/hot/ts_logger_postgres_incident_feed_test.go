@@ -40,7 +40,7 @@ func TestPgIncidentFeed_SeverityOrdering(t *testing.T) {
 
 func TestPgIncidentFeed_SnippetTruncation(t *testing.T) {
 	longQuery := "SELECT * FROM very_large_table WHERE column1 = 'value1' AND column2 = 'value2' AND column3 = 'value3' AND column4 = 'value4' AND column5 = 'value5' AND column6 = 'value6' AND column7 = 'value7' AND column8 = 'value8'"
-	
+
 	snippet := longQuery
 	if len(snippet) > 200 {
 		snippet = snippet[:197] + "..."

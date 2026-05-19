@@ -8,9 +8,10 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 )
@@ -30,12 +31,12 @@ type PgReplicationSlotStat struct {
 
 // GetReplicationSlotStats returns replication slot stats for an instance.
 // It uses pg_wal_lsn_diff to estimate WAL retention for the slot.
-func (c *PgRepository) GetReplicationSlotStats(instanceName string) ([]PgReplicationSlotStat, error) {
+func (c *PgRepository) GetReplicationSlotStats(ctx context.Context, instanceName string) ([]PgReplicationSlotStat, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
-		if c.reconnectInstance(instanceName) {
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
@@ -67,9 +68,11 @@ func (c *PgRepository) GetReplicationSlotStats(instanceName string) ([]PgReplica
 		ORDER BY retained_bytes DESC, slot_name
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[POSTGRES] GetReplicationSlotStats query error for %s: %v", instanceName, err)
+		slog.Error("[POSTGRES] GetReplicationSlotStats query error", "target", instanceName, "err", err)
 		return nil, err
 	}
 	defer rows.Close()

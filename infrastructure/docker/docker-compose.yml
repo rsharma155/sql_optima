@@ -24,6 +24,16 @@ services:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - log_statement=none
+      - -c
+      - log_min_duration_statement=5000
+      - -c
+      - log_min_error_statement=error
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-dbmonitor} -d ${DB_NAME:-dbmonitor_metrics}"]
       interval: 10s

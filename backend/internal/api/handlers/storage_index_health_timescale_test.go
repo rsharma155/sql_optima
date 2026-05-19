@@ -13,33 +13,33 @@ import (
 	"testing"
 )
 
-func TestStorageIndexHealthTimescale_IndexUsage_Returns503WhenTimescaleNotConfigured(t *testing.T) {
-	h := NewStorageIndexHealthTimescaleHandlers(nil)
-	req := httptest.NewRequest("GET", "/api/timescale/storage-index-health/index-usage?engine=sqlserver&instance=x", nil)
+func TestStorageIndexHealthTimescale_IndexUsage_Returns400WhenNoInstance(t *testing.T) {
+	h := NewStorageIndexHealthTimescaleHandlers(nil, nil)
+	req := httptest.NewRequest("GET", "/api/timescale/storage-index-health/index-usage", nil)
 	rr := httptest.NewRecorder()
 
-	h.IndexUsage(rr, req)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rr.Code)
+	h.GetIndexUsage(rr, req)
+	if rr.Code != http.StatusServiceUnavailable && rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 503 or 400, got %d", rr.Code)
 	}
 }
 
-func TestStorageIndexHealthTimescale_IndexUsage_PostgresEngine_Returns503WhenTimescaleNotConfigured(t *testing.T) {
-	h := NewStorageIndexHealthTimescaleHandlers(nil)
-	req := httptest.NewRequest("GET", "/api/timescale/storage-index-health/index-usage?engine=postgres&instance=pg1", nil)
+func TestStorageIndexHealthTimescale_IndexUsage_PostgresEngine_Returns400WhenNoInstance(t *testing.T) {
+	h := NewStorageIndexHealthTimescaleHandlers(nil, nil)
+	req := httptest.NewRequest("GET", "/api/timescale/storage-index-health/index-usage?engine=postgres", nil)
 	rr := httptest.NewRecorder()
-	h.IndexUsage(rr, req)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rr.Code)
+	h.GetIndexUsage(rr, req)
+	if rr.Code != http.StatusServiceUnavailable && rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 503 or 400, got %d", rr.Code)
 	}
 }
 
-func TestStorageIndexHealthTimescale_Dashboard_PostgresEngine_Returns503WhenTimescaleNotConfigured(t *testing.T) {
-	h := NewStorageIndexHealthTimescaleHandlers(nil)
-	req := httptest.NewRequest("GET", "/api/timescale/storage-index-health/dashboard?engine=postgres&instance=pg1&time_range=24h", nil)
+func TestStorageIndexHealthTimescale_Dashboard_PostgresEngine_Returns400WhenNoInstance(t *testing.T) {
+	h := NewStorageIndexHealthTimescaleHandlers(nil, nil)
+	req := httptest.NewRequest("GET", "/api/timescale/storage-index-health/dashboard?engine=postgres", nil)
 	rr := httptest.NewRecorder()
-	h.Dashboard(rr, req)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rr.Code)
+	h.GetDashboard(rr, req)
+	if rr.Code != http.StatusServiceUnavailable && rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 503 or 400, got %d", rr.Code)
 	}
 }

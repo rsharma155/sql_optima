@@ -48,6 +48,29 @@ var (
 		},
 		[]string{"method", "path"},
 	)
+
+	CollectorCycles = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "sql_optima_collector_cycles_total",
+			Help: "Total collector cycles by server and status.",
+		},
+		[]string{"server_id", "engine", "status"}, // status: success | error
+	)
+	CollectorDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "sql_optima_collector_duration_seconds",
+			Help:    "Duration of each collector job.",
+			Buckets: []float64{0.1, 0.5, 1, 5, 10, 30},
+		},
+		[]string{"server_id", "engine", "job"},
+	)
+	CollectorRowsWritten = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "sql_optima_collector_rows_written_total",
+			Help: "Total rows written by the collector per server and table.",
+		},
+		[]string{"server_id", "table"},
+	)
 )
 
 // MetricsHandler serves Prometheus metrics.

@@ -1,8 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Port interfaces (AlertStore, MaintenanceStore, AlertRuleStore) and
-//
-//	supporting filter/rule types for the alert engine domain.
+// Purpose: Define repository ports for alert storage and maintenance windows.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -11,65 +9,52 @@ package alerts
 
 import (
 	"context"
-	"time"
-
 	"github.com/google/uuid"
+	"time"
 )
 
-// AlertFilter holds optional filters for listing alerts.
-type AlertFilter struct {
-	InstanceName string
-	Engine       Engine
-	Severity     Severity
-	Status       Status
-	Category     string
-	Limit        int
-	Offset       int
-}
-
-// AlertStore is the port for persisting and querying alert records.
+// AlertStore defines the persistence interface for alerts.
 type AlertStore interface {
-	// Upsert creates a new alert or bumps the hit count of an existing open
-	// alert with the same fingerprint.
+	// Upsert inserts a new alert or updates an existing one (bumping HitCount).
 	Upsert(ctx context.Context, a Alert) (Alert, error)
 
-	// GetByID fetches a single alert.
+	// GetByID retrieves a single alert by its UUID.
 	GetByID(ctx context.Context, id uuid.UUID) (Alert, error)
 
-	// List returns alerts matching the given filter.
-	List(ctx context.Context, f AlertFilter) ([]Alert, int, error)
+	// List retrieves alerts filtered by instance, engine, status, or severity.
+	List(ctx context.Context, filter AlertFilter) ([]Alert, error)
 
-	// UpdateStatus persists a status transition and writes a history row.
-	UpdateStatus(ctx context.Context, id uuid.UUID, status Status, actor, reason string, at time.Time) error
+	// UpdateStatus updates the status of an alert (Acknowledge/Resolve).
+	UpdateStatus(ctx context.Context, id uuid.UUID, status Status, actor string, reason string, at time.Time) error
 
-	// CountOpen returns the number of non-resolved alerts per instance.
-	CountOpen(ctx context.Context, instanceName string) (int, error)
+	// PruneResolved removes alerts that have been resolved for more than the given duration.
+	PruneResolved(ctx context.Context, olderThan time.Duration) (int64, error)
+
+	// CountOpen returns the number of active alerts for a given server.
+	CountOpen(ctx context.Context, serverID uuid.UUID) (int, error)
 }
 
-// MaintenanceStore is the port for maintenance window persistence.
+// AlertFilter defines criteria for listing alerts.
+type AlertFilter struct {
+	ServerID *uuid.UUID `json:"server_id,omitempty"`
+	Engine   *Engine    `json:"engine,omitempty"`
+	Status   *Status    `json:"status,omitempty"`
+	Severity *Severity  `json:"severity,omitempty"`
+	Category *string    `json:"category,omitempty"`
+	Limit    int        `json:"limit,omitempty"`
+}
+
+// MaintenanceStore defines the persistence interface for maintenance windows.
 type MaintenanceStore interface {
+	// Create registers a new maintenance window.
 	Create(ctx context.Context, mw MaintenanceWindow) (MaintenanceWindow, error)
-	IsUnderMaintenance(ctx context.Context, instanceName string, engine Engine, at time.Time) (bool, error)
+
+	// IsUnderMaintenance checks if a specific instance/engine is currently suppressed.
+	IsUnderMaintenance(ctx context.Context, serverID uuid.UUID, engine Engine, at time.Time) (bool, error)
+
+	// ListActive retrieves all maintenance windows covering the current time.
 	ListActive(ctx context.Context, at time.Time) ([]MaintenanceWindow, error)
+
+	// Delete removes a maintenance window.
 	Delete(ctx context.Context, id uuid.UUID) error
-}
-
-// AlertRuleStore is the port for alert rule configuration persistence.
-type AlertRuleStore interface {
-	ListEnabled(ctx context.Context, engine Engine) ([]AlertRule, error)
-	GetByName(ctx context.Context, name string) (AlertRule, error)
-}
-
-// AlertRule describes a configured alert evaluation rule.
-type AlertRule struct {
-	ID              uuid.UUID              `json:"id"`
-	Name            string                 `json:"name"`
-	Engine          string                 `json:"engine"`
-	Category        string                 `json:"category"`
-	DefaultSeverity Severity               `json:"default_severity"`
-	Description     string                 `json:"description"`
-	IsEnabled       bool                   `json:"is_enabled"`
-	Config          map[string]interface{} `json:"config"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
 }

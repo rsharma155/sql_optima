@@ -8,10 +8,11 @@
 package collectors
 
 import (
+	"log/slog"
 	"context"
-	"log"
 	"time"
 
+	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/domain/postgres_monitoring/instance_health"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
@@ -33,75 +34,54 @@ func NewPgSnapshotCollector(pgRepo *repository.PgRepository, healthService *inst
 	}
 }
 
-func (c *PgSnapshotCollector) Collect(ctx context.Context, instanceName string) error {
+func (c *PgSnapshotCollector) Collect(ctx context.Context, inst config.Instance) error {
+	instanceName := inst.Name
+	serverID := inst.ServerID
+
 	// 1. Fetch metrics from PostgreSQL
 	// TPS
 	tps := 0.0
-	xactTotal, err := c.pgRepo.FetchXactTotal(instanceName)
+	xactTotal, err := c.pgRepo.FetchXactTotal(ctx, instanceName)
 	if err == nil && c.tsLogger != nil {
 		interval := 15.0 // default
-		if r, ok := c.tsLogger.ComputePgTps(instanceName, xactTotal, interval); ok {
+		if r, ok := c.tsLogger.ComputePgTps(serverID, xactTotal, interval); ok {
 			tps = r
 		}
 	}
 
 	// Sessions
-	active, waiting, _ := c.pgRepo.FetchActiveWaitingSessions(instanceName)
-	
-	// Fetch detailed session counts
-	cnt, _ := c.pgRepo.GetSessionStateCounts(instanceName)
-	idle := 0
-	idleInTx := 0
-	if cnt != nil {
-		idle = cnt.Idle
-		idleInTx = cnt.IdleInTxn
-	}
+	active, waiting, _ := c.pgRepo.FetchActiveWaitingSessions(ctx, instanceName)
+	idle, idleInTx, _ := c.pgRepo.FetchIdleSessions(ctx, instanceName)
 
-	// CPU & Memory
-	cpuUsage := 0.0
-	memoryUsage := 0.0
-	sharedBuffersPct := 0.0
-	cacheHitRatio, _ := c.pgRepo.FetchCacheHitRatioPct(instanceName)
+	// CPU/Memory
+	cpuUsage, _ := c.pgRepo.FetchCPUUsage(ctx, instanceName)
+	_, _ = c.pgRepo.FetchMemoryUsage(instanceName)
+	sharedBuffersPct, _ := c.pgRepo.FetchSharedBuffersUtilization(instanceName)
 
-	// Fetch detailed system stats if available
-	sysStats, err := c.pgRepo.GetSystemStatsDetail(instanceName)
-	if err == nil && sysStats != nil {
-		cpuUsage = sysStats.CPUUsagePct
-		memoryUsage = sysStats.MemoryUsedPct
-	} else {
-		// Fallback: Estimate CPU usage based on active connections if no OS metrics available
-		if active > 0 {
-			cpuUsage = float64(active) * 10.0
-			if cpuUsage > 100.0 {
-				cpuUsage = 100.0
-			}
-		}
-	}
-	
-	// WAL MB/min
+	// Cache Hit Ratio
+	cacheHitRatio, _ := c.pgRepo.FetchCacheHitRatio(ctx, instanceName)
+
+	// WAL Rate (real delta-based computation, replaces dummy FetchWALGenerationRate)
 	walRate := 0.0
-	walBytes, err := c.pgRepo.FetchWalBytesTotal(instanceName)
-	if err == nil && c.tsLogger != nil {
-		interval := 15.0 // default
-		if r, ok := c.tsLogger.ComputeWalRateMBPerMin(instanceName, walBytes, interval); ok {
+	walBytesTotal, walErr := c.pgRepo.FetchWalBytesTotal(ctx, instanceName)
+	if walErr == nil && c.tsLogger != nil {
+		if r, ok := c.tsLogger.ComputeWalRateMBPerMin(serverID, walBytesTotal, 15.0); ok {
 			walRate = r
 		}
 	}
-	
-	// XID & Storage
-	obs, _ := c.pgRepo.FetchDBObservationMetrics(instanceName)
-	maxXidAge := int64(0)
-	if obs != nil {
-		maxXidAge = obs.XIDAge
-	}
-	
-	deadTuplePct, _ := c.pgRepo.FetchDeadTupleRatioPct(instanceName)
 
-	sizeStats := c.pgRepo.GetDatabaseSizeStats(instanceName)
+	// XID Age
+	maxXidAge, _ := c.pgRepo.FetchMaxXidAge(ctx, instanceName)
+
+	// Table Stats (real dead-tuple ratio, replaces dummy FetchDeadTuplePercentage)
+	deadTuplePct, _ := c.pgRepo.FetchDeadTupleRatioPct(ctx, instanceName)
+
+	// Storage Stats
+	sizeStats := c.pgRepo.GetDatabaseSizeStats(ctx, instanceName)
 	databaseSizeGB := float64(sizeStats.TotalBytes) / 1024 / 1024 / 1024
 
 	tempBytesMB := 0.0
-	dbStats, err := c.pgRepo.GetDbIOStats(instanceName)
+	dbStats, err := c.pgRepo.GetDbIOStats(ctx, instanceName)
 	if err == nil {
 		for _, db := range dbStats {
 			tempBytesMB += float64(db.TempBytes) / 1024 / 1024
@@ -109,10 +89,10 @@ func (c *PgSnapshotCollector) Collect(ctx context.Context, instanceName string) 
 	}
 
 	// Vacuum
-	autovacWorkers, _ := c.pgRepo.FetchAutovacuumWorkers(instanceName)
+	autovacWorkers, _ := c.pgRepo.FetchAutovacuumWorkers(ctx, instanceName)
 
 	// Checkpoints
-	cp, _ := c.pgRepo.FetchBGWriterStats(instanceName)
+	cp, _ := c.pgRepo.FetchBGWriterStats(ctx, instanceName)
 	cpTimed := int64(0)
 	cpReq := int64(0)
 	cpWriteTime := 0.0
@@ -125,17 +105,86 @@ func (c *PgSnapshotCollector) Collect(ctx context.Context, instanceName string) 
 		if total > 0 {
 			cpRatio = float64(cpReq) / total
 		}
+		// Log detailed BGWriter stats
+		_ = c.tsLogger.LogPostgresBGWriterStats(ctx, hot.PostgresBGWriterRow{
+			CaptureTimestamp:    time.Now().UTC(),
+			ServerID:            serverID,
+			CheckpointsTimed:    cp.CheckpointsTimed,
+			CheckpointsReq:      cp.CheckpointsReq,
+			CheckpointWriteTime: cp.CheckpointWriteTime,
+			CheckpointSyncTime:  cp.CheckpointSyncTime,
+			BuffersCheckpoint:   cp.BuffersCheckpoint,
+			BuffersClean:        cp.BuffersClean,
+			MaxwrittenClean:     cp.MaxwrittenClean,
+			BuffersBackend:      cp.BuffersBackend,
+			BuffersBackendFsync: cp.BuffersBackendFsync,
+			BuffersAlloc:        cp.BuffersAlloc,
+			StatsReset:          cp.StatsReset,
+		})
+	}
+
+	// Archiver
+	arch, _ := c.pgRepo.FetchArchiverStats(ctx, instanceName)
+	if arch != nil {
+		lastArch := time.Time{}
+		if arch.LastArchivedTime != nil {
+			lastArch = *arch.LastArchivedTime
+		}
+		lastFail := time.Time{}
+		if arch.LastFailedTime != nil {
+			lastFail = *arch.LastFailedTime
+		}
+
+		_ = c.tsLogger.LogPostgresArchiverStats(ctx, hot.PostgresArchiverRow{
+			CaptureTimestamp: time.Now().UTC(),
+			ServerID:         serverID,
+			ArchivedCount:    arch.ArchivedCount,
+			LastArchivedWal:  arch.LastArchivedWal.String,
+			LastArchivedTime: lastArch,
+			FailedCount:      arch.FailedCount,
+			LastFailedWal:    arch.LastFailedWal.String,
+			LastFailedTime:   lastFail,
+			StatsReset:       arch.StatsReset,
+		})
 	}
 
 	// Replication
-	replicaLagSec, _ := c.pgRepo.FetchReplicaLagSec(instanceName)
+	replicaLagSec, _ := c.pgRepo.FetchReplicaLagSec(ctx, instanceName)
 
 	// Server Info (Version & Uptime)
-	version, uptime, _ := c.pgRepo.GetServerInfo(instanceName)
+	version, uptime, _ := c.pgRepo.GetServerInfo(ctx, instanceName)
+
+	// Control Center extras
+	walSizeMB, _ := c.pgRepo.FetchWalDirSizeMB(ctx, instanceName)
+	replicaLagMB, _, _ := c.pgRepo.GetReplicationLag(ctx, instanceName)
+	slowQueriesCount, _ := c.pgRepo.FetchSlowQueriesCount(ctx, instanceName, 1000.0)
+	blockingSessionsCount, _ := c.pgRepo.FetchBlockingSessionsCount(ctx, instanceName)
+	connUtil, _ := c.pgRepo.FetchConnectionUtilization(ctx, instanceName)
+	var connMax, connUsed int
+	var connUsagePct float64
+	if connUtil != nil {
+		connMax = connUtil.MaxConnections
+		connUsed = connUtil.UsedConnections
+		connUsagePct = connUtil.UsagePct
+	}
+	xidRisks, _ := c.pgRepo.GetXIDWraparoundRisk(ctx, instanceName)
+	var xidWraparoundPct float64
+	for _, r := range xidRisks {
+		if r.UsedPct > xidWraparoundPct {
+			xidWraparoundPct = r.UsedPct
+		}
+	}
+	totalDeadlocks, _ := c.pgRepo.FetchDeadlocksTotalAllDBs(ctx, instanceName)
+	deadlocksPerMin := 0.0
+	if c.tsLogger != nil {
+		if r, ok := c.tsLogger.ComputePgDeadlockRate(serverID, totalDeadlocks, 15.0); ok {
+			deadlocksPerMin = r
+		}
+	}
 
 	// 2. Build Snapshot
 	snapshot := &instance_health.PgInstanceSnapshot{
-		InstanceID:           instanceName,
+		ServerID:             serverID,
 		CollectedAt:          time.Now().UTC(),
 		TPS:                  tps,
 		ActiveSessions:       active,
@@ -145,52 +194,153 @@ func (c *PgSnapshotCollector) Collect(ctx context.Context, instanceName string) 
 		CPUUsage:             cpuUsage,
 		SharedBuffersUsedPct: sharedBuffersPct,
 		CacheHitRatio:        cacheHitRatio,
+		ConnectionsUsagePct:  connUsagePct,
 		WALMBPerMin:          walRate,
 		CheckpointReqRatio:   cpRatio,
 		CheckpointsTimed:     int(cpTimed),
 		CheckpointsReq:       int(cpReq),
 		CheckpointWriteTime:  cpWriteTime,
 		MaxXIDAge:            maxXidAge,
-		DatabaseSizeGB:     databaseSizeGB,
-		TempBytesMB:        tempBytesMB,
-		AutovacuumWorkers:  autovacWorkers,
-		DeadTuplePct:       deadTuplePct,
-		ReplicaLagSec:      replicaLagSec,
-		Version:            version,
-		Uptime:             uptime,
+		DatabaseSizeGB:       databaseSizeGB,
+		TempBytesMB:          tempBytesMB,
+		AutovacuumWorkers:    autovacWorkers,
+		DeadTuplePct:         deadTuplePct,
+		ReplicaLagSec:        replicaLagSec,
+		Version:              version,
+		Uptime:               uptime,
 	}
 
 	// 3. Calculate Health Score
+	if c.healthService == nil || c.healthRepo == nil {
+		slog.Warn("[PgSnapshotCollector] healthService or healthRepo is nil for %s; skipping snapshot persist", "val", instanceName)
+		return nil
+	}
 	snapshot.HealthScore = c.healthService.CalculateHealthScore(snapshot)
 
 	// 4. Persist to Snapshot Table
 	if err := c.healthRepo.UpsertSnapshot(ctx, snapshot); err != nil {
-		log.Printf("[PgSnapshotCollector] UpsertSnapshot error for %s: %v", instanceName, err)
+		slog.Error("[PgSnapshotCollector] UpsertSnapshot error", "target", instanceName, "err", err)
 		return err
 	}
 
-	// 5. Persist to Timeseries Hypertables
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "tps", snapshot.TPS)
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "tps_total", snapshot.TPS)
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "tps_read", snapshot.TPS*0.7) // Approximation
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "tps_write", snapshot.TPS*0.3) // Approximation
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "wal_mb_per_min", snapshot.WALMBPerMin)
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "dead_tuple_pct", snapshot.DeadTuplePct)
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "replica_lag_sec", snapshot.ReplicaLagSec)
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "cache_hit_ratio", snapshot.CacheHitRatio)
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "checkpoint_req_ratio", snapshot.CheckpointReqRatio)
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "health_score", float64(snapshot.HealthScore))
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "database_size_gb", snapshot.DatabaseSizeGB)
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "temp_bytes_mb", snapshot.TempBytesMB)
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "cpu_usage_pct", cpuUsage)
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "memory_usage_pct", memoryUsage)
+	// 5. Persist to Timeseries Hypertables (Wide-row optimized)
+	if err := c.healthRepo.LogSnapshotMetrics(ctx, snapshot); err != nil {
+		slog.Error("[PgSnapshotCollector] LogSnapshotMetrics error", "target", instanceName, "err", err)
+	}
 
-	// Additional metrics for Control Center graphs
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "active_sessions_ts", float64(snapshot.ActiveSessions))
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "idle_sessions_ts", float64(snapshot.IdleSessions))
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "cpu_load", float64(snapshot.ActiveSessions))
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "waiting_load", float64(snapshot.BlockedSessions))
-	_ = c.healthRepo.LogMetric(ctx, instanceName, "idle_in_txn_load", float64(snapshot.IdleInTxSessions))
+	// 5.1 Persist to Backup & DR Domain
+	wal, _ := c.pgRepo.FetchPgWALStats(ctx, instanceName)
+	if wal != nil && cp != nil {
+		// Re-fetch is_in_recovery specifically
+		var isInRecovery bool
+		db, ok := c.pgRepo.GetConn(instanceName)
+		if ok {
+			_ = db.QueryRow("SELECT pg_is_in_recovery()").Scan(&isInRecovery)
+		}
+
+		archCount := int64(0)
+		archFailed := int64(0)
+		var lastArch, lastFail *time.Time
+		if arch != nil {
+			archCount = arch.ArchivedCount
+			archFailed = arch.FailedCount
+			lastArch = arch.LastArchivedTime
+			lastFail = arch.LastFailedTime
+		}
+
+		_ = c.tsLogger.LogPostgresBackupDR(ctx, serverID, hot.PostgresBackupDRRow{
+			CaptureTimestamp:      time.Now().UTC(),
+			WalBytesTotal:         wal.WalBytes,
+			WalRecordsTotal:       wal.WalRecords,
+			WalFPITotal:           wal.WalFpi,
+			ArchivedCount:         archCount,
+			ArchiveFailedCount:    archFailed,
+			LastArchivedTime:      lastArch,
+			LastFailedTime:        lastFail,
+			CheckpointsTimed:      cp.CheckpointsTimed,
+			CheckpointsReq:        cp.CheckpointsReq,
+			CheckpointWriteTimeMs: cp.CheckpointWriteTime,
+			CheckpointSyncTimeMs:  cp.CheckpointSyncTime,
+			IsInRecovery:          isInRecovery,
+		})
+	}
+
+	// Bug 5: Advanced Postgres Metrics
+	// 1. Wait event stats
+	waitCounts, err := c.pgRepo.GetWaitEventCounts(ctx, instanceName)
+	if err == nil && len(waitCounts) > 0 {
+		var waitRows []hot.PostgresWaitEventRow
+		now := time.Now().UTC()
+		for _, w := range waitCounts {
+			waitRows = append(waitRows, hot.PostgresWaitEventRow{
+				CaptureTimestamp: now,
+				ServerID:         serverID,
+				WaitEventType:    w.WaitEventType,
+				WaitEvent:        w.WaitEvent,
+				SessionsCount:    w.SessionsCount,
+			})
+		}
+		_ = c.tsLogger.LogPostgresWaitEvents(ctx, serverID, waitRows)
+	}
+
+	// 2. DB I/O stats
+	// dbStats already fetched above
+	if len(dbStats) > 0 {
+		var ioRows []hot.PostgresDbIORow
+		now := time.Now().UTC()
+		for _, d := range dbStats {
+			ioRows = append(ioRows, hot.PostgresDbIORow{
+				CaptureTimestamp: now,
+				ServerID:         serverID,
+				DatabaseName:     d.DatabaseName,
+				BlksRead:         d.BlksRead,
+				BlksHit:          d.BlksHit,
+				TempFiles:        d.TempFiles,
+				TempBytes:        d.TempBytes,
+			})
+		}
+		_ = c.tsLogger.LogPostgresDbIOStats(ctx, serverID, ioRows)
+	}
+
+	// 3. Control Center Stats
+	healthStatus := "healthy"
+	switch {
+	case snapshot.HealthScore < 60:
+		healthStatus = "critical"
+	case snapshot.HealthScore < 80:
+		healthStatus = "warning"
+	}
+	_ = c.tsLogger.LogPostgresControlCenterStats(ctx, hot.PostgresControlCenterRow{
+		CaptureTimestamp:    time.Now().UTC(),
+		ServerID:            serverID,
+		WALMBPerMin:         walRate,
+		WALSizeMB:           walSizeMB,
+		ReplicaLagMB:        replicaLagMB,
+		ReplicaLagSec:       replicaLagSec,
+		CheckpointReqRatio:  cpRatio,
+		XIDAge:              maxXidAge,
+		XIDWraparoundPct:    xidWraparoundPct,
+		TPS:                 tps,
+		ActiveSessions:      active,
+		WaitingSessions:     waiting,
+		SlowQueriesCount:    slowQueriesCount,
+		BlockingSessions:    blockingSessionsCount,
+		AutovacuumWorkers:   autovacWorkers,
+		DeadTuplePct:        deadTuplePct,
+		HealthScore:         snapshot.HealthScore,
+		HealthStatus:        healthStatus,
+		IdleSessions:        idle,
+		IdleInTxnSessions:   idleInTx,
+		ConnectionsMax:      connMax,
+		ConnectionsUsed:     connUsed,
+		ConnectionsUsagePct: connUsagePct,
+		CacheHitRatioPct:    cacheHitRatio,
+		DeadlocksPerMin:     deadlocksPerMin,
+	})
+
+	// 4. Session State Counts
+	sessionTotal := active + idle + idleInTx + waiting
+	_ = c.tsLogger.LogPostgresSessionStateCounts(ctx, serverID, active, idle, idleInTx, waiting, sessionTotal)
 
 	return nil
 }

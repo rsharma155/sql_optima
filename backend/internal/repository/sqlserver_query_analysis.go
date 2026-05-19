@@ -11,34 +11,34 @@
 package repository
 
 import (
+	"log/slog"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 
 	"github.com/rsharma155/sql_optima/internal/models"
 )
 
 // FetchQueryRegressions compares the last-24h Query Store averages to the previous 24h
 // and returns queries whose duration/cpu/reads regressed ≥ 50%.
-func (c *SqlServerRepository) FetchQueryRegressions(instanceName string) ([]models.SqlServerQueryRegression, error) {
+func (c *SqlServerRepository) FetchQueryRegressions(ctx context.Context, instanceName string) ([]models.SqlServerQueryRegression, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
 	}
 
-	dbNames, err := c.listUserDatabaseNamesForQueryStore(db)
+	dbNames, err := c.listUserDatabaseNamesForQueryStore(ctx, db)
 	if err != nil || len(dbNames) == 0 {
-		log.Printf("[SQLSERVER] FetchQueryRegressions: no QS databases for %s: %v", instanceName, err)
+		slog.Info("[SQLSERVER] FetchQueryRegressions: no QS databases", "target", instanceName, "err", err)
 		return nil, nil
 	}
 
 	var all []models.SqlServerQueryRegression
 	for _, dbn := range dbNames {
-		rows, err := fetchRegressionsForDB(db, dbn)
+		rows, err := fetchRegressionsForDB(ctx, db, dbn)
 		if err != nil {
-			log.Printf("[SQLSERVER] FetchQueryRegressions(%s/%s): %v", instanceName, dbn, err)
+			slog.Info(fmt.Sprintf("[SQLSERVER] FetchQueryRegressions(%s/%s): %v", instanceName, dbn, err))
 			continue
 		}
 		all = append(all, rows...)
@@ -46,7 +46,7 @@ func (c *SqlServerRepository) FetchQueryRegressions(instanceName string) ([]mode
 	return all, nil
 }
 
-func fetchRegressionsForDB(db *sql.DB, dbName string) ([]models.SqlServerQueryRegression, error) {
+func fetchRegressionsForDB(ctx context.Context, db *sql.DB, dbName string) ([]models.SqlServerQueryRegression, error) {
 	_ = sqlServerQuoteBracket(dbName)
 	const query = `
 		/* SQL_OPTIMA */ 
@@ -106,7 +106,9 @@ func fetchRegressionsForDB(db *sql.DB, dbName string) ([]models.SqlServerQueryRe
 		)
 		ORDER BY percent_change DESC`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("regression query on %s: %w", dbName, err)
 	}
@@ -119,7 +121,7 @@ func fetchRegressionsForDB(db *sql.DB, dbName string) ([]models.SqlServerQueryRe
 		var planChanged sql.NullBool
 		if err := rows.Scan(&r.QueryHash, &r.QueryText, &regType,
 			&r.PreviousAvg, &r.CurrentAvg, &r.PercentChange, &planChanged); err != nil {
-			log.Printf("[SQLSERVER] FetchQueryRegressions scan: %v", err)
+			slog.Info("[SQLSERVER] FetchQueryRegressions scan", "err", err)
 			continue
 		}
 		if !regType.Valid || regType.String == "" {
@@ -136,23 +138,23 @@ func fetchRegressionsForDB(db *sql.DB, dbName string) ([]models.SqlServerQueryRe
 }
 
 // FetchPlanInstability returns queries with more than 3 execution plans in Query Store.
-func (c *SqlServerRepository) FetchPlanInstability(instanceName string) ([]models.SqlServerPlanInstability, error) {
+func (c *SqlServerRepository) FetchPlanInstability(ctx context.Context, instanceName string) ([]models.SqlServerPlanInstability, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
 	}
 
-	dbNames, err := c.listUserDatabaseNamesForQueryStore(db)
+	dbNames, err := c.listUserDatabaseNamesForQueryStore(ctx, db)
 	if err != nil || len(dbNames) == 0 {
-		log.Printf("[SQLSERVER] FetchPlanInstability: no QS databases for %s: %v", instanceName, err)
+		slog.Info("[SQLSERVER] FetchPlanInstability: no QS databases", "target", instanceName, "err", err)
 		return nil, nil
 	}
 
 	var all []models.SqlServerPlanInstability
 	for _, dbn := range dbNames {
-		rows, err := fetchPlanInstabilityForDB(db, dbn)
+		rows, err := fetchPlanInstabilityForDB(ctx, db, dbn)
 		if err != nil {
-			log.Printf("[SQLSERVER] FetchPlanInstability(%s/%s): %v", instanceName, dbn, err)
+			slog.Info(fmt.Sprintf("[SQLSERVER] FetchPlanInstability(%s/%s): %v", instanceName, dbn, err))
 			continue
 		}
 		all = append(all, rows...)
@@ -160,7 +162,7 @@ func (c *SqlServerRepository) FetchPlanInstability(instanceName string) ([]model
 	return all, nil
 }
 
-func fetchPlanInstabilityForDB(db *sql.DB, dbName string) ([]models.SqlServerPlanInstability, error) {
+func fetchPlanInstabilityForDB(ctx context.Context, db *sql.DB, dbName string) ([]models.SqlServerPlanInstability, error) {
 	qb := sqlServerQuoteBracket(dbName)
 	query := fmt.Sprintf(`
 		/* SQL_OPTIMA */ 
@@ -182,7 +184,9 @@ func fetchPlanInstabilityForDB(db *sql.DB, dbName string) ([]models.SqlServerPla
 		HAVING COUNT(DISTINCT p.plan_id) > 3
 		ORDER BY plan_count DESC`, qb)
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("plan instability query on %s: %w", dbName, err)
 	}
@@ -193,7 +197,7 @@ func fetchPlanInstabilityForDB(db *sql.DB, dbName string) ([]models.SqlServerPla
 		var r models.SqlServerPlanInstability
 		var lastExec sql.NullTime
 		if err := rows.Scan(&r.QueryHash, &r.QueryText, &r.PlanCount, &lastExec); err != nil {
-			log.Printf("[SQLSERVER] FetchPlanInstability scan: %v", err)
+			slog.Info("[SQLSERVER] FetchPlanInstability scan", "err", err)
 			continue
 		}
 		r.DatabaseName = dbName
@@ -242,6 +246,8 @@ func (c *SqlServerRepository) FetchWatchedQueryStats(ctx context.Context, instan
 	var s models.SqlServerWatchedQuerySnapshot
 	var lastExec sql.NullTime
 	var plan, text sql.NullString
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
 	err := db.QueryRowContext(ctx, query, queryHash).Scan(
 		&s.Executions, &s.AvgDurationMs, &s.AvgCpuMs, &s.AvgReads,
 		&s.TotalDurationMs, &s.TotalCpuMs, &s.PlanCount, &lastExec,
@@ -293,6 +299,9 @@ func (c *SqlServerRepository) FetchQueryPlans(ctx context.Context, instanceName,
 		GROUP BY p.plan_id, p.is_forced_plan, p.initial_compile_start_time, CAST(p.query_plan AS NVARCHAR(MAX))
 		ORDER BY avg_duration_ms DESC`, qb)
 
+
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
 	rows, err := db.QueryContext(ctx, query, queryHash)
 	if err != nil {
 		return nil, fmt.Errorf("FetchQueryPlans: %w", err)
@@ -305,7 +314,7 @@ func (c *SqlServerRepository) FetchQueryPlans(ctx context.Context, instanceName,
 		var lastExec, created sql.NullTime
 		if err := rows.Scan(&p.PlanID, &p.AvgDurationMs, &p.AvgCpuMs, &p.AvgReads,
 			&p.Executions, &p.IsForcedPlan, &lastExec, &created, &p.QueryPlan); err != nil {
-			log.Printf("[SQLSERVER] FetchQueryPlans scan: %v", err)
+			slog.Info("[SQLSERVER] FetchQueryPlans scan", "err", err)
 			continue
 		}
 		if lastExec.Valid {
@@ -341,10 +350,13 @@ func (c *SqlServerRepository) FetchQueryWaitStats(ctx context.Context, instanceN
 		GROUP BY ws.wait_category_desc
 		ORDER BY total_wait_ms DESC`, qb)
 
+
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
 	rows, err := db.QueryContext(ctx, query, queryHash)
 	if err != nil {
 		// wait_stats may not exist on older SQL Server versions
-		log.Printf("[SQLSERVER] FetchQueryWaitStats(%s): %v — may not be supported", instanceName, err)
+		slog.Info("[SQLSERVER] FetchQueryWaitStats(", "target", instanceName, "err", err)
 		return nil, nil
 	}
 	defer rows.Close()
@@ -353,7 +365,7 @@ func (c *SqlServerRepository) FetchQueryWaitStats(ctx context.Context, instanceN
 	for rows.Next() {
 		var w models.SqlServerQueryWaitStat
 		if err := rows.Scan(&w.WaitCategory, &w.AvgWaitMs, &w.TotalWaitMs); err != nil {
-			log.Printf("[SQLSERVER] FetchQueryWaitStats scan: %v", err)
+			slog.Info("[SQLSERVER] FetchQueryWaitStats scan", "err", err)
 			continue
 		}
 		results = append(results, w)

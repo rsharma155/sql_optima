@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: HTTP handler for PostgreSQL connection utilization history.
+// Purpose: PostgreSQL connection utilization API handlers.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -10,37 +10,38 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	"github.com/rsharma155/sql_optima/internal/service"
 )
 
-// ConnectionUtilizationHistory handles GET /api/postgres/connection-utilization
-func (h *PostgresHandlers) ConnectionUtilizationHistory(w http.ResponseWriter, r *http.Request) {
-	instance := r.URL.Query().Get("instance")
-	if instance == "" {
-		http.Error(w, "instance parameter is required", http.StatusBadRequest)
-		return
-	}
+type PgConnectionHandlers struct {
+	metricsSvc *service.MetricsService
+}
 
-	from := r.URL.Query().Get("from")
-	to := r.URL.Query().Get("to")
-	limitStr := r.URL.Query().Get("limit")
-	limit := 180
-	if limitStr != "" {
-		if val, err := strconv.Atoi(limitStr); err == nil {
-			limit = val
-		}
-	}
+func NewPgConnectionHandlers(svc *service.MetricsService) *PgConnectionHandlers {
+	return &PgConnectionHandlers{metricsSvc: svc}
+}
 
-	// Sourced from Control Center History which now includes connections_usage_pct
-	history, err := h.metricsSvc.GetPostgresControlCenterHistory(r.Context(), instance, from, to, limit)
+func (h *PgConnectionHandlers) GetConnectionUtilization(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
+	history, err := h.metricsSvc.GetPostgresControlCenterHistory(r.Context(), id, "", "", 60)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	res := map[string]interface{}{
+		"labels":          history.Labels,
+		"utilization_pct": history.ConnectionsUsagePct,
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"labels":                history.Labels,
-		"connections_usage_pct": history.ConnectionsUsagePct,
-	})
+	_ = json.NewEncoder(w).Encode(res)
 }

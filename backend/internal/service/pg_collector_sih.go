@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: PostgreSQL Storage & Index Health (SIH) ingestion tick — Timescale deltas for index/table usage, growth, definitions, and daily unused candidates.
+// Purpose: Background collector for PostgreSQL Storage & Index Health (SIH) snapshots.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -8,121 +8,205 @@
 package service
 
 import (
+	"fmt"
+	"log/slog"
 	"context"
-	"log"
+	"strings"
 	"time"
 
-	"github.com/rsharma155/sql_optima/internal/collectors"
+	"github.com/google/uuid"
+	"github.com/rsharma155/sql_optima/internal/config"
+	"github.com/rsharma155/sql_optima/internal/models"
+	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
-// runPostgresStorageIndexHealthTick collects SIH metrics for one PostgreSQL instance when Timescale logging is enabled.
-// Cadences match SQL Server SIH: 15m index, 15m table usage, 6h size history, 24h index definitions + daily unused refresh.
-func (s *MetricsService) runPostgresStorageIndexHealthTick(ctx context.Context, instanceName string) {
-	if s == nil || s.PgRepo == nil || s.tsLogger == nil {
-		return
-	}
-	capture := time.Now().UTC()
-	now := capture
-	due15mIndex := s.sihDue(s.sihLastIndex15m, instanceName, now, 15*time.Minute)
-	due15mTable := s.sihDue(s.sihLastTable15m, instanceName, now, 15*time.Minute)
-	dueDailyGrowth := s.sihDue(s.sihLastGrowth6h, instanceName, now, 24*time.Hour)
-	dueDailyDefs := s.sihDue(s.sihLastDefsDaily, instanceName, now, 24*time.Hour)
+func (s *MetricsService) StartPostgresStorageIndexHealthCollector(ctx context.Context) {
+	slog.Info("[PostgresSIH] Starting background collector")
+	
+	// Run once immediately
+	s.CollectPostgresStorageIndexHealth(ctx)
 
-	// PostgreSQL pg_stat_user_* views are scoped to the connected database.
-	// Our default connection pool uses dbname=postgres for discovery; for SIH we need to iterate real DBs.
-	dbs, err := s.PgRepo.GetDatabases(instanceName)
-	if err != nil || len(dbs) == 0 {
-		log.Printf("[Collector][SIH] GetDatabases failed or empty for %s: %v", instanceName, err)
-		return
-	}
+	interval := s.GetCollectorInterval(ctx, "pg_storage_index_health", 5*time.Minute)
+	slog.Info("[PostgresSIH] check interval", "val", interval)
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				newInterval := s.GetCollectorInterval(ctx, "pg_storage_index_health", 5*time.Minute)
+				if newInterval > 0 && newInterval != interval {
+					slog.Info("[PostgresSIH] interval changed from", "arg1", interval, "arg2", newInterval)
+					interval = newInterval
+					ticker.Reset(interval)
+				}
+				s.CollectPostgresStorageIndexHealth(ctx)
+			}
+		}
+	}()
+}
 
-	var totalIdxRows, totalTblRows, totalDefRows int
-	var insertedIdx, insertedTbl, insertedGrowth, insertedDefs int
-
-	for _, dbName := range dbs {
-		// Avoid blocking the whole tick on one bad DB.
-		dbCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		pgdb, derr := s.PgRepo.OpenConnForDatabase(dbCtx, instanceName, dbName)
-		if derr != nil {
-			cancel()
-			log.Printf("[Collector][SIH] OpenConnForDatabase failed for %s db=%s: %v", instanceName, dbName, derr)
+func (s *MetricsService) CollectPostgresStorageIndexHealth(ctx context.Context) {
+	for _, inst := range s.Config.Instances {
+		if strings.ToLower(inst.Type) != "postgres" {
 			continue
 		}
 
-		if due15mIndex {
-			idxRows, err := collectors.CollectPostgresIndexUsage(dbCtx, pgdb)
-			if err != nil {
-				log.Printf("[Collector][SIH] CollectPostgresIndexUsage failed for %s db=%s: %v", instanceName, dbName, err)
-			} else if len(idxRows) > 0 {
-				totalIdxRows += len(idxRows)
-				if n, perr := collectors.PersistPostgresIndexUsageDeltas(dbCtx, s.tsLogger, instanceName, idxRows, capture); perr != nil {
-					log.Printf("[Collector][SIH] PersistPostgresIndexUsageDeltas failed for %s db=%s: %v", instanceName, dbName, perr)
-				} else {
-					insertedIdx += n
+		serverID := inst.ServerID
+
+		// Every 15 minutes (configurable): Table/Index usage
+		if s.sihDue(serverID, "pg_storage_index_health_index15m", s.GetCollectorInterval(ctx, "pg_storage_index_health_index15m", 15*time.Minute)) {
+			go s.collectPgTableIndexUsage(ctx, inst)
+		}
+
+		// Every 6 hours (configurable): Database/Table growth estimation
+		if s.sihDue(serverID, "pg_storage_index_health_growth6h", s.GetCollectorInterval(ctx, "pg_storage_index_health_growth6h", 6*time.Hour)) {
+			go s.collectPgGrowth(ctx, inst)
+		}
+
+		// Daily (configurable): Full index definitions (heavy)
+		if s.sihDue(serverID, "pg_storage_index_health_defs_daily", s.GetCollectorInterval(ctx, "pg_storage_index_health_defs_daily", 24*time.Hour)) {
+			go s.collectPgIndexDefinitions(ctx, inst)
+		}
+	}
+}
+
+func (s *MetricsService) sihDue(serverID uuid.UUID, kind string, interval time.Duration) bool {
+	s.sihMu.Lock()
+	defer s.sihMu.Unlock()
+
+	var last time.Time
+	var ok bool
+
+	switch kind {
+	case "index15m", "pg_storage_index_health_index15m":
+		last, ok = s.sihLastIndex15m[serverID]
+	case "growth6h", "pg_storage_index_health_growth6h":
+		last, ok = s.sihLastGrowth6h[serverID]
+	case "defsDaily", "pg_storage_index_health_defs_daily":
+		last, ok = s.sihLastDefsDaily[serverID]
+	}
+
+	if !ok || time.Since(last) >= interval {
+		switch kind {
+		case "index15m", "pg_storage_index_health_index15m":
+			s.sihLastIndex15m[serverID] = time.Now()
+		case "growth6h", "pg_storage_index_health_growth6h":
+			s.sihLastGrowth6h[serverID] = time.Now()
+		case "defsDaily", "pg_storage_index_health_defs_daily":
+			s.sihLastDefsDaily[serverID] = time.Now()
+		}
+		return true
+	}
+	return false
+}
+
+func (s *MetricsService) collectPgTableIndexUsage(ctx context.Context, inst config.Instance) {
+	dbs, err := s.PgRepo.GetDatabases(ctx, inst.Name)
+	if err != nil || len(dbs) == 0 {
+		slog.Error("[PostgresSIH] collectPgTableIndexUsage: cannot list databases", "target", inst.Name, "err", err)
+		return
+	}
+
+	for _, dbName := range dbs {
+		db, err := s.PgRepo.GetConnForDB(inst.Name, dbName)
+		if err != nil {
+			slog.Error(fmt.Sprintf("[PostgresSIH] collectPgTableIndexUsage: cannot connect to %s/%s: %v", inst.Name, dbName, err))
+			continue
+		}
+
+		tables, err := s.PgRepo.FetchPgTableUsageStats(ctx, inst.Name, db)
+		if err == nil {
+			for _, t := range tables {
+				row := models.TableUsageStat{
+					Time:        t.CaptureTimestamp,
+					Engine:      "postgres",
+					ServerID:    inst.ServerID,
+					DBName:      dbName,
+					SchemaName:  t.SchemaName,
+					TableName:   t.TableName,
+					SeqScans:    t.SeqScans,
+					IdxScans:    t.IdxScans,
+					TableSizeMB: float64(t.TotalBytes) / 1024.0 / 1024.0,
+					RowCount:    t.LiveTuples,
 				}
+				_ = s.tsLogger.InsertTableUsageStat(ctx, row)
 			}
 		}
 
-		if due15mTable || dueDailyGrowth {
-			tblRows, err := collectors.CollectPostgresTableUsageAndSize(dbCtx, pgdb)
-			if err != nil {
-				log.Printf("[Collector][SIH] CollectPostgresTableUsageAndSize failed for %s db=%s: %v", instanceName, dbName, err)
-			} else if len(tblRows) > 0 {
-				totalTblRows += len(tblRows)
-				if due15mTable {
-					if n, perr := collectors.PersistPostgresTableUsageDeltas(dbCtx, s.tsLogger, instanceName, tblRows, capture); perr != nil {
-						log.Printf("[Collector][SIH] PersistPostgresTableUsageDeltas failed for %s db=%s: %v", instanceName, dbName, perr)
-					} else {
-						insertedTbl += n
-					}
+		indexes, err := s.PgRepo.FetchPgIndexUsageStats(ctx, inst.Name, db)
+		if err == nil {
+			for _, idx := range indexes {
+				row := models.IndexUsageStat{
+					Time:        idx.CaptureTimestamp,
+					Engine:      "postgres",
+					ServerID:    inst.ServerID,
+					DBName:      dbName,
+					SchemaName:  idx.SchemaName,
+					TableName:   idx.TableName,
+					IndexName:   idx.IndexName,
+					Scans:       idx.IdxScan,
+					IndexSizeMB: idx.IndexSizeMB,
+					IsPK:        idx.IsPK,
 				}
-				if dueDailyGrowth {
-					if n, perr := collectors.PersistPostgresTableSizeHistory(dbCtx, s.tsLogger, instanceName, tblRows, capture); perr != nil {
-						log.Printf("[Collector][SIH] PersistPostgresTableSizeHistory failed for %s db=%s: %v", instanceName, dbName, perr)
-					} else {
-						insertedGrowth += n
-					}
-				}
+				_ = s.tsLogger.InsertIndexUsageStat(ctx, row)
 			}
 		}
+	}
+}
 
-		if dueDailyDefs {
-			dayBucket := time.Date(capture.Year(), capture.Month(), capture.Day(), 0, 0, 0, 0, time.UTC)
-			defRows, err := collectors.CollectPostgresIndexDefinitions(dbCtx, pgdb)
-			if err != nil {
-				log.Printf("[Collector][SIH] CollectPostgresIndexDefinitions failed for %s db=%s: %v", instanceName, dbName, err)
-			} else if len(defRows) > 0 {
-				totalDefRows += len(defRows)
-				if n, perr := collectors.PersistPostgresIndexDefinitionsWithChangeDetection(dbCtx, s.tsLogger, instanceName, defRows, dayBucket); perr != nil {
-					log.Printf("[Collector][SIH] PersistPostgresIndexDefinitionsWithChangeDetection failed for %s db=%s: %v", instanceName, dbName, perr)
-				} else {
-					insertedDefs += n
-				}
-			}
+func (s *MetricsService) collectPgGrowth(ctx context.Context, inst config.Instance) {
+	dbs, err := s.PgRepo.GetDatabases(ctx, inst.Name)
+	if err != nil || len(dbs) == 0 {
+		slog.Error("[PostgresSIH] collectPgGrowth: cannot list databases", "target", inst.Name, "err", err)
+		return
+	}
+
+	now := time.Now().UTC()
+	for _, dbName := range dbs {
+		db, err := s.PgRepo.GetConnForDB(inst.Name, dbName)
+		if err != nil {
+			slog.Error(fmt.Sprintf("[PostgresSIH] collectPgGrowth: cannot connect to %s/%s: %v", inst.Name, dbName, err))
+			continue
 		}
 
-		_ = pgdb.Close()
-		cancel()
-	}
+		tables, err := s.PgRepo.FetchPgTableUsageStats(ctx, inst.Name, db)
+		if err != nil {
+			continue
+		}
+		for _, t := range tables {
+			_ = s.tsLogger.InsertTableSizeHistory(ctx, models.TableSizeHistory{
+				Time:        now,
+				Engine:      "postgres",
+				ServerID:    inst.ServerID,
+				DBName:      dbName,
+				SchemaName:  t.SchemaName,
+				TableName:   t.TableName,
+				RowCount:    t.LiveTuples,
+				TableSizeMB: float64(t.TotalBytes) / 1024.0 / 1024.0,
+			})
 
-	if due15mIndex {
-		log.Printf("[Collector][SIH] postgres index usage persisted for %s dbs=%d rows=%d inserted=%d", instanceName, len(dbs), totalIdxRows, insertedIdx)
+			_ = s.tsLogger.LogTableSizeHistoryWithChangeDetection(ctx, inst.ServerID, []hot.TableSizeHistoryRow{
+				{
+					CaptureTimestamp: now,
+					ServerID:         inst.ServerID,
+					DatabaseName:     dbName,
+					SchemaName:       t.SchemaName,
+					TableName:        t.TableName,
+					RowCount:         t.LiveTuples,
+					TotalMB:          float64(t.TotalBytes) / 1024.0 / 1024.0,
+				},
+			})
+		}
 	}
-	if due15mTable {
-		log.Printf("[Collector][SIH] postgres table usage persisted for %s dbs=%d rows=%d inserted=%d", instanceName, len(dbs), totalTblRows, insertedTbl)
-	}
-	if dueDailyGrowth {
-		log.Printf("[Collector][SIH] postgres table_size_history for %s dbs=%d rows=%d inserted=%d", instanceName, len(dbs), totalTblRows, insertedGrowth)
-	}
-	if dueDailyDefs {
-		log.Printf("[Collector][SIH] postgres index_definitions for %s dbs=%d rows=%d inserted=%d", instanceName, len(dbs), totalDefRows, insertedDefs)
-	}
+}
 
-	if dueDailyDefs {
-		if n, err := s.tsLogger.RefreshIndexUnusedCandidatesDaily(ctx, "postgres", instanceName, capture, 100); err != nil {
-			log.Printf("[Collector][SIH] Daily unused index snapshot failed for postgres %s: %v", instanceName, err)
-		} else {
-			log.Printf("[Collector][SIH] Daily unused index snapshot rows for postgres %s: %d", instanceName, n)
+func (s *MetricsService) collectPgIndexDefinitions(ctx context.Context, inst config.Instance) {
+	if s.PgIndexDefCollector != nil {
+		if err := s.PgIndexDefCollector.Collect(ctx, inst); err != nil {
+			slog.Error("[SIH] ERROR Index definitions", "target", inst.Name, "err", err)
 		}
 	}
 }

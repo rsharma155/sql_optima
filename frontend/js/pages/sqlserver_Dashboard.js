@@ -14,115 +14,12 @@ window.escapeHtml = function(unsafe) {
 };
 
 window.DashboardView = async function() {
-    appDebug('[Dashboard] Starting - config:', window.appState.config ? 'loaded' : 'not loaded');
-    
-    // Prevent multiple simultaneous loads
-    if (window.appState.dashboardLoading) {
-        appDebug('[Dashboard] Already loading, skipping...');
-        return;
+    console.warn("[Dashboard] DashboardView is deprecated. Redirecting to SqlServerHealthV2View.");
+    if (typeof window.SqlServerHealthV2View === 'function') {
+        return window.SqlServerHealthV2View();
     }
-    
-    // Check if config is loaded
-    if (!window.appState.config || !window.appState.config.instances || window.appState.config.instances.length === 0) {
-        window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-warning">Please select an instance first</h3></div>`;
-        return;
-    }
-    
-    const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
-    if (!inst || typeof inst !== 'object' || !inst.name) {
-        window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-warning">Please select an instance first</h3></div>`;
-        return;
-    }
-    if (inst.type === 'postgres') {
-        window.appNavigate('pg-dashboard');
-        return;
-    }
-
-    const dbFilter = window.appState.currentDatabase || 'all';
-    const shellId = `sqlserver-dashboard-shell-${inst.name}-${dbFilter}`;
-    const needsShell = !document.getElementById(shellId);
-
-    window.appState.currentInstanceName = inst.name;
-    window.appState.activeViewId = 'dashboard';
-
-    if (needsShell) {
-        window.appState.dashboardLoading = true;
-        window.routerOutlet.innerHTML = `
-            <div class="page-view active dashboard-sky-theme" id="${shellId}">
-                <div class="page-title flex-between dashboard-page-title-compact" style="flex-wrap: wrap; gap: 0.5rem;">
-                    <div class="dashboard-title-line">
-                        <h1>SQL Server Dashboard <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Instance Dashboard" title="Learn more about this dashboard"></i></h1>
-                        <span class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Database: <span class="text-accent">${window.escapeHtml(dbFilter)}</span></span>
-                    </div>
-                    <div id="time-picker-insertion-point"></div>
-                    <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:1rem;">
-                        <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
-                            <span id="dataSourceBadge" class="badge badge-info" style="font-size:0.65rem; display:none;">Source</span>
-                        </div>
-                        <div style="text-align:right;">
-                            <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="lastRefreshTime">--:--:--</span></span>
-                        </div>
-                        <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshDashboardData"><i class="fa-solid fa-refresh"></i> Refresh</button>
-                    </div>
-                </div>
-                <div id="dashboard-content-area">
-                    <div style="display:flex; justify-content:center; align-items:center; height:50vh;">
-                        <div class="spinner"></div><span style="margin-left:1rem;">Loading dashboard layout...</span>
-                    </div>
-                </div>
-            </div>
-        `;
-        if (window.initPageTimePicker) window.initPageTimePicker();
-    }
-
-    // Top Offenders grid: column sort
-    window.appState.topOffendersGridSort = window.appState.topOffendersGridSort || { key: 'total_cpu_ms', dir: 'desc' };
-
-    try {
-        if (window.appState.fetchingMetrics && !needsShell) {
-            appDebug('[Dashboard] Fetch already in progress, skipping full view refresh');
-            return;
-        }
-
-        appDebug('[Dashboard] Fetching dashboard data...');
-        let url = `/api/sqlserver/dashboard/v2?instance=${encodeURIComponent(inst.name)}`;
-        if (window.appState.fromTs && window.appState.toTs) {
-            const from = new Date(window.appState.fromTs).toISOString();
-            const to = new Date(window.appState.toTs).toISOString();
-            url += `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
-        }
-        const res = await window.apiClient.authenticatedFetch(url);
-        
-        const contentType = res.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-            throw new Error(`Expected JSON but got ${contentType || 'unknown'} (${res.status})`);
-        }
-
-        const v2 = await res.json();
-        if (!res.ok) throw new Error(v2.error || v2.message || `HTTP ${res.status}`);
-
-        window.appState.dashboardV2 = v2;
-        window.appState.liveMetrics = v2.compat?.dashboard || v2;
-        window.appState.lastUpdate = new Date();
-
-        if (needsShell) {
-            renderDashboardStructure(inst, v2);
-        }
-        
-        // Update data in place
-        await updateDashboardCharts();
-        updateDataSourceBadge(res.headers.get('X-Data-Source'));
-        if (window.updateAlertsBadge) window.updateAlertsBadge();
-        
-        startTimescalePolling(inst.name);
-    } catch(error) {
-        console.error("Dashboard error:", error);
-        if (needsShell) {
-            window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-danger">Error loading dashboard</h3><p>${window.escapeHtml(error.message)}</p></div>`;
-        }
-    } finally {
-        window.appState.dashboardLoading = false;
-    }
+    // Fallback if V2 is not yet loaded
+    setTimeout(() => window.DashboardView(), 200);
 };
 
 function updateDataSourceBadge(source) {
@@ -440,7 +337,7 @@ function startTimescalePolling(instanceName) {
     // Fetch immediately and then poll on interval.
     fetchAndUpdate().catch((err) => appDebug('[Dashboard] Timescale polling error:', err));
 
-    window.appState.dashboardPollingInterval = setInterval(async () => {
+    window.appState.dashboardPollingInterval = window.registerInterval(async () => {
         if (window.appState.activeViewId === 'dashboard') {
             await fetchAndUpdate();
         }

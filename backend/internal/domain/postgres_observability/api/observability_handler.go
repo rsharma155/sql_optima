@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/rsharma155/sql_optima/internal/api/handlers"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
@@ -23,9 +25,9 @@ func NewPostgresObservabilityHandler(svc *service.MetricsService) *PostgresObser
 }
 
 func (h *PostgresObservabilityHandler) GetDashboardData(w http.ResponseWriter, r *http.Request) {
-	instance := r.URL.Query().Get("instance")
-	if instance == "" {
-		http.Error(w, "instance parameter is required", http.StatusBadRequest)
+	serverID, ok := handlers.ParseServerID(r, h.metricsSvc.Config)
+	if !ok {
+		// ParseServerID already wrote error if not found or invalid
 		return
 	}
 
@@ -43,7 +45,7 @@ func (h *PostgresObservabilityHandler) GetDashboardData(w http.ResponseWriter, r
 	if repo == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   "observability repository not initialized (TimescaleDB disconnected)",
 		})
@@ -52,30 +54,30 @@ func (h *PostgresObservabilityHandler) GetDashboardData(w http.ResponseWriter, r
 
 	data := make(map[string]interface{})
 
-	kpis, _ := repo.GetKPIData(ctx, instance, from, to)
+	kpis, _ := repo.GetKPIData(ctx, serverID, from, to)
 	data["kpis"] = kpis
 
-	loadTrend, _ := repo.GetLoadTrend(ctx, instance, from, to)
+	loadTrend, _ := repo.GetLoadTrend(ctx, serverID, from, to)
 	data["load_trend"] = loadTrend
 
-	waitTrend, _ := repo.GetWaitCategoryTrend(ctx, instance, from, to)
+	waitTrend, _ := repo.GetWaitCategoryTrend(ctx, serverID, from, to)
 	data["wait_trend"] = waitTrend
 
-	waitDist, _ := repo.GetWaitCategoryDistribution(ctx, instance, from, to)
+	waitDist, _ := repo.GetWaitCategoryDistribution(ctx, serverID, from, to)
 	data["wait_distribution"] = waitDist
 
-	connByApp, _ := repo.GetConnectionsByApp(ctx, instance, from, to)
+	connByApp, _ := repo.GetConnectionsByApp(ctx, serverID, from, to)
 	data["connections_by_app"] = connByApp
 
-	longSessions, _ := repo.GetLongRunningSessions(ctx, instance, from, to)
+	longSessions, _ := repo.GetLongRunningSessions(ctx, serverID, from, to)
 	data["long_running_sessions"] = longSessions
 
-	topQueries, _ := repo.GetTopQueries(ctx, instance, from, to)
+	topQueries, _ := repo.GetTopQueries(ctx, serverID, from, to)
 	data["top_queries"] = topQueries
 
-	sessionStateTrend, _ := repo.GetSessionStateTrend(ctx, instance, from, to)
+	sessionStateTrend, _ := repo.GetSessionStateTrend(ctx, serverID, from, to)
 	data["session_state_trend"] = sessionStateTrend
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	_ = json.NewEncoder(w).Encode(data)
 }

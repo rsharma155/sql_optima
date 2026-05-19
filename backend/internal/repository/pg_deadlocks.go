@@ -8,6 +8,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -18,7 +19,7 @@ type PgDeadlockTotalRow struct {
 	DeadlocksTotal int64  `json:"deadlocks_total"`
 }
 
-func (c *PgRepository) GetDeadlocksTotalByDB(instanceName string) ([]PgDeadlockTotalRow, error) {
+func (c *PgRepository) GetDeadlocksTotalByDB(ctx context.Context, instanceName string) ([]PgDeadlockTotalRow, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -32,7 +33,9 @@ func (c *PgRepository) GetDeadlocksTotalByDB(instanceName string) ([]PgDeadlockT
 		WHERE datname IS NOT NULL AND datname <> ''
 		ORDER BY deadlocks DESC, datname
 	`
-	rows, err := db.Query(q)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
 	}

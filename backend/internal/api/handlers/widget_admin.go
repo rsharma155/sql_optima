@@ -8,8 +8,8 @@
 package handlers
 
 import (
+	"log/slog"
 	"encoding/json"
-	"log"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -47,7 +47,7 @@ func (h *WidgetAdminHandlers) UpdateWidget(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.metricsSvc.WidgetRepo.UpdateWidgetSQL(r.Context(), widgetID, req.CurrentSQL); err != nil {
-		log.Printf("[API] Widget update error for %s: %v", widgetID, err)
+		slog.Error("[API] Widget update error", "target", widgetID, "err", err)
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
@@ -70,7 +70,7 @@ func (h *WidgetAdminHandlers) RestoreWidget(w http.ResponseWriter, r *http.Reque
 
 	widgetID := mux.Vars(r)["id"]
 	if err := h.metricsSvc.WidgetRepo.RestoreWidgetDefault(r.Context(), widgetID); err != nil {
-		log.Printf("[API] Widget restore error for %s: %v", widgetID, err)
+		slog.Error("[API] Widget restore error", "target", widgetID, "err", err)
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return

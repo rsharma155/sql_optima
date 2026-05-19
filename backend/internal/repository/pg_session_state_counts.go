@@ -8,6 +8,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -20,7 +21,7 @@ type PgSessionStateCounts struct {
 	Total     int `json:"total"`
 }
 
-func (c *PgRepository) GetSessionStateCounts(instanceName string) (*PgSessionStateCounts, error) {
+func (c *PgRepository) GetSessionStateCounts(ctx context.Context, instanceName string) (*PgSessionStateCounts, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -39,7 +40,9 @@ func (c *PgRepository) GetSessionStateCounts(instanceName string) (*PgSessionSta
 		WHERE pid <> pg_backend_pid()
 	`
 	var out PgSessionStateCounts
-	if err := db.QueryRow(q).Scan(&out.Active, &out.Idle, &out.IdleInTxn, &out.Waiting, &out.Total); err != nil {
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, q).Scan(&out.Active, &out.Idle, &out.IdleInTxn, &out.Waiting, &out.Total); err != nil {
 		return nil, err
 	}
 	return &out, nil

@@ -13,12 +13,13 @@ import (
 	"hash/fnv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
 type PostgresControlCenterRow struct {
 	CaptureTimestamp   time.Time `json:"capture_timestamp"`
-	ServerInstanceName string    `json:"server_instance_name"`
+	ServerID           uuid.UUID `json:"server_id"`
 	WALMBPerMin        float64   `json:"wal_mb_per_min"`
 	WALSizeMB          float64   `json:"wal_size_mb"`
 	ReplicaLagMB       float64   `json:"max_replication_lag_mb"`
@@ -47,19 +48,22 @@ type PostgresControlCenterRow struct {
 }
 
 type PostgresReplicationLagDetailRow struct {
-	CaptureTimestamp   time.Time
-	ServerInstanceName string
-	ReplicaName        string
-	LagMB              float64
-	State              string
-	SyncState          string
+	CaptureTimestamp time.Time
+	ServerID         uuid.UUID
+	ReplicaName      string
+	LagMB            float64
+	State            string
+	SyncState        string
+	WriteLagSec      float64
+	FlushLagSec      float64
+	ReplayLagSec     float64
 }
 
 func pgControlCenterHash(r PostgresControlCenterRow) uint64 {
 	h := fnv.New64a()
 	// exclude timestamp
 	_, _ = fmt.Fprintf(h, "%s|%g|%g|%g|%g|%g|%d|%g|%g|%d|%d|%d|%d|%d|%g|%d|%s|%d|%d|%d|%d|%g|%g|%g",
-		r.ServerInstanceName,
+		r.ServerID.String(),
 		r.WALMBPerMin,
 		r.WALSizeMB,
 		r.ReplicaLagMB,
@@ -87,20 +91,20 @@ func pgControlCenterHash(r PostgresControlCenterRow) uint64 {
 	return h.Sum64()
 }
 
-// LogPostgresControlCenterStats inserts a new snapshot only when it differs from last snapshot for that instance.
+// LogPostgresControlCenterStats inserts a new snapshot only when it differs from last snapshot for that serverID.
 func (tl *TimescaleLogger) LogPostgresControlCenterStats(ctx context.Context, row PostgresControlCenterRow) error {
 	sig := pgControlCenterHash(row)
 	tl.mu.Lock()
-	if prev, ok := tl.prevPgControlCenterHash[row.ServerInstanceName]; ok && prev == sig {
+	if prev, ok := tl.prevPgControlCenterHash[row.ServerID]; ok && prev == sig {
 		tl.mu.Unlock()
 		return nil
 	}
-	tl.prevPgControlCenterHash[row.ServerInstanceName] = sig
+	tl.prevPgControlCenterHash[row.ServerID] = sig
 	tl.mu.Unlock()
 
 	q := `
 		INSERT INTO postgres_control_center_stats (
-			capture_timestamp, server_instance_name,
+			capture_timestamp, server_id,
 			wal_mb_per_min, wal_size_mb,
 			max_replication_lag_mb, replica_lag_sec,
 			checkpoint_req_ratio,
@@ -114,7 +118,7 @@ func (tl *TimescaleLogger) LogPostgresControlCenterStats(ctx context.Context, ro
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 	`
 	_, err := tl.pool.Exec(ctx, q,
-		row.CaptureTimestamp, row.ServerInstanceName,
+		row.CaptureTimestamp, row.ServerID,
 		row.WALMBPerMin, row.WALSizeMB,
 		row.ReplicaLagMB, row.ReplicaLagSec,
 		row.CheckpointReqRatio,
@@ -129,12 +133,12 @@ func (tl *TimescaleLogger) LogPostgresControlCenterStats(ctx context.Context, ro
 	return err
 }
 
-func (tl *TimescaleLogger) GetLatestPostgresControlCenterStats(ctx context.Context, instanceName string) (*PostgresControlCenterRow, error) {
+func (tl *TimescaleLogger) GetLatestPostgresControlCenterStats(ctx context.Context, serverID uuid.UUID) (*PostgresControlCenterRow, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	q := `
-		SELECT capture_timestamp, server_instance_name,
+		SELECT capture_timestamp, server_id,
 		       wal_mb_per_min, wal_size_mb,
 		       max_replication_lag_mb, replica_lag_sec,
 		       checkpoint_req_ratio,
@@ -146,13 +150,13 @@ func (tl *TimescaleLogger) GetLatestPostgresControlCenterStats(ctx context.Conte
 		       COALESCE(connections_used, 0), COALESCE(connections_usage_pct, 0), COALESCE(cache_hit_ratio_pct, 0),
 		       COALESCE(deadlocks_per_min, 0)
 		FROM postgres_control_center_stats
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT 1
 	`
 	var r PostgresControlCenterRow
-	err := tl.pool.QueryRow(ctx, q, instanceName).Scan(
-		&r.CaptureTimestamp, &r.ServerInstanceName,
+	err := tl.pool.QueryRow(ctx, q, serverID).Scan(
+		&r.CaptureTimestamp, &r.ServerID,
 		&r.WALMBPerMin, &r.WALSizeMB,
 		&r.ReplicaLagMB, &r.ReplicaLagSec,
 		&r.CheckpointReqRatio,
@@ -165,6 +169,9 @@ func (tl *TimescaleLogger) GetLatestPostgresControlCenterStats(ctx context.Conte
 		&r.DeadlocksPerMin,
 	)
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &r, nil
@@ -176,13 +183,15 @@ func (tl *TimescaleLogger) LogPostgresReplicationLagDetail(ctx context.Context, 
 	}
 	q := `
 		INSERT INTO postgres_replication_lag_detail (
-			capture_timestamp, server_instance_name, replica_name,
-			lag_mb, state, sync_state
-		) VALUES ($1,$2,$3,$4,$5,$6)
+			capture_timestamp, server_id, replica_name,
+			lag_mb, state, sync_state,
+			write_lag_sec, flush_lag_sec, replay_lag_sec
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 	`
 	b := &pgx.Batch{}
 	for _, r := range rows {
-		b.Queue(q, r.CaptureTimestamp, r.ServerInstanceName, r.ReplicaName, r.LagMB, r.State, r.SyncState)
+		b.Queue(q, r.CaptureTimestamp, r.ServerID, r.ReplicaName, r.LagMB, r.State, r.SyncState,
+			r.WriteLagSec, r.FlushLagSec, r.ReplayLagSec)
 	}
 	br := tl.pool.SendBatch(ctx, b)
 	defer br.Close()
@@ -208,21 +217,21 @@ type PostgresControlCenterHistory struct {
 	ConnectionsUsagePct []float64 `json:"connections_usage_pct"`
 }
 
-func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, instanceName string, from, to string, limit int) (*PostgresControlCenterHistory, error) {
+func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, serverID uuid.UUID, from, to string, limit int) (*PostgresControlCenterHistory, error) {
 	if limit <= 0 {
 		limit = 180
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	where := `UPPER(server_instance_name) = UPPER($1)`
-	args := []interface{}{instanceName}
+	where := `server_id = $1`
+	args := []interface{}{serverID}
 	if from != "" && to != "" {
 		where += ` AND capture_timestamp >= $2 AND capture_timestamp <= $3`
 		args = append(args, from, to)
 	}
 
-	query := fmt.Sprintf(`
+	const histSelect = `
 		SELECT capture_timestamp,
 		       COALESCE(tps, 0),
 		       COALESCE(wal_mb_per_min, 0),
@@ -237,27 +246,12 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 		FROM postgres_control_center_stats
 		WHERE %s
 		ORDER BY capture_timestamp DESC
-		LIMIT $%d
-	`, where, len(args)+1)
-
+	`
+	var query string
 	if from != "" && to != "" {
-		query = fmt.Sprintf(`
-			SELECT capture_timestamp,
-				COALESCE(tps, 0),
-				COALESCE(wal_mb_per_min, 0),
-				COALESCE(replica_lag_sec, 0),
-				COALESCE(checkpoint_req_ratio, 0),
-				COALESCE(autovacuum_workers, 0),
-				COALESCE(dead_tuple_pct, 0),
-				COALESCE(blocking_sessions, 0),
-				COALESCE(health_score, 0),
-				COALESCE(cache_hit_ratio_pct, 0),
-				COALESCE(connections_usage_pct, 0)
-			FROM postgres_control_center_stats
-			WHERE %s
-			ORDER BY capture_timestamp DESC
-		`, where)
+		query = fmt.Sprintf(histSelect, where)
 	} else {
+		query = fmt.Sprintf(histSelect+` LIMIT $%d`, where, len(args)+1)
 		args = append(args, limit)
 	}
 
@@ -308,42 +302,44 @@ func (tl *TimescaleLogger) GetPostgresControlCenterHistory(ctx context.Context, 
 }
 
 type PostgresReplicationLagSeries struct {
-	ReplicaName string    `json:"replica_name"`
-	Labels      []string  `json:"labels"`
-	LagMB       []float64 `json:"lag_mb"`
+	ReplicaName   string    `json:"replica_name"`
+	Labels        []string  `json:"labels"`
+	LagMB         []float64 `json:"lag_mb"`
+	WriteLagSec   []float64 `json:"write_lag_sec"`
+	FlushLagSec   []float64 `json:"flush_lag_sec"`
+	ReplayLagSec  []float64 `json:"replay_lag_sec"`
+	State         string    `json:"state"`
+	SyncState     string    `json:"sync_state"`
 }
 
-func (tl *TimescaleLogger) GetPostgresReplicationLagDetail(ctx context.Context, instanceName string, from, to string, limit int) (map[string]PostgresReplicationLagSeries, error) {
+func (tl *TimescaleLogger) GetPostgresReplicationLagDetail(ctx context.Context, serverID uuid.UUID, from, to string, limit int) (map[string]PostgresReplicationLagSeries, error) {
 	if limit <= 0 {
 		limit = 180
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	where := `UPPER(server_instance_name) = UPPER($1)`
-	args := []interface{}{instanceName}
+	where := `server_id = $1`
+	args := []interface{}{serverID}
 	if from != "" && to != "" {
 		where += ` AND capture_timestamp >= $2 AND capture_timestamp <= $3`
 		args = append(args, from, to)
 	}
 
-	query := fmt.Sprintf(`
-		SELECT capture_timestamp, replica_name, lag_mb
+	baseQuery := `
+		SELECT capture_timestamp, replica_name, lag_mb,
+		       COALESCE(write_lag_sec, 0), COALESCE(flush_lag_sec, 0), COALESCE(replay_lag_sec, 0),
+		       COALESCE(state, ''), COALESCE(sync_state, '')
 		FROM postgres_replication_lag_detail
 		WHERE %s
 		ORDER BY capture_timestamp DESC
-		LIMIT $%d
-	`, where, len(args)+1)
-
-	if from != "" && to != "" {
-		query = fmt.Sprintf(`
-			SELECT capture_timestamp, replica_name, lag_mb
-			FROM postgres_replication_lag_detail
-			WHERE %s
-			ORDER BY capture_timestamp DESC
-		`, where)
-	} else {
+	`
+	var query string
+	if from == "" || to == "" {
+		query = fmt.Sprintf(baseQuery+` LIMIT $%d`, where, len(args)+1)
 		args = append(args, limit)
+	} else {
+		query = fmt.Sprintf(baseQuery, where)
 	}
 
 	rows, err := tl.pool.Query(ctx, query, args...)
@@ -353,14 +349,19 @@ func (tl *TimescaleLogger) GetPostgresReplicationLagDetail(ctx context.Context, 
 	defer rows.Close()
 
 	type rr struct {
-		ts   time.Time
-		name string
-		mb   float64
+		ts        time.Time
+		name      string
+		mb        float64
+		writeSec  float64
+		flushSec  float64
+		replaySec float64
+		state     string
+		syncState string
 	}
 	var tmp []rr
 	for rows.Next() {
 		var r rr
-		if err := rows.Scan(&r.ts, &r.name, &r.mb); err != nil {
+		if err := rows.Scan(&r.ts, &r.name, &r.mb, &r.writeSec, &r.flushSec, &r.replaySec, &r.state, &r.syncState); err != nil {
 			continue
 		}
 		tmp = append(tmp, r)
@@ -371,23 +372,27 @@ func (tl *TimescaleLogger) GetPostgresReplicationLagDetail(ctx context.Context, 
 		r := tmp[i]
 		s := out[r.name]
 		s.ReplicaName = r.name
+		s.State = r.state
+		s.SyncState = r.syncState
 		s.Labels = append(s.Labels, r.ts.UTC().Format(time.RFC3339))
 		s.LagMB = append(s.LagMB, r.mb)
+		s.WriteLagSec = append(s.WriteLagSec, r.writeSec)
+		s.FlushLagSec = append(s.FlushLagSec, r.flushSec)
+		s.ReplayLagSec = append(s.ReplayLagSec, r.replaySec)
 		out[r.name] = s
 	}
 	return out, nil
 }
 
 // ComputeWalRateMBPerMin updates internal WAL bytes state and returns MB/min.
-// ok=false on first observation (no prior baseline).
-func (tl *TimescaleLogger) ComputeWalRateMBPerMin(instanceName string, walBytesTotal uint64, intervalSec float64) (rate float64, ok bool) {
+func (tl *TimescaleLogger) ComputeWalRateMBPerMin(serverID uuid.UUID, walBytesTotal uint64, intervalSec float64) (rate float64, ok bool) {
 	if intervalSec <= 0 {
 		intervalSec = 60
 	}
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
-	prev, seen := tl.prevPgWalBytesTotal[instanceName]
-	tl.prevPgWalBytesTotal[instanceName] = walBytesTotal
+	prev, seen := tl.prevPgWalBytesTotal[serverID]
+	tl.prevPgWalBytesTotal[serverID] = walBytesTotal
 	if !seen {
 		return 0, false
 	}
@@ -400,14 +405,14 @@ func (tl *TimescaleLogger) ComputeWalRateMBPerMin(instanceName string, walBytesT
 }
 
 // ComputePgTps updates internal transaction state and returns average TPS for the interval.
-func (tl *TimescaleLogger) ComputePgTps(instanceName string, xactTotal uint64, intervalSec float64) (tps float64, ok bool) {
+func (tl *TimescaleLogger) ComputePgTps(serverID uuid.UUID, xactTotal uint64, intervalSec float64) (tps float64, ok bool) {
 	if intervalSec <= 0 {
 		intervalSec = 60
 	}
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
-	prev, seen := tl.prevPgXactTotal[instanceName]
-	tl.prevPgXactTotal[instanceName] = xactTotal
+	prev, seen := tl.prevPgXactTotal[serverID]
+	tl.prevPgXactTotal[serverID] = xactTotal
 	if !seen {
 		return 0, false
 	}

@@ -5,7 +5,7 @@
 
 SELECT /* SQL_OPTIMA */   
     GETUTCDATE() AS capture_timestamp,
-    @server_instance_name AS server_instance_name,
+    @server_id AS server_id,
     osi.cpu_count,
     osi.hyperthread_ratio,
     osi.socket_count,

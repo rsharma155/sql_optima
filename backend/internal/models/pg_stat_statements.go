@@ -100,12 +100,12 @@ type PgssUserBreakdownResponse struct {
 
 // PgssRegression represents a query that degraded between two time windows.
 type PgssRegression struct {
-	QueryID   int64     `json:"query_id"`
-	Query     string    `json:"query"`
-	PrevAvgMs float64   `json:"prev_avg_ms"`
-	CurrAvgMs float64   `json:"curr_avg_ms"`
-	ChangePct float64   `json:"change_pct"`
-	Status    string    `json:"status"`
+	QueryID    int64     `json:"query_id"`
+	Query      string    `json:"query"`
+	PrevAvgMs  float64   `json:"prev_avg_ms"`
+	CurrAvgMs  float64   `json:"curr_avg_ms"`
+	ChangePct  float64   `json:"change_pct"`
+	Status     string    `json:"status"`
 	DetectedAt time.Time `json:"detected_at"`
 }
 

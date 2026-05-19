@@ -1,0 +1,14 @@
+name: latch_contention
+description: Latch contention detected
+conditions:
+  - metric: latch_wait_time
+    operator: ">"
+    value: 5000
+logic: AND
+severity: medium
+message: "Latch contention detected exceeding 5000ms."
+recommendation:
+  - "Check latch wait type distribution"
+  - "Investigate tempdb allocation contention"
+  - "Review NUMA node configuration"
+  - "Consider adding tempdb data files"

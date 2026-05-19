@@ -8,7 +8,7 @@
 package config
 
 import (
-	"log"
+	"log/slog"
 	"os"
 )
 
@@ -21,9 +21,9 @@ func ResolveDataPaths() (configPath, frontendDir string) {
 	frontendDir = "../frontend"
 
 	if _, err := os.Stat(configPath); err != nil {
-		log.Printf("[paths] config.yaml not found at %s — instances will come from server registry only", configPath)
+		slog.Info("[paths] config.yaml not found at %s — instances will come from server registry only", "val", configPath)
 	}
 
-	log.Printf("[paths] using config=%s frontend=%s", configPath, frontendDir)
+	slog.Info("[paths] using config=", "arg1", configPath, "arg2", frontendDir)
 	return configPath, frontendDir
 }

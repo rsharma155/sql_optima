@@ -12,7 +12,7 @@ SELECT
     MAX(tps) AS max_tps,
     COUNT(*) AS sample_count
 FROM sqlserver_database_throughput
-WHERE server_instance_name = $1
+WHERE server_id = $1
   AND capture_timestamp >= NOW() - INTERVAL '1 hour'
 GROUP BY database_name
 ORDER BY AVG(tps) DESC

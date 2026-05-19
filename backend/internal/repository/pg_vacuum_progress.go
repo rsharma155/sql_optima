@@ -8,8 +8,9 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 )
@@ -44,12 +45,12 @@ func vacuumProgressPct(total, scanned int64) float64 {
 	return p
 }
 
-func (c *PgRepository) GetVacuumProgress(instanceName string) ([]PgVacuumProgressRow, error) {
+func (c *PgRepository) GetVacuumProgress(ctx context.Context, instanceName string) ([]PgVacuumProgressRow, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
-		if c.reconnectInstance(instanceName) {
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
@@ -60,7 +61,17 @@ func (c *PgRepository) GetVacuumProgress(instanceName string) ([]PgVacuumProgres
 	}
 
 	// pg_stat_progress_vacuum requires privileges; use left joins for names.
-	q := `
+	version := c.GetPgVersion(ctx, instanceName)
+
+	maxDeadCol := "max_dead_tuples"
+	numDeadCol := "num_dead_tuples"
+
+	if version >= 170000 {
+		maxDeadCol = "max_dead_tuple_bytes"
+		numDeadCol = "num_dead_item_ids"
+	}
+
+	q := fmt.Sprintf(`
 		/* SQL_OPTIMA */ 
 		SELECT  
 			now() AT TIME ZONE 'UTC' AS capture_timestamp,
@@ -73,16 +84,18 @@ func (c *PgRepository) GetVacuumProgress(instanceName string) ([]PgVacuumProgres
 			COALESCE(p.heap_blks_scanned,0) AS heap_blks_scanned,
 			COALESCE(p.heap_blks_vacuumed,0) AS heap_blks_vacuumed,
 			COALESCE(p.index_vacuum_count,0) AS index_vacuum_count,
-			COALESCE(p.max_dead_tuples,0) AS max_dead_tuples,
-			COALESCE(p.num_dead_tuples,0) AS num_dead_tuples
+			COALESCE(p.%s,0) AS max_dead_tuples,
+			COALESCE(p.%s,0) AS num_dead_tuples
 		FROM pg_stat_progress_vacuum p
 		LEFT JOIN pg_stat_activity a ON a.pid = p.pid
 		ORDER BY p.heap_blks_scanned DESC, p.pid
-	`
+	`, maxDeadCol, numDeadCol)
 
-	rows, err := db.Query(q)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
-		log.Printf("[POSTGRES] GetVacuumProgress query error for %s: %v", instanceName, err)
+		slog.Error("[POSTGRES] GetVacuumProgress query error", "target", instanceName, "err", err)
 		return nil, err
 	}
 	defer rows.Close()

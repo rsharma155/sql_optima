@@ -5,7 +5,7 @@
 
 CREATE TABLE IF NOT EXISTS sqlserver_ag_health (
     capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
+    server_id TEXT NOT NULL,
     ag_name TEXT,
     replica_server_name TEXT,
     database_name TEXT,

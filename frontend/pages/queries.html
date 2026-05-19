@@ -94,9 +94,20 @@
                 <div class="tab-content" style="padding:1rem;">
                     <!-- Tab 1: Top Queries (Advanced pgss grid) -->
                     <div id="tab-top-queries" class="tab-pane active">
-                        <div class="flex-between mb-2">
-                            <span class="text-muted" style="font-size:0.7rem;" id="pgss-top-time-range">Loading window...</span>
+                        <div class="flex-between mb-2" style="flex-wrap:wrap; gap:0.5rem;">
+                            <div class="flex-center" style="gap:0.5rem; flex-wrap:wrap;">
+                                <select id="pgss-filter-db" class="btn btn-xs btn-outline" style="min-width:120px;" onchange="window.pgssApplyFilters()">
+                                    <option value="">All Databases</option>
+                                </select>
+                                <select id="pgss-filter-user" class="btn btn-xs btn-outline" style="min-width:120px;" onchange="window.pgssApplyFilters()">
+                                    <option value="">All Users</option>
+                                </select>
+                                <select id="pgss-filter-app" class="btn btn-xs btn-outline" style="min-width:120px;" onchange="window.pgssApplyFilters()">
+                                    <option value="">All Apps</option>
+                                </select>
+                            </div>
                             <div class="flex-center" style="gap:0.5rem;">
+                                <span class="text-muted" style="font-size:0.7rem;" id="pgss-top-time-range">Loading window...</span>
                                 <button class="btn btn-xs btn-outline" data-action="call" data-fn="resetPgQueries"><i class="fa-solid fa-trash"></i> Reset Stats</button>
                             </div>
                         </div>

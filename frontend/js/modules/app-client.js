@@ -23,8 +23,11 @@ export const apiClient = {
         return null;
     },
 
-    setToken(_token) {
+    setToken(token) {
         appState.isAuthenticated = true;
+        if (token && window._auth) {
+            window._auth.token = token;
+        }
     },
 
     clearToken() {
@@ -56,6 +59,13 @@ export const apiClient = {
             'Content-Type': 'application/json',
             ...options.headers
         };
+
+        // Send Authorization header using stored token (covers the setup/bootstrap flow
+        // where the HttpOnly cookie may not yet be visible to the browser).
+        const token = (window._auth && window._auth.token) || localStorage.getItem('auth_token');
+        if (token && !headers['Authorization']) {
+            headers['Authorization'] = 'Bearer ' + token;
+        }
 
         const csrf = this._csrfToken();
         if (csrf) {
@@ -338,24 +348,27 @@ export async function boot() {
         return;
     }
 
+    // Load dynamic intervals for dashboard control
+    if (window.collectorConfig) {
+        await window.collectorConfig.loadIntervals();
+    }
+
     window.router.populateInstanceDropdown();
 
     const isAdmin = !!(window._auth && window._auth.isLoggedIn && window._auth.isLoggedIn() && window._auth.isAdmin && window._auth.isAdmin());
 
-    // After Timescale + users exist: full-page onboarding until at least one active monitoring server is registered.
-    if (st2.needs_onboarding_servers && isAdmin) {
-        window.appNavigate('onboarding-servers');
-        console.log('[BOOT] Routed to onboarding (no active monitoring servers in registry)');
-        return;
-    }
-
+    // Route to onboarding only when there are genuinely no registered servers.
+    // Checking both the DB status flag AND instanceCount avoids a race where
+    // RegistryReload hasn't propagated yet but instances are already in config.
     if (instanceCount === 0) {
-        if (!isAdmin) {
+        if (st2.needs_onboarding_servers && isAdmin) {
+            window.appNavigate('onboarding-servers');
+            console.log('[BOOT] Routed to onboarding (no active monitoring servers in registry)');
+        } else if (!isAdmin) {
             window.appNavigate('login');
         } else {
             window.appNavigate('onboarding-servers');
         }
-        console.log('[BOOT] No instances in config; routed to login or onboarding');
         return;
     }
 

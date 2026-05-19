@@ -8,6 +8,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -23,13 +24,13 @@ type PgSessionStateFull struct {
 
 // FetchSessionStateFull returns 5-way session breakdown for client backends only.
 // Excludes autovacuum, bgwriter, checkpointer, and the monitoring connection itself.
-func (c *PgRepository) FetchSessionStateFull(instanceName string) (*PgSessionStateFull, error) {
+func (c *PgRepository) FetchSessionStateFull(ctx context.Context, instanceName string) (*PgSessionStateFull, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
-		if c.reconnectInstance(instanceName) {
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
@@ -57,7 +58,9 @@ func (c *PgRepository) FetchSessionStateFull(instanceName string) (*PgSessionSta
 		  AND pid <> pg_backend_pid()`
 
 	stats := &PgSessionStateFull{}
-	err := db.QueryRow(query).Scan(
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err := db.QueryRowContext(ctx, query).Scan(
 		&stats.Active,
 		&stats.Idle,
 		&stats.IdleInTxn,

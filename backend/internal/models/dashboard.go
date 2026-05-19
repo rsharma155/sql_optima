@@ -9,6 +9,10 @@
 // SPDX-License-Identifier: MIT
 package models
 
+import (
+	"github.com/google/uuid"
+)
+
 // DashboardMetrics precisely caches all Prometheus-styled queries
 // mapped perfectly to the UI widgets dropping all Javascript Math.random() usage safely.
 type DashboardMetrics struct {
@@ -221,7 +225,7 @@ type FileIOSnapshot struct {
 
 // XEventMetrics provides aggregated extended events data for dashboard display
 type XEventMetrics struct {
-	ServerInstanceName  string             `json:"server_instance_name"`
+	ServerID            uuid.UUID          `json:"server_id"`
 	TotalEventsLastHour int                `json:"total_events_last_hour"`
 	EventCounts         map[string]int     `json:"event_counts"`
 	RecentEvents        []SqlServerXeEvent `json:"recent_events"`
@@ -231,7 +235,7 @@ type XEventMetrics struct {
 // CPUSchedulerStats represents CPU scheduler and workload group metrics with pressure warnings
 type CPUSchedulerStats struct {
 	CaptureTimestamp               string  `json:"capture_timestamp"`
-	ServerInstanceName             string  `json:"server_instance_name"`
+	ServerID                       uuid.UUID `json:"server_id"`
 	MaxWorkersCount                int     `json:"max_workers_count"`
 	SchedulerCount                 int     `json:"scheduler_count"`
 	CPUCount                       int     `json:"cpu_count"`
@@ -265,7 +269,7 @@ type CPUSchedulerStats struct {
 // ServerProperties represents server hardware properties
 type ServerProperties struct {
 	CaptureTimestamp   string  `json:"capture_timestamp"`
-	ServerInstanceName string  `json:"server_instance_name"`
+	ServerID           uuid.UUID `json:"server_id"`
 	CPUCount           int     `json:"cpu_count"`
 	HyperthreadRatio   int     `json:"hyperthread_ratio"`
 	SocketCount        int     `json:"socket_count"`
@@ -281,7 +285,7 @@ type ServerProperties struct {
 
 // CPULastCollected tracks the last collection timestamps for deduplication
 type CPULastCollected struct {
-	ServerInstanceName string `json:"server_instance_name"`
+	ServerID           uuid.UUID `json:"server_id"`
 	LastCollectionTime string `json:"last_collection_time"`
 	LastCPUHistoryTime string `json:"last_cpu_history_time"`
 	LastSchedulerTime  string `json:"last_scheduler_time"`

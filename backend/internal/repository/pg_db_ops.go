@@ -10,10 +10,10 @@
 package repository
 
 import (
+	"log/slog"
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"net"
 	"net/url"
 	"os"
@@ -112,14 +112,14 @@ func (c *PgRepository) OpenConnForDatabase(ctx context.Context, instanceName, db
 }
 
 // GetDatabases returns the list of user databases (excludes template databases and 'postgres').
-func (c *PgRepository) GetDatabases(instanceName string) ([]string, error) {
+func (c *PgRepository) GetDatabases(ctx context.Context, instanceName string) ([]string, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
-		log.Printf("[POSTGRES] GetDatabases: connection not found for %s, attempting reconnect", instanceName)
-		if c.reconnectInstance(instanceName) {
+		slog.Info("[POSTGRES] GetDatabases: connection not found for %s, attempting reconnect", "val", instanceName)
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
@@ -133,9 +133,12 @@ func (c *PgRepository) GetDatabases(instanceName string) ([]string, error) {
 
 	// List all non-template databases including postgres (needed for CNPG)
 	query := "SELECT /* SQL_OPTIMA */   datname FROM pg_database WHERE datistemplate = false AND datallowconn = true ORDER BY datname"
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[POSTGRES] GetDatabases: query failed for %s: %v", instanceName, err)
+		slog.Error("[POSTGRES] GetDatabases: query failed", "target", instanceName, "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -151,6 +154,16 @@ func (c *PgRepository) GetDatabases(instanceName string) ([]string, error) {
 		}
 	}
 
-	log.Printf("[POSTGRES] GetDatabases: found %d databases for %s: %v", len(databases), instanceName, databases)
+	// Fallback: If no databases found, at least return the one we are connected to
+	if len(databases) == 0 {
+		var currentDB string
+		ctx, cancel := WithQueryTimeout(ctx, 0)
+		defer cancel()
+		if err := db.QueryRowContext(ctx, "SELECT current_database()").Scan(&currentDB); err == nil {
+			databases = []string{currentDB}
+		}
+	}
+
+	slog.Info(fmt.Sprintf("[POSTGRES] GetDatabases: found %d databases for %s: %v", len(databases), instanceName, databases))
 	return databases, nil
 }

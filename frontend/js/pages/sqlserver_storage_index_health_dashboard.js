@@ -7,98 +7,125 @@ window.runSqlServerStorageIndexHealthDashboard = async function(opts) {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || { name: 'Loading...', type: 'sqlserver' };
     window.appState.msSih = window.appState.msSih || {};
     const state = window.appState.msSih;
-    const dashTitle = 'Storage & Index Health';
     
-    // Time state
+    // Time state - Default to 24h as per redesign spec
     const now = new Date();
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    const defaultRange = 24 * 60 * 60 * 1000;
     const pad = n => String(n).padStart(2, '0');
     const fmtLocal = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
-    state.fromLocal = state.fromLocal || fmtLocal(oneHourAgo);
+    state.fromLocal = state.fromLocal || fmtLocal(new Date(now.getTime() - defaultRange));
     state.toLocal = state.toLocal || fmtLocal(now);
     
+    let isInitialLoad = false;
     if (state.db === undefined || (window.appState.currentDatabase && state.db !== window.appState.currentDatabase)) {
+        isInitialLoad = true;
         state.db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : 'all';
     }
     state.schema = state.schema || 'all';
     state.table = state.table || 'all';
     state.growthMode = state.growthMode || 'abs'; 
 
-    const fetchJson = async (url) => {
-        const res = await window.apiClient.authenticatedFetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.json();
-    };
-
-    const buildFilterQS = () => {
-        const fromIso = new Date(state.fromLocal).toISOString();
-        const toIso = new Date(state.toLocal).toISOString();
-        const db = (state.db && state.db !== 'all') ? state.db : '';
-        const schema = (state.schema && state.schema !== 'all') ? state.schema : '';
-        const table = (state.table && state.table !== 'all') ? state.table : '';
-        return `instance=${encodeURIComponent(inst.name)}&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}&db=${encodeURIComponent(db)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}`;
-    };
-
-    const fmt = (n, d=0) => {
-        const v = Number(n);
-        if (n == null || isNaN(v)) return '--';
-        return v.toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d});
-    };
-
     if (!skipLoadingShell) {
-        window.routerOutlet.innerHTML = await window.loadTemplate('/pages/sqlserver_storage_index_health.html', { inst, dashTitle });
+        window.routerOutlet.innerHTML = await window.loadTemplate('/pages/sqlserver_storage_index_health.html', { inst });
     }
+
+    const $ = (id) => document.getElementById(id);
+    const container = $('sihDashboardBody');
+    if (container) container.classList.add('loading');
 
     try {
         const base = `/api/timescale/sqlserver/storage-index-health`;
-        const filterQS = buildFilterQS();
+        const filterQS = window.sihShared.buildFilterQS(state, inst.name);
         
         const [filters, dash] = await Promise.all([
-            fetchJson(`${base}/filters?${filterQS}`),
-            fetchJson(`${base}/dashboard?${filterQS}`)
+            window.apiClient.authenticatedFetch(`${base}/filters?${filterQS}`).then(r => r.json()),
+            window.apiClient.authenticatedFetch(`${base}/dashboard?${filterQS}`).then(r => r.json())
         ]);
 
-        const $ = (id) => document.getElementById(id);
+        if (container) container.classList.remove('loading');
+
+        const hasNoData = (!dash.largest_tables || dash.largest_tables.length === 0) &&
+                          (!filters.databases || filters.databases.length === 0);
+
+        // Check for collector errors if data is empty
+        if (hasNoData && dash.collector_error) {
+            container.innerHTML = `
+                <div class="alert alert-warning" style="margin-top:1rem;">
+                    <i class="fa-solid fa-triangle-exclamation mr-2"></i>
+                    <strong>Collection Issue:</strong> ${window.sihShared.escH(dash.collector_error)}
+                    <p class="mt-2 mb-0" style="font-size:0.75rem;">This instance is registered but the collector is encountering permissions or connectivity issues while fetching table metadata.</p>
+                </div>
+                <div class="glass-panel mt-3" style="padding:1.5rem; text-align:center; opacity:0.6;">
+                    <i class="fa-solid fa-database mb-2" style="font-size:1.5rem;"></i>
+                    <p style="font-size:0.8rem; margin:0;">Dashboard will populate once collection succeeds.</p>
+                </div>
+            `;
+            return;
+        }
+
+        if (hasNoData) {
+            container.innerHTML = `
+                <div class="glass-panel mt-3" style="padding:2rem; text-align:center; opacity:0.75;">
+                    <i class="fa-solid fa-hourglass-half mb-2" style="font-size:1.5rem; color:var(--text-muted);"></i>
+                    <p style="font-size:0.85rem; font-weight:600; margin:0.5rem 0 0.25rem;">Waiting for collection data</p>
+                    <p style="font-size:0.75rem; color:var(--text-muted); margin:0;">The Storage & Index Health collector runs every 6 hours. No data has been collected yet for this instance.<br>Database, schema, and table filters will populate after the first collection cycle completes.</p>
+                </div>
+            `;
+            return;
+        }
+
         const k = dash.kpis || {};
+        const gs = dash.growth_summary || {};
+        const growth = dash.growth || [];
 
-        // 1. Inputs
+        // 1. Inputs & Presets
         const fromIn = $('sihFrom'); const toIn = $('sihTo');
-        if (fromIn && !fromIn.value) fromIn.value = state.fromLocal;
-        if (toIn && !toIn.value) toIn.value = state.toLocal;
+        if (fromIn) fromIn.value = state.fromLocal;
+        if (toIn) toIn.value = state.toLocal;
 
-        // 2. Storage Health Banner
-        (function renderBanner() {
-            const banner = $('sihHealthBanner');
-            if (!banner) return;
-            banner.style.display = 'block';
-            let severity = 'healthy';
-            let messages = [];
-            const unusedGB = (k.unused_index_mb || 0) / 1024;
+        document.querySelectorAll('.sih-preset').forEach(btn => {
+            btn.onclick = () => {
+                const h = parseInt(btn.dataset.h);
+                const end = new Date();
+                const start = new Date(end.getTime() - h * 3600 * 1000);
+                state.fromLocal = fmtLocal(start);
+                state.toLocal = fmtLocal(end);
+                reload();
+            };
+        });
 
-            if (unusedGB > 1) {
-                severity = 'critical';
-                messages.push(`Critical: ${fmt(unusedGB, 1)} GB reclaimable from unused indexes.`);
-            } else if (k.growth_7d_pct > 15) {
-                severity = 'critical';
-                messages.push(`Critical: Overall growth exceeding 15% weekly.`);
-            } else if (k.growth_7d_pct > 5) {
-                severity = 'warning';
-                messages.push(`Warning: Storage expanding at ${fmt(k.growth_7d_pct, 1)}% weekly.`);
-            }
-            if (!messages.length) messages.push("Storage healthy — growth and efficiency stable over last 7 days.");
-            const cls = severity === 'critical' ? 'alert-danger' : (severity === 'warning' ? 'alert-warning' : 'alert-success');
-            banner.innerHTML = `<div class="alert ${cls}" style="margin:0; font-weight:600; font-size:0.9rem; border-radius:8px;">
-                <i class="fa-solid ${severity==='healthy'?'fa-check-circle':'fa-triangle-exclamation'}"></i> ${messages.join(' ')}
-            </div>`;
+        // 2. Health Score
+        (function renderHealthScore() {
+            const score = window.sihShared.buildHealthScore(k);
+            const container = $('sihHealthScoreContainer');
+            if (!container) return;
+            const color = score >= 80 ? '#10b981' : (score >= 60 ? '#f59e0b' : '#f43f5e');
+            container.innerHTML = `
+                <div style="width:50px; height:50px; border-radius:50%; border:4px solid ${color}; display:flex; align-items:center; justify-content:center; font-weight:700; color:${color}; font-size:1.1rem; background:rgba(255,255,255,0.03);">
+                    ${score}
+                </div>
+            `;
         })();
 
-        // 3. Dropdowns
-        if ($('sihDb')) {
-            $('sihDb').innerHTML = '<option value="all">All</option>' + (filters.databases || []).map(d => `<option value="${d}" ${state.db===d?'selected':''}>${d}</option>`).join('');
-            $('sihSchema').innerHTML = '<option value="all">All</option>' + (filters.schemas || []).map(s => `<option value="${s}" ${state.schema===s?'selected':''}>${s}</option>`).join('');
-            $('sihTable').innerHTML = '<option value="all">All</option>' + (filters.tables || []).map(t => `<option value="${t}" ${state.table===t?'selected':''}>${t}</option>`).join('');
+        // 3. Dropdowns — auto-select first database on initial landing so data is
+        //    scoped by default instead of showing an aggregated cross-db view.
+        if (isInitialLoad && state.db === 'all' && filters.databases && filters.databases.length > 0) {
+            state.db = filters.databases[0];
+            // Re-fetch with the auto-selected database so schema/table dropdowns
+            // are correctly scoped from the start.
+            void window.runSqlServerStorageIndexHealthDashboard({ skipLoadingShell: true });
+            return;
         }
+
+        const syncSelect = (id, options, current) => {
+            const el = $(id);
+            if (!el) return;
+            el.innerHTML = '<option value="all">All</option>' + (options || []).map(o => `<option value="${o}" ${current===o?'selected':''}>${o}</option>`).join('');
+        };
+        syncSelect('sihDb', filters.databases, state.db);
+        syncSelect('sihSchema', filters.schemas, state.schema);
+        syncSelect('sihTable', filters.tables, state.table);
 
         const reload = (e) => { 
             if (e) e.preventDefault();
@@ -109,173 +136,171 @@ window.runSqlServerStorageIndexHealthDashboard = async function(opts) {
             if ($('sihTable')) state.table = $('sihTable').value;
             void window.runSqlServerStorageIndexHealthDashboard({ skipLoadingShell: true }); 
         };
-        $('sihRefresh').onclick = reload;
-        $('sihApply').onclick = reload;
-        $('sihDb').onchange = reload;
-        $('sihSchema').onchange = reload;
-        $('sihTable').onchange = reload;
+        const sihRefreshEl = $('sihRefresh'); if (sihRefreshEl) sihRefreshEl.onclick = reload;
+        const sihApplyEl = $('sihApply'); if (sihApplyEl) sihApplyEl.onclick = reload;
+        const sihDbEl = $('sihDb'); if (sihDbEl) sihDbEl.onchange = reload;
+        const sihSchemaEl = $('sihSchema'); if (sihSchemaEl) sihSchemaEl.onchange = reload;
+        const sihTableEl = $('sihTable'); if (sihTableEl) sihTableEl.onchange = reload;
 
         // 4. KPIs
-        const updateKpi = (id, val, suffix, colorRules, subText) => {
-            const el = $('kpi' + id); const card = $('card' + id);
-            const delta = $('delta' + id);
+        const sihKpi = (cardId, valId, val, suffix, rawVal, rules) => {
+            const card = $(cardId);
+            const el = $(valId);
             if (!el || !card) return;
-            const v = Number(val) || 0;
-            el.textContent = fmt(v, (id==='WriteAmp'||id==='Growth7d')?1:0) + (suffix || '');
-            
-            if (delta && subText) {
-                delta.textContent = subText;
-                delta.style.display = 'block';
-            } else if (delta) {
-                delta.style.display = 'none';
-            }
-
-            let severity = 'green';
-            if (v >= colorRules.red) severity = 'red';
-            else if (v >= colorRules.orange) severity = 'orange';
-            card.style.borderLeft = `4px solid var(--${severity === 'green' ? 'success' : (severity === 'orange' ? 'warning' : 'danger')})`;
+            el.textContent = val + (suffix || '');
+            let sev = 'success';
+            if (rawVal >= rules.red) sev = 'danger';
+            else if (rawVal >= rules.orange) sev = 'warning';
+            card.style.borderLeft = `4px solid var(--${sev})`;
         };
-        updateKpi('TotalSize', k.total_db_size_mb, ' MB', { orange: 500000, red: 1000000 });
-        let growthSub = k.fastest_growing_table ? 'Top: ' + k.fastest_growing_table.split('.').pop() : '';
-        updateKpi('Growth7d', k.growth_7d_pct, '%', { orange: 5, red: 15 }, growthSub);
-        updateKpi('Forecast30d', k.forecast_table_mb_90d, ' MB', { orange: k.total_db_size_mb * 1.1, red: k.total_db_size_mb * 1.25 });
-        updateKpi('Reclaimable', k.unused_index_mb, ' MB', { orange: 100, red: 1000 });
-        updateKpi('Frag', k.avg_fragmentation_pct, '%', { orange: 10, red: 30 });
-        updateKpi('WriteAmp', k.index_write_overhead_pct, '', { orange: 3, red: 6 });
 
-        const isTableFiltered = state.table && state.table !== 'all';
-        const filteredTableName = isTableFiltered ? state.table : '';
+        const totalGB = k.total_db_size_mb / 1024;
+        sihKpi('cardTotalSize',    'kpiTotalSize',    window.sihShared.fmt(totalGB, 1), ' GB', totalGB, {orange: 512, red: 2048});
+        sihKpi('cardGrowth7d',     'kpiGrowth7d',     window.sihShared.fmt(k.growth_7d_pct, 1), '%', k.growth_7d_pct, {orange: 5, red: 15});
+        sihKpi('cardForecast90d',  'kpiForecast90d',  window.sihShared.fmt(k.forecast_table_mb_90d / 1024, 1), ' GB', k.forecast_table_mb_90d / (k.total_db_size_mb || 1) * 100, {orange: 110, red: 125});
+        sihKpi('cardWriteOverhead','kpiWriteOverhead', window.sihShared.fmt(k.index_write_overhead_pct, 1), '%', k.index_write_overhead_pct, {orange: 30, red: 60});
 
-        // Insights
-        const insights = $('sihInsightsBody');
-        if (insights) {
-            const insData = (dash.Insights || []);
-            if (!insData.length) {
-                insights.innerHTML = '<div class="text-success" style="font-size:0.85rem;"><i class="fa-solid fa-circle-check"></i> No significant risks detected.</div>';
-            } else {
-                insights.innerHTML = insData.map(ins => `
-                    <div class="glass-panel sih-insight-item" style="font-size:0.82rem; display:flex; align-items:center; gap:0.75rem; padding:0.5rem; background:rgba(255,255,255,0.03);">
-                        <span class="badge badge-${ins.severity==='critical'?'danger':(ins.severity==='warning'?'warning':'info')}" style="min-width:4.5rem; text-align:center;">${String(ins.severity).toUpperCase()}</span>
-                        <span style="flex:1;">${window.escapeHtml(ins.message)}</span>
-                        <button class="btn btn-xs btn-outline sih-view-btn" data-db="${window.escapeHtml(ins.db_name || '')}" data-schema="${window.escapeHtml(ins.schema_name || '')}" data-table="${window.escapeHtml(ins.table_name || '')}">View</button>
-                    </div>
-                `).join('');
-                insights.querySelectorAll('.sih-view-btn').forEach(btn => {
-                    btn.onclick = () => {
-                        if (btn.dataset.table) showSqlServerSihTableDrilldown(inst.name, btn.dataset.db, btn.dataset.schema, btn.dataset.table);
-                    };
+        sihKpi('cardUnusedCount',  'kpiUnusedCount',  window.sihShared.fmt(k.unused_index_count, 0), '', k.unused_index_count, {orange: 5, red: 20});
+        sihKpi('cardUnusedMB',     'kpiUnusedMB',     window.sihShared.fmt(k.unused_index_mb, 0), ' MB', k.unused_index_mb, {orange: 100, red: 1000});
+        sihKpi('cardHighScan',     'kpiHighScan',     window.sihShared.fmt(k.high_scan_table_count, 0), '', k.high_scan_table_count, {orange: 3, red: 10});
+        sihKpi('cardDailyGrowth',  'kpiDailyGrowth',  window.sihShared.fmt(gs.daily_growth_mb, 1), ' MB/d', gs.daily_growth_mb, {orange: 50, red: 200});
+
+        // 5. Shared Renders
+        window.sihShared.renderBanner('sihHealthBanner', k, gs);
+        window.sihShared.renderInsights('sihInsightsBody', dash.insights || dash.Insights || []);
+        window.sihShared.renderProjectionStrip(dash);
+        window.sihShared.renderHighScanTables('highScanTablesBody', dash.high_scan_tables, 'sqlserver');
+        window.sihShared.renderLargestTables('largestTablesBody', dash.largest_tables, 'sqlserver', 'ms-sih-drilldown');
+        window.sihShared.renderLargestIndexes('largestIndexesBody', dash.largest_indexes);
+        window.sihShared.renderIndexEfficiency('indexEfficiencyBody', dash.unused_indexes, 'sqlserver');
+        window.sihShared.renderDuplicateIndexes('dupIdxBody', 'dupIdxCount', dash.raw_duplicate_indexes, 'sqlserver');
+        window.sihShared.wireCopyButtons(container);
+
+        // 5.5. Wire Sorting for Largest Tables
+        (function wireLargestTablesSorting() {
+            const table = $('largestTablesTable');
+            if (!table) return;
+            let sortCol = 'total';
+            let sortDir = 'desc';
+            
+            const headers = table.querySelectorAll('th.sortable');
+            headers.forEach(th => {
+                th.style.cursor = 'pointer';
+                th.addEventListener('click', () => {
+                    const col = th.dataset.sort;
+                    if (sortCol === col) {
+                        sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+                    } else {
+                        sortCol = col;
+                        sortDir = 'desc';
+                    }
+                    
+                    // Update header icons
+                    headers.forEach(h => {
+                        const baseText = h.textContent.replace(/ [▲▼]/g, '');
+                        if (h === th) {
+                            h.textContent = baseText + (sortDir === 'desc' ? ' ▼' : ' ▲');
+                        } else {
+                            h.textContent = baseText;
+                        }
+                    });
+
+                    // Sort data
+                    const sorted = [...dash.largest_tables].sort((a, b) => {
+                        let va, vb;
+                        if (col === 'table') {
+                            va = `${a.schema_name}.${a.table_name}`;
+                            vb = `${b.schema_name}.${b.table_name}`;
+                            return sortDir === 'desc' ? vb.localeCompare(va) : va.localeCompare(vb);
+                        } else if (col === 'total') {
+                            va = Number(a.value) || 0; vb = Number(b.value) || 0;
+                        } else if (col === 'idx') {
+                            va = Number(a.value2) || 0; vb = Number(b.value2) || 0;
+                        } else if (col === 'data') {
+                            va = (Number(a.value) || 0) - (Number(a.value2) || 0);
+                            vb = (Number(b.value) || 0) - (Number(b.value2) || 0);
+                        } else if (col === 'pct') {
+                            va = (Number(a.value) > 0) ? (Number(a.value2) / Number(a.value)) : 0;
+                            vb = (Number(b.value) > 0) ? (Number(b.value2) / Number(b.value)) : 0;
+                        }
+                        return sortDir === 'desc' ? vb - va : va - vb;
+                    });
+                    
+                    window.sihShared.renderLargestTables('largestTablesBody', sorted, 'sqlserver', 'ms-sih-drilldown');
                 });
-            }
-        }
-
-        // Tables
-        const ltBody = $('largestTablesBody');
-        const totalSize = Number(k.total_db_size_mb) || 1;
-        ltBody.innerHTML = (dash.largest_tables || []).map(t => {
-            const totalVal = Number(t.value) || 0;
-            const idxVal = Number(t.value2) || 0;
-            const dataVal = totalVal - idxVal;
-            const ratio = totalVal > 0 ? (idxVal / totalVal) * 100 : 0;
-            const pctDb = (totalVal / totalSize) * 100;
-            const g = Number(t.growth_pct) || 0;
-            const risk = g > 25 ? 'danger' : (g > 10 ? 'warning' : 'success');
-            return `
-                <tr style="cursor:pointer;" data-action="ms-sih-drilldown" data-db="${window.escapeHtml(t.db_name)}" data-schema="${window.escapeHtml(t.schema_name)}" data-table="${window.escapeHtml(t.table_name)}">
-                    <td><strong>${window.escapeHtml(t.schema_name)}.${window.escapeHtml(t.table_name)}</strong></td>
-                    <td>${fmt(totalVal, 1)}</td>
-                    <td>${fmt(dataVal, 1)}</td>
-                    <td>${fmt(ratio, 1)}%</td>
-                    <td class="text-muted">${fmt(pctDb, 1)}%</td>
-                    <td>${fmt(totalVal * (1 + g/100), 1)}</td>
-                    <td><span class="badge badge-${risk}">${g > 25 ? 'HIGH' : (g > 10 ? 'MEDIUM' : 'LOW')}</span></td>
-                </tr>
-            `;
-        }).join('') || '<tr><td colspan="7" class="text-center text-success p-3">No high-risk tables detected.</td></tr>';
-
-        const ieBody = $('indexEfficiencyBody');
-        ieBody.innerHTML = (dash.unused_indexes || []).map(idx => {
-            const ratio = idx.value / (idx.updates || 1);
-            let rec = 'HEALTHY', cls = 'success';
-            if (idx.value === 0) { rec = 'DROP'; cls = 'danger'; }
-            else if (idx.fragmentation > 30) { rec = 'REBUILD'; cls = 'warning'; }
-            else if (ratio < 1) { rec = 'HIGH WRITE COST'; cls = 'warning'; }
-            return `<tr><td><span class="text-muted" style="font-size:0.65rem;">${window.escapeHtml(idx.table_name)}.</span><br><strong>${window.escapeHtml(idx.index_name)}</strong></td><td class="text-right">${fmt(idx.value2, 1)}</td><td class="text-right">${fmt(ratio, 2)}</td><td class="text-right">${fmt(idx.fragmentation || 0, 0)}%</td><td><span class="badge badge-${cls}">${rec}</span></td></tr>`;
-        }).join('') || '<tr><td colspan="5" class="text-center text-success p-3">No efficiency issues detected.</td></tr>';
-
-        $('btnGrowthAbs').onclick = () => { state.growthMode = 'abs'; reload(); };
-        $('btnGrowthPct').onclick = () => { state.growthMode = 'pct'; reload(); };
-
-        setTimeout(() => {
-            renderMsSihSparkline('sparkTotalSize', (dash.growth || []).map(p => p.table_size_mb), '#3b82f6');
-            renderMsSihSparkline('sparkGrowth7d', (dash.growth || []).map(p => p.table_size_mb), '#10b981');
-            renderMsSihGrowthChart(dash.growth || [], filteredTableName);
-            renderMsSihTopGrowthChart(dash.growth || [], state.growthMode, filteredTableName);
-        }, 100);
-
-        if (!window.msSihClickListenerAdded) {
-            window.routerOutlet.addEventListener('click', (e) => {
-                const tr = e.target.closest('tr[data-action="ms-sih-drilldown"]');
-                if (tr) showSqlServerSihTableDrilldown(inst.name, tr.dataset.db, tr.dataset.schema, tr.dataset.table);
             });
-            window.msSihClickListenerAdded = true;
+        })();
+
+        const copyAllBtn = $('btnCopyAllRecs');
+        if (copyAllBtn) {
+            copyAllBtn.onclick = () => {
+                const scripts = (dash.unused_indexes || [])
+                    .filter(idx => Number(idx.value) === 0)
+                    .map(idx => `DROP INDEX [${idx.index_name}] ON [${idx.schema_name}].[${idx.table_name}];`)
+                    .join('\n');
+                if (!scripts) {
+                    alert('No DROP candidates found.');
+                    return;
+                }
+                navigator.clipboard.writeText(`-- Generated by SQL Optima\n${scripts}`)
+                    .then(() => {
+                        copyAllBtn.textContent = '✓ Copied!';
+                        setTimeout(() => { copyAllBtn.innerHTML = '<i class="fa-solid fa-copy"></i> Copy All'; }, 2000);
+                    });
+            };
         }
+
+        // 6. Charts
+        setTimeout(() => {
+            window.sihShared.renderSparkline('sparkTotalSize',   growth.map(p => p.table_size_mb), '#3b82f6');
+            window.sihShared.renderSparkline('sparkGrowth7d',    growth.map(p => p.table_size_mb), '#10b981');
+            
+            window.sihShared.renderGrowthChart('chartGrowth', growth, 'sqlserver');
+            window.sihShared.renderTopGrowthChart('chartTopGrowth', dash.top_growth_tables || [], state.growthMode);
+            window.sihShared.renderSeekScanLookupChart('chartSeekScanLookup', dash.seek_scan_lookup || [], 'sqlserver');
+        }, 0);
+
+        // 7. Event Listeners (AbortController to prevent leaks)
+        if (state._clickController) state._clickController.abort();
+        state._clickController = new AbortController();
+        
+        window.routerOutlet.addEventListener('click', (e) => {
+            const tr = e.target.closest('tr[data-action="ms-sih-drilldown"]');
+            if (tr) showSqlServerSihTableDrilldown(inst.name, tr.dataset.db, tr.dataset.schema, tr.dataset.table);
+        }, { signal: state._clickController.signal });
+
+        // Duplicate panel toggle
+        const dupToggle = $('dupIdxToggle');
+        if (dupToggle) {
+            dupToggle.onclick = () => {
+                const body = $('dupIdxBody');
+                const chevron = $('dupIdxChevron');
+                const isOpen = body.style.display !== 'none';
+                body.style.display = isOpen ? 'none' : 'block';
+                chevron.className = isOpen ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-up';
+            };
+        }
+
+        const btnAbs = $('btnGrowthAbs'); if (btnAbs) btnAbs.onclick = () => { state.growthMode = 'abs'; reload(); };
+        const btnPct = $('btnGrowthPct'); if (btnPct) btnPct.onclick = () => { state.growthMode = 'pct'; reload(); };
 
     } catch (e) {
         console.error('SQL Server SIH dashboard failed', e);
-        if ($('sihDashboardBody')) $('sihDashboardBody').innerHTML = `<div class="alert alert-danger">Analytical load failed: ${e.message}</div>`;
+        if (container) {
+            container.classList.remove('loading');
+            const isNoData = e.message && (e.message.includes('404') || e.message.includes('no rows') || e.message.includes('empty'));
+            container.innerHTML = isNoData
+                ? `<div class="glass-panel" style="padding:2rem; text-align:center; margin-top:1rem;"><i class="fa-solid fa-database" style="font-size:2rem; opacity:0.3; margin-bottom:0.75rem; display:block;"></i><h4 style="color:var(--text-muted); font-size:0.9rem;">No Storage Data Available</h4><p style="color:var(--text-muted); font-size:0.8rem; margin:0;">The collector has not yet gathered storage and index metrics. Data will appear after the first collection cycle completes.</p></div>`
+                : `<div class="alert alert-danger" style="margin-top:1rem;">Storage & Index Health load failed: ${e.message}</div>`;
+        }
     }
 };
-
-function renderMsSihSparkline(canvasId, data, color) {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) return;
-    const existing = Chart.getChart(canvas);
-    if (existing) existing.destroy();
-    if (!data || !data.length) return;
-    new Chart(canvas, {
-        type: 'line',
-        data: { labels: data.map((_, i) => i), datasets: [{ data: data, borderColor: color, borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.4 }] },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } }, scales: { x: { display: false }, y: { display: false } } }
-    });
-}
-
-function renderMsSihGrowthChart(growth, tableName) {
-    const canvas = document.getElementById('chartGrowth');
-    if (!canvas) return;
-    const existing = Chart.getChart(canvas);
-    if (existing) existing.destroy();
-    const labelSuffix = tableName ? ` (${tableName})` : '';
-    new Chart(canvas, {
-        type: 'line',
-        data: {
-            labels: growth.map(p => new Date(p.bucket).toLocaleDateString()),
-            datasets: [
-                { label: 'Table Data' + labelSuffix, data: growth.map(p => p.table_size_mb), borderColor: '#3b82f6', backgroundColor: '#3b82f622', fill: true, tension: 0.3 },
-                { label: 'Indexes' + labelSuffix, data: growth.map(p => p.index_size_mb), borderColor: '#10b981', backgroundColor: '#10b98122', fill: true, tension: 0.3 }
-            ]
-        },
-        options: { responsive: true, maintainAspectRatio: false, scales: { y: { ticks: { color: '#94a3b8', font: { size: 10 } } }, x: { ticks: { color: '#94a3b8', font: { size: 10 } } } }, plugins: { legend: { labels: { color: '#94a3b8' } } } }
-    });
-}
-
-function renderMsSihTopGrowthChart(growth, mode, tableName) {
-    const canvas = document.getElementById('chartTopGrowth');
-    if (!canvas) return;
-    const existing = Chart.getChart(canvas);
-    if (existing) existing.destroy();
-    const data = growth.map((p,i) => { if (i===0) return 0; const diff = p.table_size_mb - growth[i-1].table_size_mb; return mode==='pct' ? (diff/(growth[i-1].table_size_mb||1))*100 : diff; });
-    new Chart(canvas, {
-        type: 'bar', data: { labels: growth.map(p => new Date(p.bucket).toLocaleDateString()), datasets: [{ label: (mode==='pct'?'Growth %':'Growth MB') + (tableName?` (${tableName})`:''), data, backgroundColor: '#f43f5e' }] },
-        options: { responsive: true, maintainAspectRatio: false }
-    });
-}
 
 async function showSqlServerSihTableDrilldown(instance, db, schema, table) {
     const fromIso = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
     const toIso = new Date().toISOString();
-    const url = `/api/sqlserver/storage-index/table-drilldown?engine=sqlserver&instance=${encodeURIComponent(instance)}&db=${encodeURIComponent(db)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}&from=${fromIso}&to=${toIso}`;
+    const url = `/api/timescale/sqlserver/storage-index-health/index-usage?instance=${encodeURIComponent(instance)}&db=${encodeURIComponent(db)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}&from=${fromIso}&to=${toIso}`;
     
-    // Create modal
     const existing = document.getElementById('sihTableDrilldownModal');
     if (existing) existing.remove();
     
@@ -287,30 +312,17 @@ async function showSqlServerSihTableDrilldown(instance, db, schema, table) {
     modal.innerHTML = `
         <div class="glass-panel" style="background:var(--bg-surface); width:95%; max-width:1000px; max-height:90vh; overflow-y:auto; border-radius:12px; border:1px solid var(--border-color); display:flex; flex-direction:column;">
             <div class="modal-header flex-between" style="padding:1rem; border-bottom:1px solid var(--border-color);">
-                <h3 style="margin:0;"><i class="fa-solid fa-magnifying-glass-chart text-accent"></i> ${schema}.${table} <span class="text-muted" style="font-size:0.8rem;">(30-day History)</span></h3>
+                <h3 style="margin:0;"><i class="fa-solid fa-magnifying-glass-chart text-accent"></i> ${schema}.${table} <span class="text-muted" style="font-size:0.8rem;">(Index Usage Analysis)</span></h3>
                 <button class="btn btn-icon" id="closeSihModal" style="background:transparent; border:none; color:var(--text); font-size:1.5rem; cursor:pointer;">&times;</button>
             </div>
             <div class="modal-body" style="padding:1.5rem; flex:1;">
                 <div id="sihModalLoading" class="text-center p-5"><i class="fa-solid fa-spinner fa-spin fa-2xl text-accent"></i><p class="mt-3">Analyzing storage telemetry...</p></div>
                 <div id="sihModalContent" style="display:none;">
-                    <div class="charts-grid" style="display:grid; grid-template-columns:1.2fr 0.8fr; gap:1rem; margin-bottom:1.5rem;">
-                        <div class="glass-panel" style="height:300px; padding:1rem;">
-                            <h4 style="font-size:0.8rem; text-transform:uppercase; margin-bottom:0.5rem;" class="text-muted">Size History (MB)</h4>
-                            <div style="height:240px;"><canvas id="sihModalGrowthChart"></canvas></div>
-                        </div>
-                        <div class="glass-panel" style="padding:1rem;">
-                            <h4 style="font-size:0.8rem; text-transform:uppercase; margin-bottom:0.5rem;" class="text-muted">Index Efficiency</h4>
-                            <div class="table-responsive">
-                                <table class="data-table" style="font-size:0.75rem;">
-                                    <thead><tr><th>Index</th><th>Scans</th><th>Updates</th></tr></thead>
-                                    <tbody id="sihModalIndexBody"></tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="glass-panel" style="padding:1rem;">
-                        <h4 style="font-size:0.8rem; text-transform:uppercase; margin-bottom:0.5rem;" class="text-muted">Index Fragmentation Trend</h4>
-                        <div style="height:200px;"><canvas id="sihModalFragChart"></canvas></div>
+                    <div class="table-responsive">
+                        <table class="data-table" style="font-size:0.75rem;">
+                            <thead><tr><th>Index Name</th><th>Reads (Seeks)</th><th>Updates</th><th>Size MB</th><th>Last Used</th></tr></thead>
+                            <tbody id="sihModalIndexBody"></tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -330,40 +342,16 @@ async function showSqlServerSihTableDrilldown(instance, db, schema, table) {
         document.getElementById('sihModalLoading').style.display = 'none';
         document.getElementById('sihModalContent').style.display = 'block';
         
-        // Render Growth Chart
-        const growthCtx = document.getElementById('sihModalGrowthChart').getContext('2d');
-        new Chart(growthCtx, {
-            type: 'line',
-            data: {
-                labels: (data.growth_series || []).map(p => new Date(p.bucket).toLocaleDateString()),
-                datasets: [
-                    { label: 'Data', data: (data.growth_series || []).map(p => p.table_size_mb), borderColor: '#3b82f6', backgroundColor: '#3b82f622', fill: true, tension: 0.3 },
-                    { label: 'Indexes', data: (data.growth_series || []).map(p => p.index_size_mb), borderColor: '#10b981', backgroundColor: '#10b98122', fill: true, tension: 0.3 }
-                ]
-            },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } } }
-        });
-        
-        // Render Index Body
         const idxBody = document.getElementById('sihModalIndexBody');
-        idxBody.innerHTML = (data.index_usage || []).map(i => `
+        idxBody.innerHTML = (data || []).map(i => `
             <tr>
-                <td><strong>${window.escapeHtml(i.index_name)}</strong></td>
+                <td><strong>${window.sihShared.escH(i.index_name)}</strong></td>
                 <td>${Number(i.value).toLocaleString()}</td>
                 <td>${Number(i.updates || 0).toLocaleString()}</td>
+                <td>${window.sihShared.fmt(i.value2, 1)}</td>
+                <td>${i.last_user_seek ? new Date(i.last_user_seek).toLocaleDateString() : 'Never'}</td>
             </tr>
-        `).join('') || '<tr><td colspan="3" class="text-center p-3">No index usage data found.</td></tr>';
-        
-        // Render Frag Chart
-        const fragCtx = document.getElementById('sihModalFragChart').getContext('2d');
-        new Chart(fragCtx, {
-            type: 'bar',
-            data: {
-                labels: (data.fragmentation || []).map(p => new Date(p.bucket).toLocaleDateString()),
-                datasets: [{ label: 'Avg Fragmentation %', data: (data.fragmentation || []).map(p => p.fragmentation), backgroundColor: '#f59e0b' }]
-            },
-            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, max: 100 } } }
-        });
+        `).join('') || '<tr><td colspan="5" class="text-center p-3">No index usage data found.</td></tr>';
         
     } catch (e) {
         document.getElementById('sihModalLoading').innerHTML = `<div class="alert alert-danger">Drilldown failed: ${e.message}</div>`;

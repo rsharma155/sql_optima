@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/rsharma155/sql_optima/internal/api/handlers"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
@@ -23,9 +25,8 @@ func NewPostgresSecurityHandler(svc *service.MetricsService) *PostgresSecurityHa
 }
 
 func (h *PostgresSecurityHandler) GetDashboardData(w http.ResponseWriter, r *http.Request) {
-	instance := r.URL.Query().Get("instance")
-	if instance == "" {
-		http.Error(w, "instance parameter is required", http.StatusBadRequest)
+	serverID, ok := handlers.ParseServerID(r, h.metricsSvc.Config)
+	if !ok {
 		return
 	}
 
@@ -43,7 +44,7 @@ func (h *PostgresSecurityHandler) GetDashboardData(w http.ResponseWriter, r *htt
 	if repo == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   "security repository not initialized (TimescaleDB disconnected)",
 		})
@@ -52,30 +53,30 @@ func (h *PostgresSecurityHandler) GetDashboardData(w http.ResponseWriter, r *htt
 
 	data := make(map[string]interface{})
 
-	kpis, _ := repo.GetKPIData(ctx, instance, from, to)
+	kpis, _ := repo.GetKPIData(ctx, serverID, from, to)
 	data["kpis"] = kpis
 
-	loginTrend, _ := repo.GetFailedLoginTrend(ctx, instance, from, to)
+	loginTrend, _ := repo.GetFailedLoginTrend(ctx, serverID, from, to)
 	data["login_trend"] = loginTrend
 
-	superusers, _ := repo.GetSuperusers(ctx, instance)
+	superusers, _ := repo.GetSuperusers(ctx, serverID)
 	data["superusers"] = superusers
 
-	elevatedRoles, _ := repo.GetElevatedRoles(ctx, instance)
+	elevatedRoles, _ := repo.GetElevatedRoles(ctx, serverID)
 	data["elevated_roles"] = elevatedRoles
 
-	allRoles, _ := repo.GetAllRoles(ctx, instance)
+	allRoles, _ := repo.GetAllRoles(ctx, serverID)
 	data["all_roles"] = allRoles
 
-	dmlTrend, _ := repo.GetDMLActivityTrend(ctx, instance, from, to)
+	dmlTrend, _ := repo.GetDMLActivityTrend(ctx, serverID, from, to)
 	data["dml_trend"] = dmlTrend
 
-	origins, _ := repo.GetConnectionOrigins(ctx, instance, from, to)
+	origins, _ := repo.GetConnectionOrigins(ctx, serverID, from, to)
 	data["connection_origins"] = origins
 
-	roleTrend, _ := repo.GetRoleModificationsTrend(ctx, instance, from, to)
+	roleTrend, _ := repo.GetRoleModificationsTrend(ctx, serverID, from, to)
 	data["role_trend"] = roleTrend
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	_ = json.NewEncoder(w).Encode(data)
 }

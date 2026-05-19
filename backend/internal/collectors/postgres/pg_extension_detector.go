@@ -13,9 +13,9 @@
 package postgres
 
 import (
+	"log/slog"
 	"context"
 	"database/sql"
-	"log"
 	"sync"
 	"time"
 )
@@ -61,7 +61,7 @@ func (d *ExtensionDetector) GetSource(ctx context.Context, db *sql.DB) PgQuerySt
 
 	d.source = d.detectSource(ctx, db)
 	d.lastChecked = time.Now()
-	
+
 	return d.source
 }
 
@@ -75,7 +75,7 @@ func (d *ExtensionDetector) detectSource(ctx context.Context, db *sql.DB) PgQuer
 	`
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[PgExtensionDetector] ERROR: Failed to query pg_extension: %v", err)
+		slog.Error("[PgExtensionDetector] ERROR: Failed to query pg_extension", "err", err)
 		return PgQueryStatsNone
 	}
 	defer rows.Close()
@@ -95,10 +95,10 @@ func (d *ExtensionDetector) detectSource(ctx context.Context, db *sql.DB) PgQuer
 			var dummy int
 			err := db.QueryRowContext(ctx, "SELECT 1 FROM pg_stat_monitor LIMIT 1").Scan(&dummy)
 			if err == nil {
-				log.Printf("[PgExtensionDetector] Detected functional pg_stat_monitor.")
+				slog.Info("[PgExtensionDetector] Detected functional pg_stat_monitor.")
 				return PgStatMonitor
 			}
-			log.Printf("[PgExtensionDetector] WARN: pg_stat_monitor is installed but NOT functional (likely missing from shared_preload_libraries): %v", err)
+			slog.Error("[PgExtensionDetector] WARN: pg_stat_monitor is installed but NOT functional (likely missing from shared_preload_libraries)", "err", err)
 			// Continue to check if pg_stat_statements is available
 		}
 		if ext == "pg_stat_statements" {
@@ -106,13 +106,13 @@ func (d *ExtensionDetector) detectSource(ctx context.Context, db *sql.DB) PgQuer
 			var dummy int
 			err := db.QueryRowContext(ctx, "SELECT 1 FROM pg_stat_statements LIMIT 1").Scan(&dummy)
 			if err == nil {
-				log.Printf("[PgExtensionDetector] Detected functional pg_stat_statements.")
+				slog.Info("[PgExtensionDetector] Detected functional pg_stat_statements.")
 				return PgStatStatements
 			}
-			log.Printf("[PgExtensionDetector] WARN: pg_stat_statements is installed but NOT functional: %v", err)
+			slog.Warn("[PgExtensionDetector] WARN: pg_stat_statements is installed but NOT functional", "err", err)
 		}
 	}
 
-	log.Printf("[PgExtensionDetector] INFO: No functional query monitoring extension found.")
+	slog.Info("[PgExtensionDetector] INFO: No functional query monitoring extension found.")
 	return PgQueryStatsNone
 }

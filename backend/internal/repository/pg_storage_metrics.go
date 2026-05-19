@@ -10,6 +10,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -28,7 +29,7 @@ type PgTableStat struct {
 }
 
 // GetTableStats returns table statistics including size, bloat, and vacuum information.
-func (c *PgRepository) GetTableStats(instanceName string) ([]PgTableStat, error) {
+func (c *PgRepository) GetTableStats(ctx context.Context, instanceName string) ([]PgTableStat, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -52,7 +53,9 @@ func (c *PgRepository) GetTableStats(instanceName string) ([]PgTableStat, error)
 		ORDER BY pg_total_relation_size(quote_ident(schemaname)||'.'||quote_ident(relname)) DESC
 		LIMIT 20
 	`
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +84,7 @@ type PgIndexStat struct {
 }
 
 // GetIndexStats returns potentially unused indexes (idx_scan = 0).
-func (c *PgRepository) GetIndexStats(instanceName string) ([]PgIndexStat, error) {
+func (c *PgRepository) GetIndexStats(ctx context.Context, instanceName string) ([]PgIndexStat, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -105,7 +108,9 @@ func (c *PgRepository) GetIndexStats(instanceName string) ([]PgIndexStat, error)
 		ORDER BY pg_relation_size(indexrelid) DESC
 		LIMIT 10
 	`
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

@@ -7,12 +7,14 @@
 // SPDX-License-Identifier: MIT
 package entities
 
+import "github.com/google/uuid"
+
 import "time"
 
 // RoleSnapshot represents a snapshot of database roles and privileges.
 type RoleSnapshot struct {
-	TS             time.Time `json:"ts"`
-	InstanceID     string    `json:"instance_id"`
+	TS             time.Time `json:"capture_timestamp"`
+	ServerID       uuid.UUID `json:"server_id" db:"server_id"`
 	Rolname        string    `json:"rolname"`
 	Rolsuper       bool      `json:"rolsuper"`
 	Rolcreatedb    bool      `json:"rolcreatedb"`
@@ -23,8 +25,8 @@ type RoleSnapshot struct {
 
 // FailedLoginEvent represents a failed login attempt.
 type FailedLoginEvent struct {
-	TS         time.Time `json:"ts"`
-	InstanceID string    `json:"instance_id"`
+	TS         time.Time `json:"capture_timestamp"`
+	ServerID   uuid.UUID `json:"server_id" db:"server_id"`
 	Username   string    `json:"username"`
 	ClientAddr string    `json:"client_addr"`
 	Message    string    `json:"message"`
@@ -32,8 +34,8 @@ type FailedLoginEvent struct {
 
 // DDLActivity represents DDL activity snapshot.
 type DDLActivity struct {
-	TS         time.Time `json:"ts"`
-	InstanceID string    `json:"instance_id"`
+	TS         time.Time `json:"capture_timestamp"`
+	ServerID   uuid.UUID `json:"server_id" db:"server_id"`
 	Schemaname string    `json:"schemaname"`
 	Relname    string    `json:"relname"`
 	NTupIns    int64     `json:"n_tup_ins"`

@@ -29,7 +29,7 @@ func normalizeCSV(xs []string) []string {
 	return out
 }
 
-// sihAppendFilters appends db/schema/table ILIKE clauses for dashboard queries. argStart is the next $N index.
+// sihAppendFilters appends db/schema/table exact-match WHERE clauses for dashboard queries. argStart is the next $N index.
 func sihAppendFilters(where string, args []interface{}, f SIHFilters, argStart int) (string, []interface{}, int) {
 	n := argStart
 	if len(f.DBNames) > 0 {
@@ -43,8 +43,8 @@ func sihAppendFilters(where string, args []interface{}, f SIHFilters, argStart i
 		n++
 	}
 	if f.TableLike != "" {
-		where += fmt.Sprintf(" AND table_name ILIKE $%d", n)
-		args = append(args, "%"+f.TableLike+"%")
+		where += fmt.Sprintf(" AND table_name = $%d", n)
+		args = append(args, f.TableLike)
 		n++
 	}
 	return where, args, n

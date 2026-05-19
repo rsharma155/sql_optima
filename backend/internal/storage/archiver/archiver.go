@@ -8,10 +8,10 @@
 package archiver
 
 import (
+	"log/slog"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -63,13 +63,13 @@ func New(hs *hot.HotStorage, cfg *Config) *Archiver {
 func (a *Archiver) Start(ctx context.Context) {
 	a.wg.Add(1)
 	go a.runScheduler(ctx)
-	log.Println("[Archiver] Started nightly archive scheduler")
+	slog.Info("[Archiver] Started nightly archive scheduler")
 }
 
 func (a *Archiver) Stop() {
 	close(a.stopCh)
 	a.wg.Wait()
-	log.Println("[Archiver] Stopped")
+	slog.Info("[Archiver] Stopped")
 }
 
 func (a *Archiver) runScheduler(ctx context.Context) {
@@ -95,13 +95,13 @@ func (a *Archiver) runScheduler(ctx context.Context) {
 func (a *Archiver) runArchive(ctx context.Context) {
 	cutoff := time.Now().AddDate(0, 0, -30)
 
-	log.Printf("[Archiver] Starting archive for data older than %s", cutoff.Format(time.RFC3339))
+	slog.Info("[Archiver] Starting archive for data older than", "val", cutoff.Format(time.RFC3339))
 
 	archivedCount := 0
 	for {
 		metrics, servers, err := a.hotStorage.GetMetricsForArchive(ctx, cutoff, a.config.BatchSize)
 		if err != nil {
-			log.Printf("[Archiver] Error fetching metrics: %v", err)
+			slog.Error("[Archiver] Error fetching metrics", "err", err)
 			return
 		}
 
@@ -116,14 +116,14 @@ func (a *Archiver) runArchive(ctx context.Context) {
 			serverName := batch[0].ServerName
 
 			if err := a.writeParquetFile(serverName, date, batch); err != nil {
-				log.Printf("[Archiver] Error writing parquet file: %v", err)
+				slog.Error("[Archiver] Error writing parquet file", "err", err)
 				continue
 			}
 
 			archivedCount += len(batch)
 		}
 
-		log.Printf("[Archiver] Archived batch of %d metrics (servers: %s)", len(metrics), servers)
+		slog.Info("[Archiver] Archived batch of", "arg1", len(metrics), "arg2", servers)
 
 		if len(metrics) < a.config.BatchSize {
 			break
@@ -131,12 +131,12 @@ func (a *Archiver) runArchive(ctx context.Context) {
 	}
 
 	if archivedCount > 0 {
-		log.Printf("[Archiver] Successfully archived %d metrics, dropping chunks older than 30 days", archivedCount)
+		slog.Info("[Archiver] Successfully archived %d metrics, dropping chunks older than 30 days", "val", archivedCount)
 		if err := a.hotStorage.DeleteChunksOlderThan(ctx, 30*24*time.Hour); err != nil {
-			log.Printf("[Archiver] Warning: Failed to drop old chunks: %v", err)
+			slog.Error("[Archiver] Warning: Failed to drop old chunks", "err", err)
 		}
 	} else {
-		log.Println("[Archiver] No data to archive")
+		slog.Info("[Archiver] No data to archive")
 	}
 }
 
@@ -204,7 +204,7 @@ func (a *Archiver) writeParquetFile(serverName, date string, metrics []*hot.Metr
 		return fmt.Errorf("parquet verification failed: %w", err)
 	}
 
-	log.Printf("[Archiver] Wrote %s (%d rows)", parquetPath, len(rows))
+	slog.Info("[Archiver] Wrote", "arg1", parquetPath, "arg2", len(rows))
 	return nil
 }
 

@@ -8,8 +8,9 @@
 package handlers
 
 import (
+	"fmt"
+	"log/slog"
 	"encoding/json"
-	"log"
 	"net/http"
 )
 
@@ -61,7 +62,7 @@ func (h *PostgresHandlers) runSessionControl(w http.ResponseWriter, r *http.Requ
 	var result bool
 	err := db.QueryRowContext(r.Context(), query, req.PID).Scan(&result)
 	if err != nil {
-		log.Printf("[SessionControl] %s pid=%d instance=%s error: %v", action, req.PID, req.Instance, err)
+		slog.Error(fmt.Sprintf("[SessionControl] %s pid=%d instance=%s error: %v", action, req.PID, req.Instance, err))
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"error": "pg_signal_backend may not be granted to the monitoring role; grant it with: GRANT pg_signal_backend TO <monitoring_user>",
@@ -69,6 +70,6 @@ func (h *PostgresHandlers) runSessionControl(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	log.Printf("[SessionControl] %s pid=%d instance=%s result=%v", action, req.PID, req.Instance, result)
+	slog.Info(fmt.Sprintf("[SessionControl] %s pid=%d instance=%s result=%v", action, req.PID, req.Instance, result))
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, action + "d": result})
 }

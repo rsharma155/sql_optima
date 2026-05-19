@@ -5,7 +5,7 @@ Thanks for helping improve SQL Optima. This project is a **database monitoring t
 ## Development setup
 
 ### Prerequisites
-- Go 1.25+
+- Go 1.26+
 - Docker (recommended for TimescaleDB / local infra)
 
 ### Run the backend (local)

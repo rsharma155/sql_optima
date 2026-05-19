@@ -25,9 +25,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 
 	"github.com/rsharma155/sql_optima/internal/api"
 	"github.com/rsharma155/sql_optima/internal/api/handlers"
@@ -56,7 +58,8 @@ var (
 func initErrorLogger() {
 	logDir := "logs"
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		log.Fatalf("Failed to create log directory: %v", err)
+		slog.Error("Failed to create log directory", "err", err)
+		os.Exit(1)
 	}
 	errorLogPath := filepath.Join(logDir, "error.log")
 
@@ -70,12 +73,13 @@ func initErrorLogger() {
 	var err error
 	errorFile, err = os.OpenFile(errorLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatalf("Failed to open error log file: %v", err)
+		slog.Error("Failed to open error log file", "err", err)
+		os.Exit(1)
 	}
 	// Write errors to both the file and stderr so they appear in `docker compose logs`.
 	multiW := io.MultiWriter(os.Stderr, errorFile)
 	errorLog = log.New(multiW, "[ERROR] ", log.Ldate|log.Ltime|log.Lshortfile)
-	log.Printf("Error log file: %s", errorLogPath)
+	slog.Info("error log initialized", "path", errorLogPath)
 }
 
 func parseEnvInt(key string, defaultVal int) int {
@@ -92,6 +96,7 @@ func parseEnvInt(key string, defaultVal int) int {
 
 // Main starts the SQL Optima API and static UI.
 func Main() {
+	_ = godotenv.Load()
 	initErrorLogger()
 	defer errorFile.Close()
 
@@ -99,7 +104,7 @@ func Main() {
 	slog.SetDefault(logger)
 
 	if err := config.MergeViperConfigs(); err != nil {
-		log.Printf("[config] viper merge: %v", err)
+		slog.Info("[config] viper merge", "err", err)
 	}
 
 	configPath, frontendDir := config.ResolveDataPaths()
@@ -108,10 +113,11 @@ func Main() {
 
 	jwtSecret, err := config.ResolveJWTSecret(configPath)
 	if err != nil {
-		log.Fatalf("JWT secret initialization failed: %v", err)
+		slog.Error("JWT secret initialization failed", "err", err)
+	os.Exit(1)
 	}
 	if strings.TrimSpace(os.Getenv("JWT_SECRET")) == "" {
-		log.Printf("[auth] JWT_SECRET not set; using persisted local secret from data/ for this environment")
+		slog.Info("[auth] JWT_SECRET not set; using persisted local secret from data/ for this environment")
 	}
 	middleware.SetJWTSecret(jwtSecret)
 
@@ -119,18 +125,19 @@ func Main() {
 		octx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		if _, err := middleware.InitOIDC(octx, sec.OIDCIssuerURL, sec.OIDCAudience); err != nil {
 			cancel()
-			log.Fatalf("OIDC init failed: %v", err)
+			slog.Error("OIDC init failed", "err", err)
+	os.Exit(1)
 		}
 		cancel()
 		// Avoid logging issuer URL (often contains internal hostnames).
-		log.Printf("[auth] OIDC verifier enabled")
+		slog.Info("[auth] OIDC verifier enabled")
 	}
 
 	tctx, tcancel := context.WithTimeout(context.Background(), 10*time.Second)
 	tracerShutdown, err := telemetry.InitTracer(tctx, "sql-optima")
 	tcancel()
 	if err != nil {
-		log.Printf("[telemetry] OpenTelemetry init: %v", err)
+		slog.Info("[telemetry] OpenTelemetry init", "err", err)
 	}
 	defer func() {
 		_ = tracerShutdown(context.Background())
@@ -138,7 +145,8 @@ func Main() {
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
-		log.Fatalf("Fatal Error loading %s: %v", configPath, err)
+		slog.Error("Fatal Error loading", "target", configPath, "err", err)
+	os.Exit(1)
 	}
 
 	var tsHotStorage *hot.HotStorage
@@ -148,7 +156,7 @@ func Main() {
 	tsHotStorage, usingEnvTimescale, err = hot.ConnectMetricsTimescale(configPath, jwtSecret)
 	if err != nil {
 		errMsg := fmt.Sprintf("TimescaleDB (env fallback): %v", err)
-		log.Printf("[WARNING] %s", errMsg)
+		slog.Warn("[WARNING]", "err", errMsg)
 		errorLog.Print(errMsg)
 		tsHotStorage = nil
 		usingEnvTimescale = false
@@ -158,7 +166,7 @@ func Main() {
 		kms, usingLocalKMS = config.InitServerRegistryKMS(jwtSecret)
 
 		if usingLocalKMS {
-			log.Printf("[kms] using local envelope key derived from JWT_SECRET (set VAULT_ADDR for Vault Transit in production)")
+			slog.Info("[kms] using local envelope key derived from JWT_SECRET (set VAULT_ADDR for Vault Transit in production)")
 		}
 	}
 
@@ -168,66 +176,100 @@ func Main() {
 	} else if kms != nil {
 		if loaded, lerr := repository.LoadInstancesFromServerRegistry(context.Background(), tsHotStorage.Pool(), kms, security.NewEnvelopeSecretBox()); lerr == nil && len(loaded) > 0 {
 			cfg.Instances = loaded
-			log.Printf("[config] loaded %d instance(s) from server registry", len(cfg.Instances))
+			slog.Info("[config] loaded %d instance(s) from server registry", "val", len(cfg.Instances))
 		} else if !usingEnvTimescale && !config.DeploymentIsDocker() {
 			cfg.Instances = nil
-			log.Println("[config] no active servers in registry; config.yaml instances ignored (dedicated UI mode — use onboarding or Admin to register targets)")
+			slog.Warn("[config] no active servers in registry; config.yaml instances ignored (dedicated UI mode — use onboarding or Admin to register targets)")
 		}
 	}
 
-	log.Printf("Booting Environment: Loaded %d Instances...", len(cfg.Instances))
+	slog.Info("Booting Environment: Loaded %d Instances...", "val", len(cfg.Instances))
 
-	pgRepo := repository.NewPgRepository(cfg)
+	pgRepo := repository.NewPgRepository(context.Background(), cfg)
 	msRepo := repository.NewSqlServerRepository(cfg)
+
+	// Wire LocalPool for staging access
+	if tsHotStorage != nil {
+		pgRepo.LocalPool = tsHotStorage.Pool()
+		msRepo.LocalPool = tsHotStorage.Pool()
+	}
 
 	metricsSvc := service.NewMetricsService(pgRepo, msRepo, cfg, tsHotStorage)
 	metricsSvc.ServerKMS = kms
+	if tsHotStorage != nil {
+		metricsSvc.BindTimescaleRepos(tsHotStorage.Pool())
+	}
 
 	if sec.AuthRequired && sec.AuthMode == "local" && metricsSvc.UserRepo == nil {
 		if metricsSvc.IsTimescaleConnected() {
-			log.Fatal("AUTH_REQUIRED with AUTH_MODE=local requires Timescale user tables (optima_users). Check schema or use AUTH_MODE=oidc.")
+			slog.Error("AUTH_REQUIRED with AUTH_MODE=local requires Timescale user tables (optima_users). Check schema or use AUTH_MODE=oidc.")
+	os.Exit(1)
 		}
-		log.Printf("[auth] AUTH_REQUIRED with local mode: Timescale not connected — use /setup to add the metrics DB first; login stays unavailable until then")
+		slog.Info("[auth] AUTH_REQUIRED with local mode: Timescale not connected — use /setup to add the metrics DB first; login stays unavailable until the")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Postgres locks/blocking incidents are lightweight and useful even when Redis-backed
-	// collectors are enabled. Start this adaptive watcher whenever Timescale is connected.
-	go metricsSvc.StartPgLocksBlockingCollector(ctx)
+	// 1. Start the new Pulse Service (Handles Tier 1, 2, 3)
+	// This replaces most ad-hoc DMV collectors started below.
+	if metricsSvc.PulseSvc != nil {
+		metricsSvc.PulseSvc.Start(ctx)
+	}
 
-	// Always start background collector; it handles table-driven frequency checks
+	// 2. Start specialized and Tier 4 collectors
+	// Note: Sessions, Activity, and Basic Perf are now handled by PulseService.
+	// We keep collectors that handle specialized logic (e.g., Log Parsing, Enterprise-specific deltas)
+
+	// Always start background collector; it handles table-driven frequency checks for Tier 4
 	go metricsSvc.StartBackgroundCollector(ctx)
 
 	redisAddr := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
 	var asynqSch *asynq.Scheduler
 	if redisAddr != "" {
-		asynqSch, err = queue.StartScheduler(redisAddr)
+		asynqSch, err = queue.StartScheduler(redisAddr, metricsSvc)
 		if err != nil {
-			log.Fatalf("asynq scheduler: %v", err)
+			slog.Error("asynq scheduler", "err", err)
+	os.Exit(1)
 		}
 		srv, mux := queue.NewServerWithMux(redisAddr, metricsSvc)
 		go func() {
 			if err := srv.Run(mux); err != nil {
-				log.Printf("[asynq] server: %v", err)
+				slog.Info("[asynq] server", "err", err)
 			}
 		}()
-		log.Println("[asynq] Redis-backed collector queue enabled (tasks can be offloaded); StartBackgroundCollector will coordinate ticks")
+		slog.Info("[asynq] Redis-backed collector queue enabled (tasks can be offloaded); StartBackgroundCollector will coordinate ticks")
 	}
 
-	// SQL Server locks/blocking incidents
-	go metricsSvc.StartMsLocksBlockingCollector(ctx)
-
-	go metricsSvc.StartQueryStoreCollector(ctx)
-	go metricsSvc.StartEnterpriseCollector(ctx)
-	go metricsSvc.StartEnterpriseMetricsCollector(ctx)
+	// Specialized Collectors (to be progressively merged into Pulses)
 	go metricsSvc.StartPerformanceDebtCollector(ctx)
-	go metricsSvc.StartPostgresEnterpriseCollector(ctx)
 	go metricsSvc.StartQueryAnalysisCollector(ctx)
 	go metricsSvc.StartWatchedQueryCollector(ctx)
 	go metricsSvc.StartSqlServerStorageHistoryCollector(ctx)
 	go metricsSvc.StartPostgresNewDashboardsCollectors(ctx)
+	go metricsSvc.StartPostgresStorageIndexHealthCollector(ctx)
+	go metricsSvc.StartPostgresQueryStatsCollector(ctx)
+	go metricsSvc.StartPgLocksBlockingCollector(ctx)
+	go metricsSvc.StartQueryStoreCollector(ctx)
+	go metricsSvc.StartPostgresEnterpriseCollector(ctx)
+	go metricsSvc.StartSqlServerHealthCollector(ctx)
+	go metricsSvc.StartSqlServerHAReplicationCollector(ctx)
+	go metricsSvc.StartSqlServerDatabaseCatalogCollector(ctx)
+	go metricsSvc.StartXEFileTargetWorker(ctx)
+
+	// SQL Server Wait Stats V2 & Shared Collectors
+	go metricsSvc.StartSharedWaitStatsCollector(ctx)
+	go metricsSvc.StartActiveWaitSessionsCollector(ctx)
+	go metricsSvc.StartFileIOLatencyCollector(ctx)
+	go metricsSvc.StartMemoryIntelligenceCollector(ctx)
+
+	// Legacy Collectors DISABLED (Now handled by PulseService or Shared Collectors)
+
+	// go metricsSvc.StartPgLocksBlockingCollector(ctx)
+	// go metricsSvc.StartMsLocksBlockingCollector(ctx)
+	// go metricsSvc.StartSQLServerHealthKPICollector(ctx)
+	// go metricsSvc.StartEnterpriseCollector(ctx)
+	// go metricsSvc.StartEnterpriseMetricsCollector(ctx)
 
 	if tsHotStorage != nil {
 		go startQueryV2Collector(ctx, tsHotStorage.Pool(), cfg)
@@ -235,8 +277,8 @@ func Main() {
 
 	// ── Alert evaluation loop ──────────────────────────────────
 	if tsPool := metricsSvc.GetTimescaleDBPool(); tsPool != nil {
-		alertRepo := repository.NewAlertRepository(tsPool)
-		maintRepo := repository.NewAlertMaintenanceRepository(tsPool)
+		alertRepo := repository.NewTimescaleAlertStore(tsPool)
+		maintRepo := repository.NewAlertMaintenanceStore(tsPool)
 		evaluators := []service.AlertEvaluator{
 			service.NewSqlServerBlockingEvaluator(tsPool),
 			service.NewSqlServerFailedJobsEvaluator(tsPool),
@@ -246,8 +288,16 @@ func Main() {
 			service.NewPgBackupFreshnessEvaluator(tsPool),
 			service.NewPgDiskSpaceEvaluator(tsPool),
 		}
-		alertSvc := service.NewAlertService(alertRepo, maintRepo, evaluators)
-		alertInterval := metricsSvc.FetchInterval(ctx, "Alert Evaluation Loop", 60*time.Second)
+		alertSvc := service.NewAlertService(
+			alertRepo,
+			maintRepo,
+			evaluators,
+			service.NewNotifier(service.NotifierConfig{
+				WebhookURL:      os.Getenv("ALERT_WEBHOOK_URL"),
+				SlackWebhookURL: os.Getenv("SLACK_WEBHOOK_URL"),
+			}, slog.Default()),
+		)
+		alertInterval := metricsSvc.GetCollectorInterval(ctx, "Alert Evaluation Loop", 60*time.Second)
 		go service.StartAlertEvaluationLoop(ctx, tsPool, cfg, alertSvc, alertInterval)
 	}
 
@@ -260,12 +310,10 @@ func Main() {
 
 	disablePublicSetup := strings.TrimSpace(os.Getenv("DISABLE_PUBLIC_SETUP")) == "1"
 	if !disablePublicSetup {
-		log.Printf("[SECURITY WARNING] DISABLE_PUBLIC_SETUP is not set to 1 — /api/setup/* endpoints are publicly reachable. " +
-			"Set DISABLE_PUBLIC_SETUP=1 in production after first-run bootstrap is complete.")
+		slog.Warn("DISABLE_PUBLIC_SETUP is not set to 1 — /api/setup/* endpoints are publicly reachable. Set DISABLE_PUBLIC_SETUP=1 in production after first-run bootstrap is complete.")
 	}
 	if !sec.AuthRequired {
-		log.Printf("[SECURITY WARNING] AUTH_REQUIRED is not enabled — all monitoring read API endpoints are publicly accessible without a token. " +
-			"Set AUTH_REQUIRED=1 in production environments.")
+		slog.Warn("AUTH_REQUIRED is not enabled — all monitoring read API endpoints are publicly accessible without a token. Set AUTH_REQUIRED=1 in production environments.")
 	}
 	allowTSReconf := strings.TrimSpace(os.Getenv("ALLOW_TIMESCALE_RECONFIG")) == "1"
 	reloadFromRegistry := func() {
@@ -275,15 +323,15 @@ func Main() {
 		}
 		loaded, lerr := repository.LoadInstancesFromServerRegistry(ctx, metricsSvc.GetTimescaleDBPool(), metricsSvc.ServerKMS, security.NewEnvelopeSecretBox())
 		if lerr != nil {
-			log.Printf("[config] registry reload failed: %v", lerr)
+			slog.Error("[config] registry reload failed", "err", lerr)
 			return
 		}
 		if loaded == nil {
 			loaded = []config.Instance{}
 		}
 		cfg.Instances = loaded
-		metricsSvc.ReplaceInstanceRepositories(repository.NewPgRepository(cfg), repository.NewSqlServerRepository(cfg))
-		log.Printf("[config] registry reload: %d instance(s)", len(cfg.Instances))
+		metricsSvc.ReplaceInstanceRepositories(repository.NewPgRepository(context.Background(), cfg), repository.NewSqlServerRepository(cfg))
+		slog.Info("[config] registry reload: %d instance(s)", "val", len(cfg.Instances))
 
 		// Immediately trigger a one-time collection for new instances across all workers
 		go func() {
@@ -354,7 +402,8 @@ func Main() {
 	// Bind the listener first so we know the port is available before printing the banner.
 	ln, err := net.Listen("tcp", port)
 	if err != nil {
-		log.Fatalf("[FATAL] Failed to bind port %s: %v", port, err)
+		slog.Error("[FATAL] Failed to bind port", "target", port, "err", err)
+	os.Exit(1)
 	}
 
 	server := &http.Server{
@@ -367,7 +416,7 @@ func Main() {
 	go func() {
 		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
 			errMsg := fmt.Sprintf("Server failed: %v", err)
-			log.Printf("[FATAL] %s", errMsg)
+			slog.Info("[FATAL]", "err", errMsg)
 			errorLog.Print(errMsg)
 		}
 	}()
@@ -398,7 +447,7 @@ func Main() {
 	_, _ = fmt.Fprint(os.Stdout, banner)
 
 	sig := <-sigChan
-	log.Printf("Received signal: %v, shutting down gracefully...", sig)
+	slog.Info("Received signal: %v, shutting down gracefully...", "val", sig)
 
 	cancel()
 	if asynqSch != nil {
@@ -407,17 +456,17 @@ func Main() {
 
 	if tsHotStorage != nil {
 		tsHotStorage.Close()
-		log.Println("[Info] TimescaleDB connection closed")
+		slog.Info("[Info] TimescaleDB connection closed")
 	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Server forced to shutdown: %v", err)
+		slog.Info("Server forced to shutdown", "err", err)
 	}
 
-	log.Println("Server exited")
+	slog.Info("Server exited")
 }
 
 func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) {
@@ -425,12 +474,28 @@ func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.
 		return
 	}
 
-	log.Println("[collector-v2] starting lightweight query metrics pipeline")
+	slog.Info("[collector-v2] starting lightweight query metrics pipeline")
 
 	// Repositories
 	configRepo := repository.NewCollectorConfigRepository(pool)
 	ruleRepo := timescaledb.NewRuleRepository(pool)
 	writer := timescaledb.NewTimescaleWriter(pool)
+
+	// Ensure query-V2 jobs exist in optima_collector_configs so existing deployments
+	// that pre-date the schema seed addition still pick them up at runtime.
+	for _, seed := range []struct {
+		name   string
+		module string
+		freqS  int
+	}{
+		{"sqlserver_query_snapshot", "SQLSERVER", 60},
+		{"sqlserver_session_enrichment", "SQLSERVER", 30},
+		{"pg_queries_v2", "Postgres", 60},
+	} {
+		if err := configRepo.InsertDefault(ctx, seed.name, seed.module, seed.freqS); err != nil {
+			slog.Info("[collector-v2] seed config", "target", seed.name, "err", err)
+		}
+	}
 
 	// Fetch rules
 	mssqlRules, _ := ruleRepo.GetMSSQLIgnoreRules(ctx)
@@ -448,9 +513,9 @@ func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.
 	// But wait, our CollectorApp currently takes single repos.
 	// Let's refactor CollectorApp to take a Factory or similar, or just handle multiple instances.
 
-	// Actually, let's keep it simple: Create a map of instanceID -> App
-	mssqlApps := make(map[string]*application.CollectorApp)
-	pgApps := make(map[string]*application.CollectorApp)
+	// Actually, let's keep it simple: Create a map of serverID -> App
+	mssqlApps := make(map[uuid.UUID]*application.CollectorApp)
+	pgApps := make(map[uuid.UUID]*application.CollectorApp)
 
 	ticker := time.NewTicker(5 * time.Second)
 	go func() {
@@ -462,31 +527,31 @@ func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.
 				// Ensure all current instances from cfg have a collector app
 				for _, inst := range cfg.Instances {
 					if inst.Type == "sqlserver" {
-						if _, ok := mssqlApps[inst.Name]; !ok {
+						if _, ok := mssqlApps[inst.ServerID]; !ok {
 							db, err := config.ConnectToInstance(inst)
 							if err == nil {
 								repo := sqlserver.NewSQLServerSnapshotRepository(db)
-								mssqlApps[inst.Name] = application.NewCollectorApp(jobScheduler, repo, nil, writer, filter)
-								log.Printf("[collector-v2] Dynamic start: SQL Server collector for %s", inst.Name)
+								mssqlApps[inst.ServerID] = application.NewCollectorApp(jobScheduler, repo, nil, writer, filter)
+								slog.Info("[collector-v2] Dynamic start: SQL Server collector for", "val", inst.Name)
 							}
 						}
 					} else if inst.Type == "postgres" {
-						if _, ok := pgApps[inst.Name]; !ok {
+						if _, ok := pgApps[inst.ServerID]; !ok {
 							db, err := config.ConnectToInstance(inst)
 							if err == nil {
 								repo := postgres.NewPGSnapshotRepository(db)
-								pgApps[inst.Name] = application.NewCollectorApp(jobScheduler, nil, repo, writer, filter)
-								log.Printf("[collector-v2] Dynamic start: Postgres collector for %s", inst.Name)
+								pgApps[inst.ServerID] = application.NewCollectorApp(jobScheduler, nil, repo, writer, filter)
+								slog.Info("[collector-v2] Dynamic start: Postgres collector for", "val", inst.Name)
 							}
 						}
 					}
 				}
 
-				for name, app := range mssqlApps {
-					app.RunCycle(ctx, name)
+				for sid, app := range mssqlApps {
+					app.RunCycle(ctx, sid)
 				}
-				for name, app := range pgApps {
-					app.RunCycle(ctx, name)
+				for sid, app := range pgApps {
+					app.RunCycle(ctx, sid)
 				}
 			}
 		}

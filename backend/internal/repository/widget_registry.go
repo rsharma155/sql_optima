@@ -8,9 +8,9 @@
 package repository
 
 import (
+	"log/slog"
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -48,7 +48,7 @@ func (r *WidgetRepository) GetAllWidgets(ctx context.Context) ([]models.UIWidget
 	for rows.Next() {
 		var w models.UIWidgetPublic
 		if err := rows.Scan(&w.WidgetID, &w.DashboardSection, &w.Title, &w.ChartType, &w.UpdatedAt); err != nil {
-			log.Printf("[WidgetRepo] Scan error: %v", err)
+			slog.Error("[WidgetRepo] Scan error", "err", err)
 			continue
 		}
 		widgets = append(widgets, w)
@@ -69,7 +69,7 @@ func (r *WidgetRepository) GetWidgetsByInstance(instanceName string) ([]models.U
 	for rows.Next() {
 		var w models.UIWidget
 		if err := rows.Scan(&w.WidgetID, &w.DashboardSection, &w.Title, &w.ChartType, &w.CurrentSQL, &w.DefaultSQL, &w.UpdatedAt); err != nil {
-			log.Printf("[WidgetRepo] Scan error: %v", err)
+			slog.Error("[WidgetRepo] Scan error", "err", err)
 			continue
 		}
 		widgets = append(widgets, w)
@@ -162,7 +162,7 @@ func (r *WidgetRepository) ExecuteWidgetQuery(ctx context.Context, widgetID stri
 	for rows.Next() {
 		values, err := rows.Values()
 		if err != nil {
-			log.Printf("[WidgetRepo] Row scan error: %v", err)
+			slog.Error("[WidgetRepo] Row scan error", "err", err)
 			continue
 		}
 		rowMap := make(map[string]interface{})

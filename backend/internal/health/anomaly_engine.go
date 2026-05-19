@@ -8,10 +8,12 @@
 package health
 
 import (
+	"fmt"
+	"log/slog"
 	"context"
-	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/config"
 )
@@ -44,13 +46,13 @@ func NewAnomalyEngine(pool *pgxpool.Pool, cfg *config.Config) *AnomalyEngine {
 
 // Start begins the background anomaly detection
 func (ae *AnomalyEngine) Start(ctx context.Context) {
-	log.Printf("[AnomalyEngine] Starting background workers...")
+	slog.Info("[AnomalyEngine] Starting background workers...")
 	go ae.runDetectionLoop(ctx)
 }
 
 // Stop stops the anomaly detection engine
 func (ae *AnomalyEngine) Stop() {
-	log.Printf("[AnomalyEngine] Stopping...")
+	slog.Info("[AnomalyEngine] Stopping...")
 	close(ae.stopCh)
 }
 
@@ -64,10 +66,10 @@ func (ae *AnomalyEngine) runDetectionLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[AnomalyEngine] Context cancelled, stopping")
+			slog.Info("[AnomalyEngine] Context cancelled, stopping")
 			return
 		case <-ae.stopCh:
-			log.Printf("[AnomalyEngine] Stop signal received")
+			slog.Info("[AnomalyEngine] Stop signal received")
 			return
 		case <-ticker.C:
 			ae.detectAnomalies(ctx)
@@ -76,11 +78,11 @@ func (ae *AnomalyEngine) runDetectionLoop(ctx context.Context) {
 }
 
 func (ae *AnomalyEngine) detectAnomalies(ctx context.Context) {
-	log.Printf("[AnomalyEngine] Running anomaly detection...")
+	slog.Info("[AnomalyEngine] Running anomaly detection...")
 
 	for _, inst := range ae.config.Instances {
 		serverName := inst.Name
-		log.Printf("[AnomalyEngine] Analyzing server: %s", serverName)
+		slog.Info("[AnomalyEngine] Analyzing server", "val", serverName)
 
 		// Run detection checks using new dedicated functions
 		ae.DetectWaitSpikes(ctx, serverName)
@@ -98,7 +100,7 @@ func (ae *AnomalyEngine) DetectWaitSpikes(ctx context.Context, serverName string
 			SELECT wait_type,
 			       SUM(disk_read_ms_per_sec + blocking_ms_per_sec + parallelism_ms_per_sec + other_ms_per_sec) AS total_wait_ms
 			FROM sqlserver_wait_history
-			WHERE server_instance_name = $1
+			WHERE server_id = $1
 			  AND capture_timestamp >= NOW() - INTERVAL '15 minutes'
 			GROUP BY wait_type
 		),
@@ -106,9 +108,9 @@ func (ae *AnomalyEngine) DetectWaitSpikes(ctx context.Context, serverName string
 			SELECT wait_type,
 			       AVG(avg_disk_read_ms + avg_blocking_ms + avg_parallelism_ms + avg_other_ms) AS baseline_avg_wait
 			FROM hourly_wait_stats_baseline
-			WHERE server_instance_name = $1
-			  AND time >= NOW() - INTERVAL '7 days'
-			  AND time < NOW() - INTERVAL '6 days'
+			WHERE server_id = $1
+			  AND capture_timestamp >= NOW() - INTERVAL '7 days'
+			  AND capture_timestamp < NOW() - INTERVAL '6 days'
 			GROUP BY wait_type
 		)
 		SELECT l.wait_type, l.total_wait_ms, b.baseline_avg_wait,
@@ -121,7 +123,7 @@ func (ae *AnomalyEngine) DetectWaitSpikes(ctx context.Context, serverName string
 
 	rows, err := ae.pool.Query(ctx, query, serverName)
 	if err != nil {
-		log.Printf("[DetectWaitSpikes] Error for %s: %v", serverName, err)
+		slog.Error("[DetectWaitSpikes] Error", "target", serverName, "err", err)
 		return
 	}
 	defer rows.Close()
@@ -136,7 +138,7 @@ func (ae *AnomalyEngine) DetectWaitSpikes(ctx context.Context, serverName string
 		ae.createIncident(ctx, serverName, "WARNING", "Wait Spike",
 			"Wait type '"+waitType+"' spike ratio: %.2f (current: %.2fms, 7-day baseline: %.2fms)",
 			"Compare with historical patterns. Check for blocking, parallelism, or I/O issues.")
-		log.Printf("[DetectWaitSpikes] SPIKE detected on %s: %s ratio=%.2f", serverName, waitType, spikeRatio)
+		slog.Info(fmt.Sprintf("[DetectWaitSpikes] SPIKE detected on %s: %s ratio=%.2f", serverName, waitType, spikeRatio))
 	}
 }
 
@@ -149,8 +151,8 @@ func (ae *AnomalyEngine) DetectQueryRegressions(ctx context.Context, serverName 
 			       AVG(total_elapsed_ms / NULLIF(total_executions, 0)) AS current_avg_duration_ms,
 			       SUM(total_executions) AS total_executions
 			FROM sqlserver_query_metrics_v2
-			WHERE instance_id = $1
-			  AND ts >= NOW() - INTERVAL '15 minutes'
+			WHERE server_id = $1
+			  AND capture_timestamp >= NOW() - INTERVAL '15 minutes'
 			GROUP BY query_hash
 			HAVING SUM(total_executions) >= 5
 		),
@@ -158,9 +160,9 @@ func (ae *AnomalyEngine) DetectQueryRegressions(ctx context.Context, serverName 
 			SELECT query_hash,
 			       AVG(avg_exec_time_ms) AS baseline_avg_duration_ms
 			FROM hourly_query_performance_baseline
-			WHERE server_instance_name = $1
-			  AND time >= NOW() - INTERVAL '7 days'
-			  AND time < NOW() - INTERVAL '6 days'
+			WHERE server_id = $1
+			  AND capture_timestamp >= NOW() - INTERVAL '7 days'
+			  AND capture_timestamp < NOW() - INTERVAL '6 days'
 			GROUP BY query_hash
 		)
 		SELECT c.query_hash, c.current_avg_duration_ms, b.baseline_avg_duration_ms, c.total_executions,
@@ -174,7 +176,7 @@ func (ae *AnomalyEngine) DetectQueryRegressions(ctx context.Context, serverName 
 
 	rows, err := ae.pool.Query(ctx, query, serverName)
 	if err != nil {
-		log.Printf("[DetectQueryRegressions] Error for %s: %v", serverName, err)
+		slog.Error("[DetectQueryRegressions] Error", "target", serverName, "err", err)
 		return
 	}
 	defer rows.Close()
@@ -189,7 +191,7 @@ func (ae *AnomalyEngine) DetectQueryRegressions(ctx context.Context, serverName 
 		ae.createIncident(ctx, serverName, "WARNING", "Query Regression",
 			"Query hash "+queryHash[:16]+" regressed by %.0f%% (current: %.0fms, baseline: %.0fms, %d executions)",
 			"Analyze execution plan changes, statistics updates, or index fragmentation.")
-		log.Printf("[DetectQueryRegressions] REGRESSION on %s: query %s ratio=%.2f", serverName, queryHash[:16], regressionRatio)
+		slog.Info(fmt.Sprintf("[DetectQueryRegressions] REGRESSION on %s: query %s ratio=%.2f", serverName, queryHash[:16], regressionRatio))
 	}
 }
 
@@ -201,7 +203,7 @@ func (ae *AnomalyEngine) detectResourcePressure(ctx context.Context, serverName 
 			total_physical_memory_kb, available_physical_memory_kb,
 			total_runnable_tasks_count, total_work_queue_count
 		FROM sqlserver_cpu_scheduler_stats
-		WHERE server_instance_name = $1
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT 1
 	`
@@ -225,7 +227,7 @@ func (ae *AnomalyEngine) detectResourcePressure(ctx context.Context, serverName 
 			ae.createIncident(ctx, serverName, "CRITICAL", "Worker Thread Exhaustion",
 				"Worker threads at %.1f%% capacity",
 				"Increase max worker threads or optimize workload.")
-			log.Printf("[AnomalyEngine] CRITICAL: Worker thread exhaustion on %s: %.1f%%", serverName, workerPct)
+			slog.Info("[AnomalyEngine] CRITICAL: Worker thread exhaustion on", "arg1", serverName, "arg2", workerPct)
 		}
 	}
 
@@ -236,7 +238,7 @@ func (ae *AnomalyEngine) detectResourcePressure(ctx context.Context, serverName 
 			ae.createIncident(ctx, serverName, "CRITICAL", "Memory Pressure",
 				"Memory at %.1f%% utilization",
 				"Review memory-consuming queries, clear cache, or add RAM.")
-			log.Printf("[AnomalyEngine] CRITICAL: Memory pressure on %s: %.1f%%", serverName, memUsedPct)
+			slog.Info("[AnomalyEngine] CRITICAL: Memory pressure on", "arg1", serverName, "arg2", memUsedPct)
 		} else if memUsedPct >= 85 {
 			ae.createIncident(ctx, serverName, "WARNING", "Memory Warning",
 				"Memory at %.1f%% utilization",
@@ -249,7 +251,7 @@ func (ae *AnomalyEngine) detectResourcePressure(ctx context.Context, serverName 
 		ae.createIncident(ctx, serverName, "WARNING", "CPU Pressure",
 			"Runnable tasks exceeds CPU count",
 			"Optimize CPU-intensive queries, consider query hints.")
-		log.Printf("[AnomalyEngine] WARNING: CPU pressure on %s: %d runnable tasks", serverName, runnableTasks)
+		slog.Warn("[AnomalyEngine] WARNING: CPU pressure on", "arg1", serverName, "arg2", runnableTasks)
 	}
 }
 
@@ -263,17 +265,17 @@ func (ae *AnomalyEngine) CalculateHealthScore(ctx context.Context, serverName st
 	cpuDeviation := ae.calculateCPUDeviation(ctx, serverName)
 	if cpuDeviation > 2.0 {
 		score -= 20 // CRITICAL - deviation > 2.0
-		log.Printf("[HealthScore] %s: CPU deviation %.2f > 2.0 (CRITICAL), -20 points", serverName, cpuDeviation)
+		slog.Info("[HealthScore]", "arg1", serverName, "arg2", cpuDeviation)
 	} else if cpuDeviation > 1.5 {
 		score -= 10 // WARNING - deviation > 1.5
-		log.Printf("[HealthScore] %s: CPU deviation %.2f > 1.5 (WARNING), -10 points", serverName, cpuDeviation)
+		slog.Warn("[HealthScore]", "arg1", serverName, "arg2", cpuDeviation)
 	}
 
 	// Check Active Blocking
 	blockedSessions := ae.getActiveBlockingCount(ctx, serverName)
 	if blockedSessions > 0 {
 		score -= 15
-		log.Printf("[HealthScore] %s: %d active blocked sessions, -15 points", serverName, blockedSessions)
+		slog.Info("[HealthScore]", "arg1", serverName, "arg2", blockedSessions)
 	}
 
 	// Ensure score is within bounds
@@ -293,7 +295,7 @@ func (ae *AnomalyEngine) calculateCPUDeviation(ctx context.Context, serverName s
 	currentQuery := `
 		SELECT COALESCE(AVG(avg_cpu_load), 0)
 		FROM sqlserver_metrics
-		WHERE server_instance_name = $1
+		WHERE server_id = $1
 		  AND capture_timestamp >= NOW() - INTERVAL '15 minutes'
 	`
 
@@ -304,7 +306,7 @@ func (ae *AnomalyEngine) calculateCPUDeviation(ctx context.Context, serverName s
 			SELECT time_bucket('1 hour', capture_timestamp) AS hour_bucket,
 			       AVG(avg_cpu_load) AS avg_hourly_cpu
 			FROM sqlserver_metrics
-			WHERE server_instance_name = $1
+			WHERE server_id = $1
 			  AND capture_timestamp >= NOW() - INTERVAL '7 days'
 			  AND capture_timestamp < NOW() - INTERVAL '15 minutes'
 			GROUP BY time_bucket('1 hour', capture_timestamp)
@@ -315,7 +317,7 @@ func (ae *AnomalyEngine) calculateCPUDeviation(ctx context.Context, serverName s
 
 	err := ae.pool.QueryRow(ctx, currentQuery, serverName).Scan(&currentCPU)
 	if err != nil {
-		log.Printf("[HealthScore] Error getting current CPU: %v", err)
+		slog.Error("[HealthScore] Error getting current CPU", "err", err)
 		return 0
 	}
 
@@ -328,8 +330,7 @@ func (ae *AnomalyEngine) calculateCPUDeviation(ctx context.Context, serverName s
 	// Calculate deviation ratio
 	if baselineCPU > 0 {
 		deviation := currentCPU / baselineCPU
-		log.Printf("[HealthScore] %s: Current CPU: %.2f, Baseline CPU: %.2f, Deviation: %.2f",
-			serverName, currentCPU, baselineCPU, deviation)
+		slog.Info(fmt.Sprintf("[HealthScore] %s: Current CPU: %.2f, Baseline CPU: %.2f, Deviation: %.2f", serverName, currentCPU, baselineCPU, deviation))
 		return deviation
 	}
 
@@ -341,7 +342,7 @@ func (ae *AnomalyEngine) getActiveBlockingCount(ctx context.Context, serverName 
 	query := `
 		SELECT COUNT(DISTINCT blocked_session_id)
 		FROM sqlserver_connection_history
-		WHERE server_instance_name = $1
+		WHERE server_id = $1
 		  AND active_requests > 0
 		  AND blocked_session_id IS NOT NULL
 		  AND blocked_session_id > 0
@@ -351,7 +352,7 @@ func (ae *AnomalyEngine) getActiveBlockingCount(ctx context.Context, serverName 
 	var count int
 	err := ae.pool.QueryRow(ctx, query, serverName).Scan(&count)
 	if err != nil {
-		log.Printf("[HealthScore] Error getting blocking count: %v", err)
+		slog.Error("[HealthScore] Error getting blocking count", "err", err)
 		return 0
 	}
 
@@ -366,7 +367,7 @@ func (ae *AnomalyEngine) detectHealthScoreDegradation(ctx context.Context, serve
 		ae.createIncident(ctx, serverName, "CRITICAL", "Health Score",
 			"Health score dropped to %.0f",
 			"Immediate attention required - review all metrics.")
-		log.Printf("[AnomalyEngine] CRITICAL: Health score on %s: %.0f", serverName, healthScore)
+		slog.Info("[AnomalyEngine] CRITICAL: Health score on", "arg1", serverName, "arg2", healthScore)
 	} else if healthScore < 75 {
 		ae.createIncident(ctx, serverName, "WARNING", "Health Score",
 			"Health score at %.0f",
@@ -375,11 +376,17 @@ func (ae *AnomalyEngine) detectHealthScoreDegradation(ctx context.Context, serve
 }
 
 func (ae *AnomalyEngine) createIncident(ctx context.Context, serverName, severity, category, description, recommendations string) {
-	query := `INSERT INTO optima_incidents (time, server_instance_name, severity, category, description, recommendations) VALUES ($1, $2, $3, $4, $5, $6)`
-
-	_, err := ae.pool.Exec(ctx, query, time.Now().UTC(), serverName, severity, category, description, recommendations)
+	var serverID uuid.UUID
+	if err := ae.pool.QueryRow(ctx, "SELECT id FROM optima_servers WHERE name = $1", serverName).Scan(&serverID); err != nil {
+		slog.Error("[AnomalyEngine] Cannot resolve server", "target", serverName, "err", err)
+		return
+	}
+	_, err := ae.pool.Exec(ctx,
+		`INSERT INTO optima_incidents (capture_timestamp, server_id, severity, category, description, recommendations) VALUES ($1, $2, $3, $4, $5, $6)`,
+		time.Now().UTC(), serverID, severity, category, description, recommendations,
+	)
 	if err != nil {
-		log.Printf("[AnomalyEngine] Error creating incident: %v", err)
+		slog.Error("[AnomalyEngine] Error creating incident", "err", err)
 	}
 }
 
@@ -387,5 +394,5 @@ func (ae *AnomalyEngine) createIncident(ctx context.Context, serverName, severit
 // Used by Wait Spike and Query Regression detectors
 func (ae *AnomalyEngine) LogIncident(ctx context.Context, serverName, severity, category, description, recommendations string) {
 	ae.createIncident(ctx, serverName, severity, category, description, recommendations)
-	log.Printf("[LogIncident] %s - %s - %s: %s", severity, category, serverName, description)
+	slog.Info(fmt.Sprintf("[LogIncident] %s - %s - %s: %s", severity, category, serverName, description))
 }

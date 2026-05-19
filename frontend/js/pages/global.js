@@ -13,7 +13,7 @@ window.GlobalEstateView = async function() {
     let pgHtml = '';
 
     // Build cards from config instances directly (no API call needed)
-    const instances = window.appState.config.instances || [];
+    const instances = (window.appState.config && window.appState.config.instances) || [];
     
     instances.forEach((m, i) => {
         if (!m || !m.name || String(m.name) === 'undefined') return;

@@ -10,8 +10,8 @@
 package main
 
 import (
+	"log/slog"
 	"context"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -28,26 +28,29 @@ import (
 func main() {
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
-		log.Fatal("REDIS_ADDR is required for cmd/worker")
+		slog.Error("REDIS_ADDR is required for cmd/worker")
+	os.Exit(1)
 	}
 
 	configPath, _ := config.ResolveDataPaths()
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		slog.Error("config", "err", err)
+	os.Exit(1)
 	}
 
 	jwtSecret, err := config.ResolveJWTSecret(configPath)
 	if err != nil {
-		log.Fatalf("JWT secret initialization failed: %v", err)
+		slog.Error("JWT secret initialization failed", "err", err)
+	os.Exit(1)
 	}
 	if os.Getenv("JWT_SECRET") == "" {
-		log.Printf("[worker/auth] JWT_SECRET not set; using persisted local secret from data/")
+		slog.Info("[worker/auth] JWT_SECRET not set; using persisted local secret from data/")
 	}
 
 	tsHotStorage, usingEnvTimescale, err := hot.ConnectMetricsTimescale(configPath, jwtSecret)
 	if err != nil {
-		log.Printf("[worker] Timescale: %v", err)
+		slog.Info("[worker] Timescale", "err", err)
 		tsHotStorage = nil
 		usingEnvTimescale = false
 	}
@@ -62,21 +65,21 @@ func main() {
 	} else if kms != nil {
 		loaded, lerr := repository.LoadInstancesFromServerRegistry(context.Background(), tsHotStorage.Pool(), kms, security.NewEnvelopeSecretBox())
 		if lerr != nil {
-			log.Printf("[worker] registry load: %v", lerr)
+			slog.Info("[worker] registry load", "err", lerr)
 			cfg.Instances = nil
 		} else if len(loaded) > 0 {
 			cfg.Instances = loaded
-			log.Printf("[worker] loaded %d instance(s) from server registry", len(loaded))
+			slog.Info("[worker] loaded %d instance(s) from server registry", "val", len(loaded))
 		} else if !usingEnvTimescale && !config.DeploymentIsDocker() {
 			cfg.Instances = nil
-			log.Println("[worker] no active servers in registry; config.yaml instances ignored (same as API)")
+			slog.Warn("[worker] no active servers in registry; config.yaml instances ignored (same as API)")
 		}
 	} else {
 		cfg.Instances = nil
-		log.Println("[worker] KMS unavailable; instance list cleared")
+		slog.Info("[worker] KMS unavailable; instance list cleared")
 	}
 
-	pgRepo := repository.NewPgRepository(cfg)
+	pgRepo := repository.NewPgRepository(context.Background(), cfg)
 	msRepo := repository.NewSqlServerRepository(cfg)
 	metricsSvc := service.NewMetricsService(pgRepo, msRepo, cfg, tsHotStorage)
 	metricsSvc.ServerKMS = kms
@@ -91,8 +94,9 @@ func main() {
 		srv.Shutdown()
 	}()
 
-	log.Printf("Asynq worker listening on Redis %s", redisAddr)
+	slog.Info("Asynq worker listening on Redis", "val", redisAddr)
 	if err := srv.Run(mux); err != nil {
-		log.Fatalf("worker: %v", err)
+		slog.Error("worker", "err", err)
+	os.Exit(1)
 	}
 }

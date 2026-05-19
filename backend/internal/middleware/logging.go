@@ -70,12 +70,12 @@ func AccessLogMiddleware(log *slog.Logger, next http.Handler) http.Handler {
 			// Skip logging for high-frequency polling or static assets to reduce noise
 			// unless explicitly requested via environment variable.
 			if os.Getenv("ACCESS_LOG") != "1" {
-				if strings.HasPrefix(path, "/assets/") || 
-				   strings.HasPrefix(path, "/js/") || 
-				   strings.HasPrefix(path, "/pages/") ||
-				   strings.HasSuffix(path, "/health") ||
-				   strings.Contains(path, "status") ||
-				   (sw.status == http.StatusOK && (strings.Contains(path, "metrics") || strings.Contains(path, "poll"))) {
+				if strings.HasPrefix(path, "/assets/") ||
+					strings.HasPrefix(path, "/js/") ||
+					strings.HasPrefix(path, "/pages/") ||
+					strings.HasSuffix(path, "/health") ||
+					strings.Contains(path, "status") ||
+					(sw.status == http.StatusOK && (strings.Contains(path, "metrics") || strings.Contains(path, "poll"))) {
 					return
 				}
 			}

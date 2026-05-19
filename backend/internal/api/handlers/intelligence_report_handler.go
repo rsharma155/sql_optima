@@ -1,0 +1,83 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: HTTP handlers for SQL Server Health Intelligence Report (Autonomous Analysis).
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/gorilla/mux"
+	"github.com/rsharma155/sql_optima/internal/config"
+	"github.com/rsharma155/sql_optima/internal/service"
+)
+
+// IntelligenceReportHandlers provides API endpoints for the health intelligence report.
+type IntelligenceReportHandlers struct {
+	svc *service.IntelligenceReportService
+	cfg *config.Config
+}
+
+// NewIntelligenceReportHandlers creates a new instance of the handlers.
+func NewIntelligenceReportHandlers(svc *service.IntelligenceReportService, cfg *config.Config) *IntelligenceReportHandlers {
+	return &IntelligenceReportHandlers{svc: svc, cfg: cfg}
+}
+
+// Analyze triggers health analysis for a given server.
+func (h *IntelligenceReportHandlers) Analyze(w http.ResponseWriter, r *http.Request) {
+	serverID, ok := ParseServerID(r, h.cfg)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server_id or instance name required"})
+		return
+	}
+
+	result, err := h.svc.Analyze(r.Context(), serverID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+// Status returns whether the intelligence engine service is active and reachable.
+func (h *IntelligenceReportHandlers) Status(w http.ResponseWriter, r *http.Request) {
+	active := h.svc.CheckStatus(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"active": active})
+}
+
+// GetReport fetches the generated report (HTML, JSON, PDF).
+func (h *IntelligenceReportHandlers) GetReport(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	runID := vars["run_id"]
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "html"
+	}
+
+	content, err := h.svc.GetReport(r.Context(), runID, format)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	switch format {
+	case "pdf":
+		w.Header().Set("Content-Type", "application/pdf")
+	case "json":
+		w.Header().Set("Content-Type", "application/json")
+	default:
+		w.Header().Set("Content-Type", "text/html")
+	}
+
+	_, _ = w.Write(content)
+}

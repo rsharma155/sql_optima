@@ -47,6 +47,7 @@ export async function loadCollectorConfigs() {
                             <tr style="text-align:left; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted);">
                                 <th style="padding:0.75rem 1rem;">Collector Name</th>
                                 <th style="padding:0.75rem 1rem;">Module</th>
+                                <th style="padding:0.75rem 0.5rem; text-align:center;" title="Startup launch sequence (lower = earlier goroutine). 10=Pulse, 20=Background, 30-180=dedicated goroutines, —=system.">Order</th>
                                 <th style="padding:0.75rem 1rem;">Interval</th>
                                 <th style="padding:0.75rem 1rem;">Metadata</th>
                                 <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
@@ -119,7 +120,7 @@ export async function loadCollectorConfigs() {
         };
 
         if (!configs || configs.length === 0) {
-            body.innerHTML = '<tr><td colspan="5" class="text-center text-muted" style="padding:2rem;">No collectors configured.</td></tr>';
+            body.innerHTML = '<tr><td colspan="6" class="text-center text-muted" style="padding:2rem;">No collectors configured.</td></tr>';
         } else {
             configs.forEach(c => {
                 const tr = document.createElement('tr');
@@ -130,6 +131,10 @@ export async function loadCollectorConfigs() {
                 const moduleClass = c.module.toLowerCase() === 'postgres' ? 'badge-info' : 'badge-warning';
                 const mappingInfo = collectorMapping[c.collector_name] || 'System Internal / Background Task';
 
+                const orderDisplay = c.run_order != null
+                    ? `<span style="font-family:monospace; font-weight:600;">${c.run_order}</span>`
+                    : `<span class="text-muted">—</span>`;
+
                 tr.innerHTML = `
                     <td style="padding:1rem; border-top-left-radius:8px; border-bottom-left-radius:8px;">
                         <div style="font-weight:600; font-size:0.9rem;">${window.escapeHtml(c.collector_name)}</div>
@@ -138,6 +143,7 @@ export async function loadCollectorConfigs() {
                     <td style="padding:1rem;">
                         <span class="badge ${moduleClass}" style="text-transform:capitalize; padding:0.25rem 0.6rem;">${window.escapeHtml(c.module)}</span>
                     </td>
+                    <td style="padding:1rem 0.5rem; text-align:center;">${orderDisplay}</td>
                     <td style="padding:1rem;">
                         <div class="view-mode">
                             <span style="font-family:monospace; font-weight:600; font-size:1rem;">${c.frequency_seconds}</span>

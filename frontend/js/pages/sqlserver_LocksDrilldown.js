@@ -38,8 +38,7 @@ window.LocksDrilldown = async function() {
 
             <div id="locks-quick-links" class="flex-between glass-panel p-2 mt-2" style="flex-wrap:wrap; gap:0.5rem; font-size:0.78rem;">
                 <span class="text-muted">Jump to:</span>
-                <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="live-diagnostics"><i class="fa-solid fa-bolt text-warning"></i> Real-Time Diagnostics</button>
-                <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="drilldown-deadlocks"><i class="fa-solid fa-skull text-danger"></i> Deadlock history</button>
+<button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="drilldown-deadlocks"><i class="fa-solid fa-skull text-danger"></i> Deadlock history</button>
                 <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="drilldown-cpu"><i class="fa-solid fa-microchip"></i> CPU drilldown</button>
                 <button type="button" class="btn btn-sm btn-outline" data-action="navigate" data-route="drilldown-memory"><i class="fa-solid fa-memory"></i> Memory drilldown</button>
             </div>
@@ -134,10 +133,13 @@ window.loadBlockingData = async function(forceRefresh) {
 
     try {
         const enc = encodeURIComponent(inst.name);
-        const [dashRes, blockRes, waitsRes] = await Promise.all([
+        const now = new Date();
+        const from5m = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
+        const toNow = now.toISOString();
+
+        const [dashRes, blockRes] = await Promise.all([
             window.apiClient.authenticatedFetch(`/api/sqlserver/dashboard?instance=${enc}`),
-            window.apiClient.authenticatedFetch(`/api/live/blocking?instance=${enc}`),
-            window.apiClient.authenticatedFetch(`/api/live/waits?instance=${enc}`)
+            window.apiClient.authenticatedFetch(`/api/sqlserver/blocking/details?instance=${enc}&from=${from5m}&to=${toNow}`)
         ]);
 
         let dashboard = {};
@@ -146,25 +148,38 @@ window.loadBlockingData = async function(forceRefresh) {
             if (ct.includes('application/json')) dashboard = await dashRes.json();
         }
 
-        let liveBlocking = [];
+        // Re-aggregate per-session snapshot rows into lead-blocker chains
+        let blockingSnaps = [];
         let blockErr = null;
         if (blockRes.ok) {
             const bj = await blockRes.json();
-            if (bj.success) liveBlocking = bj.data || [];
-            else blockErr = bj.error || 'Blocking API error';
+            blockingSnaps = Array.isArray(bj) ? bj : [];
         } else {
             blockErr = `HTTP ${blockRes.status}`;
         }
 
-        let liveWaits = [];
-        let waitsErr = null;
-        if (waitsRes.ok) {
-            const wj = await waitsRes.json();
-            if (wj.success) liveWaits = wj.data || [];
-            else waitsErr = wj.error || 'Waits API error';
-        } else {
-            waitsErr = `HTTP ${waitsRes.status}`;
-        }
+        // Build lead-blocker map: key = blocking_session_id, value = {spid, victims, maxWaitMs, login}
+        const leadMap = {};
+        blockingSnaps.forEach(snap => {
+            const bsid = snap.blocking_session_id;
+            if (!bsid || bsid === 0) return;
+            if (!leadMap[bsid]) {
+                leadMap[bsid] = { spid: bsid, victims: 0, maxWaitMs: 0, login: '', wait_type: '' };
+            }
+            leadMap[bsid].victims += 1;
+            const wms = Number(snap.wait_duration_ms || 0);
+            if (wms > leadMap[bsid].maxWaitMs) leadMap[bsid].maxWaitMs = wms;
+            if (!leadMap[bsid].wait_type && snap.wait_type) leadMap[bsid].wait_type = snap.wait_type;
+        });
+        // Try to fill in the blocker's own login from the snapshot (if the blocker itself appears as a session)
+        blockingSnaps.forEach(snap => {
+            const sid = snap.session_id;
+            if (leadMap[sid] && snap.login_name) leadMap[sid].login = snap.login_name;
+        });
+        const liveBlocking = Object.values(leadMap);
+
+        const liveWaits = [];
+        const waitsErr = null;
 
         const activeBlocks = dashboard.active_blocks || [];
         const victims = activeBlocks.filter(s => (s.blocking_session_id || 0) !== 0);
@@ -180,12 +195,12 @@ window.loadBlockingData = async function(forceRefresh) {
         };
 
         if (summaryEl) {
-            const topWait = (liveWaits && liveWaits.length) ? liveWaits[0] : null;
+            const topWait = (waitStats && waitStats.length) ? waitStats[0] : null;
             const topLabel = topWait ? (topWait.wait_type || '—') : '—';
             const topMs = topWait ? Number(topWait.wait_time_ms || 0) : 0;
             summaryEl.innerHTML = `
                 <div class="glass-panel" style="padding:0.75rem; text-align:center;">
-                    <div class="text-muted" style="font-size:0.65rem;">Lead blockers (live)</div>
+                    <div class="text-muted" style="font-size:0.65rem;">Lead blockers (recent)</div>
                     <div class="metric-value" style="font-size:1.5rem;">${liveBlocking.length}</div>
                 </div>
                 <div class="glass-panel" style="padding:0.75rem; text-align:center;">
@@ -193,8 +208,8 @@ window.loadBlockingData = async function(forceRefresh) {
                     <div class="metric-value" style="font-size:1.5rem; color:${victims.length ? 'var(--danger)' : 'inherit'};">${victims.length}</div>
                 </div>
                 <div class="glass-panel" style="padding:0.75rem; text-align:center;">
-                    <div class="text-muted" style="font-size:0.65rem;">Wait types (live sample)</div>
-                    <div class="metric-value" style="font-size:1.5rem;">${liveWaits.length}</div>
+                    <div class="text-muted" style="font-size:0.65rem;">Wait types (dashboard)</div>
+                    <div class="metric-value" style="font-size:1.5rem;">${waitStats.length}</div>
                 </div>
                 <div class="glass-panel" style="padding:0.75rem; text-align:center;">
                     <div class="text-muted" style="font-size:0.65rem;">Top wait (filtered chart uses category)</div>
@@ -203,33 +218,33 @@ window.loadBlockingData = async function(forceRefresh) {
                 </div>`;
         }
 
-        // Live blocking chains table
+        // Blocking chains table (re-aggregated from TimescaleDB snapshot)
         if (blockErr) {
-            liveBlockingEl.innerHTML = `<div class="alert alert-warning m-3"><i class="fa-solid fa-triangle-exclamation"></i> Live blocking unavailable: ${window.escapeHtml(blockErr)}</div>`;
+            liveBlockingEl.innerHTML = `<div class="alert alert-warning m-3"><i class="fa-solid fa-triangle-exclamation"></i> Blocking snapshot unavailable: ${window.escapeHtml(blockErr)}</div>`;
         } else if (liveBlocking.length === 0) {
             liveBlockingEl.innerHTML = `
                 <table class="data-table">
                     <thead>
-                        <tr><th>Lead SPID</th><th>Blocker login</th><th>Blocker app</th><th>Victims</th><th>Max wait (ms)</th></tr>
+                        <tr><th>Lead SPID</th><th>Blocker login</th><th>Wait type</th><th>Victims</th><th>Max wait (ms)</th></tr>
                     </thead>
                     <tbody>
-                        <tr><td colspan="5" class="text-center text-muted">No blocking chains detected right now</td></tr>
+                        <tr><td colspan="5" class="text-center text-muted">No blocking chains detected in the last 5 minutes</td></tr>
                     </tbody>
                 </table>`;
         } else {
             liveBlockingEl.innerHTML = `
                 <table class="data-table">
                     <thead>
-                        <tr><th>Lead SPID</th><th>Blocker login</th><th>Blocker app</th><th>Victims</th><th>Max wait (ms)</th></tr>
+                        <tr><th>Lead SPID</th><th>Blocker login</th><th>Wait type</th><th>Victims</th><th>Max wait (ms)</th></tr>
                     </thead>
                     <tbody>
-                        ${liveBlocking.map(b => `
+                        ${liveBlocking.sort((a, b) => b.victims - a.victims).map(b => `
                             <tr>
-                                <td><span class="badge badge-danger">${b.Lead_Blocker != null ? b.Lead_Blocker : '—'}</span></td>
-                                <td>${window.escapeHtml(b.Blocker_Login || 'Unknown')}</td>
-                                <td style="max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${window.escapeHtml(b.Blocker_App || '')}">${window.escapeHtml(b.Blocker_App || 'Unknown')}</td>
-                                <td><span class="badge badge-warning">${b.Total_Victims != null ? b.Total_Victims : 0}</span></td>
-                                <td class="text-danger">${(b.Max_Wait_Time_ms != null ? Number(b.Max_Wait_Time_ms) : 0).toLocaleString()}</td>
+                                <td><span class="badge badge-danger">${b.spid}</span></td>
+                                <td>${window.escapeHtml(b.login || '—')}</td>
+                                <td><span class="badge badge-outline">${window.escapeHtml(b.wait_type || '—')}</span></td>
+                                <td><span class="badge badge-warning">${b.victims}</span></td>
+                                <td class="text-danger">${b.maxWaitMs.toLocaleString()}</td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -344,15 +359,7 @@ window.loadBlockingData = async function(forceRefresh) {
         const cat = document.getElementById('waitCategoryFilter')?.value || 'all';
         initWaitChartFromLiveWaits(liveWaits, cat, waitStats);
         const chartCard = document.getElementById('drillLockChart')?.closest('.chart-card');
-        if (waitsErr && (!liveWaits || liveWaits.length === 0) && chartCard) {
-            if (!chartCard.querySelector('.locks-waits-fallback-note')) {
-                const note = document.createElement('div');
-                note.className = 'alert alert-warning m-2 locks-waits-fallback-note';
-                note.style.fontSize = '0.78rem';
-                note.innerHTML = `<i class="fa-solid fa-circle-info"></i> Live waits unavailable (${window.escapeHtml(waitsErr)}). Chart uses cumulative <code>wait_stats</code> from the dashboard if present.`;
-                chartCard.appendChild(note);
-            }
-        } else if (chartCard) {
+        if (chartCard) {
             chartCard.querySelectorAll('.locks-waits-fallback-note').forEach(n => n.remove());
         }
     } catch (error) {

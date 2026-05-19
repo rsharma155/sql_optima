@@ -82,7 +82,7 @@ func newTestAlert() Alert {
 	return Alert{
 		ID:           uuid.New(),
 		Fingerprint:  "abc123",
-		InstanceName: "prod-db-01",
+		ServerName:   "prod-db-01",
 		Engine:       EngineSQLServer,
 		Severity:     SeverityWarning,
 		Status:       StatusOpen,

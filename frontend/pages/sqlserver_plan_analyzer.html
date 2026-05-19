@@ -9,15 +9,12 @@
  * SPDX-License-Identifier: MIT
 -->
 <div class="page-view active dashboard-sky-theme">
-    <div class="view-header" style="margin-bottom:1.5rem;">
-        <div style="display:flex; align-items:center; gap:1rem;">
-            <div class="icon-circle bg-accent-soft">
-                <i class="fa-solid fa-diagram-project text-accent"></i>
-            </div>
-            <div>
-                <h1 class="view-title">Plan Analyzer</h1>
-                <p class="text-muted">High-fidelity SQL Server execution plan analysis with operator-level visuals and optimization guides.</p>
-            </div>
+    <div class="page-title flex-between dashboard-page-title-compact">
+        <div class="dashboard-title-line">
+            <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;">
+                <i class="fa-solid fa-diagram-project text-accent"></i> Plan Analyzer
+            </h1>
+            <span class="subtitle" style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px; display:block;">High-fidelity SQL Server execution plan analysis with operator-level visuals and optimization guides.</span>
         </div>
     </div>
 
@@ -25,21 +22,21 @@
         <!-- Input Sidebar -->
         <div class="col-md-3">
             <div class="glass-panel" style="padding:1.25rem; border-top: 3px solid var(--accent);">
-                <h3 style="margin-top:0; font-size:1rem;"><i class="fa-solid fa-file-upload"></i> Input Plan</h3>
+                <h3 style="margin-top:0; font-size:0.85rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-secondary);"><i class="fa-solid fa-file-upload"></i> Input Plan</h3>
                 
-                <div id="plan-upload-area" class="upload-zone">
-                    <i class="fa-solid fa-cloud-arrow-up"></i>
-                    <p>Drag & drop <b>.sqlplan</b></p>
-                    <span class="text-muted">or click to browse</span>
+                <div id="plan-upload-area" class="upload-zone" style="padding:1rem;">
+                    <i class="fa-solid fa-cloud-arrow-up" style="font-size:1.5rem;"></i>
+                    <p style="font-size:0.75rem;">Drag & drop <b>.sqlplan</b></p>
+                    <span class="text-muted" style="font-size:0.65rem;">or click to browse</span>
                     <input type="file" id="plan-file-input" accept=".sqlplan,.xml" style="display:none;">
                 </div>
 
-                <div style="margin-bottom: 1.25rem;">
+                <div style="margin-bottom: 1rem;">
                     <label class="text-muted label-xs">Or Paste XML Plan</label>
-                    <textarea id="plan-xml-input" class="form-control text-mono" style="height: 180px; font-size: 0.75rem; width: 100%; box-sizing: border-box;" placeholder="<ShowPlanXML ..."></textarea>
+                    <textarea id="plan-xml-input" class="form-control text-mono" style="height: 150px; font-size: 0.7rem; width: 100%; box-sizing: border-box;" placeholder="<ShowPlanXML ..."></textarea>
                 </div>
 
-                <button id="analyze-btn" class="btn btn-accent btn-block">
+                <button id="analyze-btn" class="btn btn-accent btn-block" style="font-size:0.8rem; padding:0.5rem;">
                     <i class="fa-solid fa-magnifying-glass"></i> Generate Report
                 </button>
             </div>
@@ -47,10 +44,10 @@
 
         <!-- Results Main Area -->
         <div class="col-md-9">
-            <div id="results-placeholder" class="glass-panel empty-state">
-                <i class="fa-solid fa-chart-simple"></i>
-                <h3>Plan Analysis Engine</h3>
-                <p>Upload a .sqlplan file on the left to generate a comprehensive optimization report matching the standard library output.</p>
+            <div id="results-placeholder" class="glass-panel empty-state" style="min-height:400px;">
+                <i class="fa-solid fa-chart-simple" style="font-size:3rem;"></i>
+                <h3 style="font-size:1.1rem; margin-top:1rem;">Plan Analysis Engine</h3>
+                <p style="font-size:0.8rem; max-width:400px;">Upload a .sqlplan file on the left to generate a comprehensive optimization report matching the standard library output.</p>
             </div>
 
             <div id="results-container" style="display:none;">

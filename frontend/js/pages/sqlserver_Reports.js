@@ -44,12 +44,12 @@ window.AlertsView = async function() {
     async function loadAlerts() {
         window.routerOutlet.innerHTML = `
             <div class="page-view active dashboard-sky-theme">
-                <div class="page-title flex-between">
+                <div class="dashboard-page-title-compact flex-between">
                     <div>
-                        <h1><i class="fa-solid fa-triangle-exclamation text-accent"></i> Alerts</h1>
+                        <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-triangle-exclamation text-accent"></i> Alerts</h1>
                         <p class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Anomaly Detection</p>
                     </div>
-                    <div style="display:flex; align-items:center; gap:1rem;">
+                    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
                         ${window.renderStatusStrip({ lastUpdateId: 'alertsLastRefreshTime', sourceBadgeId: 'alertsDataSourceBadge', includeHealth: false, includeFreshness: false, autoRefreshText: 'Auto-refresh: every 30s' })}
                         <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="AlertsView"><i class="fa-solid fa-refresh"></i> Refresh</button>
                     </div>
@@ -102,22 +102,22 @@ window.AlertsView = async function() {
             if (anomalies.critical.length > 0) {
                 alertsHtml += `
                     <div class="alert-group mt-3">
-                        <h3 style="display:flex; align-items:center; gap: 8px; color: var(--danger); font-size: 1.1rem; margin-bottom: 1rem;">
-                            <span style="position:relative; display:flex; width:12px; height:12px;">
+                        <h3 style="display:flex; align-items:center; gap: 6px; color: var(--danger); font-size: 0.9rem; margin-bottom: 0.75rem;">
+                            <span style="position:relative; display:flex; width:10px; height:10px;">
                                 <span style="position:absolute; width:100%; height:100%; border-radius:50%; background:var(--danger); opacity:0.8; animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;"></span>
-                                <span style="position:relative; width:12px; height:12px; border-radius:50%; background:var(--danger);"></span>
+                                <span style="position:relative; width:10px; height:10px; border-radius:50%; background:var(--danger);"></span>
                             </span>
                             Critical Anomalies (${anomalies.critical.length})
                         </h3>
-                        <div style="display:grid; gap: 1rem;">
+                        <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem;">
                             ${anomalies.critical.map(alert => `
-                                <div class="glass-panel" style="border-left: 4px solid var(--danger); border-radius: 8px; padding: 1.25rem; display:flex; justify-content:space-between; align-items:center; background: rgba(220, 53, 69, 0.08);">
-                                    <div>
-                                        <h4 style="margin:0 0 0.5rem 0; color:var(--danger); font-size:1.05rem;"><i class="fa-solid fa-triangle-exclamation"></i> ${alert.title}</h4>
-                                        <p style="margin:0; color:var(--text); font-size:0.9rem;">${alert.description}</p>
-                                        <small style="color:var(--text-muted); display:block; margin-top:0.5rem;"><i class="fa-regular fa-clock"></i> Detected ${alert.timestamp}</small>
+                                <div class="glass-panel" style="border-left: 3px solid var(--danger); border-radius: 6px; padding: 0.75rem; display:flex; justify-content:space-between; align-items:flex-start; gap:0.5rem; background: rgba(220, 53, 69, 0.08);">
+                                    <div style="flex:1; min-width:0;">
+                                        <h4 style="margin:0 0 0.3rem 0; color:var(--danger); font-size:0.85rem;"><i class="fa-solid fa-triangle-exclamation"></i> ${alert.title}</h4>
+                                        <p style="margin:0; color:var(--text); font-size:0.78rem;">${alert.description}</p>
+                                        <small style="color:var(--text-muted); display:block; margin-top:0.3rem; font-size:0.7rem;"><i class="fa-regular fa-clock"></i> ${alert.timestamp}</small>
                                     </div>
-                                    ${alert.route ? `<button class="btn btn-outline" style="border-color:var(--danger); color:var(--danger);" data-action="navigate" data-route="${alert.route}">${alert.actionText || 'Investigate'}</button>` : ''}
+                                    ${alert.route ? `<button class="btn btn-xs btn-outline" style="border-color:var(--danger); color:var(--danger); flex-shrink:0;" data-action="navigate" data-route="${alert.route}">${alert.actionText || 'Investigate'}</button>` : ''}
                                 </div>
                             `).join('')}
                         </div>
@@ -127,16 +127,16 @@ window.AlertsView = async function() {
 
             if (anomalies.warning.length > 0) {
                 alertsHtml += `
-                    <div class="alert-group mt-4">
-                        <h3 style="color: var(--warning); font-size: 1.1rem; margin-bottom: 1rem;"><i class="fa-solid fa-circle-exclamation"></i> Early Warnings (${anomalies.warning.length})</h3>
-                        <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 1rem;">
+                    <div class="alert-group mt-3">
+                        <h3 style="color: var(--warning); font-size: 0.9rem; margin-bottom: 0.75rem;"><i class="fa-solid fa-circle-exclamation"></i> Early Warnings (${anomalies.warning.length})</h3>
+                        <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0.6rem;">
                             ${anomalies.warning.map(alert => `
-                                <div class="glass-panel" style="border-left: 4px solid var(--warning); border-radius: 8px; padding: 1.25rem; background: rgba(255, 193, 7, 0.05);">
-                                    <h4 style="margin:0 0 0.5rem 0; color:var(--warning); font-size:1rem;">${alert.title}</h4>
-                                    <p style="margin:0; color:var(--text); font-size:0.85rem;">${alert.description}</p>
-                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.75rem;">
-                                        <small style="color:var(--text-muted);"><i class="fa-regular fa-clock"></i> ${alert.timestamp}</small>
-                                        ${alert.route ? `<button class="btn btn-sm" style="background:transparent; border:1px solid var(--warning); color:var(--warning);" data-action="navigate" data-route="${alert.route}">${alert.actionText || 'View'}</button>` : ''}
+                                <div class="glass-panel" style="border-left: 3px solid var(--warning); border-radius: 6px; padding: 0.6rem 0.75rem; background: rgba(255, 193, 7, 0.05);">
+                                    <h4 style="margin:0 0 0.25rem 0; color:var(--warning); font-size:0.82rem;">${alert.title}</h4>
+                                    <p style="margin:0; color:var(--text); font-size:0.75rem;">${alert.description}</p>
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.4rem;">
+                                        <small style="color:var(--text-muted); font-size:0.7rem;"><i class="fa-regular fa-clock"></i> ${alert.timestamp}</small>
+                                        ${alert.route ? `<button class="btn btn-xs" style="background:transparent; border:1px solid var(--warning); color:var(--warning); padding:1px 6px;" data-action="navigate" data-route="${alert.route}">${alert.actionText || 'View'}</button>` : ''}
                                     </div>
                                 </div>
                             `).join('')}
@@ -147,13 +147,13 @@ window.AlertsView = async function() {
 
             if (anomalies.info.length > 0) {
                 alertsHtml += `
-                    <div class="alert-group mt-4">
-                        <h3 style="color: var(--info); font-size: 1.1rem; margin-bottom: 1rem;"><i class="fa-solid fa-info-circle"></i> AI Insights (${anomalies.info.length})</h3>
-                        <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem;">
+                    <div class="alert-group mt-3">
+                        <h3 style="color: var(--info); font-size: 0.9rem; margin-bottom: 0.6rem;"><i class="fa-solid fa-info-circle"></i> AI Insights (${anomalies.info.length})</h3>
+                        <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem;">
                             ${anomalies.info.map(alert => `
-                                <div class="glass-panel" style="border-left: 2px solid var(--info); border-radius: 6px; padding: 1rem; opacity:0.85;">
-                                    <h4 style="margin:0 0 0.25rem 0; color:var(--info); font-size:0.9rem;">${alert.title}</h4>
-                                    <p style="margin:0; color:var(--text-muted); font-size:0.8rem;">${alert.description}</p>
+                                <div class="glass-panel" style="border-left: 2px solid var(--info); border-radius: 5px; padding: 0.5rem 0.7rem; opacity:0.9;">
+                                    <h4 style="margin:0 0 0.2rem 0; color:var(--info); font-size:0.78rem;">${alert.title}</h4>
+                                    <p style="margin:0; color:var(--text-muted); font-size:0.72rem;">${alert.description}</p>
                                 </div>
                             `).join('')}
                         </div>
@@ -175,85 +175,85 @@ window.AlertsView = async function() {
 
             window.routerOutlet.innerHTML = `
                 <div class="page-view active dashboard-sky-theme">
-                    <div class="page-title flex-between">
-                        <div>
-                            <h1><i class="fa-solid fa-brain text-accent"></i> Anomaly Detection & Alerts</h1>
+                    <div class="page-title flex-between dashboard-page-title-compact">
+                        <div class="dashboard-title-line">
+                            <h1 style="font-size:1.1rem; margin:0;"><i class="fa-solid fa-brain text-accent"></i> Anomaly Detection & Alerts</h1>
                             <p class="subtitle">AI-powered system monitoring for ${window.escapeHtml(inst.name)}</p>
                         </div>
-                        <div style="display:flex; align-items:center; gap:1rem;">
+                        <div class="dashboard-page-title-actions" style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
                             ${window.renderStatusStrip({ lastUpdateId: 'alertsLastUpdate', sourceBadgeId: 'alertsDataSourceBadge2', includeHealth: false, includeFreshness: false, autoRefreshText: 'Auto-refresh: every 15s' })}
-                            <label class="flex-between" style="align-items:center; gap:0.5rem; font-size:0.8rem; cursor:pointer;">
-                                <input type="checkbox" id="alertsAutoRefresh" checked style="width:16px; height:16px;"> Auto-refresh
+                            <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.75rem; cursor:pointer;">
+                                <input type="checkbox" id="alertsAutoRefresh" checked style="width:14px; height:14px;"> Auto-refresh
                             </label>
                             <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshAlerts"><i class="fa-solid fa-refresh"></i> Refresh</button>
                         </div>
                     </div>
-                    <div class="mt-4" style="display:grid; gap:1rem;">
+                    <div class="mt-2" style="display:grid; gap:0.75rem;">
                         ${alertsHtml}
                     </div>
 
                     <!-- System Health Overview -->
-                    <div class="tables-grid mt-4" style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
-                        <div class="table-card glass-panel" style="text-align:center; padding:1rem;">
-                            <div style="margin-bottom:1rem;">
-                                <i class="fa-solid fa-heart-pulse" style="font-size:2.5rem; color:${getHealthColor(anomalies.healthScore)};"></i>
+                    <div class="tables-grid mt-3" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:0.75rem;">
+                        <div class="table-card glass-panel" style="text-align:center; padding:0.75rem;">
+                            <div style="margin-bottom:0.5rem;">
+                                <i class="fa-solid fa-heart-pulse" style="font-size:1.5rem; color:${getHealthColor(anomalies.healthScore)};"></i>
                             </div>
-                            <h3 style="font-size:0.85rem; margin:0 0 0.5rem 0; color:var(--text-muted);">System Health Score</h3>
-                            <div class="metric-value" style="font-size:3.5rem; color:${getHealthColor(anomalies.healthScore)}; line-height:1;">${anomalies.healthScore}%</div>
-                            <div style="color:var(--text-muted); margin-top:0.5rem; font-size:0.9rem;">${getHealthStatus(anomalies.healthScore)}</div>
-                            <div style="margin-top:1rem; background:var(--bg-tertiary); border-radius:8px; padding:0.75rem;">
+                            <h3 style="font-size:0.78rem; margin:0 0 0.3rem 0; color:var(--text-muted);">System Health Score</h3>
+                            <div class="metric-value" style="font-size:2rem; color:${getHealthColor(anomalies.healthScore)}; line-height:1;">${anomalies.healthScore}%</div>
+                            <div style="color:var(--text-muted); margin-top:0.3rem; font-size:0.78rem;">${getHealthStatus(anomalies.healthScore)}</div>
+                            <div style="margin-top:0.6rem; background:var(--bg-tertiary); border-radius:6px; padding:0.5rem;">
                                 <div style="display:flex; justify-content:space-around;">
                                     <div style="text-align:center;">
-                                        <div style="font-size:1.25rem; font-weight:bold; color:var(--danger);">${anomalies.critical.length}</div>
-                                        <div style="font-size:0.65rem; color:var(--text-muted);">Critical</div>
+                                        <div style="font-size:1rem; font-weight:bold; color:var(--danger);">${anomalies.critical.length}</div>
+                                        <div style="font-size:0.62rem; color:var(--text-muted);">Critical</div>
                                     </div>
                                     <div style="text-align:center;">
-                                        <div style="font-size:1.25rem; font-weight:bold; color:var(--warning);">${anomalies.warning.length}</div>
-                                        <div style="font-size:0.65rem; color:var(--text-muted);">Warnings</div>
+                                        <div style="font-size:1rem; font-weight:bold; color:var(--warning);">${anomalies.warning.length}</div>
+                                        <div style="font-size:0.62rem; color:var(--text-muted);">Warnings</div>
                                     </div>
                                     <div style="text-align:center;">
-                                        <div style="font-size:1.25rem; font-weight:bold; color:var(--info);">${anomalies.info.length}</div>
-                                        <div style="font-size:0.65rem; color:var(--text-muted);">Insights</div>
+                                        <div style="font-size:1rem; font-weight:bold; color:var(--info);">${anomalies.info.length}</div>
+                                        <div style="font-size:0.62rem; color:var(--text-muted);">Insights</div>
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        <div class="table-card glass-panel" style="padding:1rem;">
-                            <h3 style="font-size:0.85rem; margin:0 0 1rem 0; color:var(--text-muted);"><i class="fa-solid fa-chart-line text-accent"></i> Metrics Summary</h3>
-                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
-                                <div class="glass-panel" style="padding:0.75rem; text-align:center; cursor:pointer;" role="button" tabindex="0" title="Open CPU drilldown" data-action="navigate" data-route="drilldown-cpu">
-                                    <i class="fa-solid fa-microchip text-accent" style="font-size:1.5rem; margin-bottom:0.5rem;"></i>
-                                    <div style="font-size:1.5rem; font-weight:bold;">${(metrics.avg_cpu_load || 0).toFixed(1)}%</div>
-                                    <div style="font-size:0.7rem; color:var(--text-muted);">CPU Usage <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.6rem; opacity:0.7;"></i></div>
-                                    <div style="height:4px; background:var(--bg-tertiary); border-radius:2px; margin-top:0.5rem;">
+                        <div class="table-card glass-panel" style="padding:0.75rem;">
+                            <h3 style="font-size:0.78rem; margin:0 0 0.6rem 0; color:var(--text-muted);"><i class="fa-solid fa-chart-line text-accent"></i> Metrics Summary</h3>
+                            <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:0.5rem;">
+                                <div class="glass-panel" style="padding:0.5rem; text-align:center; cursor:pointer;" role="button" tabindex="0" title="Open CPU drilldown" data-action="navigate" data-route="drilldown-cpu">
+                                    <i class="fa-solid fa-microchip text-accent" style="font-size:1.1rem;"></i>
+                                    <div style="font-size:1.1rem; font-weight:bold; line-height:1.2;">${(metrics.avg_cpu_load || 0).toFixed(1)}%</div>
+                                    <div style="font-size:0.62rem; color:var(--text-muted);">CPU <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.55rem; opacity:0.7;"></i></div>
+                                    <div style="height:3px; background:var(--bg-tertiary); border-radius:2px; margin-top:0.3rem;">
                                         <div style="height:100%; width:${Math.min(metrics.avg_cpu_load || 0, 100)}%; background:${metrics.avg_cpu_load > 90 ? 'var(--danger)' : (metrics.avg_cpu_load > 75 ? 'var(--warning)' : 'var(--success)')}; border-radius:2px;"></div>
                                     </div>
                                 </div>
-                                <div class="glass-panel" style="padding:0.75rem; text-align:center;">
-                                    <i class="fa-solid fa-users text-success" style="font-size:1.5rem; margin-bottom:0.5rem;"></i>
-                                    <div style="font-size:1.5rem; font-weight:bold;">${metrics.active_users || 0}</div>
-                                    <div style="font-size:0.7rem; color:var(--text-muted);">Active Users</div>
+                                <div class="glass-panel" style="padding:0.5rem; text-align:center;">
+                                    <i class="fa-solid fa-users text-success" style="font-size:1.1rem;"></i>
+                                    <div style="font-size:1.1rem; font-weight:bold; line-height:1.2;">${metrics.active_users || 0}</div>
+                                    <div style="font-size:0.62rem; color:var(--text-muted);">Users</div>
                                 </div>
-                                <div class="glass-panel" style="padding:0.75rem; text-align:center;">
-                                    <i class="fa-solid fa-lock text-warning" style="font-size:1.5rem; margin-bottom:0.5rem;"></i>
-                                    <div style="font-size:1.5rem; font-weight:bold;">${metrics.total_locks || 0}</div>
-                                    <div style="font-size:0.7rem; color:var(--text-muted);">Total Locks</div>
+                                <div class="glass-panel" style="padding:0.5rem; text-align:center;">
+                                    <i class="fa-solid fa-lock text-warning" style="font-size:1.1rem;"></i>
+                                    <div style="font-size:1.1rem; font-weight:bold; line-height:1.2;">${metrics.total_locks || 0}</div>
+                                    <div style="font-size:0.62rem; color:var(--text-muted);">Locks</div>
                                 </div>
-                                <div class="glass-panel" style="padding:0.75rem; text-align:center;">
-                                    <i class="fa-solid fa-skull text-danger" style="font-size:1.5rem; margin-bottom:0.5rem;"></i>
-                                    <div style="font-size:1.5rem; font-weight:bold; color:${metrics.deadlocks > 0 ? 'var(--danger)' : 'inherit'};">${metrics.deadlocks || 0}</div>
-                                    <div style="font-size:0.7rem; color:var(--text-muted);">Deadlocks</div>
+                                <div class="glass-panel" style="padding:0.5rem; text-align:center;">
+                                    <i class="fa-solid fa-skull text-danger" style="font-size:1.1rem;"></i>
+                                    <div style="font-size:1.1rem; font-weight:bold; line-height:1.2; color:${metrics.deadlocks > 0 ? 'var(--danger)' : 'inherit'};">${metrics.deadlocks || 0}</div>
+                                    <div style="font-size:0.62rem; color:var(--text-muted);">Deadlocks</div>
                                 </div>
-                                <div class="glass-panel" style="padding:0.75rem; text-align:center; cursor:pointer;" role="button" tabindex="0" title="Open Memory drilldown" data-action="navigate" data-route="drilldown-memory">
-                                    <i class="fa-solid fa-memory text-info" style="font-size:1.5rem; margin-bottom:0.5rem;"></i>
-                                    <div style="font-size:1.5rem; font-weight:bold;">${(metrics.memory_usage || 0).toFixed(1)}%</div>
-                                    <div style="font-size:0.7rem; color:var(--text-muted);">Memory Usage <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.6rem; opacity:0.7;"></i></div>
+                                <div class="glass-panel" style="padding:0.5rem; text-align:center; cursor:pointer;" role="button" tabindex="0" title="Open Memory drilldown" data-action="navigate" data-route="drilldown-memory">
+                                    <i class="fa-solid fa-memory text-info" style="font-size:1.1rem;"></i>
+                                    <div style="font-size:1.1rem; font-weight:bold; line-height:1.2;">${(metrics.memory_usage || 0).toFixed(1)}%</div>
+                                    <div style="font-size:0.62rem; color:var(--text-muted);">Memory <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.55rem; opacity:0.7;"></i></div>
                                 </div>
-                                <div class="glass-panel" style="padding:0.75rem; text-align:center;">
-                                    <i class="fa-solid fa-database text-accent" style="font-size:1.5rem; margin-bottom:0.5rem;"></i>
-                                    <div style="font-size:1.5rem; font-weight:bold;">${metrics.total_db_count || 0}</div>
-                                    <div style="font-size:0.7rem; color:var(--text-muted);">Databases</div>
+                                <div class="glass-panel" style="padding:0.5rem; text-align:center;">
+                                    <i class="fa-solid fa-database text-accent" style="font-size:1.1rem;"></i>
+                                    <div style="font-size:1.1rem; font-weight:bold; line-height:1.2;">${metrics.total_db_count || 0}</div>
+                                    <div style="font-size:0.62rem; color:var(--text-muted);">Databases</div>
                                 </div>
                             </div>
                         </div>
@@ -275,7 +275,7 @@ window.AlertsView = async function() {
                 }
                 const checked = autoRefreshCheckbox ? autoRefreshCheckbox.checked : true;
                 if (checked) {
-                    window.alertsViewInterval = setInterval(loadAlerts, 15000);
+                    window.alertsViewInterval = window.registerInterval(loadAlerts, 15000);
                 }
             };
             if (autoRefreshCheckbox && !autoRefreshCheckbox.__bound) {
@@ -288,8 +288,8 @@ window.AlertsView = async function() {
             appDebug("Alerts analysis failed:", error);
             window.routerOutlet.innerHTML = `
                 <div class="page-view active dashboard-sky-theme">
-                    <div class="page-title">
-                        <h1>Anomaly Detection & Alerts</h1>
+                    <div class="dashboard-page-title-compact">
+                        <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-triangle-exclamation text-accent"></i> Anomaly Detection & Alerts</h1>
                     </div>
                     <div class="alert alert-danger mt-4">
                         <i class="fa-solid fa-exclamation-triangle"></i>
@@ -610,13 +610,13 @@ window.BestPracticesView = async function() {
     // Show loading state
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">
-            <div class="page-title flex-between">
+            <div class="dashboard-page-title-compact flex-between">
                 <div>
-                    <h1><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices & Guardrails</h1>
+                    <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices & Guardrails</h1>
                     <p class="subtitle">Configuration audit + Workload Guardrails health assessment</p>
                 </div>
-                <div class="flex-between" style="align-items:center; gap: 1rem;">
-                    <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="bpLastRefreshTime">Loading...</span></span>
+                <div class="flex-between" style="align-items:center; gap: 0.5rem;">
+                    <span class="text-muted" style="font-size:0.72rem;">Last Update: <span id="bpLastRefreshTime">Loading...</span></span>
                 </div>
             </div>
 
@@ -785,18 +785,18 @@ window.BestPracticesView = async function() {
 
         window.routerOutlet.innerHTML = `
             <div class="page-view active dashboard-sky-theme">
-                <div class="page-title flex-between">
+                <div class="dashboard-page-title-compact flex-between">
                     <div>
-                        <h1><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices & Guardrails</h1>
+                        <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices & Guardrails</h1>
                         <p class="subtitle">Instance: ${window.escapeHtml(inst.name)}</p>
                     </div>
-                    <div class="flex-between" style="align-items:center; gap: 0.75rem;">
-                        <span class="text-muted" style="font-size:0.75rem;">Last Update: <span id="bpLastRefreshTime">${new Date().toLocaleTimeString()}</span></span>
+                    <div class="flex-between" style="align-items:center; gap: 0.5rem; flex-wrap:wrap;">
+                        <span class="text-muted" style="font-size:0.72rem;">Last Update: <span id="bpLastRefreshTime">${new Date().toLocaleTimeString()}</span></span>
                         <button class="btn btn-sm btn-outline" style="color:#22c55e; border-color:#22c55e;" data-action="call" data-fn="exportSqlServerBestPracticesCSV">
-                            <i class="fa-solid fa-file-csv"></i> Export Report
+                            <i class="fa-solid fa-file-csv"></i> Export
                         </button>
                         <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshBestPractices">
-                            <i class="fa-solid fa-refresh"></i> Refresh Audit
+                            <i class="fa-solid fa-refresh"></i> Refresh
                         </button>
                     </div>
                 </div>
@@ -876,9 +876,9 @@ window.BestPracticesView = async function() {
         appDebug("Best practices audit failed:", error);
         window.routerOutlet.innerHTML = `
             <div class="page-view active dashboard-sky-theme">
-                <div class="page-title flex-between">
+                <div class="dashboard-page-title-compact flex-between">
                     <div>
-                        <h1><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices & Guardrails</h1>
+                        <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-shield-halved text-accent"></i> Best Practices & Guardrails</h1>
                         <p class="subtitle">Instance: ${window.escapeHtml(window.appState.currentInstanceName)}</p>
                     </div>
                 </div>
@@ -966,11 +966,7 @@ window.showGuardrailsModal = function(category, safeCatId) {
             </div>
         `;
     } else if (Array.isArray(items)) {
-        itemsHtml = items.map(item => `
-            <div style="background: var(--bg-tertiary); padding: 0.75rem; border-radius: 6px; margin-bottom: 0.75rem; border-left: 3px solid ${item.severity === 'CRITICAL' ? 'var(--danger)' : item.severity === 'WARNING' ? 'var(--warning)' : 'var(--success)'};">
-                ${renderItemDetails(item, categoryKey)}
-            </div>
-        `).join('');
+        itemsHtml = renderGuardrailsItems(items, categoryKey);
     }
     
     const modal = document.createElement('div');
@@ -991,7 +987,14 @@ window.showGuardrailsModal = function(category, safeCatId) {
         </div>
     </div>`;
     document.body.appendChild(modal);
-    modal.addEventListener('click', e => { if(e.target === modal) modal.remove(); });
+    modal.addEventListener('click', e => {
+        if (e.target === modal) { modal.remove(); return; }
+        const btn = e.target?.closest?.('[data-action="toggle-detail"]');
+        if (btn) {
+            const d = document.getElementById(btn.dataset.rowId);
+            if (d) d.style.display = d.style.display === 'none' ? 'table-row' : 'none';
+        }
+    });
 };
 
 function renderItemDetails(item, category) {
@@ -1099,59 +1102,103 @@ function renderResourceGovernorDetail(item) {
 }
 
 function renderGuardrailsItems(items, category) {
+    const sev = s => s === 'CRITICAL'
+        ? '<span class="text-danger" style="font-size:0.7rem; white-space:nowrap;">● Critical</span>'
+        : s === 'WARNING'
+            ? '<span class="text-warning" style="font-size:0.7rem; white-space:nowrap;">● Warning</span>'
+            : '<span class="text-success" style="font-size:0.7rem; white-space:nowrap;">● OK</span>';
+
+    let headers, getRow;
+    if (category === 'Log Backups') {
+        headers = ['Database', 'Last Backup', 'Time Ago', 'Status'];
+        getRow = i => [
+            `<strong>${i.database_name || 'N/A'}</strong>`,
+            i.last_backup || 'Never',
+            (i.minutes_ago || 0) > 0 ? `${i.minutes_ago} min ago` : '—',
+            sev(i.severity)
+        ];
+    } else if (category === 'Transaction Logs') {
+        headers = ['Database', 'Recovery Model', 'Log Reuse Wait', 'VLF Count', 'Status'];
+        getRow = i => [
+            `<strong>${i.database_name || 'N/A'}</strong>`,
+            i.recovery_model || 'N/A',
+            i.log_reuse_wait || 'NOTHING',
+            i.vlf_count || 0,
+            sev(i.severity)
+        ];
+    } else if (category === 'Storage & Files') {
+        headers = ['Database', 'File Type', 'Path', 'Size MB', 'Status'];
+        getRow = i => [
+            `<strong>${i.database_name || 'N/A'}</strong>`,
+            i.file_type || 'N/A',
+            `<span style="font-size:0.68rem; color:var(--text-muted); word-break:break-all;">${i.physical_name || 'N/A'}</span>`,
+            i.size_mb || 0,
+            sev(i.severity)
+        ];
+    } else if (category === 'Disk Space') {
+        headers = ['Drive', 'Free MB', 'Total MB', 'Free %', 'Log MB', 'Status'];
+        getRow = i => [
+            `<strong>${i.drive_letter || 'N/A'}:</strong>`,
+            i.free_space_mb || 0,
+            i.total_size_mb || 0,
+            `${(i.free_percent || 0).toFixed(1)}%`,
+            i.log_size_mb || 0,
+            sev(i.severity)
+        ];
+    } else if (category === 'Long Transactions') {
+        headers = ['Session', 'Status', 'Login', 'Database', 'Duration', 'Blocking', 'Status'];
+        getRow = i => [
+            `<strong>${i.session_id || 'N/A'}</strong>`,
+            i.status || 'N/A',
+            i.login_name || 'N/A',
+            i.database_name || 'N/A',
+            `${i.elapsed_seconds || 0}s`,
+            (i.blocking_session_id || 0) > 0 ? `<span class="text-danger">${i.blocking_session_id}</span>` : '—',
+            sev(i.severity)
+        ];
+    } else if (category === 'Autogrowth') {
+        headers = ['Database', 'File', 'Growth Type', 'Amount', 'Status'];
+        getRow = i => [
+            `<strong>${i.database_name || 'N/A'}</strong>`,
+            i.logical_name || 'N/A',
+            i.is_percent_growth ? 'Percentage' : 'Fixed',
+            i.is_percent_growth ? `${i.growth}%` : `${i.growth} pages`,
+            sev(i.severity)
+        ];
+    } else {
+        headers = ['Item', 'Message', 'Status'];
+        getRow = i => [i.database_name || i.name || 'N/A', i.message || '', sev(i.severity)];
+    }
+
+    const rows = items.map((item, idx) => {
+        const cells = getRow(item);
+        const remediation = window.getRemediationSql ? window.getRemediationSql(category, item) : '';
+        const drillHtml = [
+            item.message ? `<div style="color:var(--text-muted);margin-bottom:0.25rem;">${item.message}</div>` : '',
+            item.drill_down ? `<div style="background:var(--bg-base);padding:0.4rem;border-radius:4px;margin-bottom:0.25rem;"><strong>Why:</strong> ${item.drill_down}</div>` : '',
+            remediation ? `<div style="background:#1e3a5f;padding:0.4rem;border-radius:4px;"><strong>SQL Fix:</strong><pre style="margin:0.3rem 0 0;white-space:pre-wrap;font-size:0.65rem;">${remediation}</pre></div>` : ''
+        ].join('');
+        const rowBorder = item.severity === 'CRITICAL' ? 'var(--danger)' : item.severity === 'WARNING' ? 'var(--warning)' : 'var(--success)';
+        return `
+            <tr style="border-bottom:1px solid #2a2a2a; border-left:2px solid ${rowBorder};">
+                ${cells.map(c => `<td style="padding:0.35rem 0.5rem; vertical-align:middle;">${c}</td>`).join('')}
+                ${drillHtml ? `<td style="padding:0.35rem 0.4rem; white-space:nowrap;"><button style="background:transparent;border:1px solid #555;color:#bbb;font-size:0.62rem;cursor:pointer;padding:0.1rem 0.3rem;border-radius:3px;" data-action="toggle-detail" data-row-id="gr-d-${idx}">Details</button></td>` : '<td></td>'}
+            </tr>
+            ${drillHtml ? `<tr id="gr-d-${idx}" style="display:none; background:var(--bg-tertiary);"><td colspan="${cells.length + 1}" style="padding:0.5rem 0.75rem; font-size:0.75rem;">${drillHtml}</td></tr>` : ''}
+        `;
+    }).join('');
+
     return `
-        <div style="font-size: 0.75rem; max-height: 200px; overflow-y: auto;">
-            ${items.map(item => {
-                let severityClass = 'text-success';
-                if (item.severity === 'CRITICAL') severityClass = 'text-danger';
-                else if (item.severity === 'WARNING') severityClass = 'text-warning';
-                
-                let content = '';
-                if (category === 'Storage & Files') {
-                    content = `
-                        <div><strong>${item.database_name || 'N/A'}</strong> - ${item.file_type || 'N/A'}</div>
-                        <div style="color: var(--text-muted);">Path: ${item.physical_name || 'N/A'}</div>
-                        <div style="color: var(--text-muted);">Size: ${item.size_mb || 0} MB</div>
-                    `;
-                } else if (category === 'Disk Space') {
-                    content = `
-                        <div><strong>Drive ${item.drive_letter || 'N/A'}:</strong> ${item.free_space_mb || 0} MB free of ${item.total_size_mb || 0} MB (${(item.free_percent || 0).toFixed(1)}%)</div>
-                    `;
-                } else if (category === 'Transaction Logs') {
-                    content = `
-                        <div><strong>${item.database_name || 'N/A'}</strong> (${item.recovery_model || 'N/A'})</div>
-                        <div style="color: var(--text-muted);">Log Reuse Wait: ${item.log_reuse_wait || 'NOTHING'}</div>
-                    `;
-                } else if (category === 'Log Backups') {
-                    content = `
-                        <div><strong>${item.database_name || 'N/A'}</strong></div>
-                        <div style="color: var(--text-muted);">Last Backup: ${item.last_backup || 'Never'}</div>
-                        <div style="color: var(--text-muted);">${(item.minutes_ago || 0) > 0 ? item.minutes_ago + ' minutes ago' : 'N/A'}</div>
-                    `;
-                } else if (category === 'Long Transactions') {
-                    content = `
-                        <div><strong>Session ${item.session_id || 'N/A'}</strong> - ${item.status || 'N/A'}</div>
-                        <div style="color: var(--text-muted);">Login: ${item.login_name || 'N/A'} | DB: ${item.database_name || 'N/A'}</div>
-                        <div style="color: var(--text-muted);">Duration: ${item.elapsed_seconds || 0}s | CPU: ${item.cpu_time || 0}ms | Reads: ${item.logical_reads || 0}</div>
-                        ${(item.blocking_session_id || 0) > 0 ? `<div class="text-danger">Blocking Session: ${item.blocking_session_id}</div>` : ''}
-                    `;
-                } else if (category === 'Autogrowth') {
-                    content = `
-                        <div><strong>${item.database_name || 'N/A'}</strong> - ${item.logical_name || 'N/A'}</div>
-                        <div style="color: var(--text-muted);">${item.is_percent_growth ? 'Percentage: ' + item.growth + '%' : 'Growth: ' + item.growth + ' pages'}</div>
-                    `;
-                }
-                
-                const remediation = window.getRemediationSql(category, item);
-                
-                return `
-                    <div style="padding: 0.25rem; border-bottom: 1px solid #333;">
-                        <span class="${severityClass}">●</span> ${content}
-                        ${item.message ? `<div style="color: var(--text-muted);">${item.message}</div>` : ''}
-                        ${remediation ? `<div style="margin-top: 0.25rem; font-size: 0.7rem;"><button class="btn btn-sm btn-outline" style="padding: 0.1rem 0.3rem; font-size: 0.65rem;" data-action="toggle-next">SQL Fix</button><pre style="display: none; background: #222; padding: 0.25rem; margin: 0.25rem 0 0 0; overflow-x: auto; font-size: 0.65rem;">${remediation}</pre></div>` : ''}
-                    </div>
-                `;
-            }).join('')}
+        <div style="overflow-x:auto;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.75rem;">
+                <thead>
+                    <tr style="border-bottom:1px solid #444;">
+                        ${headers.map(h => `<th style="text-align:left; padding:0.35rem 0.5rem; color:var(--text-muted); font-weight:600; white-space:nowrap; font-size:0.7rem;">${h}</th>`).join('')}
+                        <th style="padding:0.35rem 0.4rem;"></th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
         </div>
     `;
 }

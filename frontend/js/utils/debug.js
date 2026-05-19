@@ -26,4 +26,7 @@
             console.log.apply(console, arguments);
         }
     };
+    window.appError = function () {
+        console.error.apply(console, arguments);
+    };
 })();

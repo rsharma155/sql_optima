@@ -6,7 +6,7 @@
     <div class="page-title flex-between dashboard-page-title-compact">
         <div class="dashboard-title-line">
             <h1><i class="fa-solid fa-memory"></i> Postgres Memory Intelligence <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Memory Intelligence" title="Learn more about this dashboard"></i></h1>
-            <span class="subtitle">PostgreSQL RSS, Host RAM Pressure, and Predictive Analytics</span>
+            <span class="subtitle">PostgreSQL Buffer Cache, GUC Configuration, and Session Memory Pressure</span>
         </div>
         <div class="flex-center dashboard-page-title-actions" style="gap: 0.75rem;">
             <div id="time-picker-insertion-point"></div>
@@ -14,66 +14,93 @@
         </div>
     </div>
 
-    <!-- ROW 1: MISSION CONTROL KPIs -->
+    <!-- ROW 1: KPI CARDS -->
     <div class="kpi-row">
         <div class="glass-panel metric-card-compact h-kpi">
-            <div class="metric-label">OS Used % <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="OS Used %"></i></div>
-            <div class="metric-value" id="os-memory-pct">--%</div>
-            <span style="font-size:0.6rem; color:var(--text-muted);" id="os-memory-raw">-- / -- GB</span>
+            <div class="metric-label">OS Used % <i class="fa-solid fa-circle-info info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="OS Used %"></i></div>
+            <div class="metric-value" id="os-memory-pct">-- %</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);" id="os-memory-raw">OS Collector Required</span>
         </div>
         <div class="glass-panel metric-card-compact h-kpi">
-            <div class="metric-label">Postgres RSS <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="Postgres RSS"></i></div>
+            <div class="metric-label">Postgres RSS <i class="fa-solid fa-circle-info info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="Postgres RSS"></i></div>
             <div class="metric-value text-accent" id="pg-rss-mb">-- MB</div>
-            <span style="font-size:0.6rem; color:var(--text-muted);" id="pg-rss-pct">--% of Host</span>
+            <span style="font-size:0.6rem; color:var(--text-muted);" id="pg-rss-pct">OS Collector Required</span>
         </div>
         <div class="glass-panel metric-card-compact h-kpi">
-            <div class="metric-label">Cache Hit Ratio <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Cache Hit Ratio"></i></div>
-            <div class="metric-value text-success" id="cache-hit-pct">--%</div>
-            <span style="font-size:0.6rem; color:var(--text-muted);">Shared Buffers</span>
+            <div class="metric-label">Cache Hit Ratio <i class="fa-solid fa-circle-info info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Cache Hit Ratio"></i></div>
+            <div class="metric-value text-success" id="cache-hit-pct">-- %</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);">Shared Buffer Efficiency</span>
         </div>
         <div class="glass-panel metric-card-compact h-kpi">
-            <div class="metric-label">Swap Activity <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="OS Used %"></i></div>
-            <div class="metric-value text-danger" id="swap-used-mb">-- MB</div>
-            <span style="font-size:0.6rem; color:var(--text-muted);" id="swap-status">--</span>
+            <div class="metric-label">Active Connections <i class="fa-solid fa-circle-info info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="OS Used %"></i></div>
+            <div class="metric-value" id="active-conn-kpi">--</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);" id="conn-overhead-kpi">~-- MB est. overhead</span>
         </div>
         <div class="glass-panel metric-card-compact h-kpi">
-            <div class="metric-label">Temp Spill Rate <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="Checkpoint Ratio"></i></div>
+            <div class="metric-label">Temp Spill Rate <i class="fa-solid fa-circle-info info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="Checkpoint Ratio"></i></div>
             <div class="metric-value text-warning" id="temp-spill-rate">-- MB/s</div>
-            <span style="font-size:0.6rem; color:var(--text-muted);">Work Mem Pressure</span>
+            <span style="font-size:0.6rem; color:var(--text-muted);">work_mem Pressure</span>
         </div>
         <div class="glass-panel metric-card-compact h-kpi">
-            <div class="metric-label">Health Score <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Health Score"></i></div>
-            <div class="metric-value" id="health-score-value">--</div>
-            <span style="font-size:0.6rem; color:var(--text-muted);" id="health-status-label">--</span>
+            <div class="metric-label">Swap Activity <i class="fa-solid fa-circle-info info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="OS Used %"></i></div>
+            <div class="metric-value text-danger" id="swap-used-mb">-- MB</div>
+            <span style="font-size:0.6rem; color:var(--text-muted);" id="swap-status">OS Collector Required</span>
         </div>
     </div>
 
     <!-- Data notice (shown on error or empty data) -->
     <div id="memory-data-notice" class="alert-banner alert-warning mt-2" style="display:none; padding:0.6rem 1rem; border-radius:6px; font-size:0.8rem;"></div>
 
-    <!-- ROW 2: MEMORY EFFICIENCY & PRESSURE TRENDS -->
+    <!-- ROW 2: MEMORY LOAD + CACHE EFFICIENCY -->
     <div class="grid-container mt-3">
         <div class="col-8 col-laptop-8 col-tablet-6">
             <div class="card glass-panel h-chart-md">
                 <div class="card-header flex-between">
                     <h3 style="font-size:0.8rem; margin:0;" id="main-memory-trend-title">Memory Load History</h3>
+                    <span id="os-collector-badge" style="display:none; font-size:0.65rem; padding:2px 6px; border-radius:4px; background:rgba(59,130,246,0.15); color:#60a5fa;">OS Collector Active</span>
                 </div>
-                <div class="chart-container" style="height: 230px;">
+                <div class="chart-container" style="height: 220px;">
                     <canvas id="hostPgTrendChart"></canvas>
                 </div>
             </div>
         </div>
         <div class="col-4 col-laptop-4 col-tablet-6">
             <div class="card glass-panel h-chart-md">
-                <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Cache Efficiency Trend</h3></div>
-                <div class="chart-container" style="height: 230px;">
+                <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Cache Hit Ratio Trend</h3></div>
+                <div class="chart-container" style="height: 220px;">
                     <canvas id="cacheEfficiencyChart"></canvas>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- ROW 3: ADVANCED DIAGNOSTICS & FORECASTING -->
+    <!-- ROW 3: CONNECTIONS + BGWRITER -->
+    <div class="grid-container mt-3">
+        <div class="col-6 col-laptop-6 col-tablet-6">
+            <div class="card glass-panel">
+                <div class="card-header flex-between">
+                    <h3 style="font-size:0.8rem; margin:0;">Connection Trend</h3>
+                    <span style="font-size:0.65rem; color:var(--text-muted);">Active / Idle / Total</span>
+                </div>
+                <div class="chart-container" style="height: 190px;">
+                    <canvas id="connectionTrendChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-laptop-6 col-tablet-6">
+            <div class="card glass-panel">
+                <div class="card-header flex-between">
+                    <h3 style="font-size:0.8rem; margin:0;">BGWriter Buffer Allocation</h3>
+                    <span style="font-size:0.65rem; color:var(--text-muted);">Delta buffers written per interval</span>
+                </div>
+                <div class="chart-container" style="height: 190px;">
+                    <canvas id="bgwriterChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROW 4: TABS -->
     <div class="grid-container mt-3">
         <div class="col-12">
             <div class="card glass-panel" style="padding:0;">
@@ -85,7 +112,7 @@
                 </div>
 
                 <div class="tab-content" style="padding:1.25rem;">
-                    <!-- Tab 1: AI Advisor -->
+                    <!-- Tab 1: Advisor -->
                     <div id="cockpit-tab-advisor" class="tab-pane active">
                         <div class="grid-container">
                             <div class="col-4 col-laptop-4 col-tablet-6">
@@ -100,7 +127,7 @@
                                     <div id="workmem-advisor-content" class="small">Analyzing spills...</div>
                                 </div>
                             </div>
-                            <div class="col-4 col-laptop-8 col-tablet-6">
+                            <div class="col-4 col-laptop-4 col-tablet-6">
                                 <div class="glass-panel p-3" style="border-left: 3px solid var(--info);">
                                     <h4 class="small uppercase font-bold mb-2">Connection Overhead</h4>
                                     <div id="conn-advisor-content" class="small">Estimating footprint...</div>
@@ -112,18 +139,21 @@
                     <!-- Tab 2: Configuration -->
                     <div id="cockpit-tab-config" class="tab-pane" style="display:none;">
                         <div class="grid-container">
-                            <div class="col-6 col-laptop-8 col-tablet-6">
-                                <div class="chart-container" style="height:250px;"><canvas id="pgComponentsChart"></canvas></div>
+                            <div class="col-6 col-laptop-6 col-tablet-6">
+                                <div class="chart-container" style="height:240px;"><canvas id="pgComponentsChart"></canvas></div>
                             </div>
-                            <div class="col-6 col-laptop-4 col-tablet-6">
+                            <div class="col-6 col-laptop-6 col-tablet-6">
                                 <div class="glass-panel p-3 h-100">
                                     <h4 class="small uppercase font-bold mb-3">Key Memory GUCs</h4>
-                                    <table class="modern-table modern-table-compact" style="font-size:0.7rem;">
-                                        <tbody id="pg-memory-gucs-tbody">
-                                            <tr><td>shared_buffers</td><td id="guc-shared-buffers">--</td></tr>
-                                            <tr><td>work_mem</td><td id="guc-work-mem">--</td></tr>
-                                            <tr><td>maint_work_mem</td><td id="guc-maint-mem">--</td></tr>
-                                            <tr><td>effective_cache_size</td><td id="guc-eff-cache">--</td></tr>
+                                    <table class="modern-table modern-table-compact" style="font-size:0.75rem; width:100%;">
+                                        <tbody>
+                                            <tr><td class="text-muted">shared_buffers</td><td id="guc-shared-buffers" class="text-right font-bold">--</td></tr>
+                                            <tr><td class="text-muted">work_mem</td><td id="guc-work-mem" class="text-right font-bold">--</td></tr>
+                                            <tr><td class="text-muted">maint_work_mem</td><td id="guc-maint-mem" class="text-right font-bold">--</td></tr>
+                                            <tr><td class="text-muted">effective_cache_size</td><td id="guc-eff-cache" class="text-right font-bold">--</td></tr>
+                                            <tr><td class="text-muted">wal_buffers</td><td id="guc-wal-buffers" class="text-right font-bold">--</td></tr>
+                                            <tr><td class="text-muted">temp_buffers</td><td id="guc-temp-buffers" class="text-right font-bold">--</td></tr>
+                                            <tr><td class="text-muted">max_connections</td><td id="guc-max-conn" class="text-right font-bold">--</td></tr>
                                         </tbody>
                                     </table>
                                 </div>
@@ -132,8 +162,20 @@
                     </div>
 
                     <!-- Tab 3: Forecast -->
-                    <div id="cockpit-tab-forecast" class="tab-pane" style="display:none; height:250px;">
-                        <!-- Forecast content dynamic -->
+                    <div id="cockpit-tab-forecast" class="tab-pane" style="display:none;">
+                        <div class="grid-container">
+                            <div class="col-8 col-laptop-8 col-tablet-6">
+                                <div style="height:220px;">
+                                    <canvas id="forecastChart"></canvas>
+                                </div>
+                            </div>
+                            <div class="col-4 col-laptop-4 col-tablet-6">
+                                <div class="glass-panel p-3 h-100">
+                                    <h4 class="small uppercase font-bold mb-3">Saturation Outlook</h4>
+                                    <div id="forecast-summary" class="small">Run a refresh to compute projection.</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Tab 4: Raw Data -->
@@ -141,7 +183,16 @@
                         <div class="table-container-compact h-table-md">
                             <table class="modern-table modern-table-compact">
                                 <thead>
-                                    <tr><th>Time</th><th>OS Used%</th><th>PG RSS MB</th><th>Swap MB</th><th>Spill MB/s</th><th>Hit %</th></tr>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Cache Hit %</th>
+                                        <th>Spill MB/s</th>
+                                        <th>Active Conn</th>
+                                        <th>Total Conn</th>
+                                        <th>Temp Files</th>
+                                        <th>OS Used %</th>
+                                        <th>Swap MB</th>
+                                    </tr>
                                 </thead>
                                 <tbody id="pg-memory-raw-tbody"></tbody>
                             </table>
@@ -159,5 +210,6 @@
     .pg-memory-page .cockpit-tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
     .pg-memory-page .tab-pane { display: none; }
     .pg-memory-page .tab-pane.active { display: block; }
+    .pg-memory-page .text-right { text-align: right; }
     .uppercase { text-transform: uppercase; }
 </style>

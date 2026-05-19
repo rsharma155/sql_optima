@@ -8,11 +8,11 @@
 package handlers
 
 import (
+	"log/slog"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/expr-lang/expr"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/config"
@@ -55,42 +56,58 @@ func NewRulesHandlerFromConfig(cfg *config.Config) (*RulesHandler, error) {
 
 func (h *RulesHandler) BestPractices(w http.ResponseWriter, r *http.Request) {
 	serverIDStr := r.URL.Query().Get("server_id")
+	instanceName := r.URL.Query().Get("instance")
 	dbType := r.URL.Query().Get("db_type")
 
-	if serverIDStr == "" && dbType == "" {
+	if serverIDStr == "" && instanceName == "" && dbType == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "server_id or db_type is required"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "server_id, instance or db_type is required"})
 		return
 	}
 
-	var serverID int
+	var serverID uuid.UUID
 	var instanceType string
-	if serverIDStr != "" {
-		if _, err := fmt.Sscanf(serverIDStr, "%d", &serverID); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "invalid server_id"})
-			return
-		}
-		// Determine instance type from config
+
+	if instanceName != "" {
 		for i := range h.cfg.Instances {
 			inst := &h.cfg.Instances[i]
-			// Prefer explicit ID match; fall back to positional match (historical behavior in this codebase).
-			if inst.ID == serverID || i+1 == serverID {
+			if inst.Name == instanceName {
+				serverID = inst.ServerID
 				instanceType = inst.Type
 				break
 			}
 		}
+	}
 
-		// Fallback: If not in config but db_type was passed in query string, trust it.
-		// This happens if the in-memory config is slightly stale compared to the registry.
-		if instanceType == "" && dbType != "" {
-			instanceType = dbType
-		} else if instanceType != "" {
-			dbType = instanceType
+	if serverID == uuid.Nil && serverIDStr != "" {
+		var err error
+		serverID, err = uuid.Parse(serverIDStr)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid server_id (must be UUID)"})
+			return
 		}
-	} else if dbType != "" {
+	}
+
+	if instanceType == "" && serverID != uuid.Nil {
+		for i := range h.cfg.Instances {
+			inst := &h.cfg.Instances[i]
+			if inst.ServerID == serverID {
+				instanceType = inst.Type
+				break
+			}
+		}
+	}
+
+	if instanceType == "" && dbType != "" {
 		instanceType = dbType
 	}
+	if dbType == "" && instanceType != "" {
+		dbType = instanceType
+	}
+
+	dbType = strings.ToLower(strings.TrimSpace(dbType))
+	instanceType = strings.ToLower(strings.TrimSpace(instanceType))
 
 	if dbType == "" {
 		w.WriteHeader(http.StatusBadRequest)
@@ -103,7 +120,7 @@ func (h *RulesHandler) BestPractices(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := h.getDashboard(ctx, serverID, dbType)
 	if err != nil {
-		log.Printf("[BestPracticesHandler] Error: %v", err)
+		slog.Error("[BestPracticesHandler] Error", "err", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "failed to fetch best practices"})
 		return
@@ -116,7 +133,7 @@ func (h *RulesHandler) BestPractices(w http.ResponseWriter, r *http.Request) {
 	if h.pgPool != nil && dbType != "" {
 		enabledRuleIDs, err := h.getEnabledRuleIDs(ctx, dbType)
 		if err != nil {
-			log.Printf("[BestPracticesHandler] Failed to list enabled rules: %v", err)
+			slog.Error("[BestPracticesHandler] Failed to list enabled rules", "err", err)
 		} else {
 			rulesTotal = len(enabledRuleIDs)
 			present := make(map[string]struct{}, len(entries))
@@ -134,19 +151,19 @@ func (h *RulesHandler) BestPractices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Always evaluate rules on-the-fly to get fresh current values (requires TimescaleDB)
-	if serverID > 0 && instanceType != "" && h.pgPool != nil {
-		log.Printf("[BestPracticesHandler] Triggering on-demand evaluation for server %d", serverID)
+	if serverID != uuid.Nil && instanceType != "" && h.pgPool != nil {
+		slog.Info("[BestPracticesHandler] Triggering on-demand evaluation for server", "val", serverID)
 		// Delete old results for this server to get fresh evaluation
 		if _, err := h.pgPool.Exec(ctx, `DELETE FROM ruleengine.rule_results_evaluated WHERE server_id = $1`, serverID); err != nil {
-			log.Printf("[BestPracticesHandler] Delete prior results: %v", err)
+			slog.Info("[BestPracticesHandler] Delete prior results", "err", err)
 		}
 		if err := h.evaluateRulesForServer(ctx, serverID, instanceType); err != nil {
-			log.Printf("[BestPracticesHandler] Evaluation failed: %v", err)
+			slog.Error("[BestPracticesHandler] Evaluation failed", "err", err)
 		}
 		// Fetch results after evaluation
 		entries, _ = h.getDashboard(ctx, serverID, dbType)
-	} else if serverID > 0 && instanceType != "" && h.pgPool == nil {
-		log.Printf("[BestPracticesHandler] Skipping on-demand evaluation for server %d: TimescaleDB unavailable", serverID)
+	} else if serverID != uuid.Nil && instanceType != "" && h.pgPool == nil {
+		slog.Warn("[BestPracticesHandler] Skipping on-demand evaluation for server %s: TimescaleDB unavailable", "val", serverID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -190,7 +207,7 @@ func (h *RulesHandler) getEnabledRuleIDs(ctx context.Context, dbType string) ([]
 	return ids, rows.Err()
 }
 
-func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType string) ([]models.DashboardEntry, error) {
+func (h *RulesHandler) getDashboard(ctx context.Context, serverID uuid.UUID, dbType string) ([]models.DashboardEntry, error) {
 	if h.pgPool == nil {
 		return []models.DashboardEntry{}, nil
 	}
@@ -199,7 +216,7 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 	var err error
 
 	// Normalize status to ensure proper comparison - uppercase
-	if dbType != "" && serverID > 0 {
+	if dbType != "" && serverID != uuid.Nil {
 		// Latest evaluated result per rule for a specific server + db type
 		query := `
 			SELECT 
@@ -212,13 +229,13 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 				COALESCE(e.recommended, r.recommended_value) AS recommended_value,
 				r.description,
 				CASE WHEN $1 = 'postgres' THEN COALESCE(NULLIF(BTRIM(r.fix_script_pg), ''), r.fix_script) ELSE COALESCE(NULLIF(BTRIM(r.fix_script), ''), r.fix_script_pg) END AS fix_script,
-				e.evaluated_at
+				e.capture_timestamp
 			FROM ruleengine.rules r
 			LEFT JOIN LATERAL (
-				SELECT rule_id, server_id, UPPER(status) as status, current_value, recommended, evaluated_at
+				SELECT rule_id, server_id, UPPER(status) as status, current_value, recommended, capture_timestamp
 				FROM ruleengine.rule_results_evaluated
 				WHERE target_db_type = $1 AND server_id = $2 AND rule_id = r.rule_id
-				ORDER BY evaluated_at DESC
+				ORDER BY capture_timestamp DESC
 				LIMIT 1
 			) e ON r.rule_id = e.rule_id
 			WHERE r.is_enabled = true AND r.target_db_type = $1
@@ -246,13 +263,13 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 				COALESCE(e.recommended, r.recommended_value) AS recommended_value,
 				r.description,
 				CASE WHEN $1 = 'postgres' THEN COALESCE(NULLIF(BTRIM(r.fix_script_pg), ''), r.fix_script) ELSE COALESCE(NULLIF(BTRIM(r.fix_script), ''), r.fix_script_pg) END AS fix_script,
-				e.evaluated_at
+				e.capture_timestamp
 			FROM ruleengine.rules r
 			LEFT JOIN LATERAL (
-				SELECT rule_id, server_id, UPPER(status) as status, current_value, recommended, evaluated_at
+				SELECT rule_id, server_id, UPPER(status) as status, current_value, recommended, capture_timestamp
 				FROM ruleengine.rule_results_evaluated
 				WHERE target_db_type = $1 AND rule_id = r.rule_id
-				ORDER BY evaluated_at DESC
+				ORDER BY capture_timestamp DESC
 				LIMIT 1
 			) e ON r.rule_id = e.rule_id
 			WHERE r.is_enabled = true AND r.target_db_type = $1
@@ -266,7 +283,7 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 				r.rule_name;
 		`
 		rows, err = h.pgPool.Query(ctx, query, dbType)
-	} else if serverID > 0 {
+	} else if serverID != uuid.Nil {
 		query := `
 			SELECT 
 				r.rule_id,
@@ -278,13 +295,13 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 				COALESCE(e.recommended, r.recommended_value) AS recommended_value,
 				r.description,
 				CASE WHEN COALESCE(s.db_type, 'sqlserver') = 'postgres' THEN COALESCE(NULLIF(BTRIM(r.fix_script_pg), ''), r.fix_script) ELSE COALESCE(NULLIF(BTRIM(r.fix_script), ''), r.fix_script_pg) END AS fix_script,
-				e.evaluated_at
+				e.capture_timestamp
 			FROM ruleengine.rules r
 			LEFT JOIN LATERAL (
-				SELECT rule_id, server_id, UPPER(status) as status, current_value, recommended, evaluated_at
+				SELECT rule_id, server_id, UPPER(status) as status, current_value, recommended, capture_timestamp
 				FROM ruleengine.rule_results_evaluated
 				WHERE rule_id = r.rule_id AND server_id = $1
-				ORDER BY evaluated_at DESC
+				ORDER BY capture_timestamp DESC
 				LIMIT 1
 			) e ON r.rule_id = e.rule_id
 			LEFT JOIN ruleengine.servers s ON s.server_id = $1
@@ -311,13 +328,13 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 				COALESCE(e.recommended, r.recommended_value) AS recommended_value,
 				r.description,
 				COALESCE(NULLIF(BTRIM(r.fix_script), ''), r.fix_script_pg) AS fix_script,
-				e.evaluated_at
+				e.capture_timestamp
 			FROM ruleengine.rules r
 			LEFT JOIN LATERAL (
-				SELECT rule_id, UPPER(status) as status, current_value, recommended, evaluated_at
+				SELECT rule_id, UPPER(status) as status, current_value, recommended, capture_timestamp
 				FROM ruleengine.rule_results_evaluated e2
 				WHERE e2.rule_id = r.rule_id
-				ORDER BY evaluated_at DESC
+				ORDER BY capture_timestamp DESC
 				LIMIT 1
 			) e ON true
 			WHERE r.is_enabled = true
@@ -334,7 +351,7 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 	}
 
 	if err != nil {
-		log.Printf("[RulesHandler] Query failed: %v", err)
+		slog.Error("[RulesHandler] Query failed", "err", err)
 		return []models.DashboardEntry{}, nil
 	}
 	defer rows.Close()
@@ -378,16 +395,16 @@ func (h *RulesHandler) getDashboard(ctx context.Context, serverID int, dbType st
 		entries = []models.DashboardEntry{}
 	}
 
-	if serverID > 0 && dbType != "" && len(entries) > 0 {
+	if serverID != uuid.Nil && dbType != "" && len(entries) > 0 {
 		if err := h.enrichDashboardEntries(ctx, serverID, dbType, entries); err != nil {
-			log.Printf("[RulesHandler] Failed to enrich best practices payload: %v", err)
+			slog.Error("[RulesHandler] Failed to enrich best practices payload", "err", err)
 		}
 	}
 
 	return entries, nil
 }
 
-func (h *RulesHandler) enrichDashboardEntries(ctx context.Context, serverID int, dbType string, entries []models.DashboardEntry) error {
+func (h *RulesHandler) enrichDashboardEntries(ctx context.Context, serverID uuid.UUID, dbType string, entries []models.DashboardEntry) error {
 	if h.pgPool == nil || len(entries) == 0 {
 		return nil
 	}
@@ -405,7 +422,7 @@ func (h *RulesHandler) enrichDashboardEntries(ctx context.Context, serverID int,
 			WHERE r.rule_id = rr.rule_id
 			  AND r.target_db_type = $2
 		  )
-		ORDER BY rr.rule_id, rr.collected_at DESC
+		ORDER BY rr.rule_id, rr.capture_timestamp DESC
 	`, serverID, dbType)
 	if err != nil {
 		return err
@@ -426,19 +443,19 @@ func (h *RulesHandler) enrichDashboardEntries(ctx context.Context, serverID int,
 
 	historyByRule := map[string][]models.RuleHistoryPoint{}
 	historyRows, err := h.pgPool.Query(ctx, `
-		SELECT rule_id, status, current_value, evaluated_at
+		SELECT rule_id, status, current_value, capture_timestamp
 		FROM (
 			SELECT
 				rule_id,
 				UPPER(status) AS status,
 				current_value,
-				evaluated_at,
-				ROW_NUMBER() OVER (PARTITION BY rule_id ORDER BY evaluated_at DESC) AS rn
+				capture_timestamp,
+				ROW_NUMBER() OVER (PARTITION BY rule_id ORDER BY capture_timestamp DESC) AS rn
 			FROM ruleengine.rule_results_evaluated
 			WHERE server_id = $1 AND target_db_type = $2
 		) history
 		WHERE rn <= 8
-		ORDER BY rule_id, evaluated_at DESC
+		ORDER BY rule_id, capture_timestamp DESC
 	`, serverID, dbType)
 	if err != nil {
 		return err
@@ -534,14 +551,14 @@ func (h *RulesHandler) getTargetConnString(inst *config.Instance) string {
 		inst.Host, port, inst.User, inst.Password, dbname, sslmode)
 }
 
-func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int, instanceType string) error {
+func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID uuid.UUID, instanceType string) error {
 	if h.pgPool == nil || h.cfg == nil {
 		return fmt.Errorf("rule engine not initialized")
 	}
 
 	var inst *config.Instance
 	for i := range h.cfg.Instances {
-		if h.cfg.Instances[i].ID == serverID || i+1 == serverID {
+		if h.cfg.Instances[i].ServerID == serverID {
 			inst = &h.cfg.Instances[i]
 			break
 		}
@@ -584,7 +601,7 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 	}
 
 	if len(rules) == 0 {
-		log.Printf("[RulesHandler] No rules found for type %s", instanceType)
+		slog.Info("[RulesHandler] No rules found for type", "val", instanceType)
 		return nil
 	}
 
@@ -639,7 +656,7 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 		}
 		wrapped, serr := sqlsandbox.WrapWithRowLimit(dialect, query, sqlsandbox.DefaultMaxRows)
 		if serr != nil {
-			log.Printf("[RulesHandler] Sandbox rejected SQL for %s: %v", r.RuleID, serr)
+			slog.Error("[RulesHandler] Sandbox rejected SQL", "target", r.RuleID, "err", serr)
 			continue
 		}
 		if ruleEngineVerbose() {
@@ -648,13 +665,13 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 			if len(prefix) > 80 {
 				prefix = prefix[:80] + "..."
 			}
-			log.Printf("[RulesHandler] Executing rule %s (dialect=%s, sql_len=%d, sql_prefix=%q)", r.RuleID, dialect, len(query), prefix)
+			slog.Info(fmt.Sprintf("[RulesHandler] Executing rule %s (dialect=%s, sql_len=%d, sql_prefix=%q)", r.RuleID, dialect, len(query), prefix))
 		}
 		qctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		targetRows, err := db.QueryContext(qctx, wrapped)
-		cancel()
 		if err != nil {
-			log.Printf("[RulesHandler] Query failed for %s: %v", r.RuleID, err)
+			cancel()
+			slog.Error("[RulesHandler] Query failed", "target", r.RuleID, "err", err)
 			continue
 		}
 
@@ -664,7 +681,7 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 			cols, _ := targetRows.Columns()
 			columns = cols
 			if ruleEngineVerbose() {
-				log.Printf("[RulesHandler] %s returned columns: %v", r.RuleID, cols)
+				slog.Info("[RulesHandler]", "arg1", r.RuleID, "arg2", cols)
 			}
 			values := make([]interface{}, len(cols))
 			valuePtrs := make([]interface{}, len(cols))
@@ -673,7 +690,7 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 			}
 			for targetRows.Next() {
 				if err := targetRows.Scan(valuePtrs...); err != nil {
-					log.Printf("[RulesHandler] Scan error for %s: %v", r.RuleID, err)
+					slog.Error("[RulesHandler] Scan error", "target", r.RuleID, "err", err)
 					continue
 				}
 				row := make(map[string]interface{})
@@ -684,10 +701,11 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 			}
 			// Never log full result payloads (may contain sensitive values). Row counts are sufficient.
 			if ruleEngineVerbose() {
-				log.Printf("[RulesHandler] %s returned %d rows", r.RuleID, len(results))
+				slog.Info("[RulesHandler]", "arg1", r.RuleID, "arg2", len(results))
 			}
 			targetRows.Close()
 		}
+		cancel()
 
 		currentValue := ""
 		recommendedValue := r.RecommendedValue.String
@@ -732,11 +750,11 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 			}
 			// Avoid logging full env map (it can contain sensitive values). Keep only key list size.
 			if ruleEngineVerbose() {
-				log.Printf("[RulesHandler] %s evaluation env keys=%d", r.RuleID, len(env))
+				slog.Info("[RulesHandler]", "arg1", r.RuleID, "arg2", len(env))
 			}
 		} else {
 			if ruleEngineVerbose() {
-				log.Printf("[RulesHandler] No results for rule %s, query: %s", r.RuleID, query)
+				slog.Info("[RulesHandler] No results for rule", "arg1", r.RuleID, "arg2", query)
 			}
 		}
 
@@ -746,20 +764,21 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 		// expr engine panics with "invalid operation: <nil> > int".
 		if len(results) > 0 && r.ExpectedCalc.Valid && r.ExpectedCalc.String != "" {
 			if ruleEngineVerbose() {
-				log.Printf("[RulesHandler] Evaluating expected_calc for %s: %s", r.RuleID, r.ExpectedCalc.String)
+				slog.Info("[RulesHandler] Evaluating expected_calc", "arg1", r.RuleID, "arg2", r.ExpectedCalc.String)
 			}
 			program, err := expr.Compile(r.ExpectedCalc.String)
 			if err != nil {
-				log.Printf("[RulesHandler] Failed to compile expected_calc for %s: %v", r.RuleID, err)
+				slog.Error("[RulesHandler] Failed to compile expected_calc", "target", r.RuleID, "err", err)
 			} else {
 				result, err := expr.Run(program, safeExprEnv(env))
 				if err != nil {
-					log.Printf("[RulesHandler] Failed to run expected_calc for %s: %v", r.RuleID, err)
+					slog.Error("[RulesHandler] Failed to run expected_calc", "target", r.RuleID, "err", err)
 				} else if f, ok := result.(float64); ok {
 					recommendedValue = fmt.Sprintf("%.0f", f)
 					env["Recommended"] = f
+					env["Expected"] = f
 					if ruleEngineVerbose() {
-						log.Printf("[RulesHandler] %s recommended value calculated: %s", r.RuleID, recommendedValue)
+						slog.Info("[RulesHandler]", "arg1", r.RuleID, "arg2", recommendedValue)
 					}
 				}
 			}
@@ -769,15 +788,15 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 		// Same guard: skip when there are no metric rows to evaluate.
 		if len(results) > 0 && r.EvaluationLogic.Valid && r.EvaluationLogic.String != "" {
 			if ruleEngineVerbose() {
-				log.Printf("[RulesHandler] Evaluating evaluation_logic for %s: %s", r.RuleID, r.EvaluationLogic.String)
+				slog.Info("[RulesHandler] Evaluating evaluation_logic", "arg1", r.RuleID, "arg2", r.EvaluationLogic.String)
 			}
 			program, err := expr.Compile(r.EvaluationLogic.String)
 			if err != nil {
-				log.Printf("[RulesHandler] Failed to compile evaluation_logic for %s: %v", r.RuleID, err)
+				slog.Error("[RulesHandler] Failed to compile evaluation_logic", "target", r.RuleID, "err", err)
 			} else {
 				result, err := expr.Run(program, safeExprEnv(env))
 				if err != nil {
-					log.Printf("[RulesHandler] Failed to run evaluation_logic for %s: %v", r.RuleID, err)
+					slog.Error("[RulesHandler] Failed to run evaluation_logic", "target", r.RuleID, "err", err)
 				} else {
 					switch val := result.(type) {
 					case string:
@@ -792,7 +811,7 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 						status = "OK"
 					}
 					if ruleEngineVerbose() {
-						log.Printf("[RulesHandler] %s status evaluated: %s (type: %T)", r.RuleID, status, result)
+						slog.Info(fmt.Sprintf("[RulesHandler] %s status evaluated: %s (type: %T)", r.RuleID, status, result))
 					}
 				}
 			}
@@ -825,7 +844,7 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 					}
 					foundValue = true
 					if ruleEngineVerbose() {
-						log.Printf("[RulesHandler] %s current value from column '%s': %s", r.RuleID, colName, currentValue)
+						slog.Info(fmt.Sprintf("[RulesHandler] %s current value from column '%s': %s", r.RuleID, colName, currentValue))
 					}
 					break
 				}
@@ -853,7 +872,7 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 							currentValue = fmt.Sprintf("%v", val)
 						}
 						if ruleEngineVerbose() {
-							log.Printf("[RulesHandler] %s current value from first column '%s': %s", r.RuleID, col, currentValue)
+							slog.Info(fmt.Sprintf("[RulesHandler] %s current value from first column '%s': %s", r.RuleID, col, currentValue))
 						}
 						break
 					}
@@ -882,29 +901,28 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID int,
 
 		_, err = h.pgPool.Exec(ctx, `
 			INSERT INTO ruleengine.rule_results_raw
-			(run_id, server_id, rule_id, raw_payload, collected_at)
+			(run_id, server_id, rule_id, raw_payload, capture_timestamp)
 			VALUES ($1, $2, $3, $4::jsonb, NOW())
 		`, runID, serverID, r.RuleID, string(buildRawRulePayload(results, currentValue, recommendedValue, status)))
 		if err != nil {
-			log.Printf("[RulesHandler] Failed to store raw result for %s: %v", r.RuleID, err)
+			slog.Error("[RulesHandler] Failed to store raw result", "target", r.RuleID, "err", err)
 		}
 
 		_, err = h.pgPool.Exec(ctx, `
 			INSERT INTO ruleengine.rule_results_evaluated 
-			(run_id, server_id, rule_id, target_db_type, status, current_value, recommended, evaluated_at)
+			(run_id, server_id, rule_id, target_db_type, status, current_value, recommended, capture_timestamp)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
 		`, runID, serverID, r.RuleID, instanceType, status, currentValue, recommendedValue)
 		if err != nil {
-			log.Printf("[RulesHandler] Failed to store result for %s: %v", r.RuleID, err)
+			slog.Error("[RulesHandler] Failed to store result", "target", r.RuleID, "err", err)
 		} else {
 			if ruleEngineVerbose() {
-				log.Printf("[RulesHandler] Stored result for %s: current=%s, recommended=%s, status=%s",
-					r.RuleID, currentValue, recommendedValue, status)
+				slog.Info(fmt.Sprintf("[RulesHandler] Stored result for %s: current=%s, recommended=%s, status=%s", r.RuleID, currentValue, recommendedValue, status))
 			}
 		}
 	}
 
-	log.Printf("[RulesHandler] Evaluated %d rules for server %d", len(rules), serverID)
+	slog.Info("[RulesHandler] Evaluated", "arg1", len(rules), "arg2", serverID)
 	return nil
 }
 

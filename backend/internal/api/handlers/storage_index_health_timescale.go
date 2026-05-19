@@ -1,7 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Unified Storage & Index Health HTTP handlers (Timescale reads).
-// Supports both PostgreSQL and SQL Server via 'engine' query parameter.
+// Purpose: Engine-agnostic TimescaleDB storage index health API handlers.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -11,232 +10,171 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
-	"time"
 
+	"github.com/google/uuid"
+	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/service"
+	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
 type StorageIndexHealthTimescaleHandlers struct {
 	metricsSvc *service.MetricsService
+	cfg        *config.Config
 }
 
-func NewStorageIndexHealthTimescaleHandlers(metricsSvc *service.MetricsService) *StorageIndexHealthTimescaleHandlers {
-	return &StorageIndexHealthTimescaleHandlers{metricsSvc: metricsSvc}
+func NewStorageIndexHealthTimescaleHandlers(svc *service.MetricsService, cfg *config.Config) *StorageIndexHealthTimescaleHandlers {
+	return &StorageIndexHealthTimescaleHandlers{metricsSvc: svc, cfg: cfg}
 }
 
-func (h *StorageIndexHealthTimescaleHandlers) getParams(r *http.Request) (engine, instance, from, to string) {
-	engine = strings.ToLower(strings.TrimSpace(r.URL.Query().Get("engine")))
-	instance = strings.TrimSpace(r.URL.Query().Get("instance"))
-	from = strings.TrimSpace(r.URL.Query().Get("from"))
-	to = strings.TrimSpace(r.URL.Query().Get("to"))
-
-	if from == "" || to == "" {
-		end := time.Now().UTC()
-		start := end.Add(-24 * time.Hour)
-		from = start.Format(time.RFC3339)
-		to = end.Format(time.RFC3339)
-	}
-	return
+func (h *StorageIndexHealthTimescaleHandlers) parseID(r *http.Request) (uuid.UUID, bool) {
+	return ParseServerID(r, h.cfg)
 }
 
-func (h *StorageIndexHealthTimescaleHandlers) IndexUsage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if h.metricsSvc == nil || !h.metricsSvc.IsTimescaleConnected() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "timescale not configured"})
-		return
-	}
-
-	engine, instance, from, to := h.getParams(r)
-	if engine == "" {
+func (h *StorageIndexHealthTimescaleHandlers) GetIndexUsage(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "engine is required"})
-		return
-	}
-	if instance == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is required"})
 		return
 	}
 
-	points, err := h.metricsSvc.TimescaleStorageIndexHealthIndexUsage(r.Context(), engine, instance, from, to, 2000)
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
+	res, err := h.metricsSvc.TimescaleStorageIndexHealthIndexUsage(r.Context(), id, from, to)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"engine":   engine,
-		"instance": instance,
-		"from":     from,
-		"to":       to,
-		"points":   points,
-	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-func (h *StorageIndexHealthTimescaleHandlers) TableUsage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if h.metricsSvc == nil || !h.metricsSvc.IsTimescaleConnected() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "timescale not configured"})
+func (h *StorageIndexHealthTimescaleHandlers) GetTableUsage(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	engine, instance, from, to := h.getParams(r)
-	if engine == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "engine is required"})
-		return
-	}
-	if instance == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is required"})
-		return
-	}
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
 
-	points, err := h.metricsSvc.TimescaleStorageIndexHealthTableUsage(r.Context(), engine, instance, from, to, 2000)
+	res, err := h.metricsSvc.TimescaleStorageIndexHealthTableUsage(r.Context(), id, from, to)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"engine":   engine,
-		"instance": instance,
-		"from":     from,
-		"to":       to,
-		"points":   points,
-	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-func (h *StorageIndexHealthTimescaleHandlers) Growth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if h.metricsSvc == nil || !h.metricsSvc.IsTimescaleConnected() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "timescale not configured"})
+func (h *StorageIndexHealthTimescaleHandlers) GetGrowth(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	engine, instance, from, to := h.getParams(r)
-	if engine == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "engine is required"})
-		return
-	}
-	if instance == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is required"})
-		return
-	}
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
 
-	points, err := h.metricsSvc.TimescaleStorageIndexHealthGrowth(r.Context(), engine, instance, from, to, 2000)
+	res, err := h.metricsSvc.TimescaleStorageIndexHealthGrowth(r.Context(), id, from, to)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"engine":   engine,
-		"instance": instance,
-		"from":     from,
-		"to":       to,
-		"points":   points,
-	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-func (h *StorageIndexHealthTimescaleHandlers) Dashboard(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if h.metricsSvc == nil || !h.metricsSvc.IsTimescaleConnected() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "timescale not configured"})
-		return
-	}
-
-	engine, instance, from, to := h.getParams(r)
-	if engine == "" {
+func (h *StorageIndexHealthTimescaleHandlers) GetDashboard(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "engine is required"})
-		return
-	}
-	if instance == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is required"})
 		return
 	}
 
-	dbNames := splitCSV(r.URL.Query().Get("db"))
-	schemaNames := splitCSV(r.URL.Query().Get("schema"))
-	tableLike := strings.TrimSpace(r.URL.Query().Get("table"))
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	
+	// Optional filters
+	filters := hot.SIHFilters{
+		DBNames:     r.URL.Query()["db"],
+		SchemaNames: r.URL.Query()["schema"],
+		TableLike:   r.URL.Query().Get("table"),
+	}
 
-	payload, err := h.metricsSvc.TimescaleStorageIndexHealthDashboard(r.Context(), engine, instance, from, to, dbNames, schemaNames, tableLike)
+	res, err := h.metricsSvc.TimescaleStorageIndexHealthDashboard(r.Context(), id, from, to, filters)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	json.NewEncoder(w).Encode(payload)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-func (h *StorageIndexHealthTimescaleHandlers) Filters(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if h.metricsSvc == nil || !h.metricsSvc.IsTimescaleConnected() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "timescale not configured"})
-		return
-	}
-
-	engine := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("engine")))
-	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
-	dbName := strings.TrimSpace(r.URL.Query().Get("db"))
-	schemaName := strings.TrimSpace(r.URL.Query().Get("schema"))
-
-	if engine == "" {
+func (h *StorageIndexHealthTimescaleHandlers) GetFilterOptions(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "engine is required"})
-		return
-	}
-	if instance == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "instance is required"})
 		return
 	}
 
-	filters, err := h.metricsSvc.TimescaleStorageIndexHealthFilterOptions(r.Context(), engine, instance, "", "", dbName, schemaName)
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	db := r.URL.Query().Get("db")
+	schema := r.URL.Query().Get("schema")
+
+	res, err := h.metricsSvc.TimescaleStorageIndexHealthFilterOptions(r.Context(), id, from, to, db, schema)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	_ = json.NewEncoder(w).Encode(filters)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-func (h *StorageIndexHealthTimescaleHandlers) IndexDefinition(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if h.metricsSvc == nil || !h.metricsSvc.IsTimescaleConnected() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "timescale not configured"})
-		return
-	}
-
-	engine := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("engine")))
-	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
-	db := strings.TrimSpace(r.URL.Query().Get("db"))
-	schema := strings.TrimSpace(r.URL.Query().Get("schema"))
-	// table := strings.TrimSpace(r.URL.Query().Get("table")) // Not used in service method
-	index := strings.TrimSpace(r.URL.Query().Get("index"))
-
-	if engine == "" || instance == "" || db == "" || index == "" {
+func (h *StorageIndexHealthTimescaleHandlers) GetIndexDefinition(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "engine, instance, db, and index are required"})
 		return
 	}
 
-	definitionRows, err := h.metricsSvc.TimescaleStorageIndexDefinition(r.Context(), engine, instance, db, schema, index)
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
+	res, err := h.metricsSvc.TimescaleStorageIndexDefinition(r.Context(), id, from, to)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"rows": definitionRows})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (h *StorageIndexHealthTimescaleHandlers) GetIndexUsageTrend(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+
+	res, err := h.metricsSvc.TimescaleStorageIndexHealthIndexUsage(r.Context(), id, from, to)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }

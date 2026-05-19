@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Background worker for performance debt analysis and debt accumulation tracking.
+// Purpose: Background worker for "Performance Debt" analysis (Unused indexes, missing indexes, fragmentation).
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -8,599 +8,721 @@
 package service
 
 import (
+	"log/slog"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"os"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
-// StartPerformanceDebtCollector collects maintenance/risk findings periodically (default every 15 min).
 func (s *MetricsService) StartPerformanceDebtCollector(ctx context.Context) {
-	if s.tsLogger == nil {
-		log.Printf("[PerfDebtCollector] TimescaleDB not connected; collector disabled")
-		return
-	}
-
-	interval := s.FetchInterval(ctx, "Performance Debt Collection", 15*time.Minute)
-	log.Printf("[PerfDebtCollector] Starting Performance Debt collector (interval: %v)...", interval)
+	// Performance debt is heavy; run every 6 hours by default
+	interval := s.GetCollectorInterval(ctx, "Performance Debt Collection", 6*time.Hour)
+	slog.Info("[PerformanceDebt] Starting background collector (interval: %v)", "val", interval)
 
 	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	// Run once on startup for fast first data.
-	s.collectPerformanceDebtOnce()
-
-	for {
-		select {
-		case <-ctx.Done():
-			log.Printf("[PerfDebtCollector] Shutting down Performance Debt collector")
-			return
-		case <-ticker.C:
+	go func() {
+		defer ticker.Stop()
+		// Run once at start
+		if interval > 0 {
 			s.collectPerformanceDebtOnce()
-			// Refresh interval
-			newInterval := s.FetchInterval(ctx, "Performance Debt Collection", 15*time.Minute)
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Dynamic interval check
+				newInterval := s.GetCollectorInterval(ctx, "Performance Debt Collection", 6*time.Hour)
+				if newInterval != interval && newInterval > 0 {
+					slog.Info("[PerformanceDebt] Frequency changed from", "arg1", interval, "arg2", newInterval)
+					interval = newInterval
+					ticker.Reset(interval)
+				}
+
+				if interval > 0 {
+					s.collectPerformanceDebtOnce()
+				}
 			}
 		}
-	}
+	}()
 }
 
 func (s *MetricsService) collectPerformanceDebtOnce() {
-	if s.tsLogger == nil {
-		return
-	}
-	sqlserverCount := 0
-	var wg sync.WaitGroup
 	for _, inst := range s.Config.Instances {
-		if inst.Type != "sqlserver" {
+		if strings.ToLower(inst.Type) != "sqlserver" {
 			continue
 		}
-		sqlserverCount++
-		wg.Add(1)
-		go func(instanceName string, databases []string) {
-			defer wg.Done()
-			s.collectPerformanceDebtForInstance(instanceName, databases)
-		}(inst.Name, inst.Databases)
+
+		// Discover databases for this instance
+		db, ok := s.MsRepo.GetConn(inst.Name)
+		if !ok {
+			continue
+		}
+
+		var databases []string
+		rows, err := db.Query("SELECT name FROM sys.databases WHERE state = 0 AND name NOT IN ('master','tempdb','model','msdb')")
+		if err == nil {
+			for rows.Next() {
+				var name string
+				if err := rows.Scan(&name); err == nil {
+					databases = append(databases, name)
+				}
+			}
+			rows.Close()
+		}
+
+		go s.collectPerformanceDebtForInstance(inst.ServerID, inst.Name, databases)
 	}
-	if sqlserverCount == 0 {
-		log.Printf("[PerfDebtCollector] No SQL Server instances configured; skipping collection")
-	}
-	wg.Wait()
 }
 
-func (s *MetricsService) collectPerformanceDebtForInstance(instanceName string, databases []string) {
-	if s.tsLogger == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+func (s *MetricsService) collectPerformanceDebtForInstance(serverID uuid.UUID, instanceName string, databases []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	now := time.Now().UTC()
-	findings := make([]hot.PerformanceDebtFindingRow, 0, 600)
+	slog.Info("[PerformanceDebt] Starting analysis", "arg1", instanceName, "arg2", serverID)
 
-	// Delta de-duplication: load latest fingerprints by finding_key so we only persist changes.
-	prev, err := s.tsLogger.GetLatestPerformanceDebtFingerprintHashesByKey(ctx, instanceName, 4*time.Hour)
-	if err != nil {
-		// If this fails, we still collect (worst case: duplicates as before).
-		log.Printf("[PerfDebtCollector] fingerprint lookup failed instance=%s err=%v", instanceName, err)
-		prev = map[string]string{}
-	}
-	seenThisRun := map[string]bool{}
-
-	if len(databases) == 0 {
-		databases = []string{"master"}
-	}
-
-	// helper to append only when new/changed
-	appendIfChanged := func(r hot.PerformanceDebtFindingRow) {
-		k := strings.TrimSpace(r.FindingKey)
-		if k == "" {
-			return
-		}
-		if seenThisRun[k] {
-			return
-		}
-		seenThisRun[k] = true
-
-		currHash := hot.PerformanceDebtFingerprintHash(r)
-		if prevHash, ok := prev[k]; ok && prevHash == currHash {
-			return
-		}
-		findings = append(findings, r)
-	}
-
-	for _, db := range databases {
-		if strings.EqualFold(db, "tempdb") {
+	// 1. Unused Indexes
+	// SAFETY: sys.dm_db_index_usage_stats resets to zero on every SQL Server restart.
+	// All unused-index findings are permanently marked INFO ("Monitoring") until 28+ days of
+	// continuous observation have been collected. The DROP INDEX fix script is intentionally
+	// gated with a safety warning comment and blocked in the UI for first-scan data.
+	for _, dbName := range databases {
+		unused, err := s.MsRepo.FetchUnusedIndexes(ctx, instanceName, dbName, 1000, 50)
+		if err != nil {
+			slog.Error(fmt.Sprintf("[PerformanceDebt] ERROR FetchUnusedIndexes for %s/%s: %v", instanceName, dbName, err))
 			continue
 		}
 
-		// ------------------------------------------------------------------
-		// Index Health
-		// ------------------------------------------------------------------
-		if unused, err := s.MsRepo.FetchUnusedIndexes(instanceName, db, 1000, 50); err == nil {
-			for _, u := range unused {
-				details, _ := json.Marshal(map[string]any{
-					"user_updates": u.UserUpdates,
-					"total_reads":  u.TotalReads,
-				})
-				appendIfChanged(hot.PerformanceDebtFindingRow{
-					CaptureTimestamp:   now,
-					ServerInstanceName: instanceName,
-					DatabaseName:       db,
-					Section:            "Index Health",
-					FindingType:        "unused_index",
-					Severity:           "WARNING",
-					Title:              "Unused index candidate (writes without reads)",
-					ObjectName:         fmt.Sprintf("%s.%s", u.TableName, u.IndexName),
-					ObjectType:         "index",
-					FindingKey:         fmt.Sprintf("%s.%s:%s", db, u.TableName, u.IndexName),
-					Details:            details,
-					Recommendation:     "Validate with workload and consider dropping if truly unused.",
-					FixScript:          fmt.Sprintf("/* Review first */\nUSE %s;\nDROP INDEX %s ON %s;", bracket(db), bracket(u.IndexName), bracket(u.TableName)),
-				})
-			}
-		}
-
-		if miss, err := s.MsRepo.FetchMissingIndexRecommendations(instanceName, db, 25); err == nil {
-			for _, m := range miss {
-				sev := "INFO"
-				if m.ImprovementScore >= 1_000_000 {
-					sev = "CRITICAL"
-				} else if m.ImprovementScore >= 250_000 {
-					sev = "WARNING"
-				}
-				details, _ := json.Marshal(map[string]any{
-					"improvement_score":  m.ImprovementScore,
-					"table":              m.TableName,
-					"equality_columns":   m.EqualityColumns,
-					"inequality_columns": m.InequalityCols,
-					"included_columns":   m.IncludedColumns,
-				})
-				appendIfChanged(hot.PerformanceDebtFindingRow{
-					CaptureTimestamp:   now,
-					ServerInstanceName: instanceName,
-					DatabaseName:       db,
-					Section:            "Index Health",
-					FindingType:        "missing_index",
-					Severity:           sev,
-					Title:              "Missing index recommendation",
-					ObjectName:         m.TableName,
-					ObjectType:         "table",
-					FindingKey:         fmt.Sprintf("%s:%s:%s:%s", db, m.TableName, m.EqualityColumns, m.InequalityCols),
-					Details:            details,
-					Recommendation:     "Validate against Query Store/top offenders before implementing.",
-					FixScript:          "",
-				})
-			}
-		}
-
-		if frags, err := s.MsRepo.FetchIndexFragmentation(instanceName, db, 30, 1000, 50); err == nil {
-			for _, f := range frags {
-				sev := "WARNING"
-				if f.FragPct >= 60 {
-					sev = "CRITICAL"
-				}
-				details, _ := json.Marshal(map[string]any{
-					"fragmentation_pct": f.FragPct,
-					"page_count":        f.PageCount,
-				})
-				appendIfChanged(hot.PerformanceDebtFindingRow{
-					CaptureTimestamp:   now,
-					ServerInstanceName: instanceName,
-					DatabaseName:       db,
-					Section:            "Index Health",
-					FindingType:        "index_fragmentation",
-					Severity:           sev,
-					Title:              "High index fragmentation",
-					ObjectName:         fmt.Sprintf("%s.%s", f.TableName, f.IndexName),
-					ObjectType:         "index",
-					FindingKey:         fmt.Sprintf("%s.%s:%s", db, f.TableName, f.IndexName),
-					Details:            details,
-					Recommendation:     "Rebuild/reorganize as appropriate; verify fillfactor and workload pattern.",
-					FixScript:          fmt.Sprintf("/* Review first */\nUSE %s;\nALTER INDEX %s ON %s REORGANIZE;", bracket(db), bracket(f.IndexName), bracket(f.TableName)),
-				})
-			}
-		}
-
-		// ------------------------------------------------------------------
-		// Statistics Health
-		// ------------------------------------------------------------------
-		if stats, err := s.MsRepo.FetchStaleStatistics(instanceName, db, 0.20, 50); err == nil {
-			for _, st := range stats {
-				sev := "WARNING"
-				if st.Rows > 0 && float64(st.ModificationCounter) > float64(st.Rows)*0.5 {
-					sev = "CRITICAL"
-				}
-				last := ""
-				if st.LastUpdated.Valid {
-					last = st.LastUpdated.Time.UTC().Format(time.RFC3339)
-				}
-				details, _ := json.Marshal(map[string]any{
-					"rows":                 st.Rows,
-					"modification_counter": st.ModificationCounter,
-					"last_updated":         last,
-				})
-				appendIfChanged(hot.PerformanceDebtFindingRow{
-					CaptureTimestamp:   now,
-					ServerInstanceName: instanceName,
-					DatabaseName:       db,
-					Section:            "Statistics Health",
-					FindingType:        "stale_stats",
-					Severity:           sev,
-					Title:              "Stale statistics (high modifications)",
-					ObjectName:         fmt.Sprintf("%s.%s", st.TableName, st.StatsName),
-					ObjectType:         "stats",
-					FindingKey:         fmt.Sprintf("%s.%s:%s", db, st.TableName, st.StatsName),
-					Details:            details,
-					Recommendation:     "Update statistics (consider FULLSCAN for critical objects).",
-					FixScript:          fmt.Sprintf("USE %s;\nUPDATE STATISTICS %s %s WITH FULLSCAN;", bracket(db), bracket(st.TableName), bracket(st.StatsName)),
-				})
-			}
-		}
-
-		// ------------------------------------------------------------------
-		// Storage & Growth
-		// ------------------------------------------------------------------
-		if files, err := s.MsRepo.FetchAutogrowthRisks(instanceName, db, 25); err == nil {
-			for _, f := range files {
-				sev := "INFO"
-				// Percent growth and tiny fixed growth can cause frequent autogrowth.
-				if f.IsPercentGrowth {
-					sev = "WARNING"
-				} else if f.Growth > 0 && f.Growth < 512 { // pages; <4MB
-					sev = "WARNING"
-				}
-				details, _ := json.Marshal(map[string]any{
-					"file":              f.FileName,
-					"size_mb":           f.SizeMB,
-					"growth":            f.Growth,
-					"is_percent_growth": f.IsPercentGrowth,
-				})
-				appendIfChanged(hot.PerformanceDebtFindingRow{
-					CaptureTimestamp:   now,
-					ServerInstanceName: instanceName,
-					DatabaseName:       db,
-					Section:            "Storage & Growth",
-					FindingType:        "autogrowth_risk",
-					Severity:           sev,
-					Title:              "Potential autogrowth risk",
-					ObjectName:         f.FileName,
-					ObjectType:         "database_file",
-					FindingKey:         fmt.Sprintf("%s:file:%s", db, f.FileName),
-					Details:            details,
-					Recommendation:     "Prefer fixed growth in MB sized to workload; avoid percent growth for large files.",
-					FixScript:          "",
-				})
-			}
-		}
-
-		if vlf, err := s.MsRepo.FetchVLFCount(instanceName, db); err == nil {
-			sev := "INFO"
-			if vlf >= 1000 {
-				sev = "CRITICAL"
-			} else if vlf >= 500 {
-				sev = "WARNING"
-			}
-			details, _ := json.Marshal(map[string]any{
-				"vlf_count": vlf,
+		var findings []hot.PerformanceDebtFindingRow
+		for _, idx := range unused {
+			title := fmt.Sprintf("Unused Index (Monitoring): %s", idx.IndexName)
+			rec := fmt.Sprintf(
+				"Index %s on %s has %d write operations but zero reads since the last SQL Server restart (%s). "+
+					"Requires ≥28 days of continuous observation before acting. Do not drop based on a single scan.",
+				idx.IndexName, idx.TableName, idx.UserUpdates, idx.ServerStartTime.Format("2006-01-02"),
+			)
+			details, _ := json.Marshal(map[string]interface{}{
+				"index_name":        idx.IndexName,
+				"table_name":        idx.TableName,
+				"user_updates":      idx.UserUpdates,
+				"server_start_time": idx.ServerStartTime,
+				"index_create_date": idx.IndexCreateDate,
+				"recommendation":    rec,
 			})
-			appendIfChanged(hot.PerformanceDebtFindingRow{
-				CaptureTimestamp:   now,
-				ServerInstanceName: instanceName,
-				DatabaseName:       db,
-				Section:            "Storage & Growth",
-				FindingType:        "vlf_high",
-				Severity:           sev,
-				Title:              "High VLF count",
-				ObjectName:         db,
-				ObjectType:         "database",
-				FindingKey:         fmt.Sprintf("%s:vlf", db),
-				Details:            details,
-				Recommendation:     "Consider log file sizing and growth settings; rebuild log to reduce VLFs if needed.",
-				FixScript:          "",
+			fixScript := fmt.Sprintf(
+				"-- WARNING: Verify ≥28 days of continuous observation before dropping.\n"+
+					"-- sys.dm_db_index_usage_stats resets to zero on every SQL Server restart.\n"+
+					"-- Confirm no batch, monthly, quarterly, or seasonal queries depend on this index.\nDROP INDEX [%s] ON [%s];",
+				idx.IndexName, idx.TableName,
+			)
+			findings = append(findings, hot.PerformanceDebtFindingRow{
+				DatabaseName:   dbName,
+				Section:        "Index Health",
+				FindingType:    "unused_index",
+				Severity:       "INFO",
+				Title:          title,
+				ObjectName:     idx.TableName + "." + idx.IndexName,
+				ObjectType:     "index",
+				FindingKey:     fmt.Sprintf("%s.%s.%s", dbName, idx.TableName, idx.IndexName),
+				ImpactScore:    float64(idx.UserUpdates),
+				Details:        string(details),
+				Recommendation: rec,
+				FixScript:      fixScript,
 			})
 		}
+		if len(findings) > 0 {
+			_ = s.tsLogger.LogPerformanceDebtFindings(ctx, serverID, findings)
+		}
+	}
 
-		// ------------------------------------------------------------------
-		// Backup & Recovery
-		// ------------------------------------------------------------------
-		if ageH, err := s.MsRepo.FetchLastFullBackupAgeHours(instanceName, db); err == nil {
-			sev := "INFO"
-			if ageH >= 168 { // 7d
-				sev = "CRITICAL"
-			} else if ageH >= 48 {
-				sev = "WARNING"
+	// 2. Missing Indexes
+	for _, dbName := range databases {
+		missing, err := s.MsRepo.FetchMissingIndexRecommendations(ctx, instanceName, dbName, 25)
+		if err != nil {
+			continue
+		}
+		var findings []hot.PerformanceDebtFindingRow
+		for _, m := range missing {
+			// avg_user_impact is the actual estimated improvement percentage (0–100) from SQL Server DMVs.
+			// ImprovementScore is a composite ranking value and must not be displayed as a percentage.
+			userImpact := m.AvgUserImpact
+			if userImpact > 100 {
+				userImpact = 100
 			}
-			details, _ := json.Marshal(map[string]any{
-				"last_full_backup_age_hours": ageH,
+			title := fmt.Sprintf("Missing Index on %s", m.TableName)
+			rec := fmt.Sprintf("Missing index on [%s]. Estimated query cost improvement: %.1f%%", m.EqualityColumns, userImpact)
+
+			details, _ := json.Marshal(map[string]interface{}{
+				"table_name":        m.TableName,
+				"equality_columns":  m.EqualityColumns,
+				"inequality_cols":   m.InequalityColumns,
+				"included_columns":  m.IncludedColumns,
+				"avg_user_impact":   userImpact,
+				"ranking_score":     m.ImprovementScore,
+				"recommendation":    rec,
 			})
-			appendIfChanged(hot.PerformanceDebtFindingRow{
-				CaptureTimestamp:   now,
-				ServerInstanceName: instanceName,
-				DatabaseName:       db,
-				Section:            "Backup & Recovery",
-				FindingType:        "backup_age",
-				Severity:           sev,
-				Title:              "Full backup age",
-				ObjectName:         db,
-				ObjectType:         "database",
-				FindingKey:         fmt.Sprintf("%s:full_backup_age", db),
-				Details:            details,
-				Recommendation:     "Ensure backups meet RPO/RTO policy and verify backup jobs are running successfully.",
-				FixScript:          "",
+
+			severity := "WARNING"
+			if m.ImprovementScore > 500000 {
+				severity = "CRITICAL"
+			}
+
+			findings = append(findings, hot.PerformanceDebtFindingRow{
+				DatabaseName:   dbName,
+				Section:        "Index Health",
+				FindingType:    "missing_index",
+				Severity:       severity,
+				Title:          title,
+				ObjectName:     m.TableName,
+				ObjectType:     "table",
+				FindingKey:     fmt.Sprintf("%s.%s:missing", dbName, m.TableName),
+				ImpactScore:    m.ImprovementScore,
+				Details:        string(details),
+				Recommendation: rec,
+				FixScript:      m.CreateStatement,
 			})
 		}
-	}
-
-	// ----------------------------------------------------------------------
-	// SQL Agent (instance-level)
-	// ----------------------------------------------------------------------
-	if failed, err := s.MsRepo.FetchFailedAgentJobs24h(instanceName, 50); err == nil && len(failed) > 0 {
-		details, _ := json.Marshal(map[string]any{"failed_jobs": failed})
-		appendIfChanged(hot.PerformanceDebtFindingRow{
-			CaptureTimestamp:   now,
-			ServerInstanceName: instanceName,
-			DatabaseName:       "msdb",
-			Section:            "SQL Agent",
-			FindingType:        "job_failed",
-			Severity:           "CRITICAL",
-			Title:              "SQL Agent job failures (last 24h)",
-			ObjectName:         "SQL Agent",
-			ObjectType:         "job",
-			FindingKey:         "agent:failed_jobs_24h",
-			Details:            details,
-			Recommendation:     "Investigate job history and fix the underlying failure (permissions, storage, blocking, etc.).",
-			FixScript:          "",
-		})
-	}
-
-	if disabled, err := s.MsRepo.FetchDisabledAgentJobs(instanceName, 200); err == nil && len(disabled) > 0 {
-		details, _ := json.Marshal(map[string]any{"disabled_jobs": disabled})
-		appendIfChanged(hot.PerformanceDebtFindingRow{
-			CaptureTimestamp:   now,
-			ServerInstanceName: instanceName,
-			DatabaseName:       "msdb",
-			Section:            "SQL Agent",
-			FindingType:        "job_disabled",
-			Severity:           "WARNING",
-			Title:              "Disabled SQL Agent jobs",
-			ObjectName:         "SQL Agent",
-			ObjectType:         "job",
-			FindingKey:         "agent:disabled_jobs",
-			Details:            details,
-			Recommendation:     "Confirm whether disabled jobs are intentional; disable stale jobs or fix scheduling/ownership.",
-			FixScript:          "",
-		})
-	}
-
-	// ----------------------------------------------------------------------
-	// Engine Config (instance-level)
-	// ----------------------------------------------------------------------
-	if maxdop, err := s.MsRepo.FetchConfigValueInUse(instanceName, "max degree of parallelism"); err == nil {
-		sev := "INFO"
-		if maxdop == 0 {
-			sev = "WARNING"
-		}
-		details, _ := json.Marshal(map[string]any{"maxdop": maxdop})
-		appendIfChanged(hot.PerformanceDebtFindingRow{
-			CaptureTimestamp:   now,
-			ServerInstanceName: instanceName,
-			DatabaseName:       "master",
-			Section:            "Engine Config",
-			FindingType:        "maxdop",
-			Severity:           sev,
-			Title:              "MAXDOP configuration",
-			ObjectName:         "sp_configure",
-			ObjectType:         "config",
-			FindingKey:         "config:maxdop",
-			Details:            details,
-			Recommendation:     "Set MAXDOP based on CPU topology and workload; avoid 0 for many OLTP systems.",
-			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'max degree of parallelism', 8; RECONFIGURE;",
-		})
-	}
-
-	if ctfp, err := s.MsRepo.FetchConfigValueInUse(instanceName, "cost threshold for parallelism"); err == nil {
-		sev := "INFO"
-		if ctfp < 20 {
-			sev = "WARNING"
-		}
-		details, _ := json.Marshal(map[string]any{"cost_threshold_for_parallelism": ctfp})
-		appendIfChanged(hot.PerformanceDebtFindingRow{
-			CaptureTimestamp:   now,
-			ServerInstanceName: instanceName,
-			DatabaseName:       "master",
-			Section:            "Engine Config",
-			FindingType:        "cost_threshold_for_parallelism",
-			Severity:           sev,
-			Title:              "Cost threshold for parallelism",
-			ObjectName:         "sp_configure",
-			ObjectType:         "config",
-			FindingKey:         "config:ctfp",
-			Details:            details,
-			Recommendation:     "Consider raising above default 5 to reduce trivial parallelism.",
-			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'cost threshold for parallelism', 25; RECONFIGURE;",
-		})
-	}
-
-	// Max server memory — should not be unlimited (2147483647 = default/unlimited).
-	if maxMem, err := s.MsRepo.FetchConfigValueInUse(instanceName, "max server memory (MB)"); err == nil {
-		sev := "INFO"
-		if maxMem >= 2147483647 {
-			sev = "CRITICAL"
-		}
-		details, _ := json.Marshal(map[string]any{"max_server_memory_mb": maxMem})
-		appendIfChanged(hot.PerformanceDebtFindingRow{
-			CaptureTimestamp:   now,
-			ServerInstanceName: instanceName,
-			DatabaseName:       "master",
-			Section:            "Engine Config",
-			FindingType:        "max_server_memory",
-			Severity:           sev,
-			Title:              "Max server memory configuration",
-			ObjectName:         "sp_configure",
-			ObjectType:         "config",
-			FindingKey:         "config:max_server_memory",
-			Details:            details,
-			Recommendation:     "Set max server memory to leave ~10-20% of OS RAM for the OS. Default unlimited can cause OS memory pressure.",
-			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'max server memory (MB)', 12288; RECONFIGURE;",
-		})
-	}
-
-	// Optimize for ad hoc workloads — should be 1 to reduce plan cache bloat.
-	if adHoc, err := s.MsRepo.FetchConfigValueInUse(instanceName, "optimize for ad hoc workloads"); err == nil {
-		sev := "INFO"
-		if adHoc == 0 {
-			sev = "WARNING"
-		}
-		details, _ := json.Marshal(map[string]any{"optimize_for_ad_hoc_workloads": adHoc})
-		appendIfChanged(hot.PerformanceDebtFindingRow{
-			CaptureTimestamp:   now,
-			ServerInstanceName: instanceName,
-			DatabaseName:       "master",
-			Section:            "Engine Config",
-			FindingType:        "optimize_for_ad_hoc",
-			Severity:           sev,
-			Title:              "Optimize for ad hoc workloads",
-			ObjectName:         "sp_configure",
-			ObjectType:         "config",
-			FindingKey:         "config:optimize_ad_hoc",
-			Details:            details,
-			Recommendation:     "Enable to store only compiled plan stubs on first execution, reducing plan cache bloat from single-use plans.",
-			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'optimize for ad hoc workloads', 1; RECONFIGURE;",
-		})
-	}
-
-	// Backup compression default — should be 1 for faster backups and less I/O.
-	if bkComp, err := s.MsRepo.FetchConfigValueInUse(instanceName, "backup compression default"); err == nil {
-		sev := "INFO"
-		if bkComp == 0 {
-			sev = "WARNING"
-		}
-		details, _ := json.Marshal(map[string]any{"backup_compression_default": bkComp})
-		appendIfChanged(hot.PerformanceDebtFindingRow{
-			CaptureTimestamp:   now,
-			ServerInstanceName: instanceName,
-			DatabaseName:       "master",
-			Section:            "Engine Config",
-			FindingType:        "backup_compression_default",
-			Severity:           sev,
-			Title:              "Backup compression default",
-			ObjectName:         "sp_configure",
-			ObjectType:         "config",
-			FindingKey:         "config:backup_compression",
-			Details:            details,
-			Recommendation:     "Enable to reduce backup size and duration. CPU overhead is minimal on modern hardware.",
-			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'backup compression default', 1; RECONFIGURE;",
-		})
-	}
-
-	// Remote admin connections — should be 1 for emergency DAC access.
-	if rac, err := s.MsRepo.FetchConfigValueInUse(instanceName, "remote admin connections"); err == nil {
-		sev := "INFO"
-		if rac == 0 {
-			sev = "WARNING"
-		}
-		details, _ := json.Marshal(map[string]any{"remote_admin_connections": rac})
-		appendIfChanged(hot.PerformanceDebtFindingRow{
-			CaptureTimestamp:   now,
-			ServerInstanceName: instanceName,
-			DatabaseName:       "master",
-			Section:            "Engine Config",
-			FindingType:        "remote_admin_connections",
-			Severity:           sev,
-			Title:              "Remote admin connections (DAC)",
-			ObjectName:         "sp_configure",
-			ObjectType:         "config",
-			FindingKey:         "config:remote_admin_connections",
-			Details:            details,
-			Recommendation:     "Enable so DBAs can connect via DAC when the instance is unresponsive.",
-			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'remote admin connections', 1; RECONFIGURE;",
-		})
-	}
-
-	// Lightweight pooling — should be 0 (fiber mode is deprecated/harmful for most workloads).
-	if lwp, err := s.MsRepo.FetchConfigValueInUse(instanceName, "lightweight pooling"); err == nil {
-		sev := "INFO"
-		if lwp != 0 {
-			sev = "CRITICAL"
-		}
-		details, _ := json.Marshal(map[string]any{"lightweight_pooling": lwp})
-		appendIfChanged(hot.PerformanceDebtFindingRow{
-			CaptureTimestamp:   now,
-			ServerInstanceName: instanceName,
-			DatabaseName:       "master",
-			Section:            "Engine Config",
-			FindingType:        "lightweight_pooling",
-			Severity:           sev,
-			Title:              "Lightweight pooling (fiber mode)",
-			ObjectName:         "sp_configure",
-			ObjectType:         "config",
-			FindingKey:         "config:lightweight_pooling",
-			Details:            details,
-			Recommendation:     "Disable (set to 0). Fiber mode is deprecated, causes instability, and Microsoft recommends against it.",
-			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'lightweight pooling', 0; RECONFIGURE;",
-		})
-	}
-
-	// Priority boost — should be 0 (can cause instability and deadlocks with OS).
-	if pb, err := s.MsRepo.FetchConfigValueInUse(instanceName, "priority boost"); err == nil {
-		sev := "INFO"
-		if pb != 0 {
-			sev = "CRITICAL"
-		}
-		details, _ := json.Marshal(map[string]any{"priority_boost": pb})
-		appendIfChanged(hot.PerformanceDebtFindingRow{
-			CaptureTimestamp:   now,
-			ServerInstanceName: instanceName,
-			DatabaseName:       "master",
-			Section:            "Engine Config",
-			FindingType:        "priority_boost",
-			Severity:           sev,
-			Title:              "Priority boost",
-			ObjectName:         "sp_configure",
-			ObjectType:         "config",
-			FindingKey:         "config:priority_boost",
-			Details:            details,
-			Recommendation:     "Disable (set to 0). Running SQL Server at high OS priority can cause system instability.",
-			FixScript:          "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'priority boost', 0; RECONFIGURE;",
-		})
-	}
-
-	if err := s.tsLogger.LogPerformanceDebtFindings(ctx, findings); err != nil {
-		log.Printf("[PerfDebtCollector] insert error instance=%s findings=%d err=%v", instanceName, len(findings), err)
-		return
-	}
-
-	// Retention/cleanup: keep only meaningful history.
-	keepPerKey := 10
-	if v := strings.TrimSpace(os.Getenv("PERFDEBT_KEEP_PER_KEY")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 200 {
-			keepPerKey = n
+		if len(findings) > 0 {
+			_ = s.tsLogger.LogPerformanceDebtFindings(ctx, serverID, findings)
 		}
 	}
-	retentionDays := 90
-	if v := strings.TrimSpace(os.Getenv("PERFDEBT_RETENTION_DAYS")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 7 && n <= 3650 {
-			retentionDays = n
+
+	// 2.5 Index Fragmentation
+	for _, dbName := range databases {
+		frags, err := s.MsRepo.FetchIndexFragmentation(ctx, instanceName, dbName, 10, 100, 50)
+		if err != nil {
+			slog.Error(fmt.Sprintf("[PerformanceDebt] ERROR FetchIndexFragmentation for %s/%s: %v", instanceName, dbName, err))
+			continue
+		}
+		var findings []hot.PerformanceDebtFindingRow
+		for _, fr := range frags {
+			isHeap := fr.IndexID == 0
+			// fragmentation > 30% → REBUILD (exclusive lock on Standard Edition); 10-30% → REORGANIZE (online)
+			severity := "WARNING"
+			action := "REORGANIZE"
+			if fr.FragPct > 30 {
+				severity = "CRITICAL"
+				action = "REBUILD"
+			}
+			var title, rec, fixScript string
+			if isHeap {
+				title = fmt.Sprintf("Fragmented Heap: %s.%s (%.1f%%)", fr.SchemaName, fr.TableName, fr.FragPct)
+				rec = fmt.Sprintf("Table %s.%s has no clustered index (heap) with %.1f%% forwarded-record fragmentation and %d pages. Consider adding a clustered index or rebuilding the heap.", fr.SchemaName, fr.TableName, fr.FragPct, fr.PageCount)
+				fixScript = fmt.Sprintf("-- Heaps require ALTER TABLE REBUILD, not ALTER INDEX REBUILD\n-- WITH (ONLINE = ON) requires Enterprise Edition; remove for Standard Edition\nALTER TABLE [%s].[%s] REBUILD;", fr.SchemaName, fr.TableName)
+			} else if fr.FragPct > 30 {
+				title = fmt.Sprintf("Fragmented Index: %s on %s.%s (%.1f%%)", fr.IndexName, fr.SchemaName, fr.TableName, fr.FragPct)
+				rec = fmt.Sprintf("Index %s on %s.%s has %.1f%% fragmentation (%d pages). REBUILD required — REORGANIZE is not sufficient at this level. Note: REBUILD takes an exclusive lock on Standard Edition.", fr.IndexName, fr.SchemaName, fr.TableName, fr.FragPct, fr.PageCount)
+				fixScript = fmt.Sprintf("-- WITH (ONLINE = ON) requires Enterprise Edition; remove for Standard Edition\nALTER INDEX [%s] ON [%s].[%s] REBUILD WITH (ONLINE = ON);", fr.IndexName, fr.SchemaName, fr.TableName)
+			} else {
+				title = fmt.Sprintf("Fragmented Index: %s on %s.%s (%.1f%%)", fr.IndexName, fr.SchemaName, fr.TableName, fr.FragPct)
+				rec = fmt.Sprintf("Index %s on %s.%s has %.1f%% fragmentation (%d pages). REORGANIZE is appropriate at this level (online, minimal locking).", fr.IndexName, fr.SchemaName, fr.TableName, fr.FragPct, fr.PageCount)
+				fixScript = fmt.Sprintf("ALTER INDEX [%s] ON [%s].[%s] REORGANIZE;", fr.IndexName, fr.SchemaName, fr.TableName)
+			}
+			details, _ := json.Marshal(map[string]interface{}{
+				"schema_name":    fr.SchemaName,
+				"table_name":     fr.TableName,
+				"index_name":     fr.IndexName,
+				"index_id":       fr.IndexID,
+				"frag_pct":       fr.FragPct,
+				"page_count":     fr.PageCount,
+				"action":         action,
+				"is_heap":        isHeap,
+				"recommendation": rec,
+			})
+			findingType := "index_fragmentation"
+			if isHeap {
+				findingType = "heap_fragmentation"
+			}
+			// Weight impact by both fragmentation level and physical size.
+			impactScore := fr.FragPct * float64(fr.PageCount) / 100.0
+			findings = append(findings, hot.PerformanceDebtFindingRow{
+				DatabaseName:   dbName,
+				Section:        "Index Health",
+				FindingType:    findingType,
+				Severity:       severity,
+				Title:          title,
+				ObjectName:     fmt.Sprintf("%s.%s.%s", fr.SchemaName, fr.TableName, fr.IndexName),
+				ObjectType:     "index",
+				FindingKey:     fmt.Sprintf("%s.%s.%s.%s:frag", dbName, fr.SchemaName, fr.TableName, fr.IndexName),
+				ImpactScore:    impactScore,
+				Details:        string(details),
+				Recommendation: rec,
+				FixScript:      fixScript,
+			})
+		}
+		if len(findings) > 0 {
+			_ = s.tsLogger.LogPerformanceDebtFindings(ctx, serverID, findings)
 		}
 	}
-	if err := s.tsLogger.CleanupPerformanceDebtFindings(ctx, instanceName, keepPerKey, time.Duration(retentionDays)*24*time.Hour); err != nil {
-		log.Printf("[PerfDebtCollector] retention cleanup failed instance=%s err=%v", instanceName, err)
+
+	// 3. Statistics Health
+	for _, dbName := range databases {
+		stale, err := s.MsRepo.FetchStaleStatistics(ctx, instanceName, dbName, 50)
+		if err != nil {
+			slog.Error(fmt.Sprintf("[PerformanceDebt] ERROR FetchStaleStatistics for %s/%s: %v", instanceName, dbName, err))
+			continue
+		}
+		var findings []hot.PerformanceDebtFindingRow
+		for _, st := range stale {
+			lastUpdated := "never"
+			if st.LastUpdated.Valid {
+				lastUpdated = st.LastUpdated.Time.Format("2006-01-02")
+			}
+			var title, rec, severity, findingType string
+			switch {
+			case st.NoRecompute:
+				findingType = "stats_no_recompute"
+				severity = "WARNING"
+				title = fmt.Sprintf("Statistics NO_RECOMPUTE: %s on %s", st.StatsName, st.TableName)
+				rec = fmt.Sprintf("Statistics %s on %s has NO_RECOMPUTE enabled. Auto-update will never fire for this object regardless of modification count. Verify this is intentional and that it is updated via a scheduled maintenance job.", st.StatsName, st.TableName)
+			case st.Rows > 0 && st.ModificationCounter > st.Rows:
+				findingType = "stale_statistics"
+				severity = "CRITICAL"
+				title = fmt.Sprintf("Critically Stale Statistics: %s on %s", st.StatsName, st.TableName)
+				rec = fmt.Sprintf("Statistics %s on %s has %d modifications exceeding its %d row count (last updated: %s). The optimizer is working with severely outdated distribution data.", st.StatsName, st.TableName, st.ModificationCounter, st.Rows, lastUpdated)
+			case !st.LastUpdated.Valid || st.LastUpdated.Time.Before(time.Now().AddDate(0, 0, -30)):
+				findingType = "stale_statistics"
+				severity = "WARNING"
+				title = fmt.Sprintf("Stale Statistics (>30d): %s on %s", st.StatsName, st.TableName)
+				rec = fmt.Sprintf("Statistics %s on %s was last updated %s. Small lookup tables with infrequent inserts can accumulate staleness silently.", st.StatsName, st.TableName, lastUpdated)
+			default:
+				findingType = "stale_statistics"
+				severity = "WARNING"
+				title = fmt.Sprintf("Stale Statistics: %s on %s", st.StatsName, st.TableName)
+				rec = fmt.Sprintf("Statistics %s on %s has %d modifications exceeding the SQL Server 2016+ dynamic threshold for %d rows (last updated: %s).", st.StatsName, st.TableName, st.ModificationCounter, st.Rows, lastUpdated)
+			}
+			details, _ := json.Marshal(map[string]interface{}{
+				"table_name":           st.TableName,
+				"stats_name":           st.StatsName,
+				"last_updated":         lastUpdated,
+				"rows":                 st.Rows,
+				"modification_counter": st.ModificationCounter,
+				"no_recompute":         st.NoRecompute,
+				"recommendation":       rec,
+			})
+			findings = append(findings, hot.PerformanceDebtFindingRow{
+				DatabaseName:   dbName,
+				Section:        "Statistics Health",
+				FindingType:    findingType,
+				Severity:       severity,
+				Title:          title,
+				ObjectName:     st.TableName + "." + st.StatsName,
+				ObjectType:     "statistics",
+				FindingKey:     fmt.Sprintf("%s.%s.%s", dbName, st.TableName, st.StatsName),
+				ImpactScore:    float64(st.ModificationCounter),
+				Details:        string(details),
+				Recommendation: rec,
+				FixScript:      fmt.Sprintf("UPDATE STATISTICS [%s] ([%s]) WITH FULLSCAN;", st.TableName, st.StatsName),
+			})
+		}
+		if len(findings) > 0 {
+			_ = s.tsLogger.LogPerformanceDebtFindings(ctx, serverID, findings)
+		}
 	}
 
-	log.Printf("[PerfDebtCollector] instance=%s findings_written=%d retention_keep_per_key=%d retention_days=%d", instanceName, len(findings), keepPerKey, retentionDays)
-}
+	// 4. Storage & Growth
+	for _, dbName := range databases {
+		files, err := s.MsRepo.FetchAutogrowthRisks(ctx, instanceName, dbName, 30)
+		if err != nil {
+			slog.Error(fmt.Sprintf("[PerformanceDebt] ERROR FetchAutogrowthRisks for %s/%s: %v", instanceName, dbName, err))
+			continue
+		}
+		vlfCount, _ := s.MsRepo.FetchVLFCount(ctx, instanceName, dbName)
 
-func bracket(s string) string {
-	s = strings.ReplaceAll(s, "]", "")
-	return "[" + s + "]"
+		var findings []hot.PerformanceDebtFindingRow
+		for _, f := range files {
+			// growthMB: only meaningful when is_percent_growth = false; growth is in 8KB pages.
+			growthMB := float64(f.Growth) * 8.0 / 1024.0
+
+			var severity, title, rec, fixScript string
+
+			switch {
+			case f.Growth == 0:
+				severity = "CRITICAL"
+				title = fmt.Sprintf("Autogrowth Disabled: %s", f.FileName)
+				rec = fmt.Sprintf("File %s in %s has autogrowth disabled. Without autogrowth the database will go offline when the file is full.", f.FileName, dbName)
+				fixScript = fmt.Sprintf("ALTER DATABASE [%s] MODIFY FILE (NAME = N'%s', FILEGROWTH = 512MB);", dbName, f.FileName)
+
+			case f.IsPercentGrowth && f.FileType == 0 && f.SizeMB > 100:
+				severity = "CRITICAL"
+				title = fmt.Sprintf("Percent Autogrowth on Data File: %s (%d%%)", f.FileName, f.Growth)
+				rec = fmt.Sprintf("Data file %s (%.0f MB) uses %.0f%% percent-based autogrowth. Each event grows the file by %.0f MB, causing unpredictable I/O stalls. Switch to a fixed increment.", f.FileName, f.SizeMB, float64(f.Growth), f.SizeMB*float64(f.Growth)/100.0)
+				fixScript = fmt.Sprintf("ALTER DATABASE [%s] MODIFY FILE (NAME = N'%s', FILEGROWTH = 512MB);", dbName, f.FileName)
+
+			case f.IsPercentGrowth && f.FileType == 1:
+				severity = "CRITICAL"
+				title = fmt.Sprintf("Percent Autogrowth on Log File: %s (%d%%)", f.FileName, f.Growth)
+				rec = fmt.Sprintf("Log file %s uses %d%% percent-based autogrowth. This creates excessive VLFs and unpredictable log-space stalls. Switch to a fixed increment.", f.FileName, f.Growth)
+				fixScript = fmt.Sprintf("ALTER DATABASE [%s] MODIFY FILE (NAME = N'%s', FILEGROWTH = 256MB);", dbName, f.FileName)
+
+			case !f.IsPercentGrowth && f.FileType == 0 && f.SizeMB > 1024 && growthMB < 64:
+				severity = "WARNING"
+				title = fmt.Sprintf("Small Fixed Autogrowth on Large Data File: %s (%.0f MB)", f.FileName, growthMB)
+				rec = fmt.Sprintf("Data file %s is %.0f MB but grows only %.0f MB per event. On a file this large, frequent growth events cause write stalls. Increase to at least 512 MB.", f.FileName, f.SizeMB, growthMB)
+				fixScript = fmt.Sprintf("ALTER DATABASE [%s] MODIFY FILE (NAME = N'%s', FILEGROWTH = 512MB);", dbName, f.FileName)
+
+			case !f.IsPercentGrowth && f.FileType == 1 && f.SizeMB > 256 && growthMB < 8:
+				severity = "WARNING"
+				title = fmt.Sprintf("Small Fixed Autogrowth on Log File: %s (%.0f MB)", f.FileName, growthMB)
+				rec = fmt.Sprintf("Log file %s is %.0f MB but grows only %.0f MB per event. Small log growth increments create excessive VLFs. Increase to at least 64 MB.", f.FileName, f.SizeMB, growthMB)
+				fixScript = fmt.Sprintf("ALTER DATABASE [%s] MODIFY FILE (NAME = N'%s', FILEGROWTH = 64MB);", dbName, f.FileName)
+
+			case !f.IsPercentGrowth && f.Growth == 128:
+				// 128 pages × 8 KB = 1 MB — the legacy SQL Server 2014 and earlier default
+				severity = "WARNING"
+				title = fmt.Sprintf("Legacy 1 MB Autogrowth: %s", f.FileName)
+				rec = fmt.Sprintf("File %s uses the legacy 1 MB autogrowth default from SQL Server 2014 and earlier. This causes excessive VLF fragmentation on busy systems.", f.FileName)
+				targetMB := "512MB"
+				if f.FileType == 1 {
+					targetMB = "64MB"
+				}
+				fixScript = fmt.Sprintf("ALTER DATABASE [%s] MODIFY FILE (NAME = N'%s', FILEGROWTH = %s);", dbName, f.FileName, targetMB)
+			}
+
+			if severity == "" {
+				continue
+			}
+
+			details, _ := json.Marshal(map[string]interface{}{
+				"file_name":         f.FileName,
+				"file_type":         f.FileType,
+				"size_mb":           f.SizeMB,
+				"growth":            f.Growth,
+				"growth_mb":         growthMB,
+				"is_percent_growth": f.IsPercentGrowth,
+				"recommendation":    rec,
+			})
+			findings = append(findings, hot.PerformanceDebtFindingRow{
+				DatabaseName:   dbName,
+				Section:        "Storage & Growth",
+				FindingType:    "autogrowth_risk",
+				Severity:       severity,
+				Title:          title,
+				ObjectName:     f.FileName,
+				ObjectType:     "database_file",
+				FindingKey:     fmt.Sprintf("%s.file.%s", dbName, f.FileName),
+				ImpactScore:    f.SizeMB,
+				Details:        string(details),
+				Recommendation: rec,
+				FixScript:      fixScript,
+			})
+		}
+
+		// VLF thresholds: <50 = OK (no finding), 50-500 = WARNING, >500 = CRITICAL
+		if vlfCount >= 50 {
+			severity := "WARNING"
+			if vlfCount > 500 {
+				severity = "CRITICAL"
+			}
+			rec := fmt.Sprintf("Database %s has %d VLFs. Excessive VLFs slow crash recovery, log backups, and database mirroring. Shrink the log file then expand with one large pre-allocated increment.", dbName, vlfCount)
+			details, _ := json.Marshal(map[string]interface{}{
+				"vlf_count":      vlfCount,
+				"recommendation": rec,
+			})
+			findings = append(findings, hot.PerformanceDebtFindingRow{
+				DatabaseName:   dbName,
+				Section:        "Storage & Growth",
+				FindingType:    "excessive_vlfs",
+				Severity:       severity,
+				Title:          fmt.Sprintf("Excessive VLFs: %d in %s", vlfCount, dbName),
+				ObjectName:     dbName + ".log",
+				ObjectType:     "log_file",
+				FindingKey:     fmt.Sprintf("%s.vlf_count", dbName),
+				ImpactScore:    float64(vlfCount),
+				Details:        string(details),
+				Recommendation: rec,
+				FixScript: fmt.Sprintf(
+					"-- Step 1: Check for active transactions, then shrink log\n-- Step 2: Expand with a single large allocation to reduce VLF count\nUSE [%s];\nDBCC SHRINKFILE (N'%s_log', 1);\nALTER DATABASE [%s] MODIFY FILE (NAME = N'%s_log', SIZE = 2048MB);",
+					dbName, dbName, dbName, dbName,
+				),
+			})
+		}
+		if len(findings) > 0 {
+			_ = s.tsLogger.LogPerformanceDebtFindings(ctx, serverID, findings)
+		}
+	}
+
+	// 5. Backup & Recovery
+	for _, dbName := range databases {
+		ageHours, err := s.MsRepo.FetchLastFullBackupAgeHours(ctx, instanceName, dbName)
+		if err != nil {
+			slog.Error(fmt.Sprintf("[PerformanceDebt] ERROR FetchLastFullBackupAgeHours for %s/%s: %v", instanceName, dbName, err))
+			continue
+		}
+		// Thresholds: >7 days → CRITICAL, >1 day → WARNING (industry standard)
+		severity := ""
+		if ageHours >= 999999 {
+			severity = "CRITICAL"
+		} else if ageHours > 168 { // 7 days
+			severity = "CRITICAL"
+		} else if ageHours > 24 { // 1 day
+			severity = "WARNING"
+		}
+		if severity != "" {
+			ageDesc := fmt.Sprintf("%.1f hours", ageHours)
+			if ageHours >= 999999 {
+				ageDesc = "never backed up"
+			}
+			rec := fmt.Sprintf("Database %s last full backup was %s ago. Full backups should run at least every 24 hours.", dbName, ageDesc)
+			details, _ := json.Marshal(map[string]interface{}{
+				"database_name":    dbName,
+				"backup_age_hours": ageHours,
+				"recommendation":   rec,
+			})
+			_ = s.tsLogger.LogPerformanceDebtFindings(ctx, serverID, []hot.PerformanceDebtFindingRow{{
+				DatabaseName:   dbName,
+				Section:        "Backup & Recovery",
+				FindingType:    "backup_age",
+				Severity:       severity,
+				Title:          fmt.Sprintf("Overdue Full Backup: %s (%s)", dbName, ageDesc),
+				ObjectName:     dbName,
+				ObjectType:     "database",
+				FindingKey:     fmt.Sprintf("%s.full_backup_age", dbName),
+				ImpactScore:    ageHours,
+				Details:        string(details),
+				Recommendation: rec,
+			}})
+		}
+
+		// Log backup check: only relevant for FULL and BULK_LOGGED recovery model databases.
+		recoveryModel, err := s.MsRepo.FetchDatabaseRecoveryModel(ctx, instanceName, dbName)
+		if err == nil && (recoveryModel == "FULL" || recoveryModel == "BULK_LOGGED") {
+			logAgeHours, logErr := s.MsRepo.FetchLastLogBackupAgeHours(ctx, instanceName, dbName)
+			if logErr == nil {
+				logSeverity := ""
+				if logAgeHours >= 999999 {
+					logSeverity = "CRITICAL" // no log backups ever → log space exhaustion risk
+				} else if logAgeHours > 4 {
+					logSeverity = "WARNING"
+				}
+				if logSeverity != "" {
+					logAgeDesc := fmt.Sprintf("%.1f hours", logAgeHours)
+					if logAgeHours >= 999999 {
+						logAgeDesc = "never backed up (log chain broken)"
+					}
+					logRec := fmt.Sprintf(
+						"Database %s (%s recovery) last log backup was %s ago. Without regular log backups the transaction log cannot be truncated, point-in-time recovery is unavailable, and log space exhaustion is a risk.",
+						dbName, recoveryModel, logAgeDesc,
+					)
+					logDetails, _ := json.Marshal(map[string]interface{}{
+						"database_name":        dbName,
+						"recovery_model":       recoveryModel,
+						"log_backup_age_hours": logAgeHours,
+						"recommendation":       logRec,
+					})
+					_ = s.tsLogger.LogPerformanceDebtFindings(ctx, serverID, []hot.PerformanceDebtFindingRow{{
+						DatabaseName:   dbName,
+						Section:        "Backup & Recovery",
+						FindingType:    "log_backup_age",
+						Severity:       logSeverity,
+						Title:          fmt.Sprintf("Overdue Log Backup: %s (%s)", dbName, logAgeDesc),
+						ObjectName:     dbName,
+						ObjectType:     "database",
+						FindingKey:     fmt.Sprintf("%s.log_backup_age", dbName),
+						ImpactScore:    logAgeHours,
+						Details:        string(logDetails),
+						Recommendation: logRec,
+					}})
+				}
+			}
+		}
+	}
+
+	// 6. SQL Agent (instance-level, not per-database)
+	{
+		var agentFindings []hot.PerformanceDebtFindingRow
+
+		failed, err := s.MsRepo.FetchFailedAgentJobs24h(ctx, instanceName, 20)
+		if err != nil {
+			slog.Error("[PerformanceDebt] ERROR FetchFailedAgentJobs24h", "target", instanceName, "err", err)
+		} else {
+			for _, job := range failed {
+				name, _ := job["job_name"].(string)
+				runDt, _ := job["run_dt"].(time.Time)
+				rec := fmt.Sprintf("SQL Agent job '%s' failed at %s. Investigate job history.", name, runDt.Format(time.RFC3339))
+				details, _ := json.Marshal(map[string]interface{}{
+					"job_name":       name,
+					"run_dt":         runDt.Format(time.RFC3339),
+					"recommendation": rec,
+				})
+				agentFindings = append(agentFindings, hot.PerformanceDebtFindingRow{
+					DatabaseName:   "msdb",
+					Section:        "SQL Agent",
+					FindingType:    "failed_job",
+					Severity:       "WARNING",
+					Title:          fmt.Sprintf("Failed Agent Job: %s", name),
+					ObjectName:     name,
+					ObjectType:     "agent_job",
+					FindingKey:     fmt.Sprintf("agent.failed.%s", name),
+					ImpactScore:    1,
+					Details:        string(details),
+					Recommendation: rec,
+				})
+			}
+		}
+
+		disabled, err := s.MsRepo.FetchDisabledAgentJobs(ctx, instanceName, 20)
+		if err != nil {
+			slog.Error("[PerformanceDebt] ERROR FetchDisabledAgentJobs", "target", instanceName, "err", err)
+		} else if len(disabled) > 0 {
+			rec := fmt.Sprintf("%d SQL Agent jobs are disabled. Review whether they should be re-enabled.", len(disabled))
+			details, _ := json.Marshal(map[string]interface{}{
+				"disabled_jobs":  disabled,
+				"count":          len(disabled),
+				"recommendation": rec,
+			})
+			agentFindings = append(agentFindings, hot.PerformanceDebtFindingRow{
+				DatabaseName:   "msdb",
+				Section:        "SQL Agent",
+				FindingType:    "disabled_jobs",
+				Severity:       "INFO",
+				Title:          fmt.Sprintf("%d Agent Jobs Disabled", len(disabled)),
+				ObjectName:     "SQL Agent",
+				ObjectType:     "agent_job",
+				FindingKey:     "agent.disabled_jobs",
+				ImpactScore:    float64(len(disabled)),
+				Details:        string(details),
+				Recommendation: rec,
+			})
+		}
+		if len(agentFindings) > 0 {
+			_ = s.tsLogger.LogPerformanceDebtFindings(ctx, serverID, agentFindings)
+		}
+	}
+
+	// 7. Engine Config (instance-level)
+	{
+		type configCheck struct {
+			name      string
+			findingFn func(val int64) (severity, title, rec string, impact float64, ok bool)
+		}
+		checks := []configCheck{
+			{
+				name: "optimize for ad hoc workloads",
+				findingFn: func(val int64) (string, string, string, float64, bool) {
+					if val == 1 {
+						return "", "", "", 0, false
+					}
+					return "WARNING",
+						"Engine Config: optimize for ad hoc workloads is OFF",
+						"Enable 'optimize for ad hoc workloads' to reduce plan cache bloat from single-use plans.",
+						10, true
+				},
+			},
+			{
+				name: "cost threshold for parallelism",
+				findingFn: func(val int64) (string, string, string, float64, bool) {
+					if val > 5 {
+						return "", "", "", 0, false
+					}
+					return "WARNING",
+						fmt.Sprintf("Engine Config: cost threshold for parallelism = %d (too low)", val),
+						"Cost threshold for parallelism of 5 is the old default. Raise to 25–50 to reduce unnecessary parallelism on OLTP workloads.",
+						float64(val), true
+				},
+			},
+			{
+				name: "max degree of parallelism",
+				findingFn: func(val int64) (string, string, string, float64, bool) {
+					if val != 0 {
+						return "", "", "", 0, false
+					}
+					return "INFO",
+						"Engine Config: MAXDOP = 0 (unlimited)",
+						"MAXDOP 0 allows queries to use all CPUs. Consider setting to half the logical CPU count on OLTP systems.",
+						float64(val), true
+				},
+			},
+			{
+				name: "max server memory (MB)",
+				findingFn: func(val int64) (string, string, string, float64, bool) {
+					if val < 2147483647 {
+						return "", "", "", 0, false
+					}
+					return "WARNING",
+						"Engine Config: max server memory is uncapped (2147483647 MB)",
+						"SQL Server max server memory is at default (unlimited). Set an explicit ceiling to leave OS memory headroom and prevent memory pressure.",
+						float64(val), true
+				},
+			},
+			{
+				name: "xp_cmdshell",
+				findingFn: func(val int64) (string, string, string, float64, bool) {
+					if val == 0 {
+						return "", "", "", 0, false
+					}
+					return "CRITICAL",
+						"Engine Config: xp_cmdshell is ENABLED",
+						"xp_cmdshell allows SQL Server to execute arbitrary OS commands. This is a significant security risk. Disable unless absolutely required and compensating controls are in place.",
+						float64(val), true
+				},
+			},
+			{
+				name: "remote admin connections",
+				findingFn: func(val int64) (string, string, string, float64, bool) {
+					if val == 1 {
+						return "", "", "", 0, false
+					}
+					return "INFO",
+						"Engine Config: remote admin connections (DAC) is disabled",
+						"Enabling the Dedicated Admin Connection (DAC) allows emergency remote access when the server is under extreme load and cannot accept regular connections.",
+						float64(val), true
+				},
+			},
+			{
+				name: "backup compression default",
+				findingFn: func(val int64) (string, string, string, float64, bool) {
+					if val == 1 {
+						return "", "", "", 0, false
+					}
+					return "INFO",
+						"Engine Config: backup compression default is OFF",
+						"Enabling backup compression by default reduces backup size and I/O duration. Enable unless storage constraints or compliance policies require uncompressed backups.",
+						float64(val), true
+				},
+			},
+		}
+
+		var configFindings []hot.PerformanceDebtFindingRow
+		for _, chk := range checks {
+			val, err := s.MsRepo.FetchConfigValueInUse(ctx, instanceName, chk.name)
+			if err != nil {
+				continue
+			}
+			severity, title, rec, impact, flagged := chk.findingFn(val)
+			if !flagged {
+				continue
+			}
+			details, _ := json.Marshal(map[string]interface{}{
+				"config_name":    chk.name,
+				"value_in_use":   val,
+				"recommendation": rec,
+			})
+			configFindings = append(configFindings, hot.PerformanceDebtFindingRow{
+				DatabaseName:   "master",
+				Section:        "Engine Config",
+				FindingType:    "config_risk",
+				Severity:       severity,
+				Title:          title,
+				ObjectName:     chk.name,
+				ObjectType:     "server_config",
+				FindingKey:     fmt.Sprintf("config.%s", strings.ReplaceAll(chk.name, " ", "_")),
+				ImpactScore:    impact,
+				Details:        string(details),
+				Recommendation: rec,
+				FixScript:      fmt.Sprintf("EXEC sp_configure '%s', <value>; RECONFIGURE;", chk.name),
+			})
+		}
+		if len(configFindings) > 0 {
+			_ = s.tsLogger.LogPerformanceDebtFindings(ctx, serverID, configFindings)
+		}
+	}
+
+	slog.Info("[PerformanceDebt] Analysis complete", "arg1", instanceName, "arg2", serverID)
 }

@@ -4,6 +4,6 @@
 -- Description: Inserts a snapshot of SQL Server dashboard metrics
 
 INSERT INTO sqlserver_metrics (
-    capture_timestamp, server_instance_name, avg_cpu_load, memory_usage,
+    capture_timestamp, server_id, avg_cpu_load, memory_usage,
     active_users, total_locks, deadlocks, data_disk_mb, log_disk_mb, free_disk_mb
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);

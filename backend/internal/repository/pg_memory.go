@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: PostgreSQL memory metrics collection repository.
+// Purpose: Repository methods for PostgreSQL memory intelligence.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -10,9 +10,6 @@ package repository
 import (
 	"context"
 	"fmt"
-	"log"
-	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -20,183 +17,137 @@ import (
 	"github.com/rsharma155/sql_optima/internal/models"
 )
 
-// CollectPgMemoryStats fetches PostgreSQL internal memory usage metrics.
-func (c *PgRepository) CollectPgMemoryStats(ctx context.Context, instanceName string) (*models.PgMemoryStatsSnapshot, error) {
-	db, ok := c.GetConn(instanceName)
-	if !ok || db == nil {
-		return nil, fmt.Errorf("connection not found for %s", instanceName)
-	}
-
-	snap := &models.PgMemoryStatsSnapshot{
-		Timestamp:    time.Now().UTC(),
-		InstanceName: instanceName,
-	}
-
-	// 1. Connections
-	connQuery := `
-			/* SQL_OPTIMA */ SELECT 
-			COUNT(*) FILTER (WHERE state = 'active')::bigint AS active_connections,
-			COUNT(*) FILTER (WHERE state = 'idle')::bigint   AS idle_connections,
-			COUNT(*) AS total_connections
-		FROM pg_stat_activity`
-	if err := db.QueryRowContext(ctx, connQuery).Scan(&snap.ActiveConnections, &snap.IdleConnections, &snap.TotalConnections); err != nil {
-		log.Printf("[POSTGRES] CollectPgMemoryStats connections error: %v", err)
-	}
-
-	// 2. Cache Stats & Temp Spill Stats
-	// Handle PostgreSQL version differences: temp_files/temp_bytes were added in PG 12,
-	// pg_stat_checkpointer (replacing buffers_checkpoint in pg_stat_bgwriter) in PG 17.
-	// SHOW returns text; current_setting()::integer avoids a scan-type mismatch.
-	var versionNum int
-	if err := db.QueryRowContext(ctx, "SELECT current_setting('server_version_num')::integer").Scan(&versionNum); err != nil {
-		log.Printf("[POSTGRES] CollectPgMemoryStats version check error: %v", err)
-		versionNum = 120000 // assume modern if check fails
-	}
-
-	dbQuery := `
-		/* SQL_OPTIMA */ SELECT  
-			COALESCE(SUM(blks_hit)::bigint, 0)  AS blks_hit,
-			COALESCE(SUM(blks_read)::bigint, 0) AS blks_read`
-	if versionNum >= 120000 {
-		dbQuery += `,
-			COALESCE(SUM(temp_files)::bigint, 0) AS temp_files,
-			COALESCE(SUM(temp_bytes)::bigint, 0) AS temp_bytes`
-	} else {
-		dbQuery += `, 0, 0`
-	}
-	dbQuery += ` FROM pg_stat_database`
-
-	if err := db.QueryRowContext(ctx, dbQuery).Scan(&snap.BlksHit, &snap.BlksRead, &snap.TempFiles, &snap.TempBytes); err != nil {
-		log.Printf("[POSTGRES] CollectPgMemoryStats database stats error: %v", err)
-	}
-
-	// 3. BGWriter — PG 17 moved checkpoint counters out of pg_stat_bgwriter.
-	var bgQuery string
-	if versionNum >= 170000 {
-		bgQuery = `/* SQL_OPTIMA */ SELECT
-			COALESCE((SELECT buffers_written FROM pg_stat_checkpointer), 0),
-			COALESCE(buffers_clean, 0),
-			0
-			FROM pg_stat_bgwriter`
-	} else {
-		bgQuery = `/* SQL_OPTIMA */ SELECT
-			COALESCE(buffers_checkpoint, 0)::bigint,
-			COALESCE(buffers_clean, 0)::bigint,
-			COALESCE(buffers_backend, 0)::bigint
-			FROM pg_stat_bgwriter`
-	}
-	if err := db.QueryRowContext(ctx, bgQuery).Scan(&snap.BuffersCheckpoint, &snap.BuffersClean, &snap.BuffersBackend); err != nil {
-		log.Printf("[POSTGRES] CollectPgMemoryStats bgwriter error: %v", err)
-	}
-
-	// 4. Postgres Process Memory (Linux only, co-located)
-	if runtime.GOOS == "linux" {
-		pgRaw := c.runBash("ps -eo rss,vsz,comm 2>/dev/null | grep postgres | awk '{rss+=$1; vsz+=$2} END {print rss \",\" vsz}'")
-		parts := strings.Split(pgRaw, ",")
-		if len(parts) == 2 {
-			rss, _ := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
-			vsz, _ := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
-			snap.PostgresRSSMB = rss / 1024 // KB to MB
-			snap.PostgresVSZMB = vsz / 1024
-		}
-	} else {
-		// Fallback/estimate for non-linux or non-colocated
-		var sharedBuffers int64
-		if err := db.QueryRowContext(ctx, "SELECT /* SQL_OPTIMA */   setting::bigint * 8 / 1024 FROM pg_settings WHERE name = 'shared_buffers'").Scan(&sharedBuffers); err != nil {
-			log.Printf("[POSTGRES] CollectPgMemoryStats shared_buffers scan error: %v", err)
-		}
-		snap.PostgresRSSMB = int64(float64(sharedBuffers) * 1.2) // very rough estimate
-		snap.PostgresVSZMB = int64(float64(sharedBuffers) * 2.5) // very rough estimate for VSZ
-	}
-
-	return snap, nil
+// CollectPgHostMemory is intentionally a no-op when the OS collector agent is not running.
+// Host memory data is written by the separate os_collector agent into monitor.pg_os_memory_samples.
+// Returning an error causes the service to skip writing zeros to host_memory_samples,
+// keeping the table clean. The frontend handles total_mem_mb==0 by showing "N/A".
+func (c *PgRepository) CollectPgHostMemory(_ string) (*models.PgHostMemorySnapshot, error) {
+	return nil, fmt.Errorf("host memory requires os_collector agent")
 }
 
-// CollectPgMemoryComponents fetches PostgreSQL memory configuration settings.
+func (c *PgRepository) CollectPgMemoryStats(ctx context.Context, instanceName string) (*models.PgMemoryStatsSnapshot, error) {
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+
+	db, ok := c.GetConn(instanceName)
+	if !ok {
+		return nil, fmt.Errorf("no connection")
+	}
+
+	serverID, _ := c.GetServerID(instanceName)
+
+	var snap models.PgMemoryStatsSnapshot
+	snap.ServerID = serverID
+	snap.Timestamp = time.Now().UTC()
+
+	// Exclude system databases to get accurate user-workload stats.
+	q := `SELECT /* SQL_OPTIMA */
+		COALESCE(sum(blks_hit), 0),
+		COALESCE(sum(blks_read), 0),
+		COALESCE(sum(temp_files), 0),
+		COALESCE(sum(temp_bytes), 0)
+	FROM pg_stat_database
+	WHERE datname NOT IN ('template0', 'template1', 'postgres')
+	  AND datname IS NOT NULL`
+	_ = db.QueryRowContext(ctx, q).Scan(&snap.BlksHit, &snap.BlksRead, &snap.TempFiles, &snap.TempBytes)
+
+	// BGWriter stats — shows checkpoint vs backend buffer write pressure.
+	q2 := `SELECT /* SQL_OPTIMA */
+		COALESCE(buffers_checkpoint, 0),
+		COALESCE(buffers_clean, 0),
+		COALESCE(buffers_backend, 0)
+	FROM pg_stat_bgwriter`
+	_ = db.QueryRowContext(ctx, q2).Scan(&snap.BuffersCheckpoint, &snap.BuffersClean, &snap.BuffersBackend)
+
+	// Connection counts from pg_stat_activity.
+	active, waiting, _ := c.FetchActiveWaitingSessions(ctx, instanceName)
+	idle, _, _ := c.FetchIdleSessions(ctx, instanceName)
+	snap.ActiveConnections = active
+	snap.IdleConnections = idle
+	snap.TotalConnections = active + idle + waiting
+
+	return &snap, nil
+}
+
 func (c *PgRepository) CollectPgMemoryComponents(ctx context.Context, instanceName string) (*models.PgMemoryComponentsSnapshot, error) {
 	db, ok := c.GetConn(instanceName)
-	if !ok || db == nil {
-		return nil, fmt.Errorf("connection not found for %s", instanceName)
+	if !ok {
+		return nil, fmt.Errorf("no connection")
 	}
 
-	snap := &models.PgMemoryComponentsSnapshot{
-		Timestamp:    time.Now().UTC(),
-		InstanceName: instanceName,
-	}
+	serverID, _ := c.GetServerID(instanceName)
 
-	query := `
-		SELECT  
-			(SELECT    setting::bigint * 8 / 1024 FROM pg_settings WHERE name = 'shared_buffers') AS shared_buffers_mb,
-			(SELECT    setting::bigint / 1024 FROM pg_settings WHERE name = 'work_mem') AS work_mem_mb,
-			(SELECT    setting::bigint / 1024 FROM pg_settings WHERE name = 'maintenance_work_mem') AS maintenance_work_mem_mb,
-			(SELECT    setting::bigint * 8 / 1024 FROM pg_settings WHERE name = 'wal_buffers') AS wal_buffers_mb,
-			(SELECT    setting::bigint * 8 / 1024 FROM pg_settings WHERE name = 'temp_buffers') AS temp_buffers_mb,
-			(SELECT    setting::int FROM pg_settings WHERE name = 'max_connections') AS max_connections`
+	var snap models.PgMemoryComponentsSnapshot
+	snap.ServerID = serverID
+	snap.Timestamp = time.Now().UTC()
 
-	err := db.QueryRowContext(ctx, query).Scan(
-		&snap.SharedBuffersMB, &snap.WorkMemMB, &snap.MaintenanceWorkMemMB, &snap.WalBuffersMB, &snap.TempBuffersMB, &snap.MaxConnections,
-	)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+
+	// Fetch name, setting (numeric value), and unit so we can convert to MB accurately.
+	// PostgreSQL unit examples: "8kB" (shared_buffers), "kB" (work_mem), "MB", "GB".
+	rows, err := db.QueryContext(ctx, `SELECT /* SQL_OPTIMA */
+		name, setting, COALESCE(unit, '')
+	FROM pg_settings
+	WHERE name IN (
+		'shared_buffers', 'work_mem', 'maintenance_work_mem',
+		'wal_buffers', 'temp_buffers', 'effective_cache_size', 'max_connections'
+	)`)
 	if err != nil {
-		return nil, err
+		return &snap, nil
 	}
+	defer rows.Close()
 
-	return snap, nil
-}
-
-// CollectPgHostMemory fetches OS-level memory metrics (Linux only).
-func (c *PgRepository) CollectPgHostMemory(instanceName string) (*models.PgHostMemorySnapshot, error) {
-	snap := &models.PgHostMemorySnapshot{
-		Timestamp:    time.Now().UTC(),
-		InstanceName: instanceName,
-		ServerID:     instanceName,
-	}
-
-	if runtime.GOOS != "linux" {
-		// Mock data for development on Darwin/Windows
-		snap.TotalMemoryMB = 16384
-		snap.UsedMemoryMB = 8192
-		snap.FreeMemoryMB = 4096
-		snap.CachedMemoryMB = 4096
-		return snap, nil
-	}
-
-	// 1. Memory Info from /proc/meminfo
-	memInfo := c.runBash("cat /proc/meminfo")
-	snap.TotalMemoryMB = c.parseMemInfo(memInfo, "MemTotal:") / 1024
-	snap.FreeMemoryMB = c.parseMemInfo(memInfo, "MemFree:") / 1024
-	snap.CachedMemoryMB = c.parseMemInfo(memInfo, "Cached:") / 1024
-	snap.BufferedMemoryMB = c.parseMemInfo(memInfo, "Buffers:") / 1024
-	snap.SwapTotalMB = c.parseMemInfo(memInfo, "SwapTotal:") / 1024
-	snap.SwapUsedMB = snap.SwapTotalMB - (c.parseMemInfo(memInfo, "SwapFree:") / 1024)
-
-	snap.UsedMemoryMB = snap.TotalMemoryMB - snap.FreeMemoryMB - snap.CachedMemoryMB - snap.BufferedMemoryMB
-
-	// 2. Page Faults from /proc/vmstat
-	vmStat := c.runBash("cat /proc/vmstat")
-	snap.PageFaults = c.parseMemInfo(vmStat, "pgfault")
-	snap.MajorPageFaults = c.parseMemInfo(vmStat, "pgmajfault")
-
-	return snap, nil
-}
-
-func (c *PgRepository) runBash(script string) string {
-	out, err := exec.Command("bash", "-c", script).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-func (c *PgRepository) parseMemInfo(content, key string) int64 {
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, key) {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				val, _ := strconv.ParseInt(fields[1], 10, 64)
-				return val
-			}
+	for rows.Next() {
+		var name, setting, unit string
+		if err := rows.Scan(&name, &setting, &unit); err != nil {
+			continue
+		}
+		switch name {
+		case "shared_buffers":
+			snap.SharedBuffersMB = pgSettingToMB(setting, unit)
+		case "work_mem":
+			snap.WorkMemMB = pgSettingToMB(setting, unit)
+		case "maintenance_work_mem":
+			snap.MaintenanceWorkMemMB = pgSettingToMB(setting, unit)
+		case "wal_buffers":
+			snap.WalBuffersMB = pgSettingToMB(setting, unit)
+		case "temp_buffers":
+			snap.TempBuffersMB = pgSettingToMB(setting, unit)
+		case "effective_cache_size":
+			snap.EffectiveCacheSizeMB = pgSettingToMB(setting, unit)
+		case "max_connections":
+			v, _ := strconv.Atoi(setting)
+			snap.MaxConnections = v
 		}
 	}
-	return 0
+
+	return &snap, nil
+}
+
+// pgSettingToMB converts a pg_settings value + unit pair to megabytes.
+// PostgreSQL reports memory GUC values as an integer multiplied by the unit:
+//   - "8kB"  → 8-kilobyte pages (shared_buffers, wal_buffers, temp_buffers, effective_cache_size)
+//   - "kB"   → kilobytes (work_mem, maintenance_work_mem)
+//   - "MB"   → megabytes
+//   - "GB"   → gigabytes
+func pgSettingToMB(setting, unit string) int64 {
+	v, err := strconv.ParseFloat(setting, 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	switch strings.ToUpper(unit) {
+	case "8KB":
+		return int64(v * 8 / 1024) // 8kB pages → MB
+	case "KB":
+		return int64(v / 1024) // kB → MB
+	case "B":
+		return int64(v / 1048576) // bytes → MB
+	case "MB":
+		return int64(v)
+	case "GB":
+		return int64(v * 1024)
+	default:
+		return 0
+	}
 }

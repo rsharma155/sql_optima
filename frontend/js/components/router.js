@@ -13,6 +13,48 @@ window.routerOutlet = document.getElementById('router-outlet');
 if (!window.routerOutlet) {
     console.error("router-outlet element not found!");
 }
+
+// ── Interval & Fetch Registry ──────────────────────────────────────────────
+// All page-level polling intervals must be registered here so they are
+// automatically cleared on every navigation.
+window._registeredIntervals = new Set();
+window._currentPageAbortController = new AbortController();
+
+/**
+ * Register a polling interval that will be automatically cleared on navigation.
+ * Drop-in replacement for setInterval().
+ */
+window.registerInterval = function(fn, ms) {
+    const id = setInterval(fn, ms);
+    window._registeredIntervals.add(id);
+    return id;
+};
+
+/**
+ * Get an AbortSignal that will be triggered on next navigation.
+ * Use this for all fetch/api calls in page modules.
+ */
+window.getPageSignal = function() {
+    return window._currentPageAbortController.signal;
+};
+
+/**
+ * Clear all registered intervals and abort pending fetches.
+ * Called automatically on every navigation.
+ */
+window.clearAllIntervals = function() {
+    // Abort any in-flight fetch calls from the previous page
+    if (window._currentPageAbortController) {
+        window._currentPageAbortController.abort();
+    }
+    window._currentPageAbortController = new AbortController();
+
+    // Clear all intervals
+    window._registeredIntervals.forEach(id => clearInterval(id));
+    window._registeredIntervals.clear();
+};
+// ─────────────────────────────────────────────────────────────────────────────
+
 window.getCSSVar = function(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); };
 window.escapeHtml = function(unsafe) {
     if (unsafe === null || unsafe === undefined) return '';
@@ -37,6 +79,9 @@ if (!window.__sidebarNavDelegateBound) {
 
 window.appNavigate = function(route, skipHistory = false) {
     appDebug('Navigating to:', route, 'instance idx:', window.appState.currentInstanceIdx);
+
+    // Clear all registered polling intervals and abort pending fetches from the previous page
+    window.clearAllIntervals();
 
     if (typeof route !== 'string' || route.length === 0 || route.length > 96 || !/^[a-z0-9-]+$/i.test(route)) {
         console.error('[Router] Invalid or unsafe route id:', route);
@@ -198,6 +243,33 @@ window.appNavigate = function(route, skipHistory = false) {
     }
     window.currentCharts = {};
 
+    // Helper for lazy-loaded views to prevent infinite loops and provide unified error handling
+    function loadLazyView(viewFnName, routeId, displayName) {
+        let attempts = 0;
+        const tryLoad = () => {
+            attempts++;
+            if (typeof window[viewFnName] === 'function') {
+                try {
+                    window[viewFnName]();
+                } catch(e) {
+                    console.error(`[Router] Error in ${viewFnName}:`, e);
+                    window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-danger">Error loading ${displayName}</h3><p>${window.escapeHtml(String(e.message || e))}</p></div>`;
+                }
+            } else if (attempts < 15) {
+                window.routerOutlet.innerHTML = `<div class="page-view active"><h3>Loading ${displayName}…</h3></div>`;
+                setTimeout(tryLoad, 200);
+            } else {
+                window.routerOutlet.innerHTML = `
+                    <div class="page-view active">
+                        <h3 class="text-warning">${displayName} unavailable</h3>
+                        <p>The dashboard script failed to load. Please try refreshing the page.</p>
+                        <button class="btn btn-primary" onclick="window.location.reload()">Refresh Page</button>
+                    </div>`;
+            }
+        };
+        tryLoad();
+    }
+
     switch(route) {
         case 'global': 
             if (window.GlobalEstateView) window.GlobalEstateView(); 
@@ -223,55 +295,19 @@ window.appNavigate = function(route, skipHistory = false) {
             window.appNavigate('sqlserver-health-v2');
             break;
         case 'sqlserver-health-v2':
-            if (window.SqlServerHealthV2View) {
-                window.SqlServerHealthV2View();
-            } else {
-                setTimeout(() => window.appNavigate('sqlserver-health-v2'), 200);
-            }
+            loadLazyView('SqlServerHealthV2View', 'sqlserver-health-v2', 'Health Dashboard');
+            break;
+        case 'sqlserver-waits':
+            loadLazyView('WaitStatsV2View', 'sqlserver-waits', 'Wait Stats');
             break;
         case 'drilldown-cpu': window.CpuDrilldown(); break;
         case 'drilldown-memory': if (window.MemoryDrilldown) window.MemoryDrilldown(); break;
         case 'sqlserver-cpu-dashboard': window.SqlServerCpuDashboardView(); break;
         case 'sqlserver-workload':
-            if (window.SqlServerWorkloadDashboardView) {
-                window.SqlServerWorkloadDashboardView();
-            } else {
-                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Workload Analytics...</h3></div>';
-                setTimeout(() => window.appNavigate('sqlserver-workload'), 200);
-            }
+            loadLazyView('SqlServerWorkloadDashboardView', 'sqlserver-workload', 'Workload Analytics');
             break;
         case 'instance-health': 
-            appDebug('[Router] instance-health route triggered');
-            appDebug('[Router] Checking for InstanceHealthDashboardView...');
-            
-            let attempts = 0;
-            function tryLoadHealthDashboard() {
-                attempts++;
-                appDebug('[Router] Attempt', attempts, '- InstanceHealthDashboardView type:', typeof window.InstanceHealthDashboardView);
-                
-                if (typeof window.InstanceHealthDashboardView === 'function') {
-                    appDebug('[Router] Found function, calling it');
-                    try {
-                        window.InstanceHealthDashboardView();
-                    } catch(e) {
-                        appDebug('[Router] Error:', e);
-                        window.routerOutlet.innerHTML = `<div class="page-view active"><h3 class="text-danger">Error: ${window.escapeHtml(String(e.message || e))}</h3></div>`;
-                    }
-                } else if (attempts < 20) {
-                    appDebug('[Router] Not found, waiting 100ms...');
-                    setTimeout(tryLoadHealthDashboard, 100);
-                } else {
-                    appDebug('[Router] Giving up, checking window keys...');
-                    const keys = Object.keys(window).filter(k => k.toLowerCase().includes('instance') || k.toLowerCase().includes('health'));
-                    appDebug('[Router] Related keys:', keys);
-                    window.routerOutlet.innerHTML = `<div class="page-view active">
-                        <h3 class="text-warning">DBA War Room unavailable</h3>
-                        <p>Script failed to load. Please check console.</p>
-                        <button data-action="reload" class="btn btn-primary">Refresh Page</button>
-                    </div>`;
-                }
-            }
-            tryLoadHealthDashboard();
+            loadLazyView('InstanceHealthDashboardView', 'instance-health', 'DBA War Room');
             break;
         case 'drilldown-query': if(window.sqlserver_QueryDrilldown) window.sqlserver_QueryDrilldown(); break;
         case 'drilldown-top-queries': if(window.sqlserver_TopQueriesDrilldown) window.sqlserver_TopQueriesDrilldown(); break;
@@ -283,7 +319,9 @@ window.appNavigate = function(route, skipHistory = false) {
         // "Deadlock graph" page: route to the functional dashboard implementation.
         case 'drilldown-deadlock': if(window.sqlserver_DeadlockDashboard) window.sqlserver_DeadlockDashboard(); break;
         case 'drilldown-bottlenecks': window.HistoricalBottlenecksView(); break;
-        case 'drilldown-ha': window.HADashboardView(); break;
+        case 'drilldown-ha':
+            loadLazyView('HADashboardView', 'drilldown-ha', 'HA & Replication');
+            break;
         case 'drilldown-pg-enterprise': window.PgEnterpriseDashboardView(); break;
         case 'enterprise-metrics': 
             const emInstance = window.appState.config?.instances?.[window.appState.currentInstanceIdx];
@@ -294,62 +332,30 @@ window.appNavigate = function(route, skipHistory = false) {
                 </div>`;
                 return;
             }
-            const waitForEM = () => {
-                if (window.EnterpriseMetricsView) {
-                    window.EnterpriseMetricsView(); 
-                } else {
-                    setTimeout(waitForEM, 100);
-                }
-            };
-            waitForEM();
+            loadLazyView('EnterpriseMetricsView', 'enterprise-metrics', 'Enterprise Metrics');
             break;
         case 'performance-debt':
-            if (window.sqlserver_PerformanceDebtDashboard) {
-                window.sqlserver_PerformanceDebtDashboard();
-            } else {
-                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Performance Debt…</h3></div>';
-                setTimeout(() => window.appNavigate('performance-debt'), 200);
-            }
+            loadLazyView('sqlserver_PerformanceDebtDashboard', 'performance-debt', 'Performance Debt');
+            break;
+        case 'sqlserver-intelligence-report':
+            loadLazyView('SqlServerIntelligenceReportView', 'sqlserver-intelligence-report', 'Intelligence Report');
             break;
         case 'query-analysis':
-            if (window.sqlserver_QueryAnalysisDashboard) {
-                window.sqlserver_QueryAnalysisDashboard();
-            } else {
-                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Query Analysis…</h3></div>';
-                setTimeout(() => window.appNavigate('query-analysis'), 200);
-            }
+            loadLazyView('sqlserver_QueryAnalysisDashboard', 'query-analysis', 'Query Analysis');
             break;
         case 'sqlserver-plan-analyzer':
-            if (window.SqlServerPlanAnalyzerView) {
-                window.SqlServerPlanAnalyzerView();
-            } else {
-                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Plan Analyzer…</h3></div>';
-                setTimeout(() => window.appNavigate('sqlserver-plan-analyzer'), 200);
-            }
+            loadLazyView('SqlServerPlanAnalyzerView', 'sqlserver-plan-analyzer', 'Plan Analyzer');
             break;
         case 'watched-queries':
-            if (window.sqlserver_WatchedQueryAnalyzer) {
-                window.sqlserver_WatchedQueryAnalyzer();
-            } else {
-                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Watched Queries…</h3></div>';
-                setTimeout(() => window.appNavigate('watched-queries'), 200);
-            }
+            loadLazyView('sqlserver_WatchedQueryAnalyzer', 'watched-queries', 'Watched Queries');
             break;
         case 'storage-index-health': {
             const sihInst = window.appState.config?.instances?.[window.appState.currentInstanceIdx];
             const runPg = () => {
-                if (typeof window.PgStorageIndexHealthView === 'function') window.PgStorageIndexHealthView();
-                else {
-                    window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Index & Table Health…</h3></div>';
-                    setTimeout(() => window.appNavigate('storage-index-health'), 200);
-                }
+                loadLazyView('PgStorageIndexHealthView', 'storage-index-health', 'Index & Table Health');
             };
             const runMs = () => {
-                if (typeof window.SqlServerStorageIndexHealthView === 'function') window.SqlServerStorageIndexHealthView();
-                else {
-                    window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Storage & Index Health…</h3></div>';
-                    setTimeout(() => window.appNavigate('storage-index-health'), 200);
-                }
+                loadLazyView('SqlServerStorageIndexHealthView', 'storage-index-health', 'Storage & Index Health');
             };
             if (sihInst && String(sihInst.type || '').toLowerCase() === 'postgres') runPg();
             else runMs();
@@ -366,31 +372,18 @@ window.appNavigate = function(route, skipHistory = false) {
             break;
         case 'settings': window.SettingsView(); break;
         case 'best-practices':
-            if (typeof window.SqlserverBestPracticesView === 'function') {
-                window.SqlserverBestPracticesView();
-            } else {
-                appDebug('SqlserverBestPracticesView not loaded yet');
-                window.routerOutlet.innerHTML = '<div class="alert alert-warning">Loading Best Practices...</div>';
-                setTimeout(() => window.appNavigate('best-practices'), 500);
-            }
-            break;        case 'sqlserver-locks':
-            if (window.sqlserver_LocksDashboard) {
-                window.sqlserver_LocksDashboard();
-            } else {
-                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Locks & Blocking...</h3></div>';
-                setTimeout(() => window.appNavigate('sqlserver-locks'), 200);
-            }
+            loadLazyView('SqlserverBestPracticesView', 'best-practices', 'Best Practices');
+            break;
+        case 'sqlserver-locks':
+            loadLazyView('sqlserver_LocksDashboard', 'sqlserver-locks', 'Locks & Blocking');
             break;
         case 'sqlserver-locks-drilldown':
             if (window.sqlserver_LocksDrilldownDetailed) {
                 window.sqlserver_LocksDrilldownDetailed(window.appState.routeParams);
             } else {
-                window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Deep Dive...</h3></div>';
-                setTimeout(() => window.appNavigate('sqlserver-locks-drilldown'), 200);
+                loadLazyView('sqlserver_LocksDrilldownDetailed', 'sqlserver-locks-drilldown', 'Deep Dive');
             }
             break;
-        case 'live-diagnostics': window.LiveDiagnosticsView(); break;
-        
         // Postgres
         case 'pg-dashboard': {
             const pgInst = window.appState.config?.instances?.[window.appState.currentInstanceIdx];
@@ -425,12 +418,7 @@ window.appNavigate = function(route, skipHistory = false) {
         case 'pg-cnpg': window.CNPGClusterTopologyView(); break;
         case 'pg-stat-statements': if (typeof window.PgStatStatementsView === 'function') window.PgStatStatementsView(); break;
         case 'pg-best-practices':
-            if (typeof window.PgBestPracticesView === 'function') {
-                window.PgBestPracticesView();
-            } else {
-                window.routerOutlet.innerHTML = '<div class="alert alert-warning">Loading PostgreSQL Best Practices…</div>';
-                setTimeout(() => window.appNavigate('pg-best-practices'), 500);
-            }
+            loadLazyView('PgBestPracticesView', 'pg-best-practices', 'PostgreSQL Best Practices');
             break;
         // Dynamic dashboard removed from sidebar; keep route for backward links.
         case 'dynamic-dashboard': window.DynamicDashboardView(); break;
@@ -468,11 +456,12 @@ window.router = {
         }
         
         const sorted = [...window.appState.config.instances].map((inst, i) => ({inst, i})).sort((a,b) => a.inst.name.localeCompare(b.inst.name));
-        
+
         sorted.forEach(({inst, i}) => {
             if (inst && inst.name && String(inst.name) !== 'undefined') {
                 const opt = document.createElement('option');
-                opt.value = i; opt.textContent = `${inst.name} (${inst.type || 'unknown'})`;
+                opt.value = i;
+                opt.textContent = inst.name;
                 sel.appendChild(opt);
             }
         });
@@ -497,10 +486,11 @@ window.router = {
         }
 
         const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+        const instType = String(inst.type || '').toLowerCase();
         dbSel.innerHTML = '<option value="all">-- Loading Databases --</option>';
 
         // Fetch databases from server if postgres
-        if (inst.type === 'postgres') {
+        if (instType === 'postgres') {
             window.apiClient.authenticatedFetch(`/api/postgres/databases?instance=${encodeURIComponent(inst.name)}`)
                 .then(response => {
                     if (!response.ok) {
@@ -545,7 +535,7 @@ window.router = {
                     window.appState.currentDatabase = 'all';
                 });
         } else {
-            // For SQLSERVER, use static list
+            // For SQL Server / Others, use static list from config
             const currentDb = window.appState.currentDatabase;
             dbSel.innerHTML = '<option value="all">-- All Databases --</option>';
             let dbExists = false;
@@ -571,10 +561,10 @@ window.router = {
             }
         }
         
-        if(inst.type==='postgres') { 
+        if (instType === 'postgres') { 
             brand.className='fa-solid fa-database xl-icon logo-icon text-accent'; 
             sidebarNav.innerHTML = `
-                <li data-route="pg-dashboard" id="nav-pg-dashboard"><i class="fa-solid fa-gauge-high"></i> Postgres Control Center</li>
+                <li data-route="pg-dashboard" id="nav-pg-dashboard"><i class="fa-solid fa-gauge-high"></i> Control Center</li>
                 <li data-route="drilldown-pg-enterprise"><i class="fa-solid fa-chart-line"></i> Enterprise Monitor</li>
                 <li data-route="pg-cpu" class="sub-nav"><i class="fa-solid fa-microchip"></i> CPU Usage</li>
                 <li data-route="pg-memory" class="sub-nav"><i class="fa-solid fa-memory"></i> Memory Usage</li>
@@ -583,7 +573,7 @@ window.router = {
                 <li data-route="pg-queries"><i class="fa-solid fa-bolt"></i> Query Performance</li>
                 <li data-route="pg-explain"><i class="fa-solid fa-diagram-project"></i> EXPLAIN Analyzer</li>
                 <li data-route="pg-storage"><i class="fa-solid fa-hard-drive"></i> Storage & Vacuum</li>
-                <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Postgres Index and Table Health</li>
+                <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Index and Table</li>
                 <li data-route="pg-replication" id="nav-pg-replication" style="display:none;"><i class="fa-solid fa-clone"></i> Replication & HA</li>
                 <li data-route="pg-backups"><i class="fa-solid fa-shield-heart"></i> Backup & DR</li>
                 <li data-route="pg-security"><i class="fa-solid fa-user-lock"></i> Security Monitor</li>
@@ -592,17 +582,19 @@ window.router = {
                 ${adminLi}
             `;
         } else { 
+            // Default to SQL Server sidebar for anything else
             brand.className='fa-brands fa-microsoft xl-icon logo-icon text-accent'; 
             sidebarNav.innerHTML = `
                 <li data-route="sqlserver-health-v2" id="nav-dashboard"><i class="fa-solid fa-gauge-high"></i> Instance Dashboard</li>
                 <li data-route="sqlserver-workload"><i class="fa-solid fa-chart-area"></i> Workload Analytics</li>
+                <li data-route="sqlserver-waits"><i class="fa-solid fa-clock-rotate-left"></i> Wait Statistics</li>
                 <li data-route="drilldown-memory"><i class="fa-solid fa-memory"></i> Memory Analyzer</li>
-                <li data-route="live-diagnostics"><i class="fa-solid fa-bolt text-warning"></i> Real-Time Diagnostics</li>
                 <li data-route="sqlserver-locks"><i class="fa-solid fa-link-slash"></i> Locks & Blocking</li>
                 <li data-route="drilldown-ha" style="display:none;"><i class="fa-solid fa-server"></i> HA & Replication</li>
                 <li data-route="enterprise-metrics"><i class="fa-solid fa-chart-line"></i> Enterprise Metrics</li>
-                <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> SQL Server Index and Table Health</li>
+                <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Index and Table</li>
                 <li data-route="performance-debt"><i class="fa-solid fa-screwdriver-wrench"></i> Performance Debt</li>
+                <li data-route="sqlserver-intelligence-report"><i class="fa-solid fa-brain"></i> Intelligence Report</li>
                 <li data-route="query-analysis"><i class="fa-solid fa-magnifying-glass-chart"></i> Query Analysis</li>
                 <li data-route="sqlserver-plan-analyzer"><i class="fa-solid fa-diagram-project"></i> Plan Analyzer</li>
                 <li data-route="watched-queries"><i class="fa-solid fa-binoculars"></i> Watched Queries</li>
@@ -624,98 +616,92 @@ window.router = {
             }
         });
 
-        // Dynamic sidebar link visibility (Replication/HA)
+        // Dynamic sidebar link visibility (Replication/HA).
+        // On instance selection always use instance-level detection (no database param)
+        // so the link appears if the instance has any HA or replication regardless of
+        // which database happens to be selected first.
         if (window.appState.currentInstanceIdx !== -1 && window.appState.config) {
             const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
-            if (inst && inst.type === 'postgres') {
-                const checkRepl = async () => {
-                    try {
-                        const r = await window.apiClient.authenticatedFetch(`/api/postgres/replication?instance=${encodeURIComponent(inst.name)}`);
-                        if (r.ok) {
-                            const d = await r.json();
-                            // stats wrapper check
-                            const s = d.stats || {};
-                            const hasRepl = s.is_primary === false || (s.standbys && s.standbys.length > 0);
-                            const li = document.querySelector('li[data-route="pg-replication"]');
-                            if (li) li.style.display = hasRepl ? 'block' : 'none';
-                        }
-                    } catch(e) {
-                        console.warn('[Router] Replication check failed', e);
-                    }
-                };
-                checkRepl();
-            } else if (inst && inst.type === 'sqlserver') {
-                const checkSQLHA = async () => {
-                    try {
-                        const [agR, lsR, replR] = await Promise.all([
-                            window.apiClient.authenticatedFetch(`/api/sqlserver/ag-health?instance=${encodeURIComponent(inst.name)}`),
-                            window.apiClient.authenticatedFetch(`/api/sqlserver/log-shipping?instance=${encodeURIComponent(inst.name)}`),
-                            window.apiClient.authenticatedFetch(`/api/sqlserver/replication-status?instance=${encodeURIComponent(inst.name)}`)
-                        ]);
-                        let hasHA = false;
-                        if (agR.ok) {
-                            const d = await agR.json();
-                            if (d.hadr_enabled || (d.ag_health && d.ag_health.length > 0)) hasHA = true;
-                        }
-                        if (!hasHA && lsR.ok) {
-                            const d = await lsR.json();
-                            if (d.log_shipping_enabled || (d.log_shipping && d.log_shipping.length > 0)) hasHA = true;
-                        }
-                        if (!hasHA && replR.ok) {
-                            const d = await replR.json();
-                            if (d.replication && d.replication.length > 0) hasHA = true;
-                        }
-                        const li = document.querySelector('li[data-route="drilldown-ha"]');
-                        if (li) li.style.display = hasHA ? 'block' : 'none';
-                    } catch(e) {
-                        console.warn('[Router] SQL HA check failed', e);
-                    }
-                };
-                checkSQLHA();
-            }
+            _refreshHALinkVisibility(inst, '');
         }
     }
 };
+
+// _refreshHALinkVisibility shows or hides the HA/Replication sidebar link based on feature detection.
+// For SQL Server, uses instance-level detection so the link remains visible even if 
+// a non-HA database (like master) is currently selected.
+// Safe to call any time the instance or database selection changes.
+async function _refreshHALinkVisibility(inst, database) {
+    if (!inst) return;
+    try {
+        const type = String(inst.type || '').toLowerCase();
+        if (type === 'postgres') {
+            const r = await window.apiClient.authenticatedFetch(
+                `/api/postgres/replication?instance=${encodeURIComponent(inst.name)}`
+            );
+            if (r.ok) {
+                const d = await r.json();
+                const s = d.stats || {};
+                const hasRepl = s.is_primary === false || (Array.isArray(s.standbys) && s.standbys.length > 0);
+                const li = document.querySelector('li[data-route="pg-replication"]');
+                if (li) li.style.display = hasRepl ? 'block' : 'none';
+            }
+        } else if (type === 'sqlserver') {
+            // Sidebar visibility is instance-wide. We don't pass the database param here
+            // because the HA/Replication dashboard covers the entire instance. This
+            // prevents the link from disappearing when a non-HA database (like master) is selected.
+            const r = await window.apiClient.authenticatedFetch(
+                `/api/sqlserver/ha/feature-status?instance=${encodeURIComponent(inst.name)}`
+            );
+            if (r.ok) {
+                const d = await r.json();
+                const hasHA = d.ha_enabled === true || d.replication_enabled === true;
+                const li = document.querySelector('li[data-route="drilldown-ha"]');
+                if (li) li.style.display = hasHA ? 'block' : 'none';
+            }
+        }
+    } catch (e) {
+        console.warn('[Router] HA/Repl link visibility check failed', e);
+    }
+}
 
 // Event Listeners strictly mounting globally mapped nodes
 document.getElementById('instance-select').addEventListener('change', (e) => {
     let idx = parseInt(e.target.value);
     if (isNaN(idx)) idx = -1;
     window.appState.currentInstanceIdx = idx;
-    
+
     const inst = window.appState.config && window.appState.config.instances ? window.appState.config.instances[idx] : null;
     if (!inst) {
         window.appState.currentInstanceIdx = -1;
         window.appNavigate('global');
         return;
     }
-    
+
     // Set current instance name for modules that rely on window.state or similar
     if (window.state) window.state.currentInstance = inst.name;
-    
+
     window.router.populateDatabaseDropdown();
-    
-    // Rest of logic
-    if(window.appState.activeViewId === 'global') {
-        window.appNavigate(inst.type === 'postgres' ? 'pg-dashboard' : 'sqlserver-health-v2');
-    } else {
-        const isCurrentRoutePG = window.appState.activeViewId.startsWith('pg-');
-        const isSharedEngineRoute = window.appState.activeViewId === 'storage-index-health';
-        const root = inst.type === 'postgres' ? 'pg-dashboard' : 'sqlserver-health-v2';
-        
-        if(inst.type === 'postgres' && !isCurrentRoutePG && !isSharedEngineRoute) {
-            window.appNavigate(root);
-        } else if(inst.type === 'sqlserver' && isCurrentRoutePG) {
-            window.appNavigate(root);
-        } else {
-            window.appNavigate(window.appState.activeViewId);
-        }
-    }
+
+    // Always navigate to the primary dashboard for the selected engine
+    const root = inst.type === 'postgres' ? 'pg-dashboard' : 'sqlserver-health-v2';
+    window.appNavigate(root);
 });
 
 document.getElementById('database-select').addEventListener('change', (e) => {
-    window.appState.currentDatabase = e.target.value;
-    if(window.appState.activeViewId !== 'global') window.appNavigate(window.appState.activeViewId);
+    const selectedDb = e.target.value;
+    window.appState.currentDatabase = selectedDb;
+
+    const inst = window.appState.config?.instances?.[window.appState.currentInstanceIdx];
+    if (!inst) return;
+
+    // Re-check HA/Replication link visibility with the new database selection.
+    _refreshHALinkVisibility(inst, selectedDb);
+
+    // Always navigate to the engine's default dashboard so the user sees
+    // instance-level data for the newly selected database context.
+    const defaultRoute = inst.type === 'postgres' ? 'pg-dashboard' : 'sqlserver-health-v2';
+    window.appNavigate(defaultRoute);
 });
 
 document.getElementById('theme-toggle').addEventListener('change', (e) => {

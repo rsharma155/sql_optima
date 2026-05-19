@@ -5,7 +5,7 @@
 
 SELECT 
     capture_timestamp,
-    server_instance_name,
+    server_id,
     max_workers_count,
     scheduler_count,
     cpu_count,
@@ -33,7 +33,7 @@ SELECT
     offline_cpu_count,
     offline_cpu_warning
 FROM sqlserver_cpu_scheduler_stats
-WHERE server_instance_name = $1
+WHERE server_id = $1
   AND capture_timestamp >= $2
   AND capture_timestamp <= $3
 ORDER BY capture_timestamp DESC

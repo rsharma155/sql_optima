@@ -8,11 +8,12 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
 
-func (c *PgRepository) FetchClusterName(instanceName string) (string, error) {
+func (c *PgRepository) FetchClusterName(ctx context.Context, instanceName string) (string, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -20,7 +21,9 @@ func (c *PgRepository) FetchClusterName(instanceName string) (string, error) {
 		return "", fmt.Errorf("connection not found")
 	}
 	var clusterName string
-	err := db.QueryRow("SELECT /* SQL_OPTIMA */   COALESCE(setting,'') FROM pg_settings WHERE name='cluster_name'").Scan(&clusterName)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err := db.QueryRowContext(ctx, "SELECT /* SQL_OPTIMA */   COALESCE(setting,'') FROM pg_settings WHERE name='cluster_name'").Scan(&clusterName)
 	if err != nil {
 		return "", err
 	}

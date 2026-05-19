@@ -5,7 +5,7 @@
 
 SELECT 
     time_bucket('1 minute', capture_timestamp) AS bucket,
-    server_instance_name,
+    server_id,
     database_name,
     query_hash,
     MAX(query_text) AS query_text,
@@ -15,8 +15,8 @@ SELECT
     AVG(avg_logical_reads) AS avg_logical_reads,
     SUM(total_cpu_ms) AS total_cpu_ms
 FROM sqlserver_query_store_stats
-WHERE server_instance_name = $1
+WHERE server_id = $1
   AND capture_timestamp >= NOW() - INTERVAL '24 hours'
-GROUP BY bucket, server_instance_name, database_name, query_hash
+GROUP BY bucket, server_id, database_name, query_hash
 ORDER BY SUM(total_cpu_ms) DESC
 LIMIT $2;

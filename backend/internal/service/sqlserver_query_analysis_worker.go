@@ -1,9 +1,8 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Background worker that periodically collects query regression and
+// Purpose: Background worker for SQL Server Query Analysis Dashboard —
 //
-//	plan instability data from SQL Server Query Store, and watched-query
-//	snapshots, persisting results to TimescaleDB.
+//	detects regressions and plan instability, stores snapshots for watched queries.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -11,186 +10,179 @@
 package service
 
 import (
+	"fmt"
+	"log/slog"
 	"context"
-	"log"
+	"strings"
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
-// StartQueryAnalysisCollector runs periodically, fetching regressions and plan instability
-// from SQL Server Query Store for each configured instance and persisting to TimescaleDB.
 func (s *MetricsService) StartQueryAnalysisCollector(ctx context.Context) {
-	interval := s.FetchInterval(ctx, "SQL Server Query Analysis", 30*time.Minute)
+	// Query analysis is moderate weight; run every 15-30 mins
+	interval := s.GetCollectorInterval(ctx, "SQL Server Query Analysis", 30*time.Minute)
+	slog.Info("[QueryAnalysis] Starting background collector (interval: %v)", "val", interval)
+
 	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	// Run immediately on startup.
-	s.collectQueryAnalysisData(ctx)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
+	go func() {
+		defer ticker.Stop()
+		// Run once at start
+		if interval > 0 {
 			s.collectQueryAnalysisData(ctx)
-			// Refresh interval
-			newInterval := s.FetchInterval(ctx, "SQL Server Query Analysis", 30*time.Minute)
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Dynamic interval check
+				newInterval := s.GetCollectorInterval(ctx, "SQL Server Query Analysis", 30*time.Minute)
+				if newInterval != interval && newInterval > 0 {
+					slog.Info("[QueryAnalysis] Frequency changed from", "arg1", interval, "arg2", newInterval)
+					interval = newInterval
+					ticker.Reset(interval)
+				}
+
+				if interval > 0 {
+					s.collectQueryAnalysisData(ctx)
+				}
 			}
 		}
-	}
+	}()
 }
 
 func (s *MetricsService) collectQueryAnalysisData(ctx context.Context) {
-	if s.MsRepo == nil || s.tsLogger == nil {
-		return
-	}
-
-	now := time.Now().UTC()
-
 	for _, inst := range s.Config.Instances {
-		if inst.Type != "sqlserver" {
+		if strings.ToLower(inst.Type) != "sqlserver" {
 			continue
 		}
 
+		serverID := inst.ServerID
+
 		// Regressions
-		regs, err := s.MsRepo.FetchQueryRegressions(inst.Name)
-		if err != nil {
-			log.Printf("[QueryAnalysis] FetchQueryRegressions(%s): %v", inst.Name, err)
-		} else if len(regs) > 0 {
-			rows := make([]hot.SqlServerQueryRegressionRow, len(regs))
-			for i, r := range regs {
-				rows[i] = hot.SqlServerQueryRegressionRow{
-					CaptureTime: now, InstanceName: inst.Name, DatabaseName: r.DatabaseName,
-					QueryHash: r.QueryHash, QueryText: r.QueryText, RegressionType: r.RegressionType,
-					PreviousAvg: r.PreviousAvg, CurrentAvg: r.CurrentAvg,
-					PercentChange: r.PercentChange, PlanChanged: r.PlanChanged,
-				}
+		regStats, err := s.MsRepo.FetchQueryRegressions(ctx, inst.Name)
+		if err == nil && len(regStats) > 0 {
+			var regressions []hot.SqlServerQueryRegressionRow
+			now := time.Now().UTC()
+			for _, r := range regStats {
+				regressions = append(regressions, hot.SqlServerQueryRegressionRow{
+					CaptureTime:    now,
+					ServerID:       serverID,
+					DatabaseName:   r.DatabaseName,
+					QueryHash:      r.QueryHash,
+					QueryText:      r.QueryText,
+					RegressionType: r.RegressionType,
+					PreviousAvg:    r.PreviousAvg,
+					CurrentAvg:     r.CurrentAvg,
+					PercentChange:  r.PercentChange,
+					PlanChanged:    r.PlanChanged,
+				})
 			}
-			if err := s.tsLogger.LogSqlServerQueryRegressions(ctx, rows); err != nil {
-				log.Printf("[QueryAnalysis] LogSqlServerQueryRegressions(%s): %v", inst.Name, err)
-			}
+			_ = s.tsLogger.LogSqlServerQueryRegressions(ctx, regressions)
 		}
 
-		// Plan instability
-		pis, err := s.MsRepo.FetchPlanInstability(inst.Name)
-		if err != nil {
-			log.Printf("[QueryAnalysis] FetchPlanInstability(%s): %v", inst.Name, err)
-		} else if len(pis) > 0 {
-			rows := make([]hot.SqlServerPlanInstabilityRow, len(pis))
-			for i, p := range pis {
-				rows[i] = hot.SqlServerPlanInstabilityRow{
-					CaptureTime: now, InstanceName: inst.Name, DatabaseName: p.DatabaseName,
-					QueryHash: p.QueryHash, QueryText: p.QueryText,
-					PlanCount: p.PlanCount, LastExecutionTime: p.LastExecutionTime,
-				}
+		// Plan Instability
+		instabStats, err := s.MsRepo.FetchPlanInstability(ctx, inst.Name)
+		if err == nil && len(instabStats) > 0 {
+			var instability []hot.SqlServerPlanInstabilityRow
+			now := time.Now().UTC()
+			for _, r := range instabStats {
+				instability = append(instability, hot.SqlServerPlanInstabilityRow{
+					CaptureTime:       now,
+					ServerID:          serverID,
+					DatabaseName:      r.DatabaseName,
+					QueryHash:         r.QueryHash,
+					QueryText:         r.QueryText,
+					PlanCount:         r.PlanCount,
+					LastExecutionTime: r.LastExecutionTime,
+				})
 			}
-			if err := s.tsLogger.LogSqlServerPlanInstability(ctx, rows); err != nil {
-				log.Printf("[QueryAnalysis] LogSqlServerPlanInstability(%s): %v", inst.Name, err)
-			}
+			_ = s.tsLogger.LogSqlServerPlanInstability(ctx, instability)
 		}
 	}
 }
 
-// StartWatchedQueryCollector runs periodically, collecting current stats for all
-// watched queries from SQL Server Query Store and persisting snapshot rows.
 func (s *MetricsService) StartWatchedQueryCollector(ctx context.Context) {
-	interval := s.FetchInterval(ctx, "SQL Server Watched Query Snapshot", 5*time.Minute)
+	// Watched query snapshots; run every 15 mins
+	interval := s.GetCollectorInterval(ctx, "SQL Server Watched Query Snapshot", 15*time.Minute)
+	slog.Info("[WatchedQueries] Starting background collector (interval: %v)", "val", interval)
+
 	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	// Run immediately on startup.
-	s.collectWatchedQuerySnapshots(ctx)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
+	go func() {
+		defer ticker.Stop()
+		// Run once at start
+		if interval > 0 {
 			s.collectWatchedQuerySnapshots(ctx)
-			// Refresh interval
-			newInterval := s.FetchInterval(ctx, "SQL Server Watched Query Snapshot", 5*time.Minute)
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Dynamic interval check
+				newInterval := s.GetCollectorInterval(ctx, "SQL Server Watched Query Snapshot", 15*time.Minute)
+				if newInterval != interval && newInterval > 0 {
+					slog.Info("[WatchedQueries] Frequency changed from", "arg1", interval, "arg2", newInterval)
+					interval = newInterval
+					ticker.Reset(interval)
+				}
+
+				if interval > 0 {
+					s.collectWatchedQuerySnapshots(ctx)
+				}
 			}
 		}
-	}
+	}()
 }
 
 func (s *MetricsService) collectWatchedQuerySnapshots(ctx context.Context) {
-	if s.MsRepo == nil || s.tsLogger == nil {
-		return
-	}
-
-	now := time.Now().UTC()
-
 	for _, inst := range s.Config.Instances {
-		if inst.Type != "sqlserver" {
+		if strings.ToLower(inst.Type) != "sqlserver" {
 			continue
 		}
 
-		wqs, err := s.tsLogger.ListSqlServerWatchedQueries(ctx, inst.Name)
+		serverID := inst.ServerID
+		watched, err := s.tsLogger.ListSqlServerWatchedQueries(ctx, serverID)
 		if err != nil {
-			log.Printf("[WatchedQuery] ListSqlServerWatchedQueries(%s): %v", inst.Name, err)
-			continue
-		}
-		if len(wqs) == 0 {
 			continue
 		}
 
-		var snapRows []hot.SqlServerWatchedSnapshotRow
-		for _, wq := range wqs {
-			if wq.QueryHash == "" || wq.DatabaseName == "" {
-				continue
-			}
-			// Use the stored database_name for targeted Query Store lookup
-			snap, err := s.MsRepo.FetchWatchedQueryStats(ctx, inst.Name, wq.DatabaseName, wq.QueryHash)
+		var snapshots []hot.SqlServerWatchedSnapshotRow
+		now := time.Now().UTC()
+
+		for _, q := range watched {
+			stats, err := s.MsRepo.FetchWatchedQueryStats(ctx, inst.Name, q.DatabaseName, q.QueryHash)
 			if err != nil {
-				log.Printf("[WatchedQuery] FetchWatchedQueryStats(%s, %s, %s): %v", inst.Name, wq.DatabaseName, wq.QueryHash, err)
+				slog.Error(fmt.Sprintf("[WatchedQueries] FetchWatchedQueryStats error for hash %s db %s: %v", q.QueryHash, q.DatabaseName, err))
 				continue
 			}
-			if snap == nil {
+			if stats == nil {
 				continue
 			}
 
-			// If registry is missing query text, update it now that we have it from Query Store
-			if wq.QueryText == "" && snap.QueryText != "" {
-				_ = s.tsLogger.UpdateSqlServerWatchedQueryText(ctx, wq.ID, snap.QueryText)
+			snap := hot.SqlServerWatchedSnapshotRow{
+				WatchedID:         q.ID,
+				ServerID:          serverID,
+				CaptureTimestamp:  now,
+				Executions:        stats.Executions,
+				AvgDurationMs:     stats.AvgDurationMs,
+				AvgCpuMs:          stats.AvgCpuMs,
+				AvgReads:          stats.AvgReads,
+				TotalDurationMs:   stats.TotalDurationMs,
+				TotalCpuMs:        stats.TotalCpuMs,
+				PlanCount:         stats.PlanCount,
+				LastExecutionTime: stats.LastExecutionTime,
+				QueryPlan:         stats.QueryPlan,
+				QueryText:         stats.QueryText,
 			}
-
-			// Also fetch wait stats for this query hash specifically
-			waitStats, _ := s.MsRepo.FetchQueryWaitStats(ctx, inst.Name, wq.DatabaseName, wq.QueryHash)
-
-			displayName := wq.Name
-			if len(displayName) > 60 {
-				displayName = displayName[:57] + "..."
-			}
-			log.Printf("[WatchedQuery] Captured stats for %s: %d executions", displayName, snap.Executions)
-			snapRows = append(snapRows, hot.SqlServerWatchedSnapshotRow{
-				SnapshotTime:      now,
-				WatchedID:         wq.ID,
-				InstanceName:      inst.Name,
-				Executions:        snap.Executions,
-				AvgDurationMs:     snap.AvgDurationMs,
-				AvgCpuMs:          snap.AvgCpuMs,
-				AvgReads:          snap.AvgReads,
-				TotalDurationMs:   snap.TotalDurationMs,
-				TotalCpuMs:        snap.TotalCpuMs,
-				PlanCount:         snap.PlanCount,
-				LastExecutionTime: snap.LastExecutionTime,
-				QueryPlan:         snap.QueryPlan,
-				WaitStats:         waitStats,
-			})
+			snapshots = append(snapshots, snap)
 		}
 
-		if len(snapRows) > 0 {
-			if err := s.tsLogger.LogSqlServerWatchedQuerySnapshot(ctx, snapRows); err != nil {
-				log.Printf("[WatchedQuery] LogSqlServerWatchedQuerySnapshot(%s): %v", inst.Name, err)
-			}
+		if len(snapshots) > 0 {
+			_ = s.tsLogger.LogSqlServerWatchedQuerySnapshot(ctx, snapshots)
 		}
 	}
 }

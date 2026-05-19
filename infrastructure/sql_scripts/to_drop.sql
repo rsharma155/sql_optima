@@ -9,7 +9,14 @@ DROP TABLE IF EXISTS pg_ts_replication_lag CASCADE;
 DROP TABLE IF EXISTS pg_ts_tps CASCADE;
 DROP TABLE IF EXISTS pg_ts_wal_metrics CASCADE;
 
--- 2. SQL Server Obsolete Tables
+-- 2. SQL Server Obsolete Tables — snapshot schema (never written; superseded by monitor.* tables)
+DROP TABLE IF EXISTS snapshot.sqlserver_db_storage_history CASCADE;
+DROP TABLE IF EXISTS snapshot.sqlserver_index_usage_history CASCADE;
+DROP TABLE IF EXISTS snapshot.sqlserver_index_fragmentation_history CASCADE;
+DROP TABLE IF EXISTS snapshot.sqlserver_table_structure_history CASCADE;
+-- public schema — never written (no background worker ever called the Log* method)
+DROP TABLE IF EXISTS sqlserver_health_snapshots CASCADE;
+
 DROP TABLE IF EXISTS sqlserver_collection_schedule CASCADE;
 DROP TABLE IF EXISTS sqlserver_file_io_history CASCADE;
 DROP TABLE IF EXISTS sqlserver_query_store_stats CASCADE;

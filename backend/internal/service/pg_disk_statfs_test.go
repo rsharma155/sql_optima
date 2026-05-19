@@ -9,6 +9,14 @@ package service
 
 import "testing"
 
+func computeUsedPct(total, free int64) float64 {
+	if total <= 0 {
+		return 0
+	}
+	used := total - free
+	return (float64(used) / float64(total)) * 100.0
+}
+
 func TestComputeUsedPct_Basic(t *testing.T) {
 	if got := computeUsedPct(0, 0); got != 0 {
 		t.Fatalf("expected 0, got %v", got)

@@ -33,7 +33,6 @@
     let _topRows = [];
     let _regRows = [];
     let _instabRows = [];
-    let _liveRows = [];
     let _schedulerRows = [];
     let _watchedHashes = new Set();
     let _searchDebounce = null;
@@ -41,7 +40,6 @@
         'top-queries': { col: 'total_cpu_ms', dir: 'desc' },
         'regressions': { col: 'percent_change', dir: 'desc' },
         'instability': { col: 'plan_count', dir: 'desc' },
-        'live': { col: 'cpu_time_ms', dir: 'desc' }
     };
 
     function destroyCharts() {
@@ -52,7 +50,7 @@
     /* ── main view ──────────────────────────────────────────── */
     async function loadQueryAnalysis() {
         destroyCharts();
-        _topRows = []; _regRows = []; _instabRows = []; _liveRows = []; _schedulerRows = []; _watchedHashes = new Set();
+        _topRows = []; _regRows = []; _instabRows = []; _schedulerRows = []; _watchedHashes = new Set();
         window.appState.queryCache = window.appState.queryCache || {};
         
         const outlet = window.routerOutlet;
@@ -122,22 +120,19 @@
             const excludeSystem = ignoreSysEl ? ignoreSysEl.checked : true;
             const dbName = window.appState.currentDatabase || 'all';
             
-            // Always refresh summary for KPIs
+            // Always refresh summary for KPIs and trend charts
             fetchSummary(from, to, excludeSystem, dbName);
+            fetchTrendCharts(from, to, dbName);
+
             // And fetch current watch list so we show filled stars
             await fetchWatchedHashes();
 
             if (activeTab === 'top-queries') {
                 await fetchTopQueries(from, to, dbName);
             } else if (activeTab === 'regressions') {
-                await fetchRegressions(from, to, excludeSystem, dbName);
+                await fetchRegressions(dbName);
             } else if (activeTab === 'instability') {
-                await fetchPlanInstability(from, to, dbName);
-            } else if (activeTab === 'live') {
-                await Promise.all([
-                    fetchLiveQueries(dbName),
-                    fetchSchedulerStats()
-                ]);
+                await fetchPlanInstability(dbName);
             }
             renderActiveTab();
             bindActiveTabEvents(activeTab);
@@ -157,7 +152,7 @@
                 const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/watched-queries?instance=${encodeURIComponent(instName)}`, { cache: 'no-store' });
                 if (resp.ok) {
                     const data = await resp.json();
-                    _watchedHashes = new Set((data.watched_queries || []).map(q => q.query_hash));
+                    _watchedHashes = new Set(((data && data.watched_queries) || []).map(q => q.query_hash));
                 }
             } catch (e) { console.error('failed to fetch watched hashes', e); }
         }
@@ -167,7 +162,6 @@
             if (activeTab === 'top-queries') renderTopQueries();
             else if (activeTab === 'regressions') renderRegressions();
             else if (activeTab === 'instability') renderInstability();
-            else if (activeTab === 'live') renderLive();
         }
 
         async function fetchSummary(from, to, excludeSystem, dbName) {
@@ -233,8 +227,7 @@
                 const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/top-queries?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}&exclude_system=${excludeSystem}&limit=100&database=${encodeURIComponent(dbName)}`);
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const data = await resp.json();
-                _topRows = data.queries || data || [];
-                fetchTrendCharts(from, to, dbName);
+                _topRows = Array.isArray(data) ? data : (data && data.queries) || [];
             } catch (e) {
                 body.innerHTML = `<div class="text-danger p-3">Failed to load top queries: ${e.message}</div>`;
             }
@@ -276,22 +269,6 @@
                 return;
             }
             container.innerHTML = renderPlanInstabilityTable(_instabRows);
-        }
-
-        function renderLive() {
-            const container = document.getElementById('qaLiveBody');
-            if (!_liveRows.length) {
-                container.innerHTML = `<div class="text-muted p-4 text-center">No live sessions found.</div>`;
-                return;
-            }
-            container.innerHTML = `
-                <div class="chart-card glass-panel mb-3" style="height:200px;">
-                    <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-chart-line"></i> CPU Scheduler History (Last 100 Samples)</h3></div>
-                    <div class="chart-container" style="height:160px;"><canvas id="qaSchedulerHistoryChart"></canvas></div>
-                </div>
-                ${renderLiveQueriesTable(_liveRows)}
-            `;
-            setTimeout(() => renderSchedulerChart(_schedulerRows), 50);
         }
 
         function renderSchedulerChart(schedulerStats) {
@@ -507,39 +484,6 @@
                 </tr>`}).join('')}</tbody></table></div>`;
         }
 
-        function renderLiveQueriesTable(rows) {
-            const sorted = applySort(rows, 'live');
-            return `<div class="table-responsive"><table class="qa-table">
-                <thead><tr>
-                    ${sortTh('live', 'session_id', 'SPID', '')}
-                    ${sortTh('live', 'status', 'Status', '')}
-                    ${sortTh('live', 'total_elapsed_time_ms', 'Duration', 'text-right')}
-                    ${sortTh('live', 'cpu_time_ms', 'CPU', 'text-right')}
-                    <th>Wait Type</th>
-                    <th>Blocking</th>
-                    <th>User / App</th>
-                    <th>Query Text</th>
-                </tr></thead>
-                <tbody>${sorted.map((r, i) => {
-                    const cacheKey = 'qa_live_' + i;
-                    window.appState.queryCache[cacheKey] = { text: r.query_text, query_hash: r.query_hash, database_name: r.database_name };
-                    return `<tr>
-                    <td style="font-weight:700; color:var(--accent);">${esc(r.session_id)}</td>
-                    <td><span class="qa-badge qa-badge--default">${esc(r.status)}</span></td>
-                    <td class="text-right font-mono">${fmtMs(r.total_elapsed_time_ms)}</td>
-                    <td class="text-right font-mono">${fmtMs(r.cpu_time_ms)}</td>
-                    <td><span class="qa-badge ${r.wait_type?.startsWith('LCK') ? 'qa-badge--danger' : 'qa-badge--warn'}">${esc(r.wait_type)}</span></td>
-                    <td class="text-danger" style="font-weight:700;">${r.blocking_session_id || ''}</td>
-                    <td class="text-muted" style="font-size:0.65rem;">
-                        <div style="font-weight:600; color:var(--text);">${esc(r.login_name)}</div>
-                        <div>${esc(r.program_name)}</div>
-                    </td>
-                    <td style="max-width:250px; cursor:pointer;" data-action="show-query-modal-direct" data-key="${cacheKey}" data-fn="showQueryStoreQueryModal">
-                        <span class="qa-query-text" title="${esc(r.query_text)}">${esc(r.query_text)}</span>
-                    </td>
-                </tr>`}).join('')}</tbody></table></div>`;
-        }
-
         /* ── Trend Charts ── */
         function renderWorkloadChart(series) {
             const ctx = document.getElementById('qaWorkloadChart')?.getContext('2d');
@@ -614,6 +558,7 @@
         async function fetchRegressions(dbName) {
             try {
                 const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/regressions?instance=${encodeURIComponent(instName)}&database=${encodeURIComponent(dbName)}`);
+                if (!resp.ok) { console.error('regressions HTTP', resp.status); return; }
                 const data = await resp.json();
                 _regRows = data.regressions || data || [];
             } catch (err) { console.error('regressions failed', err); }
@@ -622,17 +567,10 @@
         async function fetchPlanInstability(dbName) {
             try {
                 const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/plan-instability?instance=${encodeURIComponent(instName)}&database=${encodeURIComponent(dbName)}`);
+                if (!resp.ok) { console.error('instability HTTP', resp.status); return; }
                 const data = await resp.json();
                 _instabRows = data.plan_instability || data || [];
             } catch (err) { console.error('instability failed', err); }
-        }
-
-        async function fetchLiveQueries(dbName) {
-            try {
-                const resp = await window.apiClient.authenticatedFetch(`/api/live/running-queries?instance=${encodeURIComponent(instName)}&database=${encodeURIComponent(dbName)}`);
-                const data = await resp.json();
-                _liveRows = data.data || data.queries || (Array.isArray(data) ? data : []);
-            } catch (err) { console.error('live-queries failed', err); }
         }
 
         /* ── initial load ── */

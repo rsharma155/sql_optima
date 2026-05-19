@@ -33,10 +33,12 @@ window.MemoryDrilldown = async function() {
             <!-- ROW 0: HEADER -->
             <div class="page-title flex-between dashboard-page-title-compact">
                 <div class="dashboard-title-line">
-                    <div style="display:flex; align-items:center; gap:0.75rem;">
-                        <h1><i class="fa-solid fa-memory"></i> SQL Server Memory Intelligence <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Memory Analyzer" title="Learn more about this dashboard"></i></h1>
-                        <span class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Detailed Memory Pressure & Buffer Pool Analytics</span>
-                    </div>
+                    <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;">
+                        <i class="fa-solid fa-memory text-accent"></i>
+                        SQL Server Memory Intelligence
+                        <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Memory Analyzer" title="Learn more about this dashboard"></i>
+                    </h1>
+                    <span class="subtitle" style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px; display:block;">Instance: ${window.escapeHtml(inst.name)} | Detailed Memory Pressure & Buffer Pool Analytics</span>
                 </div>
                 <div class="flex-center dashboard-page-title-actions" style="gap: 0.75rem;">
                     <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem;">
@@ -111,17 +113,11 @@ window.MemoryDrilldown = async function() {
                 </div>
             </div>
 
-            <!-- ROW 4: INTERNALS: PLE & WORKSPACE -->
+            <!-- ROW 4: WORKSPACE -->
             <div class="grid-container mt-3">
-                <div class="col-6 col-laptop-8 col-tablet-6">
+                <div class="col-12">
                     <div class="card glass-panel h-chart-md">
-                        <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Page Life Expectancy (s)</h3></div>
-                        <div class="chart-container" style="height: 220px;"><canvas id="memPleChart"></canvas></div>
-                    </div>
-                </div>
-                <div class="col-6 col-laptop-8 col-tablet-6">
-                    <div class="card glass-panel h-chart-md">
-                        <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Workspace (Granted vs Req MB)</h3></div>
+                        <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Workspace Memory (Granted vs Requested MB)</h3></div>
                         <div class="chart-container" style="height: 220px;"><canvas id="memWorkspaceChart"></canvas></div>
                     </div>
                 </div>
@@ -174,7 +170,7 @@ window.loadMemoryDrilldownData = async function(instanceName, fromLocal, toLocal
     } catch (e) { console.error('Memory drilldown load failed:', e); }
 };
 
-const _memDrillChartIds = ['memCorrelationChart','memPressureChart','memOsFreePctChart','memPleChart','memWorkspaceChart','memBufferPoolDbChart','memClerksChart'];
+const _memDrillChartIds = ['memCorrelationChart','memPressureChart','memOsFreePctChart','memWorkspaceChart','memBufferPoolDbChart','memClerksChart'];
 window._destroyMemoryDrillCharts = function() {
     _memDrillChartIds.forEach(id => {
         const el = document.getElementById(id);
@@ -190,7 +186,16 @@ window.renderMemoryDrilldownCharts = function(data) {
     const mem = window._memoryDrilldownSortPoints(data.memory_metrics || []);
     const sched = window._memoryDrilldownSortPoints(data.scheduler_memory || []);
     const bpdb = window._memoryDrilldownSortPoints(data.buffer_pool_by_db || []).filter(r => !['master','model','msdb','tempdb','resource'].includes(String(r.database_name || r.database || '').toLowerCase()));
-    const baseOpts = { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { boxWidth: 10, font: { size: 9 } } } }, scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } } } };
+    const axisOpts = (xLabel, yLabel, extraScales) => ({
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'top', labels: { boxWidth: 10, font: { size: 9 } } } },
+        scales: {
+            x: { grid: { display: false }, ticks: { maxTicksLimit: 12, font: { size: 8 } }, title: { display: !!xLabel, text: xLabel, font: { size: 9 }, color: 'var(--text-muted)' } },
+            y: { beginAtZero: true, ticks: { font: { size: 8 } }, grid: { color: 'rgba(255,255,255,0.05)' }, title: { display: !!yLabel, text: yLabel, font: { size: 9 }, color: 'var(--text-muted)' } },
+            ...(extraScales || {})
+        }
+    });
+    const baseOpts = axisOpts('Time', '');
 
     // KPI update logic...
     (function renderKpis() {
@@ -227,53 +232,67 @@ window.renderMemoryDrilldownCharts = function(data) {
     })();
 
     const labels = window._memoryDrilldownLabels(mem);
+
+    if (!mem.length && !data.memory_clerks?.length && !bpdb.length) {
+        const noDataMsg = `<div style="display:flex; align-items:center; justify-content:center; height:100%; min-height:60px; color:var(--text-muted); font-size:0.72rem;"><i class="fa-solid fa-database-slash" style="margin-right:6px; opacity:0.4;"></i>No collector data yet — metrics will appear after the first collection cycle.</div>`;
+        ['memCorrelationChart','memPressureChart','memOsFreePctChart','memWorkspaceChart','memBufferPoolDbChart'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) { const p = el.parentElement; if (p) { el.style.display = 'none'; if (!p.querySelector('.mem-nodata')) { const d = document.createElement('div'); d.className = 'mem-nodata'; d.style.cssText = 'height:100%;'; d.innerHTML = noDataMsg; p.appendChild(d); } } }
+        });
+        const elLegend = document.getElementById('memClerksLegend');
+        if (elLegend) elLegend.innerHTML = '';
+        return;
+    }
+
     if (mem.length) {
         const ctxCorrelation = document.getElementById('memCorrelationChart')?.getContext('2d');
         if (ctxCorrelation) {
             new Chart(ctxCorrelation, {
                 type: 'line', data: { labels, datasets: [
                     { label: 'PLE (s)', data: mem.map(m => Number(m.ple_seconds) || 0), borderColor: '#22c55e', yAxisID: 'y', tension: 0.3, pointRadius: 0 },
-                    { label: 'Pending', data: mem.map(m => Number(m.memory_grants_pending) || 0), borderColor: '#eab308', yAxisID: 'y1', tension: 0.3, pointRadius: 0 }
-                ]}, options: { ...baseOpts, scales: { y: { position: 'left' }, y1: { position: 'right', grid: { display: false } } } }
+                    { label: 'Pending Grants', data: mem.map(m => Number(m.memory_grants_pending) || 0), borderColor: '#eab308', yAxisID: 'y1', tension: 0.3, pointRadius: 0 }
+                ]}, options: axisOpts('Time', 'PLE (seconds)', {
+                    y:  { position: 'left',  beginAtZero: true, ticks: { font: { size: 8 } }, title: { display: true, text: 'PLE (s)', font: { size: 9 }, color: 'var(--text-muted)' } },
+                    y1: { position: 'right', beginAtZero: true, ticks: { font: { size: 8 } }, grid: { display: false }, title: { display: true, text: 'Pending Grants', font: { size: 9 }, color: 'var(--text-muted)' } }
+                })
             });
         }
-        
+
         const ctxPressure = document.getElementById('memPressureChart')?.getContext('2d');
         if (ctxPressure) {
             new Chart(ctxPressure, {
-                type: 'line', data: { labels, datasets: [{ label: 'Pressure %', data: mem.map(m => 100 - (Number(m.os_available_memory_mb)/Number(m.os_total_memory_mb)*100)), borderColor: '#3b82f6', fill: true, backgroundColor: 'rgba(59, 130, 246, 0.1)', tension: 0.3, pointRadius: 0 }] }, options: baseOpts
+                type: 'line', data: { labels, datasets: [{ label: 'Pressure %', data: mem.map(m => 100 - (Number(m.os_available_memory_mb)/Number(m.os_total_memory_mb)*100)), borderColor: '#3b82f6', fill: true, backgroundColor: 'rgba(59, 130, 246, 0.1)', tension: 0.3, pointRadius: 0 }] },
+                options: axisOpts('Time', '% Used')
             });
         }
-        
+
         const ctxOsFree = document.getElementById('memOsFreePctChart')?.getContext('2d');
         if (ctxOsFree) {
             new Chart(ctxOsFree, {
-                type: 'line', data: { labels, datasets: [{ label: 'OS Free %', data: mem.map(m => Number(m.os_total_memory_mb) ? (Number(m.os_available_memory_mb)/Number(m.os_total_memory_mb)*100) : 0), borderColor: '#22c55e', fill: true, backgroundColor: 'rgba(34,197,94,0.1)', tension: 0.3, pointRadius: 0 }] }, options: baseOpts
+                type: 'line', data: { labels, datasets: [{ label: 'OS Free %', data: mem.map(m => Number(m.os_total_memory_mb) ? (Number(m.os_available_memory_mb)/Number(m.os_total_memory_mb)*100) : 0), borderColor: '#22c55e', fill: true, backgroundColor: 'rgba(34,197,94,0.1)', tension: 0.3, pointRadius: 0 }] },
+                options: axisOpts('Time', '% Free')
             });
         }
-        
-        const ctxPle = document.getElementById('memPleChart')?.getContext('2d');
-        if (ctxPle) {
-            new Chart(ctxPle, {
-                type: 'line', data: { labels, datasets: [{ label: 'PLE (s)', data: mem.map(m => Number(m.ple_seconds) || 0), borderColor: '#22c55e', fill: true, backgroundColor: 'rgba(34, 197, 94, 0.1)', tension: 0.3, pointRadius: 0 }] }, options: baseOpts
-            });
-        }
-        
+
         const ctxWorkspace = document.getElementById('memWorkspaceChart')?.getContext('2d');
         if (ctxWorkspace) {
             new Chart(ctxWorkspace, {
                 type: 'line', data: { labels, datasets: [
                     { label: 'Granted MB', data: mem.map(m => Number(m.granted_workspace_mb) || 0), borderColor: '#22c55e', pointRadius: 0 },
-                    { label: 'Req MB', data: mem.map(m => Number(m.requested_workspace_mb) || 0), borderColor: '#ef4444', pointRadius: 0 }
-                ]}, options: baseOpts
+                    { label: 'Requested MB', data: mem.map(m => Number(m.requested_workspace_mb) || 0), borderColor: '#ef4444', pointRadius: 0 }
+                ]}, options: axisOpts('Time', 'MB')
             });
         }
     }
 
     if (data.memory_clerks && data.memory_clerks.length) {
-        // Group by clerk name and take top 8
-        const lastSnapshotTime = data.memory_clerks[0].capture_timestamp;
-        const latestClerks = data.memory_clerks.filter(c => c.capture_timestamp === lastSnapshotTime)
+        // Find the most-recent snapshot timestamp and filter to it
+        const latestTs = data.memory_clerks.reduce((max, c) => {
+            const t = new Date(c.capture_timestamp).getTime();
+            return t > max ? t : max;
+        }, 0);
+        const latestClerks = data.memory_clerks
+            .filter(c => Math.abs(new Date(c.capture_timestamp).getTime() - latestTs) < 1000)
             .sort((a, b) => (Number(b.pages_mb)||0) - (Number(a.pages_mb)||0))
             .slice(0, 8);
         
@@ -305,12 +324,31 @@ window.renderMemoryDrilldownCharts = function(data) {
     }
 
     if (bpdb.length) {
-        const topNames = [...new Set(bpdb.map(r => r.database_name || r.database))].slice(0, 5);
+        // Filter out rows without a valid database name (server-side 'undefined' or empty values)
+        const validBpdb = bpdb.filter(r => {
+            const n = r.database_name || r.database;
+            return n && n !== 'undefined' && n !== 'null' && String(n).trim() !== '';
+        });
+        const topNames = [...new Set(validBpdb.map(r => r.database_name || r.database))].slice(0, 5);
         const ctxBp = document.getElementById('memBufferPoolDbChart')?.getContext('2d');
-        if (ctxBp) {
+        if (ctxBp && topNames.length > 0) {
             new Chart(ctxBp, {
-                type: 'line', data: { labels, datasets: topNames.map((n, i) => ({ label: n, data: labels.map(l => bpdb.find(r => (r.database_name||r.database) === n && window._memoryDrilldownLabels([r])[0] === l)?.buffer_mb || 0), borderColor: ['#3b82f6','#22c55e','#f59e0b','#ef4444','#a855f7'][i], pointRadius: 0, tension: 0.3 })) }, options: baseOpts
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: topNames.map((n, i) => ({
+                        label: n,
+                        data: labels.map(l => validBpdb.find(r => (r.database_name || r.database) === n && window._memoryDrilldownLabels([r])[0] === l)?.buffer_mb || 0),
+                        borderColor: ['#3b82f6','#22c55e','#f59e0b','#ef4444','#a855f7'][i],
+                        pointRadius: 0,
+                        tension: 0.3
+                    }))
+                },
+                options: axisOpts('Time', 'Buffer Pool (MB)')
             });
+        } else if (ctxBp) {
+            const p = ctxBp.canvas.parentElement;
+            if (p) { ctxBp.canvas.style.display = 'none'; const d = document.createElement('div'); d.style.cssText = 'height:100%;display:flex;align-items:center;justify-content:center;font-size:0.72rem;color:var(--text-muted);'; d.textContent = 'No user database buffer pool data available.'; p.appendChild(d); }
         }
     }
 };

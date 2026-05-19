@@ -1,22 +1,20 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: API handlers for the SQL Server Workload Observability Dashboard.
+// Purpose: SQL Server workload and throughput API handlers.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
 // SPDX-License-Identifier: MIT
-
 package handlers
 
 import (
+	"strconv"
+	"time"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
-	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
@@ -26,258 +24,127 @@ type SqlServerWorkloadHandlers struct {
 	cfg        *config.Config
 }
 
-func NewSqlServerWorkloadHandlers(metricsSvc *service.MetricsService, cfg *config.Config) *SqlServerWorkloadHandlers {
-	return &SqlServerWorkloadHandlers{metricsSvc: metricsSvc, cfg: cfg}
+func NewSqlServerWorkloadHandlers(svc *service.MetricsService, cfg *config.Config) *SqlServerWorkloadHandlers {
+	return &SqlServerWorkloadHandlers{metricsSvc: svc, cfg: cfg}
 }
 
-func (h *SqlServerWorkloadHandlers) Summary(w http.ResponseWriter, r *http.Request) {
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
+func (h *SqlServerWorkloadHandlers) parseID(r *http.Request) (uuid.UUID, bool) {
+	return ParseServerID(r, h.cfg)
+}
+
+func (h *SqlServerWorkloadHandlers) GetSummary(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "sqlserver") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name or server_id required"})
 		return
 	}
 
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	from, to, err := parseWorkloadTimeRange(fromStr, toStr)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
+	from, to, _ := parseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 
-	summary, err := h.metricsSvc.GetSqlServerWorkloadSummary(r.Context(), instance, from, to)
+	res, err := h.metricsSvc.GetSqlServerWorkloadSummary(r.Context(), id, from, to)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(summary)
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-func (h *SqlServerWorkloadHandlers) Trends(w http.ResponseWriter, r *http.Request) {
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
+func (h *SqlServerWorkloadHandlers) GetTrends(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "sqlserver") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name or server_id required"})
 		return
 	}
 
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	from, to, err := parseWorkloadTimeRange(fromStr, toStr)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
+	from, to, _ := parseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 
-	trends, err := h.metricsSvc.GetSqlServerWorkloadTrends(r.Context(), instance, from, to)
+	res, err := h.metricsSvc.GetSqlServerWorkloadTrends(r.Context(), id, from, to)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"trends": trends})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"trends": res})
 }
 
-func (h *SqlServerWorkloadHandlers) TopOffenders(w http.ResponseWriter, r *http.Request) {
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
+func (h *SqlServerWorkloadHandlers) GetTopOffenders(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(r)
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "sqlserver") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name or server_id required"})
 		return
 	}
 
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	from, to, err := parseWorkloadTimeRange(fromStr, toStr)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
+	from, to, _ := parseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 
-	limit := 20
-	if lStr := r.URL.Query().Get("limit"); lStr != "" {
-		if l, err := strconv.Atoi(lStr); err == nil && l > 0 {
-			limit = l
-		}
-	}
-
-	offenders, err := h.metricsSvc.GetSqlServerWorkloadTopOffenders(r.Context(), instance, from, to, limit)
+	res, err := h.metricsSvc.GetSqlServerWorkloadTopOffenders(r.Context(), id, from, to, 20)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"top_offenders": offenders})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"top_offenders": res})
 }
 
-func (h *SqlServerWorkloadHandlers) AppLoad(w http.ResponseWriter, r *http.Request) {
-	h.handleTimeline(w, r, h.metricsSvc.GetSqlServerWorkloadAppLoadTimeline, "app_load")
+func (h *SqlServerWorkloadHandlers) GetAppLoadTimeline(w http.ResponseWriter, r *http.Request) {
+	h.handleTimeline(w, r, "app_load", h.metricsSvc.GetSqlServerWorkloadAppLoadTimeline)
 }
 
-func (h *SqlServerWorkloadHandlers) LoginLoad(w http.ResponseWriter, r *http.Request) {
-	h.handleTimeline(w, r, h.metricsSvc.GetSqlServerWorkloadLoginLoadTimeline, "login_load")
+func (h *SqlServerWorkloadHandlers) GetLoginLoadTimeline(w http.ResponseWriter, r *http.Request) {
+	h.handleTimeline(w, r, "login_load", h.metricsSvc.GetSqlServerWorkloadLoginLoadTimeline)
 }
 
-func (h *SqlServerWorkloadHandlers) TopApps(w http.ResponseWriter, r *http.Request) {
-	h.handleTopN(w, r, h.metricsSvc.GetSqlServerWorkloadTopApps, "top_apps")
+func (h *SqlServerWorkloadHandlers) GetTopApps(w http.ResponseWriter, r *http.Request) {
+	h.handleTopN(w, r, "top_apps", h.metricsSvc.GetSqlServerWorkloadTopApps)
 }
 
-func (h *SqlServerWorkloadHandlers) TopLogins(w http.ResponseWriter, r *http.Request) {
-	h.handleTopN(w, r, h.metricsSvc.GetSqlServerWorkloadTopLogins, "top_logins")
+func (h *SqlServerWorkloadHandlers) GetTopLogins(w http.ResponseWriter, r *http.Request) {
+	h.handleTopN(w, r, "top_logins", h.metricsSvc.GetSqlServerWorkloadTopLogins)
 }
 
-func (h *SqlServerWorkloadHandlers) handleTimeline(w http.ResponseWriter, r *http.Request, fn func(context.Context, string, time.Time, time.Time) ([]map[string]interface{}, error), key string) {
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
+func (h *SqlServerWorkloadHandlers) handleTimeline(w http.ResponseWriter, r *http.Request, wrapKey string, fn func(context.Context, uuid.UUID, time.Time, time.Time) (interface{}, error)) {
+	id, ok := h.parseID(r)
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "sqlserver") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name or server_id required"})
 		return
 	}
 
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	from, to, err := parseWorkloadTimeRange(fromStr, toStr)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
+	from, to, _ := parseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 
-	data, err := fn(r.Context(), instance, from, to)
+	res, err := fn(r.Context(), id, from, to)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{key: data})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{wrapKey: res})
 }
 
-func (h *SqlServerWorkloadHandlers) handleTopN(w http.ResponseWriter, r *http.Request, fn func(context.Context, string, time.Time, time.Time, int) ([]map[string]interface{}, error), key string) {
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
+func (h *SqlServerWorkloadHandlers) handleTopN(w http.ResponseWriter, r *http.Request, wrapKey string, fn func(context.Context, uuid.UUID, time.Time, time.Time, int) (interface{}, error)) {
+	id, ok := h.parseID(r)
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "sqlserver") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not sqlserver"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "instance name or server_id required"})
 		return
 	}
 
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	from, to, err := parseWorkloadTimeRange(fromStr, toStr)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
+	from, to, _ := parseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 	limit := 10
-	if lStr := r.URL.Query().Get("limit"); lStr != "" {
-		if l, err := strconv.Atoi(lStr); err == nil && l > 0 {
-			limit = l
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if val, err := strconv.Atoi(l); err == nil {
+			limit = val
 		}
 	}
 
-	data, err := fn(r.Context(), instance, from, to, limit)
+	res, err := fn(r.Context(), id, from, to, limit)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{key: data})
-}
-
-func parseWorkloadTimeRange(fromStr, toStr string) (time.Time, time.Time, error) {
-	var from, to time.Time
-	var err error
-
-	if fromStr == "" {
-		from = time.Now().UTC().Add(-1 * time.Hour)
-	} else {
-		from, err = time.Parse(time.RFC3339, fromStr)
-		if err != nil {
-			// Try without Z or fractional seconds if needed, but browsers usually send correct RFC3339
-			from, err = time.Parse("2006-01-02T15:04:05", strings.Split(fromStr, ".")[0])
-			if err != nil {
-				return time.Time{}, time.Time{}, fmt.Errorf("invalid from time: %w", err)
-			}
-		}
-	}
-
-	if toStr == "" {
-		to = time.Now().UTC()
-	} else {
-		to, err = time.Parse(time.RFC3339, toStr)
-		if err != nil {
-			to, err = time.Parse("2006-01-02T15:04:05", strings.Split(toStr, ".")[0])
-			if err != nil {
-				return time.Time{}, time.Time{}, fmt.Errorf("invalid to time: %w", err)
-			}
-		}
-	}
-
-	return from, to, nil
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{wrapKey: res})
 }

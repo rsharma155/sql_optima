@@ -10,8 +10,9 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -20,14 +21,14 @@ import (
 
 // GetServerInfo returns PostgreSQL version and uptime information.
 // Uptime is calculated from pg_postmaster_start_time().
-func (c *PgRepository) GetServerInfo(instanceName string) (version string, uptime string, err error) {
+func (c *PgRepository) GetServerInfo(ctx context.Context, instanceName string) (version string, uptime string, err error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 
 	if !ok || db == nil {
-		log.Printf("[POSTGRES] GetServerInfo: connection not found for %s, attempting reconnect", instanceName)
-		if c.reconnectInstance(instanceName) {
+		slog.Info("[POSTGRES] GetServerInfo: connection not found for %s, attempting reconnect", "val", instanceName)
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
@@ -40,7 +41,9 @@ func (c *PgRepository) GetServerInfo(instanceName string) (version string, uptim
 	}
 
 	// Get version string and extract version number
-	err = db.QueryRow("SELECT /* SQL_OPTIMA */   version()").Scan(&version)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err = db.QueryRowContext(ctx, "SELECT /* SQL_OPTIMA */   version()").Scan(&version)
 	if err != nil {
 		return "", "", err
 	}
@@ -55,7 +58,9 @@ func (c *PgRepository) GetServerInfo(instanceName string) (version string, uptim
 
 	// Get server start time and calculate uptime
 	var startTime time.Time
-	err = db.QueryRow("/* SQL_OPTIMA */ SELECT   pg_postmaster_start_time()").Scan(&startTime)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err = db.QueryRowContext(ctx, "/* SQL_OPTIMA */ SELECT   pg_postmaster_start_time()").Scan(&startTime)
 	if err != nil {
 		return version, "", err
 	}
@@ -73,7 +78,7 @@ func (c *PgRepository) GetServerInfo(instanceName string) (version string, uptim
 
 // GetSystemStats returns estimated CPU and memory usage metrics.
 // Note: These are approximations based on PostgreSQL internals, not actual OS metrics.
-func (c *PgRepository) GetSystemStats(instanceName string) (cpuUsage float64, memoryUsage float64, err error) {
+func (c *PgRepository) GetSystemStats(ctx context.Context, instanceName string) (cpuUsage float64, memoryUsage float64, err error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -84,13 +89,17 @@ func (c *PgRepository) GetSystemStats(instanceName string) (cpuUsage float64, me
 
 	// Estimate CPU based on active connections vs max connections
 	var activeConnections int
-	err = db.QueryRow("/* SQL_OPTIMA */ SELECT   count(*) FROM pg_stat_activity WHERE state = 'active'").Scan(&activeConnections)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err = db.QueryRowContext(ctx, "/* SQL_OPTIMA */ SELECT   count(*) FROM pg_stat_activity WHERE state = 'active'").Scan(&activeConnections)
 	if err != nil {
 		return 0, 0, err
 	}
 
 	var maxConnections int
-	err = db.QueryRow("/* SQL_OPTIMA */ SELECT   setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConnections)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err = db.QueryRowContext(ctx, "/* SQL_OPTIMA */ SELECT   setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConnections)
 	if err != nil {
 		maxConnections = 100 // fallback
 	}
@@ -102,7 +111,9 @@ func (c *PgRepository) GetSystemStats(instanceName string) (cpuUsage float64, me
 
 	// Estimate memory based on shared buffers
 	var sharedBuffersMB int
-	err = db.QueryRow(`
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err = db.QueryRowContext(ctx, `
 		SELECT /* SQL_OPTIMA */   (setting::bigint * 8192) / 1024 / 1024
 		FROM pg_settings
 		WHERE name = 'shared_buffers'
@@ -120,7 +131,7 @@ func (c *PgRepository) GetSystemStats(instanceName string) (cpuUsage float64, me
 }
 
 // GetConfig returns PostgreSQL configuration settings for key categories.
-func (c *PgRepository) GetConfig(instanceName string) ([]models.PgConfigSetting, error) {
+func (c *PgRepository) GetConfig(ctx context.Context, instanceName string) ([]models.PgConfigSetting, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -143,7 +154,9 @@ func (c *PgRepository) GetConfig(instanceName string) ([]models.PgConfigSetting,
 		ORDER BY category, name
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +176,7 @@ func (c *PgRepository) GetConfig(instanceName string) ([]models.PgConfigSetting,
 }
 
 // GetAlerts returns potential issues and alerts based on current metrics.
-func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) {
+func (c *PgRepository) GetAlerts(ctx context.Context, instanceName string) ([]models.PgAlert, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -188,7 +201,9 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 		LIMIT 5
 	`
 
-	rows, err := db.Query(longTxnQuery)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, longTxnQuery)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -196,7 +211,7 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 			var duration float64
 			var query string
 			if err := rows.Scan(&pid, &duration, &query); err != nil {
-				log.Printf("[POSTGRES] Failed to scan long transaction row: %v", err)
+				slog.Error("[POSTGRES] Failed to scan long transaction row", "err", err)
 				continue
 			}
 			alerts = append(alerts, models.PgAlert{
@@ -212,13 +227,17 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 
 	// Check connection count threshold
 	var connCount int
-	if err := db.QueryRow("/* SQL_OPTIMA */ SELECT   count(*) FROM pg_stat_activity").Scan(&connCount); err != nil {
-		log.Printf("[POSTGRES] Failed to query connection count: %v", err)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, "/* SQL_OPTIMA */ SELECT   count(*) FROM pg_stat_activity").Scan(&connCount); err != nil {
+		slog.Error("[POSTGRES] Failed to query connection count", "err", err)
 	}
 
 	var maxConn int
-	if err := db.QueryRow("/* SQL_OPTIMA */ SELECT   setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConn); err != nil {
-		log.Printf("[POSTGRES] Failed to query max_connections: %v", err)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, "/* SQL_OPTIMA */ SELECT   setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConn); err != nil {
+		slog.Error("[POSTGRES] Failed to query max_connections", "err", err)
 	}
 
 	if maxConn > 0 && float64(connCount)/float64(maxConn) > 0.8 {
@@ -233,7 +252,7 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 	}
 
 	// Check replication lag on standby
-	lag, status, err := c.GetReplicationLag(instanceName)
+	lag, status, err := c.GetReplicationLag(ctx, instanceName)
 	if err == nil && status == "standby" && lag > 10 {
 		alerts = append(alerts, models.PgAlert{
 			Severity:   "CRITICAL",
@@ -257,7 +276,9 @@ func (c *PgRepository) GetAlerts(instanceName string) ([]models.PgAlert, error) 
 		LIMIT 3
 	`
 
-	bloatRows, err := db.Query(bloatQuery)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	bloatRows, err := db.QueryContext(ctx, bloatQuery)
 	if err == nil {
 		defer bloatRows.Close()
 		for bloatRows.Next() {

@@ -78,6 +78,11 @@ func WrapWithRowLimit(dialect, sql string, maxRows int) (string, error) {
 	case "postgres", "":
 		return fmt.Sprintf("SELECT * FROM (%s) AS _optima_sandbox LIMIT %d", s, maxRows), nil
 	case "sqlserver":
+		// SQL Server does not allow CTEs (WITH clause) inside a subquery.
+		// If the query starts with WITH, we skip wrapping it with SELECT TOP and return as-is.
+		if strings.HasPrefix(strings.ToUpper(s), "WITH") {
+			return s, nil
+		}
 		return fmt.Sprintf("SELECT TOP (%d) * FROM (%s) AS _optima_sandbox", maxRows, s), nil
 	default:
 		return "", fmt.Errorf("sqlsandbox: unknown dialect %q", dialect)

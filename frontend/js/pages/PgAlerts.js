@@ -40,11 +40,11 @@ window.PgAlertsView = async function() {
         if (alertsResp.status === 503 || countResp.status === 503) disconnected = true;
         if (alertsResp.ok) {
             const body = await alertsResp.json();
-            alerts = (body.data && body.data.alerts) || body.alerts || [];
+            alerts = (body && (body.data && body.data.alerts || body.alerts)) ? (body.data && body.data.alerts || body.alerts) : [];
         }
         if (countResp.ok) {
             const body = await countResp.json();
-            openCount = (body.data && body.data.count) != null ? body.data.count : 0;
+            openCount = (body && body.data && body.data.count != null) ? body.data.count : (body && body.count != null ? body.count : 0);
         }
     } catch (e) { console.error("Alert engine fetch failed:", e); }
 

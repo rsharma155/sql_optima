@@ -20,7 +20,7 @@ window.PgLogsView = async function() {
 
     // 3. Set Refresh Interval
     if (window.pgLogsInterval) clearInterval(window.pgLogsInterval);
-    window.pgLogsInterval = setInterval(() => {
+    window.pgLogsInterval = window.registerInterval(() => {
         if (window.appState.activeViewId === 'pg-logs') {
             initPgLogs(inst.name);
         } else {

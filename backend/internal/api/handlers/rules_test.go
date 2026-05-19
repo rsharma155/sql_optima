@@ -242,25 +242,24 @@ func TestHumanizeEvidenceKey(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// formatEvidenceValue
+// safeExprEnv
 // ---------------------------------------------------------------------------
 
-func TestFormatEvidenceValue(t *testing.T) {
-	cases := []struct {
-		in   interface{}
-		want string
-	}{
-		{nil, ""},
-		{"hello", "hello"},
-		{float64(3), "3"},
-		{float64(45.50), "45.5"},
-		{float64(45.55), "45.55"},
-		{[]byte("rawbytes"), "rawbytes"},
+func TestSafeExprEnv(t *testing.T) {
+	env := map[string]interface{}{
+		"valid":    float64(10),
+		"null_val": nil,
+		"string":   "text",
 	}
-	for _, tc := range cases {
-		got := formatEvidenceValue(tc.in)
-		if got != tc.want {
-			t.Errorf("formatEvidenceValue(%v) = %q, want %q", tc.in, got, tc.want)
-		}
+	safe := safeExprEnv(env)
+
+	if safe["valid"] != float64(10) {
+		t.Errorf("expected valid=10, got %v", safe["valid"])
+	}
+	if safe["null_val"] != float64(0) {
+		t.Errorf("expected null_val=0, got %v", safe["null_val"])
+	}
+	if safe["string"] != "text" {
+		t.Errorf("expected string=text, got %v", safe["string"])
 	}
 }

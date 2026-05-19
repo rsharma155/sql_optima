@@ -10,8 +10,9 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"time"
@@ -20,8 +21,8 @@ import (
 // PgBloatEstimate holds heuristic table bloat signals for one table.
 type PgBloatEstimate struct {
 	DatabaseName     string     `json:"database_name"`
-	SchemaName       string     `json:"schema"`
-	TableName        string     `json:"table"`
+	SchemaName       string     `json:"schema_name"`
+	TableName        string     `json:"table_name"`
 	TotalBytes       int64      `json:"total_bytes"`
 	TotalSizePretty  string     `json:"total_size"`
 	LiveTuples       int64      `json:"live_tuples"`
@@ -75,11 +76,11 @@ type PgWALArchiverRisk struct {
 }
 
 // GetBloatEstimates returns per-table bloat signals ordered by dead tuple count.
-func (c *PgRepository) GetBloatEstimates(instanceName string, limit int) ([]PgBloatEstimate, error) {
+func (c *PgRepository) GetBloatEstimates(ctx context.Context, instanceName string, limit int) ([]PgBloatEstimate, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	dbs, err := c.GetDatabases(instanceName)
+	dbs, err := c.GetDatabases(ctx, instanceName)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +89,7 @@ func (c *PgRepository) GetBloatEstimates(instanceName string, limit int) ([]PgBl
 	for _, dbName := range dbs {
 		db, err := c.GetConnForDB(instanceName, dbName)
 		if err != nil {
-			log.Printf("[POSTGRES] GetBloatEstimates: failed to connect to %s/%s: %v", instanceName, dbName, err)
+			slog.Error(fmt.Sprintf("[POSTGRES] GetBloatEstimates: failed to connect to %s/%s: %v", instanceName, dbName, err))
 			continue
 		}
 
@@ -126,9 +127,11 @@ func (c *PgRepository) GetBloatEstimates(instanceName string, limit int) ([]PgBl
 			ORDER BY (COALESCE(s.n_dead_tup, 0)::numeric / NULLIF(c.reltuples, 0)) DESC, age(c.relfrozenxid) DESC
 			LIMIT $2`
 
-		rows, err := db.Query(q, dbName, limit)
+		ctx, cancel := WithQueryTimeout(ctx, 0)
+		rows, err := db.QueryContext(ctx, q, dbName, limit)
 		if err != nil {
-			log.Printf("[POSTGRES] GetBloatEstimates query failed for %s/%s: %v", instanceName, dbName, err)
+			cancel()
+			slog.Error(fmt.Sprintf("[POSTGRES] GetBloatEstimates query failed for %s/%s: %v", instanceName, dbName, err))
 			continue
 		}
 
@@ -159,6 +162,7 @@ func (c *PgRepository) GetBloatEstimates(instanceName string, limit int) ([]PgBl
 			all = append(all, r)
 		}
 		rows.Close()
+		cancel()
 	}
 
 	// Sort globally by dead tuples desc and limit.
@@ -172,12 +176,12 @@ func (c *PgRepository) GetBloatEstimates(instanceName string, limit int) ([]PgBl
 }
 
 // GetIdleInTransactionSessions returns sessions currently idle in a transaction.
-func (c *PgRepository) GetIdleInTransactionSessions(instanceName string) ([]PgIdleInTransactionSession, error) {
+func (c *PgRepository) GetIdleInTransactionSessions(ctx context.Context, instanceName string) ([]PgIdleInTransactionSession, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
-		if c.reconnectInstance(instanceName) {
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
@@ -206,7 +210,9 @@ func (c *PgRepository) GetIdleInTransactionSessions(instanceName string) ([]PgId
 		ORDER BY idle_seconds DESC NULLS LAST
 		LIMIT 200`
 
-	rows, err := db.Query(q)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("GetIdleInTransactionSessions query: %w", err)
 	}
@@ -228,12 +234,12 @@ func (c *PgRepository) GetIdleInTransactionSessions(instanceName string) ([]PgId
 }
 
 // GetXIDWraparoundRisk returns per-database XID freeze risk derived from age(datfrozenxid).
-func (c *PgRepository) GetXIDWraparoundRisk(instanceName string) ([]PgXIDWraparoundRisk, error) {
+func (c *PgRepository) GetXIDWraparoundRisk(ctx context.Context, instanceName string) ([]PgXIDWraparoundRisk, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
-		if c.reconnectInstance(instanceName) {
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
@@ -260,7 +266,9 @@ func (c *PgRepository) GetXIDWraparoundRisk(instanceName string) ([]PgXIDWraparo
 		ORDER BY freeze_age DESC
 		LIMIT 100`
 
-	rows, err := db.Query(q)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("GetXIDWraparoundRisk query: %w", err)
 	}
@@ -306,12 +314,12 @@ type PgLongRunningTransaction struct {
 }
 
 // GetLongRunningTransactions returns active transactions running longer than 1 minute.
-func (c *PgRepository) GetLongRunningTransactions(instanceName string) ([]PgLongRunningTransaction, error) {
+func (c *PgRepository) GetLongRunningTransactions(ctx context.Context, instanceName string) ([]PgLongRunningTransaction, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
-		if c.reconnectInstance(instanceName) {
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
@@ -341,7 +349,9 @@ func (c *PgRepository) GetLongRunningTransactions(instanceName string) ([]PgLong
 		ORDER BY txn_duration_seconds DESC NULLS LAST
 		LIMIT 100`
 
-	rows, err := db.Query(q)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("GetLongRunningTransactions query: %w", err)
 	}
@@ -365,8 +375,8 @@ func (c *PgRepository) GetLongRunningTransactions(instanceName string) ([]PgLong
 // PgIndexBloat holds index size and usage signals for one index.
 type PgIndexBloat struct {
 	DatabaseName    string `json:"database_name"`
-	SchemaName      string `json:"schema"`
-	TableName       string `json:"table"`
+	SchemaName      string `json:"schema_name"`
+	TableName       string `json:"table_name"`
 	IndexName       string `json:"index_name"`
 	IndexSizeBytes  int64  `json:"index_size_bytes"`
 	IndexSizePretty string `json:"index_size"`
@@ -377,11 +387,11 @@ type PgIndexBloat struct {
 }
 
 // GetIndexBloat returns index size and usage signals ordered by size desc.
-func (c *PgRepository) GetIndexBloat(instanceName string, limit int) ([]PgIndexBloat, error) {
+func (c *PgRepository) GetIndexBloat(ctx context.Context, instanceName string, limit int) ([]PgIndexBloat, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	dbs, err := c.GetDatabases(instanceName)
+	dbs, err := c.GetDatabases(ctx, instanceName)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +400,7 @@ func (c *PgRepository) GetIndexBloat(instanceName string, limit int) ([]PgIndexB
 	for _, dbName := range dbs {
 		db, err := c.GetConnForDB(instanceName, dbName)
 		if err != nil {
-			log.Printf("[POSTGRES] GetIndexBloat: failed to connect to %s/%s: %v", instanceName, dbName, err)
+			slog.Error(fmt.Sprintf("[POSTGRES] GetIndexBloat: failed to connect to %s/%s: %v", instanceName, dbName, err))
 			continue
 		}
 
@@ -411,9 +421,11 @@ func (c *PgRepository) GetIndexBloat(instanceName string, limit int) ([]PgIndexB
 			ORDER BY pg_relation_size(i.indexrelid) DESC
 			LIMIT $2`
 
-		rows, err := db.Query(q, dbName, limit)
+		ctx, cancel := WithQueryTimeout(ctx, 0)
+		rows, err := db.QueryContext(ctx, q, dbName, limit)
 		if err != nil {
-			log.Printf("[POSTGRES] GetIndexBloat query failed for %s/%s: %v", instanceName, dbName, err)
+			cancel()
+			slog.Error(fmt.Sprintf("[POSTGRES] GetIndexBloat query failed for %s/%s: %v", instanceName, dbName, err))
 			continue
 		}
 
@@ -441,6 +453,7 @@ func (c *PgRepository) GetIndexBloat(instanceName string, limit int) ([]PgIndexB
 			all = append(all, r)
 		}
 		rows.Close()
+		cancel()
 	}
 
 	// Sort globally by index size desc and limit.
@@ -454,12 +467,12 @@ func (c *PgRepository) GetIndexBloat(instanceName string, limit int) ([]PgIndexB
 }
 
 // GetWALArchiverRisk returns a combined WAL archiver health and slot retention summary.
-func (c *PgRepository) GetWALArchiverRisk(instanceName string) (*PgWALArchiverRisk, error) {
+func (c *PgRepository) GetWALArchiverRisk(ctx context.Context, instanceName string) (*PgWALArchiverRisk, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
-		if c.reconnectInstance(instanceName) {
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
@@ -480,7 +493,8 @@ func (c *PgRepository) GetWALArchiverRisk(instanceName string) (*PgWALArchiverRi
 			COALESCE(EXTRACT(EPOCH FROM (now() - last_archived_time))::float8, -1) AS last_age_sec,
 			COALESCE(last_failed_wal, '')      AS last_failed_wal
 		FROM pg_stat_archiver`
-	row := db.QueryRow(archQ)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	row := db.QueryRowContext(ctx, archQ)
 	var ageSec float64
 	if err := row.Scan(
 		&result.ArchivedCount, &result.FailedCount,
@@ -493,6 +507,7 @@ func (c *PgRepository) GetWALArchiverRisk(instanceName string) (*PgWALArchiverRi
 		}
 		result.ArchiverEnabled = true
 	}
+	cancel()
 
 	// Replication slot retention.
 	slotQ := `/* SQL_OPTIMA */ 
@@ -506,7 +521,9 @@ func (c *PgRepository) GetWALArchiverRisk(instanceName string) (*PgWALArchiverRi
 		WHERE active = false OR restart_lsn IS NOT NULL
 		ORDER BY retained_mb DESC
 		LIMIT 1`
-	sr := db.QueryRow(slotQ)
+	ctx2, cancel2 := WithQueryTimeout(ctx, 0)
+	defer cancel2()
+	sr := db.QueryRowContext(ctx2, slotQ)
 	var slotName string
 	var retMB float64
 	if err := sr.Scan(&slotName, &retMB); err == nil {

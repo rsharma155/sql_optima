@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/collectors/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -52,13 +53,13 @@ func (m *MockWriter) WriteMSSQLMetrics(ctx context.Context, metrics []domain.MSS
 	return args.Error(0)
 }
 
-func (m *MockWriter) WriteMSSQLSessionEnrichment(ctx context.Context, instanceID string, enrichments []domain.MSSQLSessionEnrichment) error {
-	args := m.Called(ctx, instanceID, enrichments)
+func (m *MockWriter) WriteMSSQLSessionEnrichment(ctx context.Context, serverID uuid.UUID, enrichments []domain.MSSQLSessionEnrichment) error {
+	args := m.Called(ctx, serverID, enrichments)
 	return args.Error(0)
 }
 
-func (m *MockWriter) ReadMSSQLPlanEnrichment(ctx context.Context, instanceID string) ([]domain.MSSQLSessionEnrichment, error) {
-	args := m.Called(ctx, instanceID)
+func (m *MockWriter) ReadMSSQLPlanEnrichment(ctx context.Context, serverID uuid.UUID) ([]domain.MSSQLSessionEnrichment, error) {
+	args := m.Called(ctx, serverID)
 	return args.Get(0).([]domain.MSSQLSessionEnrichment), args.Error(1)
 }
 
@@ -67,19 +68,19 @@ func (m *MockWriter) WritePGMetrics(ctx context.Context, metrics []domain.PGComb
 	return args.Error(0)
 }
 
-func (m *MockWriter) GetInstanceState(ctx context.Context, instanceID string) (time.Time, time.Time, error) {
-	args := m.Called(ctx, instanceID)
+func (m *MockWriter) GetInstanceState(ctx context.Context, serverID uuid.UUID) (time.Time, time.Time, error) {
+	args := m.Called(ctx, serverID)
 	return args.Get(0).(time.Time), args.Get(1).(time.Time), args.Error(2)
 }
 
-func (m *MockWriter) SaveMetrics(ctx context.Context, instanceID string, snapshots []domain.MSSQLQuerySnapshot, pollTime time.Time, sqlStartTime time.Time) error {
-	args := m.Called(ctx, instanceID, snapshots, pollTime, sqlStartTime)
+func (m *MockWriter) SaveMetrics(ctx context.Context, serverID uuid.UUID, snapshots []domain.MSSQLQuerySnapshot, pollTime time.Time, sqlStartTime time.Time) error {
+	args := m.Called(ctx, serverID, snapshots, pollTime, sqlStartTime)
 	return args.Error(0)
 }
 
 func TestCollectMSSQL_Workflow(t *testing.T) {
 	app := NewCollectorApp(nil, nil, nil, nil, nil)
-	instanceID := "test-instance"
+	serverID := uuid.New()
 
 	now := time.Now().UTC()
 	startTime := now.Add(-24 * time.Hour)
@@ -94,16 +95,13 @@ func TestCollectMSSQL_Workflow(t *testing.T) {
 	mockMSSQL.On("FetchSnapshot", mock.Anything, lastPoll).Return(snapshots, nil)
 
 	mockWriter := new(MockWriter)
-	mockWriter.On("GetInstanceState", mock.Anything, instanceID).Return(lastPoll, startTime, nil)
-	mockWriter.On("SaveMetrics", mock.Anything, instanceID, snapshots, mock.Anything, startTime).Return(nil)
-	// Enrichment now comes from the table, not a fresh DMV fetch.
-	mockWriter.On("ReadMSSQLPlanEnrichment", mock.Anything, instanceID).Return([]domain.MSSQLSessionEnrichment{}, nil)
-	mockWriter.On("WriteMSSQLMetrics", mock.Anything, mock.Anything).Return(nil)
+	mockWriter.On("GetInstanceState", mock.Anything, serverID).Return(lastPoll, startTime, nil)
+	mockWriter.On("SaveMetrics", mock.Anything, serverID, snapshots, mock.Anything, startTime).Return(nil)
 
 	app.mssqlRepo = mockMSSQL
 	app.writer = mockWriter
 
-	app.collectMSSQLQuerySnapshot(context.Background(), instanceID)
+	app.collectMSSQLQuerySnapshot(context.Background(), serverID)
 
 	mockMSSQL.AssertExpectations(t)
 	mockWriter.AssertExpectations(t)
@@ -111,7 +109,7 @@ func TestCollectMSSQL_Workflow(t *testing.T) {
 
 func TestCollectMSSQLSessionEnrichment(t *testing.T) {
 	app := NewCollectorApp(nil, nil, nil, nil, nil)
-	instanceID := "test-instance"
+	serverID := uuid.New()
 
 	enrichments := []domain.MSSQLSessionEnrichment{
 		{PlanHandle: []byte("handle1"), LoginName: "user1"},
@@ -121,12 +119,12 @@ func TestCollectMSSQLSessionEnrichment(t *testing.T) {
 	mockMSSQL.On("FetchSessionEnrichment", mock.Anything).Return(enrichments, nil)
 
 	mockWriter := new(MockWriter)
-	mockWriter.On("WriteMSSQLSessionEnrichment", mock.Anything, instanceID, enrichments).Return(nil)
+	mockWriter.On("WriteMSSQLSessionEnrichment", mock.Anything, serverID, enrichments).Return(nil)
 
 	app.mssqlRepo = mockMSSQL
 	app.writer = mockWriter
 
-	app.collectMSSQLSessionEnrichment(context.Background(), instanceID)
+	app.collectMSSQLSessionEnrichment(context.Background(), serverID)
 
 	mockMSSQL.AssertExpectations(t)
 	mockWriter.AssertExpectations(t)
@@ -134,7 +132,7 @@ func TestCollectMSSQLSessionEnrichment(t *testing.T) {
 
 func TestCollectMSSQL_RestartDetection(t *testing.T) {
 	app := NewCollectorApp(nil, nil, nil, nil, nil)
-	instanceID := "test-instance"
+	serverID := uuid.New()
 
 	now := time.Now().UTC()
 	prevStartTime := now.Add(-24 * time.Hour)
@@ -151,15 +149,13 @@ func TestCollectMSSQL_RestartDetection(t *testing.T) {
 	mockMSSQL.On("FetchSnapshot", mock.Anything, time.Time{}).Return(snapshots, nil)
 
 	mockWriter := new(MockWriter)
-	mockWriter.On("GetInstanceState", mock.Anything, instanceID).Return(lastPoll, prevStartTime, nil)
-	mockWriter.On("SaveMetrics", mock.Anything, instanceID, snapshots, mock.Anything, currStartTime).Return(nil)
-	mockWriter.On("ReadMSSQLPlanEnrichment", mock.Anything, instanceID).Return([]domain.MSSQLSessionEnrichment{}, nil)
-	mockWriter.On("WriteMSSQLMetrics", mock.Anything, mock.Anything).Return(nil)
+	mockWriter.On("GetInstanceState", mock.Anything, serverID).Return(lastPoll, prevStartTime, nil)
+	mockWriter.On("SaveMetrics", mock.Anything, serverID, snapshots, mock.Anything, currStartTime).Return(nil)
 
 	app.mssqlRepo = mockMSSQL
 	app.writer = mockWriter
 
-	app.collectMSSQLQuerySnapshot(context.Background(), instanceID)
+	app.collectMSSQLQuerySnapshot(context.Background(), serverID)
 
 	mockMSSQL.AssertExpectations(t)
 	mockWriter.AssertExpectations(t)
@@ -167,7 +163,7 @@ func TestCollectMSSQL_RestartDetection(t *testing.T) {
 
 func TestCollectPG_DeltaResetHandling(t *testing.T) {
 	app := NewCollectorApp(nil, nil, nil, nil, nil)
-	instanceID := "test-instance"
+	serverID := uuid.New()
 
 	// Initial collection
 	snap1 := []domain.PGQuerySnapshot{
@@ -177,8 +173,8 @@ func TestCollectPG_DeltaResetHandling(t *testing.T) {
 	mockPG.On("FetchSnapshot", mock.Anything).Return(snap1, nil).Once()
 	app.pgRepo = mockPG
 
-	app.collectPG(context.Background(), instanceID)
-	assert.Equal(t, int64(100), app.pgPrevCounters[instanceID][1].Calls)
+	app.collectPG(context.Background(), serverID)
+	assert.Equal(t, int64(100), app.pgPrevCounters[serverID][1].Calls)
 
 	// Second collection - delta
 	snap2 := []domain.PGQuerySnapshot{
@@ -193,5 +189,5 @@ func TestCollectPG_DeltaResetHandling(t *testing.T) {
 	})).Return(nil)
 	app.writer = mockWriter
 
-	app.collectPG(context.Background(), instanceID)
+	app.collectPG(context.Background(), serverID)
 }

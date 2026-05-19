@@ -5,7 +5,7 @@
 
 CREATE TABLE IF NOT EXISTS postgres_throughput_metrics (
     capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
+    server_id TEXT NOT NULL,
     database_name TEXT,
     tps DOUBLE PRECISION DEFAULT 0,
     cache_hit_pct DOUBLE PRECISION DEFAULT 0,

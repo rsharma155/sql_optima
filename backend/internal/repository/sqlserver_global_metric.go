@@ -8,10 +8,11 @@
 package repository
 
 import (
+	"context"
 	"github.com/rsharma155/sql_optima/internal/models"
 )
 
-func (c *SqlServerRepository) GetGlobalMetric(name string, base models.GlobalInstanceMetric) models.GlobalInstanceMetric {
+func (c *SqlServerRepository) GetGlobalMetric(ctx context.Context, name string, base models.GlobalInstanceMetric) models.GlobalInstanceMetric {
 	c.mutex.RLock()
 	db, ok := c.conns[name]
 	c.mutex.RUnlock()
@@ -42,7 +43,9 @@ func (c *SqlServerRepository) GetGlobalMetric(name string, base models.GlobalIns
 		) AS x ORDER BY [timestamp] DESC
 	`
 	var cpu int
-	if err := db.QueryRow(cpuQuery).Scan(&cpu); err == nil {
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	if err := db.QueryRowContext(ctx, cpuQuery).Scan(&cpu); err == nil {
 		base.CPUUsage = float64(cpu)
 	}
 

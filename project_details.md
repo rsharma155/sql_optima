@@ -9,7 +9,8 @@ This document describes how the **Go backend**, **SPA frontend**, and **navigati
 1. **Backend (`backend/`)** — HTTP API built with Gorilla `mux`. On startup it optionally reads `config.yaml` for instance definitions and resolves database passwords from environment variables. In Docker mode, instances are managed via the **server registry** (Admin UI / API) and `config.yaml` is not required. A **collector service** polls SQL Server and PostgreSQL and writes snapshots to **TimescaleDB** via the hot storage layer.
 2. **Frontend (`frontend/`)** — Static HTML/CSS/JS SPA. `index.html` loads `js/entry.js` (module bootstrap), `auth.js`, `router.js`, and many page scripts that attach view functions to `window`.
 3. **Routing** — There is **no path-based** router in the URL bar for most views. Navigation is **`window.appNavigate(routeId)`**, which swaps content inside `#router-outlet` and updates the sidebar's `data-route` items. Browser history is tracked in `appState.navigationHistory` for back navigation where used.
-4. **Authentication** — `POST /api/login` and **`POST /api/auth/login`** are the same rate-limited handler (shared per-IP budget, implemented in `internal/api/router.go` via `AuthHandlers.Login`). The UI uses `/api/login` by default. `GET /api/auth/me` requires a valid JWT. Tokens are stored in `localStorage` and `apiClient.authenticatedFetch` sends `Authorization: Bearer …`. Many read-only dashboard APIs are intentionally **public**; mutating endpoints (e.g. kill session, admin) require auth. (A previous bug registered `POST /api/auth/login` behind JWT middleware, which made login impossible on that path; that registration was removed.)
+4. **Authentication** — `POST /api/login` and **`POST /api/auth/login`** are the same rate-limited handler (shared per-IP budget, implemented in `internal/api/router.go` via `AuthHandlers.Login`). The UI uses `/api/login` by default. `GET /api/auth/me` requires a valid JWT. Tokens are stored in `localStorage` and `apiClient.authenticatedFetch` sends `Authorization: Bearer …`. Many read-only dashboard APIs are intentionally **public**; mutating endpoints (e.g. kill session, admin) require auth.
+5. **Instance dispatch** — When the user selects an instance, the router inspects `appState.currentInstance.type`. PostgreSQL instances navigate to `pg-dashboard`; SQL Server instances navigate to `sqlserver-health-v2`. The sidebar is rebuilt accordingly.
 
 ---
 
@@ -78,10 +79,18 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 | Route | View function | Notes |
 |--------|----------------|--------|
 | `global` | `GlobalEstateView` | Default after boot; no instance required |
-| `dashboard` | `DashboardView` | SQLSERVER instance dashboard; requires instance |
+| `dashboard` | `DashboardView` | Redirects to `sqlserver-health-v2` for SQL Server or `pg-dashboard` for Postgres |
+| `sqlserver-health-v2` | `SqlServerHealthDashboardV2` | SQL Server real-time triage view (4-column KPI, time-range selection) |
 | `drilldown-cpu` | `CpuDrilldown` | |
+| `drilldown-memory` | `MemoryDrilldown` | |
 | `sqlserver-cpu-dashboard` | `SqlServerCpuDashboardView` | |
-| `instance-health` | `InstanceHealthDashboardView` | |
+| `sqlserver-waits` | `WaitStatsV2View` | SQL Server wait stats V2 (lazy-loaded) |
+| `sqlserver-workload` | `SqlServerWorkloadDashboardView` | Workload analytics (lazy-loaded) |
+| `sqlserver-intelligence-report` | `SqlServerIntelligenceReportView` | Autonomous SQL Server health analysis (lazy-loaded) |
+| `query-analysis` | `sqlserver_QueryAnalysisDashboard` | Query analysis dashboard (lazy-loaded) |
+| `watched-queries` | `sqlserver_WatchedQueryAnalyzer` | Watched query tracker (lazy-loaded) |
+| `sqlserver-plan-analyzer` | `sqlserver_PlanAnalyzer` | Execution plan analysis (lazy-loaded) |
+| `instance-health` | `InstanceHealthDashboardView` | DBA War Room (lazy-loaded) |
 | `drilldown-query` | `sqlserver_QueryDrilldown` | |
 | `drilldown-top-queries` | `sqlserver_TopQueriesDrilldown` | |
 | `drilldown-metric-detail` | `sqlserver_MetricDetailDrilldown` | |
@@ -95,6 +104,8 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 | `drilldown-pg-enterprise` | `PgEnterpriseDashboardView` | |
 | `enterprise-metrics` | `EnterpriseMetricsView` | Requires instance |
 | `performance-debt` | `sqlserver_PerformanceDebtDashboard` | |
+| `sqlserver-locks` | `sqlserver_LocksDashboard` | SQL Server Locks & Blocking dashboard (lazy-loaded) |
+| `sqlserver-locks-drilldown` | `sqlserver_LocksDrilldownDetailed` | Detailed lock drilldown; accepts `routeParams` |
 | `storage-index-health` | `SqlServerStorageIndexHealthView` / `PgStorageIndexHealthView` | Cross-engine Timescale-backed Storage & Index Health dashboard; the router dispatches based on current instance type |
 | `jobs` | `JobsView` | |
 | `alerts` | `AlertsView` | |
@@ -103,21 +114,29 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 | `settings` | `SettingsView` | |
 | `best-practices` | `RulesEngineView` | SQLSERVER-oriented rules dashboard |
 | `live-diagnostics` | `LiveDiagnosticsView` | |
-| `pg-dashboard` | `PgDashboardView` | Control Center |
+| `pg-dashboard` | `PgDashboardView` | PostgreSQL Control Center |
 | `pg-sessions` | `PgSessionsView` | |
 | `pg-locks` | `PgLocksView` | |
-| `pg-queries` | `PgQueriesView` | |
+| `pg-queries` | `PgStatStatementsView` | `pg_stat_statements` query performance view |
+| `pg-stat-statements` | `PgStatStatementsView` | Alias for `pg-queries` |
 | `pg-explain` | `PgExplainView` | Paste EXPLAIN text/JSON; analyze + optimization report (no live query execution) |
 | `pg-storage` | `PgStorageView` | |
+| `pg-autovacuum` | `PgStorageView` | Alias — routes to storage view (autovacuum tab) |
 | `pg-replication` | `PgReplicationView` | |
 | `pg-logs` | `PgLogsView` | |
 | `pg-backups` | `PgBackupsView` | |
+| `pg-waits` | `PgWaitsView` | PostgreSQL wait stats |
+| `pg-backup-dr` | `PgBackupDRView` | Backup & DR overview |
+| `pg-security` | `PgSecurityView` | Security posture dashboard |
 | `pg-alerts` | `PgAlertsView` | |
 | `pg-config` | `PgConfigView` | Not in default PG sidebar; deep-link only |
 | `pg-cpu` | `PgCpuView` | |
 | `pg-memory` | `PgMemoryView` | |
 | `pg-cnpg` | `CNPGClusterTopologyView` | Legacy / deep-link |
 | `pg-best-practices` | `PgBestPracticesView` | |
+| `setup` | `SetupWizardView` | Initial setup wizard |
+| `setup-schema` | `SetupSchemaProgressView` | Schema initialization progress |
+| `onboarding-servers` | `OnboardingMonitoredServersView` | Monitored server onboarding |
 | `dynamic-dashboard` | `DynamicDashboardView` | Not in default sidebar; deep-link |
 | `sentinel-mock` | `SentinelMockView` | Optional mock UI; see below |
 | `admin` | `AdminPanelView` | Requires logged-in **admin** |
@@ -155,6 +174,9 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 |------|------|
 | HTTP routes | `backend/internal/api/router.go` |
 | JWT / security headers | `backend/internal/middleware/` |
+| Collector orchestration | `backend/internal/collectors/application/collect_cycle.go` |
+| Query V2 delta pipeline | `backend/internal/collectors/domain/` |
+| PG snapshot collectors | `backend/internal/collectors/postgres/` |
 | SPA router | `frontend/js/components/router.js` |
 | Auth UI | `frontend/js/components/auth.js` |
 | API client | `frontend/js/api/client.js` |
@@ -164,5 +186,6 @@ Routes must match `^[a-zA-Z0-9-]+$` (length ≤ 96). Unknown routes show a **Pag
 | API server image | `Dockerfile` — multi-stage distroless non-root build |
 | Worker image | `Dockerfile.worker` — background collector/queue worker |
 | Dev TimescaleDB | `infrastructure/docker/docker-compose.yml` — standalone TimescaleDB for local dev |
-| Schema scripts | `infrastructure/sql_scripts/` — schema, seed data, rule engine |
+| Schema scripts | `infrastructure/sql_scripts/` — schema (01–06), seed data, rule engine, alert engine |
+| Target DB provisioning | `infrastructure/sql_scripts/pgsql_init.sql`, `sqlserver_init.sql` |
 | Instance config | `config.yaml` — optional; instances can be managed via Admin UI instead |

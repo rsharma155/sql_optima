@@ -107,6 +107,7 @@ run/
 **/*_final_report.json
 
 # Local planning docs
+cold_storage_initial_roadmap.md
 docs/pg_explain_analyze_integration_plan.md
 docs/pg_query_monitor_enhancement_plan.md
 docs/postgres_dashboard_details.md
@@ -116,3 +117,5 @@ postgre_main_control_center.md
 project_backlog.md
 project_details.md
 CLAUDE.md
+.clauderc
+.claude/

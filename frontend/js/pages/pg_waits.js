@@ -111,7 +111,7 @@
                             </div>
                             <div class="table-container-compact h-table-md">
                                 <table class="modern-table modern-table-compact" id="pg-long-sessions-table">
-                                    <thead><tr><th>PID</th><th>Time</th><th>App</th><th>User</th><th>State/Wait</th><th>Query Snippet</th></tr></thead>
+                                    <thead><tr><th>PID</th><th>Captured At</th><th>App</th><th>User</th><th>State/Wait</th><th>Query Snippet</th></tr></thead>
                                     <tbody></tbody>
                                 </table>
                             </div>
@@ -192,9 +192,13 @@
     }
 
     function renderLoadChart(trend) {
-        const ctx = document.getElementById('pg-load-chart').getContext('2d');
+        const canvas = document.getElementById('pg-load-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
         if (!trend) return;
-        new Chart(ctx, {
+        if (window.pgWaitsCharts?.load) window.pgWaitsCharts.load.destroy();
+        window.pgWaitsCharts = window.pgWaitsCharts || {};
+        window.pgWaitsCharts.load = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: trend.map(t => new Date(t.ts)),
@@ -216,8 +220,14 @@
     }
 
     function renderWaitTrend(trend) {
-        const ctx = document.getElementById('pg-wait-trend-chart').getContext('2d');
+        const canvas = document.getElementById('pg-wait-trend-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
         if (!trend || trend.length === 0) return;
+
+        if (window.pgWaitsCharts?.waitTrend) window.pgWaitsCharts.waitTrend.destroy();
+        window.pgWaitsCharts = window.pgWaitsCharts || {};
+
         const types = [...new Set(trend.map(t => t.wait_event_type))];
         const labels = [...new Set(trend.map(t => t.bucket))].sort();
         const colors = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
@@ -226,7 +236,7 @@
             data: labels.map(l => trend.find(t => t.bucket === l && t.wait_event_type === type)?.sessions || 0),
             backgroundColor: colors[i % colors.length] + '44', borderColor: colors[i % colors.length], fill: true, pointRadius: 0, tension: 0.3
         }));
-        new Chart(ctx, {
+        window.pgWaitsCharts.waitTrend = new Chart(ctx, {
             type: 'line',
             data: { labels: labels.map(l => new Date(l)), datasets },
             options: { 
@@ -242,9 +252,15 @@
     }
 
     function renderWaitDist(dist) {
-        const ctx = document.getElementById('pg-wait-dist-chart').getContext('2d');
+        const canvas = document.getElementById('pg-wait-dist-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
         if (!dist || dist.length === 0) return;
-        new Chart(ctx, {
+
+        if (window.pgWaitsCharts?.waitDist) window.pgWaitsCharts.waitDist.destroy();
+        window.pgWaitsCharts = window.pgWaitsCharts || {};
+
+        window.pgWaitsCharts.waitDist = new Chart(ctx, {
             type: 'doughnut',
             data: { labels: dist.map(d => d.wait_event_type), datasets: [{ data: dist.map(d => d.avg_sessions), backgroundColor: ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'], borderWidth:0 }] },
             options: { responsive: true, maintainAspectRatio: false, cutout:'70%', plugins:{legend:{position:'right', labels:{boxWidth:10, font:{size:9}}}} }
@@ -252,9 +268,15 @@
     }
 
     function renderAppConn(apps) {
-        const ctx = document.getElementById('pg-app-conn-chart').getContext('2d');
+        const canvas = document.getElementById('pg-app-conn-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
         if (!apps || apps.length === 0) return;
-        new Chart(ctx, {
+
+        if (window.pgWaitsCharts?.appConn) window.pgWaitsCharts.appConn.destroy();
+        window.pgWaitsCharts = window.pgWaitsCharts || {};
+
+        window.pgWaitsCharts.appConn = new Chart(ctx, {
             type: 'bar',
             data: { labels: apps.map(a => a.application_name || 'unknown'), datasets: [{ data: apps.map(a => a.count), backgroundColor: '#3b82f6', borderRadius:4 }] },
             options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true }, y: { ticks: { font: { size: 9 } } } } }
@@ -262,19 +284,54 @@
     }
 
     function renderSessionStateTrend(trend) {
-        const ctx = document.getElementById('pg-session-state-chart').getContext('2d');
+        const canvas = document.getElementById('pg-session-state-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
         if (!trend || trend.length === 0) return;
+
+        if (window.pgWaitsCharts?.stateTrend) window.pgWaitsCharts.stateTrend.destroy();
+        window.pgWaitsCharts = window.pgWaitsCharts || {};
+
+        // Human-readable labels for pg session states
+        const STATE_LABELS = {
+            'active':                  'Active',
+            'idle':                    'Idle',
+            'idle in transaction':     'Idle in Txn',
+            'idle in transaction (aborted)': 'Idle in Txn (Abort)',
+            'fastpath function call':  'Fast-Path',
+            'disabled':                'Disabled',
+        };
+        const STATE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b'];
+
         const states = [...new Set(trend.map(t => t.state))];
         const labels = [...new Set(trend.map(t => t.bucket))].sort();
         const datasets = states.map((state, i) => ({
-            label: state || 'unknown',
+            label: STATE_LABELS[state] || state || 'Unknown',
             data: labels.map(l => trend.find(t => t.bucket === l && t.state === state)?.count || 0),
-            borderColor: ['#10b981','#3b82f6','#f59e0b','#ef4444'][i % 4], pointRadius: 0, tension: 0.3
+            borderColor: STATE_COLORS[i % STATE_COLORS.length],
+            backgroundColor: STATE_COLORS[i % STATE_COLORS.length] + '22',
+            fill: true,
+            pointRadius: 0,
+            tension: 0.3,
         }));
-        new Chart(ctx, {
+        window.pgWaitsCharts.stateTrend = new Chart(ctx, {
             type: 'line',
             data: { labels: labels.map(l => new Date(l)), datasets },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { type: 'time', display: false }, y: { beginAtZero: true } } }
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom',
+                        labels: { boxWidth: 10, font: { size: 9 }, color: '#94a3b8' }
+                    }
+                },
+                scales: {
+                    x: { type: 'time', display: true, ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 6 }, grid: { display: false } },
+                    y: { beginAtZero: true, ticks: { color: '#64748b', font: { size: 8 } } }
+                }
+            }
         });
     }
 
@@ -294,10 +351,13 @@
         };
         tbody.innerHTML = sessions.slice(0, 10).map(s => {
             const decodedQuery = pgssSmartDecode(s.query || '');
+            const capturedAt = s.capture_timestamp
+                ? new Date(s.capture_timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                : (s.duration || '—');
             return `
             <tr style="cursor:pointer;" data-action="call" data-fn="showQueryModal" data-arg="${encodeURIComponent(decodedQuery)}">
                 <td><span class="badge badge-outline">${s.pid}</span></td>
-                <td>${s.duration || ''}</td>
+                <td class="text-muted" style="font-size:0.78rem;">${capturedAt}</td>
                 <td>${window.escapeHtml(s.application_name || 'unknown')}</td>
                 <td>${window.escapeHtml(s.usename || '')}</td>
                 <td class="text-warning">${window.escapeHtml(s.wait_event || s.state || 'CPU')}</td>

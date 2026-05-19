@@ -14,7 +14,7 @@ SELECT
     COUNT(DISTINCT database_name) AS database_count,
     COUNT(*) AS sample_count
 FROM sqlserver_query_store_stats
-WHERE server_instance_name = $1
+WHERE server_id = $1
   AND capture_timestamp >= NOW() - INTERVAL '24 hours'
 GROUP BY query_hash
 ORDER BY SUM(total_cpu_ms) DESC

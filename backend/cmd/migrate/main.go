@@ -24,7 +24,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -50,28 +50,33 @@ func main() {
 		dsn = os.Getenv("TIMESCALE_DSN") // fall back to the app's connection string
 	}
 	if dsn == "" {
-		log.Fatal("GOOSE_DBSTRING (or TIMESCALE_DSN) must be set to a PostgreSQL connection string")
+		slog.Error("GOOSE_DBSTRING (or TIMESCALE_DSN) must be set to a PostgreSQL connection string")
+		os.Exit(1)
 	}
 
 	// Use the pgx stdlib driver registered as "pgx".
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		log.Fatalf("failed to open database: %v", err)
+		slog.Error("failed to open database", "err", err)
+		os.Exit(1)
 	}
 	defer db.Close()
 
 	if err := db.PingContext(context.Background()); err != nil {
-		log.Fatalf("database unreachable: %v", err)
+		slog.Error("database unreachable", "err", err)
+		os.Exit(1)
 	}
 
 	if err := goose.SetDialect("postgres"); err != nil {
-		log.Fatalf("failed to set goose dialect: %v", err)
+		slog.Error("failed to set goose dialect", "err", err)
+		os.Exit(1)
 	}
 
 	command := strings.ToLower(args[0])
 	cmdArgs := args[1:]
 
 	if err := goose.RunContext(context.Background(), command, db, *dir, cmdArgs...); err != nil {
-		log.Fatalf("goose %s: %v", command, err)
+		slog.Error("goose command failed", "command", command, "err", err)
+		os.Exit(1)
 	}
 }

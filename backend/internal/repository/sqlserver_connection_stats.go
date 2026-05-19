@@ -8,12 +8,13 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
 )
 
-func (c *SqlServerRepository) CollectConnectionStats(db *sql.DB, database string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectConnectionStats(ctx context.Context, db *sql.DB, database string) ([]map[string]interface{}, error) {
 	dbName := strings.TrimSpace(database)
 	if dbName != "" {
 		dbName = fmt.Sprintf("AND DB_NAME(r.database_id) = '%s'", strings.ReplaceAll(dbName, "'", "''"))
@@ -34,7 +35,9 @@ func (c *SqlServerRepository) CollectConnectionStats(db *sql.DB, database string
 		ORDER BY active_connections DESC
 	`, dbName)
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

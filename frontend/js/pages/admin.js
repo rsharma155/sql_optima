@@ -47,6 +47,7 @@ window.AdminPanelView = async function() {
                 <button type="button" class="btn btn-sm btn-accent admin-nav-btn" id="admin-tab-users"><i class="fa-solid fa-users"></i> User management</button>
                 <button type="button" class="btn btn-sm btn-outline admin-nav-btn" id="admin-tab-servers"><i class="fa-solid fa-server"></i> Monitoring servers</button>
                 <button type="button" class="btn btn-sm btn-outline admin-nav-btn" id="admin-tab-collectors"><i class="fa-solid fa-clock-rotate-left"></i> Collector frequencies</button>
+                <button type="button" class="btn btn-sm btn-outline admin-nav-btn" id="admin-tab-notifications"><i class="fa-solid fa-bell"></i> Notifications</button>
             </div>
             <div id="admin-content">
                 <div style="display:flex; justify-content:center; align-items:center; min-height:12rem;">
@@ -61,6 +62,7 @@ window.AdminPanelView = async function() {
     document.getElementById('admin-tab-users').addEventListener('click', () => window.showAdminTab('users'));
     document.getElementById('admin-tab-servers').addEventListener('click', () => window.showAdminTab('servers'));
     document.getElementById('admin-tab-collectors').addEventListener('click', () => window.showAdminTab('collectors'));
+    document.getElementById('admin-tab-notifications').addEventListener('click', () => window.showAdminTab('notifications'));
 
     window.showAdminTab('users');
 };
@@ -110,8 +112,50 @@ window.showAdminTab = async function(tab) {
         document.getElementById('btn-show-add-server').addEventListener('click', () => window.showAddServerForm());
         window.loadAdminServers();
     } else if (tab === 'collectors') {
-        const { loadCollectorConfigs } = await import('/js/pages/admin_collector_control.js');
-        loadCollectorConfigs();
+        try {
+            // Using a relative path for the dynamic import to be more robust across different environments
+            const { loadCollectorConfigs } = await import('./admin_collector_control.js');
+            if (typeof loadCollectorConfigs === 'function') {
+                await loadCollectorConfigs();
+            } else {
+                throw new Error('loadCollectorConfigs is not a function in the imported module');
+            }
+        } catch (err) {
+            console.error('Failed to load collector configs module:', err);
+            content.innerHTML = `
+                <div class="glass-panel" style="padding:2rem; border-radius:12px; text-align:center;">
+                    <i class="fa-solid fa-triangle-exclamation text-danger" style="font-size:2rem; margin-bottom:1rem;"></i>
+                    <h3 style="margin:0 0 0.5rem;">Failed to load Collector Control</h3>
+                    <p class="text-muted">${window.escapeHtml(err.message)}</p>
+                    <button class="btn btn-sm btn-accent" id="admin-collector-retry-btn">
+                        <i class="fa-solid fa-rotate"></i> Retry
+                    </button>
+                </div>
+            `;
+            document.getElementById('admin-collector-retry-btn')?.addEventListener('click', () => window.showAdminTab('collectors'));
+        }
+    } else if (tab === 'notifications') {
+        try {
+            const { loadNotificationConfig } = await import('./admin_notifications.js');
+            if (typeof loadNotificationConfig === 'function') {
+                await loadNotificationConfig();
+            } else {
+                throw new Error('loadNotificationConfig is not a function in the imported module');
+            }
+        } catch (err) {
+            console.error('Failed to load notifications module:', err);
+            content.innerHTML = `
+                <div class="glass-panel" style="padding:2rem; border-radius:12px; text-align:center;">
+                    <i class="fa-solid fa-triangle-exclamation text-danger" style="font-size:2rem; margin-bottom:1rem;"></i>
+                    <h3 style="margin:0 0 0.5rem;">Failed to load Notifications</h3>
+                    <p class="text-muted">${window.escapeHtml(err.message)}</p>
+                    <button class="btn btn-sm btn-accent" id="admin-notif-retry-btn">
+                        <i class="fa-solid fa-rotate"></i> Retry
+                    </button>
+                </div>
+            `;
+            document.getElementById('admin-notif-retry-btn')?.addEventListener('click', () => window.showAdminTab('notifications'));
+        }
     }
 };
 
@@ -226,46 +270,50 @@ window.showAddServerForm = function() {
     if (!slot || document.getElementById('admin-add-server-form')) return;
 
     slot.innerHTML = `
-        <div class="glass-panel" id="admin-add-server-form" style="padding:0;margin-bottom:1.5rem;border-radius:12px;overflow:hidden;border:1px solid var(--border-color);box-shadow:var(--shadow-sm);">
-            <div class="flex-between" style="padding:0.85rem 1rem;border-bottom:1px solid var(--border-color);background:linear-gradient(135deg,rgba(59,130,246,0.1),rgba(139,92,246,0.06));">
-                <h4 style="margin:0;font-size:0.95rem;font-weight:600;"><i class="fa-solid fa-plus text-accent"></i> New monitoring server</h4>
+        <style>
+            #admin-add-server-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0.5rem 0.9rem; align-items:start; }
+            #admin-add-server-form .srv-fld label { display:block; font-size:0.68rem; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.25rem; }
+            #admin-add-server-form .srv-fld .custom-input,
+            #admin-add-server-form .srv-fld .custom-select { width:100%; min-height:2rem; box-sizing:border-box; font-size:0.8rem; padding:0.3rem 0.55rem; }
+            @media (max-width: 900px) {
+                #admin-add-server-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+                .srv-fld-ssl, .srv-fld-db, #srv-trust-wrap, #pg-extension-guide { grid-column:1/-1 !important; }
+            }
+            @media (max-width: 560px) {
+                #admin-add-server-grid { grid-template-columns:1fr; }
+                #admin-add-server-grid .srv-fld { grid-column:1/-1 !important; }
+            }
+        </style>
+        <div class="glass-panel" id="admin-add-server-form" style="padding:0;margin-bottom:1rem;border-radius:10px;overflow:hidden;border:1px solid var(--border-color);box-shadow:var(--shadow-sm);">
+            <div class="flex-between" style="padding:0.6rem 0.9rem;border-bottom:1px solid var(--border-color);background:linear-gradient(135deg,rgba(59,130,246,0.1),rgba(139,92,246,0.06));">
+                <h4 style="margin:0;font-size:0.9rem;font-weight:600;"><i class="fa-solid fa-plus text-accent"></i> New monitoring server</h4>
                 <button type="button" class="btn btn-xs btn-outline" id="btn-close-add-server"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div style="padding:1rem 1rem 1.1rem;">
-                <p class="text-muted" style="font-size:0.75rem;margin:0 0 0.85rem;line-height:1.45;"><i class="fa-solid fa-vault"></i> Credentials are encrypted before storage. For production environments, ensure <code>VAULT_ADDR</code> is configured on the API.</p>
-                <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem 1.2rem;align-items:start;">
+            <div style="padding:0.75rem 0.9rem 0.85rem;">
+                <p class="text-muted" style="font-size:0.7rem;margin:0 0 0.6rem;line-height:1.4;"><i class="fa-solid fa-vault"></i> Credentials are encrypted before storage. Ensure <code>VAULT_ADDR</code> is set for production.</p>
+                <div id="admin-add-server-grid">
                     <div class="srv-fld"><label for="srv-name">Name</label><input class="custom-input" id="srv-name" placeholder="Production Postgres" /></div>
                     <div class="srv-fld"><label for="srv-type">Engine</label>
-                        <select class="custom-select" id="srv-type" style="width:100%;min-height:2.4rem;"><option value="postgres">PostgreSQL</option><option value="sqlserver">SQL Server</option></select></div>
+                        <select class="custom-select" id="srv-type"><option value="postgres">PostgreSQL</option><option value="sqlserver">SQL Server</option></select></div>
                     <div class="srv-fld"><label for="srv-host">Host</label><input class="custom-input" id="srv-host" placeholder="localhost" /></div>
                     <div class="srv-fld"><label for="srv-port">Port</label><input class="custom-input" id="srv-port" placeholder="5432" inputmode="numeric" /></div>
                     <div class="srv-fld"><label for="srv-user">Username</label><input class="custom-input" id="srv-user" /></div>
                     <div class="srv-fld"><label for="srv-pass">Password</label><input class="custom-input" id="srv-pass" type="password" autocomplete="new-password" /></div>
-                    <div class="srv-fld" style="grid-column:1/-1;"><label for="srv-ssl">SSL mode (PostgreSQL / RDS)</label>
-                        <select class="custom-select" id="srv-ssl" style="width:100%;min-height:2.4rem;"><option value="require">require</option><option value="disable">disable</option><option value="verify-full">verify-full</option></select></div>
-                    <div class="srv-fld" style="grid-column:1/-1;"><label for="srv-db">Initial database / catalog <span class="text-muted" style="font-weight:400;">(optional)</span></label>
+                    <div class="srv-fld srv-fld-ssl" style="grid-column:span 2;"><label for="srv-ssl">SSL mode (PostgreSQL / RDS)</label>
+                        <select class="custom-select" id="srv-ssl"><option value="require">require</option><option value="disable">disable</option><option value="verify-full">verify-full</option></select></div>
+                    <div class="srv-fld srv-fld-db"><label for="srv-db">Initial database <span class="text-muted" style="font-weight:400;">(optional)</span></label>
                         <input class="custom-input" id="srv-db" placeholder="postgres or master" /></div>
-                    <div id="srv-trust-wrap" class="srv-fld" style="grid-column:1/-1;display:none;"><label style="display:flex;align-items:center;gap:0.45rem;cursor:pointer;margin:0;font-weight:500;">
+                    <div id="srv-trust-wrap" class="srv-fld" style="grid-column:1/-1;display:none;"><label style="display:flex;align-items:center;gap:0.45rem;cursor:pointer;margin:0;font-weight:500;font-size:0.8rem;">
                         <input type="checkbox" id="srv-trust-cert" style="width:1rem;height:1rem;" /> Trust server certificate (Azure SQL / MI)
                     </label></div>
-                    <div id="pg-extension-guide" class="glass-panel" style="grid-column:1/-1; font-size:0.75rem; line-height:1.4; margin-top:0.5rem; display:none; border-color:rgba(var(--accent-rgb), 0.2); background:rgba(var(--accent-rgb), 0.03);">
-                       <h5 style="margin:0 0 0.4rem; font-size:0.8rem; font-weight:700; color:var(--accent);"><i class="fa-solid fa-circle-info"></i> PostgreSQL Configuration Tip</h5>
-                       For advanced metrics, enable <code>pg_stat_statements</code> (minimum requirement). <code>pg_stat_monitor</code> is optional but recommended for bucketed history:
-                       <ul style="margin:0.35rem 0 0; padding-left:1.1rem; color:var(--text-muted);">
-                           <li>Add to <code>shared_preload_libraries</code>: <code>'pg_stat_statements, pg_stat_monitor'</code></li>
-                           <li>Set <code>pg_stat_monitor.pgsm_bucket_time = 60</code> for 1-minute granularity (optional).</li>
-                       </ul>
-                       <p style="margin:0.4rem 0 0; font-style:italic;">Note: If <code>pg_stat_monitor</code> is unavailable, the application will automatically fall back to <code>pg_stat_statements</code>.</p>
-                    </div>                    </div>
-
-                <style>
-                    #admin-add-server-form .srv-fld label { display:block; font-size:0.7rem; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.35rem; }
-                    #admin-add-server-form .srv-fld .custom-input, #admin-add-server-form .srv-fld .custom-select { width:100%; min-height:2.4rem; box-sizing:border-box; }
-                </style>
-                <div id="admin-add-server-err" class="alert alert-danger" style="display:none;margin-top:1rem;"></div>
-                <div style="margin-top:1.25rem;display:flex;align-items:center;gap:0.75rem;">
+                    <div id="pg-extension-guide" style="grid-column:1/-1; font-size:0.7rem; line-height:1.4; padding:0.5rem 0.65rem; border-radius:6px; margin-top:0.1rem; display:none; border:1px solid rgba(var(--accent-rgb),0.2); background:rgba(var(--accent-rgb),0.03); color:var(--text-muted);">
+                        <i class="fa-solid fa-circle-info text-accent"></i> Enable <code>pg_stat_statements</code> (required) and optionally <code>pg_stat_monitor</code> via <code>shared_preload_libraries</code> for advanced query metrics.
+                    </div>
+                </div>
+                <div id="admin-add-server-err" class="alert alert-danger" style="display:none;margin-top:0.6rem;font-size:0.78rem;padding:0.4rem 0.75rem;"></div>
+                <div style="margin-top:0.75rem;display:flex;align-items:center;gap:0.6rem;">
                     <button type="button" class="btn btn-sm btn-outline" id="srv-test-btn"><i class="fa-solid fa-plug-circle-check"></i> Test connection</button>
-                    <span id="srv-test-msg" style="font-size:0.78rem;font-weight:500;vertical-align:middle;"></span>
+                    <span id="srv-test-msg" style="font-size:0.78rem;font-weight:500;"></span>
                     <button type="button" class="btn btn-sm btn-accent" id="srv-save-btn" disabled title="Test connection first"><i class="fa-solid fa-floppy-disk"></i> Save server</button>
                 </div>
             </div>
@@ -392,11 +440,18 @@ window.showAddServerForm = function() {
             if (mainMsg) mainMsg.innerHTML = `<div class="alert alert-success">Server saved successfully.</div>`;
             window.loadAdminServers();
             
-            // Trigger background config refresh so the sidebar dropdown updates immediately.
+            // Refresh config so sidebar dropdown and estate view reflect the new server immediately.
             if (window.apiClient && typeof window.apiClient.fetchConfig === 'function') {
                 await window.apiClient.fetchConfig();
                 if (window.router && typeof window.router.populateInstanceDropdown === 'function') {
                     window.router.populateInstanceDropdown();
+                }
+                
+                // Full boot ensures Global Estate and all components reflect new inventory.
+                if (typeof window.boot === 'function') {
+                    window.boot();
+                } else if (window.GlobalEstate && typeof window.GlobalEstate.render === 'function') {
+                    window.GlobalEstate.render();
                 }
             }
         } catch (e) {

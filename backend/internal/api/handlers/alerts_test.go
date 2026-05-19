@@ -50,18 +50,18 @@ func (m *handlerMockAlertStore) GetByID(_ context.Context, id uuid.UUID) (alerts
 	return a, nil
 }
 
-func (m *handlerMockAlertStore) List(_ context.Context, f alerts.AlertFilter) ([]alerts.Alert, int, error) {
+func (m *handlerMockAlertStore) List(_ context.Context, f alerts.AlertFilter) ([]alerts.Alert, error) {
 	var result []alerts.Alert
 	for _, a := range m.alerts {
-		if f.Status != "" && a.Status != f.Status {
+		if f.Status != nil && a.Status != *f.Status {
 			continue
 		}
-		if f.InstanceName != "" && a.InstanceName != f.InstanceName {
+		if f.ServerID != nil && a.ServerID != *f.ServerID {
 			continue
 		}
 		result = append(result, a)
 	}
-	return result, len(result), nil
+	return result, nil
 }
 
 func (m *handlerMockAlertStore) UpdateStatus(_ context.Context, id uuid.UUID, status alerts.Status, actor, _ string, at time.Time) error {
@@ -75,10 +75,14 @@ func (m *handlerMockAlertStore) UpdateStatus(_ context.Context, id uuid.UUID, st
 	return nil
 }
 
-func (m *handlerMockAlertStore) CountOpen(_ context.Context, instanceName string) (int, error) {
+func (m *handlerMockAlertStore) PruneResolved(_ context.Context, _ time.Duration) (int64, error) {
+	return 0, nil
+}
+
+func (m *handlerMockAlertStore) CountOpen(_ context.Context, serverID uuid.UUID) (int, error) {
 	count := 0
 	for _, a := range m.alerts {
-		if a.InstanceName == instanceName && a.Status != alerts.StatusResolved {
+		if a.ServerID == serverID && a.Status != alerts.StatusResolved {
 			count++
 		}
 	}
@@ -92,7 +96,7 @@ func (m *handlerMockMaintenanceStore) Create(_ context.Context, mw alerts.Mainte
 	mw.CreatedAt = time.Now()
 	return mw, nil
 }
-func (m *handlerMockMaintenanceStore) IsUnderMaintenance(_ context.Context, _ string, _ alerts.Engine, _ time.Time) (bool, error) {
+func (m *handlerMockMaintenanceStore) IsUnderMaintenance(_ context.Context, _ uuid.UUID, _ alerts.Engine, _ time.Time) (bool, error) {
 	return false, nil
 }
 func (m *handlerMockMaintenanceStore) ListActive(_ context.Context, _ time.Time) ([]alerts.MaintenanceWindow, error) {
@@ -105,8 +109,8 @@ func (m *handlerMockMaintenanceStore) Delete(_ context.Context, _ uuid.UUID) err
 func setupHandlers() (*AlertHandlers, *handlerMockAlertStore) {
 	store := newHandlerMockAlertStore()
 	maintStore := &handlerMockMaintenanceStore{}
-	svc := service.NewAlertService(store, maintStore, nil)
-	h := NewAlertHandlers(svc, store, maintStore)
+	svc := service.NewAlertService(store, maintStore, nil, nil)
+	h := NewAlertHandlers(svc, nil)
 	return h, store
 }
 
@@ -135,9 +139,9 @@ func TestListAlerts_WithData(t *testing.T) {
 
 	id := uuid.New()
 	store.alerts[id] = alerts.Alert{
-		ID:           id,
-		InstanceName: "prod-db-01",
-		Engine:       alerts.EngineSQLServer,
+		ID:         id,
+		ServerName: "prod-db-01",
+		Engine:     alerts.EngineSQLServer,
 		Severity:     alerts.SeverityCritical,
 		Status:       alerts.StatusOpen,
 		Category:     "blocking",
@@ -211,8 +215,8 @@ func TestAcknowledgeAlert(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.AcknowledgeAlert(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNoContent)
 	}
 	if store.alerts[id].Status != alerts.StatusAcknowledged {
 		t.Errorf("alert status = %q, want acknowledged", store.alerts[id].Status)
@@ -235,8 +239,8 @@ func TestResolveAlert(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ResolveAlert(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNoContent)
 	}
 	if store.alerts[id].Status != alerts.StatusResolved {
 		t.Errorf("alert status = %q, want resolved", store.alerts[id].Status)
@@ -269,17 +273,18 @@ func TestResolveAlert_AlreadyResolved(t *testing.T) {
 
 func TestCountOpen(t *testing.T) {
 	h, store := setupHandlers()
+	serverID := uuid.New()
 
 	for i := 0; i < 3; i++ {
 		id := uuid.New()
 		store.alerts[id] = alerts.Alert{
-			ID:           id,
-			InstanceName: "prod-db-01",
-			Status:       alerts.StatusOpen,
+			ID:       id,
+			ServerID: serverID,
+			Status:   alerts.StatusOpen,
 		}
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/alerts/count?instance=prod-db-01", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/alerts/count?server_id="+serverID.String(), nil)
 	rr := httptest.NewRecorder()
 	h.CountOpen(rr, req)
 
@@ -287,11 +292,10 @@ func TestCountOpen(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]int
 	json.NewDecoder(rr.Body).Decode(&resp)
-	data := resp["data"].(map[string]interface{})
-	if data["open_count"].(float64) != 3 {
-		t.Errorf("open_count = %v, want 3", data["open_count"])
+	if resp["count"] != 3 {
+		t.Errorf("count = %v, want 3", resp["count"])
 	}
 }
 
@@ -479,8 +483,8 @@ func TestAcknowledgeAlert_UsesAuthClaims(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.AcknowledgeAlert(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNoContent)
 	}
 }
 
@@ -502,7 +506,7 @@ func TestAcknowledgeAlert_FallbackToSystem(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.AcknowledgeAlert(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNoContent)
 	}
 }

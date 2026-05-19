@@ -9,6 +9,7 @@ package hot
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"strings"
 	"time"
 
@@ -16,20 +17,20 @@ import (
 )
 
 type PostgresLogEventRow struct {
-	CaptureTimestamp   time.Time              `json:"capture_timestamp"`
-	ServerInstanceName string                 `json:"server_instance_name"`
-	Severity           string                 `json:"severity"`
-	SQLState           string                 `json:"sqlstate,omitempty"`
-	Message            string                 `json:"message"`
-	UserName           string                 `json:"user_name,omitempty"`
-	DatabaseName       string                 `json:"database_name,omitempty"`
-	ApplicationName    string                 `json:"application_name,omitempty"`
-	ClientAddr         string                 `json:"client_addr,omitempty"`
-	PID                int64                  `json:"pid,omitempty"`
-	Context            string                 `json:"context,omitempty"`
-	Detail             string                 `json:"detail,omitempty"`
-	Hint               string                 `json:"hint,omitempty"`
-	Raw                map[string]interface{} `json:"raw,omitempty"`
+	CaptureTimestamp time.Time              `json:"capture_timestamp"`
+	ServerID         uuid.UUID              `json:"server_id"`
+	Severity         string                 `json:"severity"`
+	SQLState         string                 `json:"sqlstate,omitempty"`
+	Message          string                 `json:"message"`
+	UserName         string                 `json:"user_name,omitempty"`
+	DatabaseName     string                 `json:"database_name,omitempty"`
+	ApplicationName  string                 `json:"application_name,omitempty"`
+	ClientAddr       string                 `json:"client_addr,omitempty"`
+	PID              int64                  `json:"pid,omitempty"`
+	Context          string                 `json:"context,omitempty"`
+	Detail           string                 `json:"detail,omitempty"`
+	Hint             string                 `json:"hint,omitempty"`
+	Raw              map[string]interface{} `json:"raw,omitempty"`
 }
 
 type PostgresLogSummary struct {
@@ -60,13 +61,13 @@ func normalizePgLogSeverity(s string) string {
 	}
 }
 
-func (tl *TimescaleLogger) LogPostgresLogEvents(ctx context.Context, instanceName string, rows []PostgresLogEventRow) error {
+func (tl *TimescaleLogger) LogPostgresLogEvents(ctx context.Context, serverID uuid.UUID, rows []PostgresLogEventRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	q := `
 		INSERT INTO postgres_log_events (
-			capture_timestamp, server_instance_name,
+			capture_timestamp, server_id,
 			severity, sqlstate, message,
 			user_name, database_name, application_name, client_addr,
 			pid, context, detail, hint, raw
@@ -80,7 +81,7 @@ func (tl *TimescaleLogger) LogPostgresLogEvents(ctx context.Context, instanceNam
 			ts = time.Now().UTC()
 		}
 		b.Queue(q,
-			ts, instanceName,
+			ts, serverID,
 			se, r.SQLState, r.Message,
 			r.UserName, r.DatabaseName, r.ApplicationName, r.ClientAddr,
 			r.PID, r.Context, r.Detail, r.Hint, r.Raw,
@@ -96,7 +97,7 @@ func (tl *TimescaleLogger) LogPostgresLogEvents(ctx context.Context, instanceNam
 	return nil
 }
 
-func (tl *TimescaleLogger) GetPostgresLogSummary(ctx context.Context, instanceName string, windowMinutes int) (*PostgresLogSummary, error) {
+func (tl *TimescaleLogger) GetPostgresLogSummary(ctx context.Context, serverID uuid.UUID, windowMinutes int) (*PostgresLogSummary, error) {
 	if windowMinutes <= 0 {
 		windowMinutes = 60
 	}
@@ -104,7 +105,7 @@ func (tl *TimescaleLogger) GetPostgresLogSummary(ctx context.Context, instanceNa
 		WITH w AS (
 			SELECT *
 			FROM postgres_log_events
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND capture_timestamp >= NOW() - ($2 * INTERVAL '1 minute')
 		)
 		SELECT
@@ -120,7 +121,7 @@ func (tl *TimescaleLogger) GetPostgresLogSummary(ctx context.Context, instanceNa
 	var s PostgresLogSummary
 	s.WindowMinutes = windowMinutes
 	var lastAt *time.Time
-	if err := tl.pool.QueryRow(ctx, q, instanceName, windowMinutes).Scan(
+	if err := tl.pool.QueryRow(ctx, q, serverID, windowMinutes).Scan(
 		&s.ErrorCount, &s.FatalCount, &s.PanicCount, &s.AuthFailCount, &s.OOMCount, &lastAt, &s.LastMessage,
 	); err != nil {
 		return nil, err
@@ -131,20 +132,20 @@ func (tl *TimescaleLogger) GetPostgresLogSummary(ctx context.Context, instanceNa
 	return &s, nil
 }
 
-func (tl *TimescaleLogger) GetPostgresLogEvents(ctx context.Context, instanceName string, limit int, severity string) ([]PostgresLogEventRow, error) {
+func (tl *TimescaleLogger) GetPostgresLogEvents(ctx context.Context, serverID uuid.UUID, limit int, severity string) ([]PostgresLogEventRow, error) {
 	if limit <= 0 {
 		limit = 200
 	}
 	sev := strings.ToLower(strings.TrimSpace(severity))
 	q := `
-		SELECT capture_timestamp, server_instance_name, severity,
+		SELECT capture_timestamp, server_id, severity,
 		       COALESCE(sqlstate,''), message,
 		       COALESCE(user_name,''), COALESCE(database_name,''), COALESCE(application_name,''), COALESCE(client_addr,''),
 		       COALESCE(pid,0), COALESCE(context,''), COALESCE(detail,''), COALESCE(hint,''), raw
 		FROM postgres_log_events
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 	`
-	args := []any{instanceName}
+	args := []any{serverID}
 	if sev != "" && sev != "all" {
 		q += " AND severity = $2"
 		args = append(args, sev)
@@ -165,7 +166,7 @@ func (tl *TimescaleLogger) GetPostgresLogEvents(ctx context.Context, instanceNam
 	for rows.Next() {
 		var r PostgresLogEventRow
 		if err := rows.Scan(
-			&r.CaptureTimestamp, &r.ServerInstanceName, &r.Severity,
+			&r.CaptureTimestamp, &r.ServerID, &r.Severity,
 			&r.SQLState, &r.Message,
 			&r.UserName, &r.DatabaseName, &r.ApplicationName, &r.ClientAddr,
 			&r.PID, &r.Context, &r.Detail, &r.Hint, &r.Raw,

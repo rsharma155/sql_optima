@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/ruleengine/models"
 )
@@ -83,7 +84,7 @@ func (c *PGClient) GetEnabledRules(ctx context.Context, instanceType string) ([]
 	return rules, rows.Err()
 }
 
-func (c *PGClient) StartRuleRun(ctx context.Context, serverID int) (int, error) {
+func (c *PGClient) StartRuleRun(ctx context.Context, serverID uuid.UUID) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -96,11 +97,11 @@ func (c *PGClient) StartRuleRun(ctx context.Context, serverID int) (int, error) 
 	return runID, nil
 }
 
-func (c *PGClient) StoreRawResult(ctx context.Context, runID int, ruleID string, serverID int, payload json.RawMessage) error {
+func (c *PGClient) StoreRawResult(ctx context.Context, runID int, ruleID string, serverID uuid.UUID, payload json.RawMessage) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	_, err := c.pool.Exec(ctx, QueryStoreRaw, runID, ruleID, serverID, payload)
+	_, err := c.pool.Exec(ctx, QueryStoreRaw, runID, serverID, ruleID, payload)
 	if err != nil {
 		return fmt.Errorf("failed to store raw result for rule %s: %w", ruleID, err)
 	}
@@ -121,7 +122,7 @@ func (c *PGClient) EvaluateRun(ctx context.Context, runID int) error {
 }
 
 func (c *PGClient) GetDashboardView(ctx context.Context, serverID int) ([]models.DashboardEntry, error) {
-	query := `SELECT rule_id, rule_name, category, status, current_value, recommended_value, description, fix_script, context_tags, confidence, evaluated_at FROM ruleengine.v_best_practices_dashboard WHERE server_id = $1 ORDER BY category, rule_name;`
+	query := `SELECT rule_id, rule_name, category, status, current_value, recommended_value, description, fix_script, context_tags, confidence, capture_timestamp FROM ruleengine.v_best_practices_dashboard WHERE server_id = $1 ORDER BY category, rule_name;`
 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

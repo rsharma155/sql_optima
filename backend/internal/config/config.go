@@ -17,7 +17,9 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -50,7 +52,13 @@ func ConnectToInstance(inst Instance) (*sql.DB, error) {
 			q.Set("TrustServerCertificate", "true")
 		}
 		msURL.RawQuery = q.Encode()
-		return sql.Open("sqlserver", msURL.String())
+		db, err := sql.Open("sqlserver", msURL.String())
+		if err == nil {
+			db.SetMaxOpenConns(5)
+			db.SetMaxIdleConns(2)
+			db.SetConnMaxLifetime(10 * time.Minute)
+		}
+		return db, err
 	} else if inst.Type == "postgres" {
 		port := inst.Port
 		if port == 0 {
@@ -74,26 +82,33 @@ func ConnectToInstance(inst Instance) (*sql.DB, error) {
 		q := pgURL.Query()
 		q.Set("sslmode", sslmode)
 		pgURL.RawQuery = q.Encode()
-		return sql.Open("postgres", pgURL.String())
+		db, err := sql.Open("postgres", pgURL.String())
+		if err == nil {
+			db.SetMaxOpenConns(5)
+			db.SetMaxIdleConns(2)
+			db.SetConnMaxLifetime(10 * time.Minute)
+		}
+		return db, err
 	}
 	return nil, fmt.Errorf("unsupported instance type: %s", inst.Type)
 }
 
 type Config struct {
-	Instances    []Instance        `yaml:"instances" json:"instances"`
-	FeatureFlags map[string]bool   `yaml:"feature_flags" json:"feature_flags"`
+	Instances    []Instance      `yaml:"instances" json:"instances"`
+	FeatureFlags map[string]bool `yaml:"feature_flags" json:"feature_flags"`
 }
 
 type Instance struct {
-	ID        int      `yaml:"id,omitempty" json:"id,omitempty"`
-	Name      string   `yaml:"name" json:"name"`
-	Type      string   `yaml:"type" json:"type"` // "sqlserver" or "postgres"
-	Host      string   `yaml:"host" json:"host"`
-	Port      int      `yaml:"port,omitempty" json:"port,omitempty"`
-	User      string   `yaml:"user,omitempty" json:"-"`
-	Password  string   `yaml:"password,omitempty" json:"-"`
-	Databases []string `yaml:"databases,omitempty" json:"databases,omitempty"`
-	Available bool     `yaml:"available,omitempty" json:"available,omitempty"`
+	ServerID  uuid.UUID `yaml:"server_id,omitempty" json:"server_id,omitempty"`
+	ID        int       `yaml:"id,omitempty" json:"id,omitempty"`
+	Name      string    `yaml:"name" json:"name"`
+	Type      string    `yaml:"type" json:"type"` // "sqlserver" or "postgres"
+	Host      string    `yaml:"host" json:"host"`
+	Port      int       `yaml:"port,omitempty" json:"port,omitempty"`
+	User      string    `yaml:"user,omitempty" json:"-"`
+	Password  string    `yaml:"password,omitempty" json:"-"`
+	Databases []string  `yaml:"databases,omitempty" json:"databases,omitempty"`
+	Available bool      `yaml:"available,omitempty" json:"available,omitempty"`
 
 	// Security Additions
 	TrustServerCertificate bool   `yaml:"trust_server_certificate,omitempty" json:"trust_server_certificate,omitempty"` // SQLSERVER (Azure SQL / MI when CA validation is impractical)
@@ -116,6 +131,19 @@ type Instance struct {
 	// Optional PgBouncer admin DSN for pooler monitoring (example: "postgres://user:pass@host:6432/pgbouncer?sslmode=disable").
 	// Keep this server-side only (not exposed via /api/config).
 	PGBouncerAdminDSN string `yaml:"pgbouncer_admin_dsn,omitempty" json:"-"`
+
+	// QueryTimeoutSeconds overrides the default 20s timeout for database queries.
+	QueryTimeoutSeconds int `yaml:"query_timeout_seconds,omitempty" json:"query_timeout_seconds,omitempty"`
+
+
+}
+
+// QueryTimeout returns the configured query timeout or 0 (use default).
+func (i Instance) QueryTimeout() time.Duration {
+	if i.QueryTimeoutSeconds > 0 {
+		return time.Duration(i.QueryTimeoutSeconds) * time.Second
+	}
+	return 0
 }
 
 func LoadConfig(path string) (*Config, error) {

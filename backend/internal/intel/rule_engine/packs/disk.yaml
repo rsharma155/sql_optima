@@ -1,0 +1,45 @@
+name: low_disk_space
+description: Low free disk space
+conditions:
+  - metric: free_disk_mb
+    operator: "<"
+    value: 10240
+logic: AND
+severity: high
+message: "Free disk space is {free_disk_mb} MB (below 10 GB threshold)."
+recommendation:
+  - "Check disk history for growth trends"
+  - "Purge old backups"
+  - "Review log_mb growth"
+  - "Add disk capacity"
+
+---
+name: rapid_disk_growth
+description: Rapid disk growth
+conditions:
+  - metric: delta_data_mb
+    operator: ">"
+    value: 500
+logic: AND
+severity: medium
+message: "Data growth rate is {delta_data_mb} MB per interval."
+recommendation:
+  - "Identify growth contributors"
+  - "Review data retention policies"
+  - "Implement data archiving"
+  - "Plan storage expansion"
+
+---
+name: io_latency_high
+description: High I/O latency
+conditions:
+  - metric: read_latency_ms
+    operator: ">"
+    value: 20
+logic: OR
+severity: high
+message: "I/O latency is elevated (read: {read_latency_ms}ms)."
+recommendation:
+  - "Check PAGEIOLATCH_SH waits"
+  - "Review read/write latency"
+  - "Move high-latency databases to faster storage"

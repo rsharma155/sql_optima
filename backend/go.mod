@@ -13,12 +13,13 @@ require (
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/hibiken/asynq v0.26.0
 	github.com/jackc/pgx/v5 v5.9.2
+	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
 	github.com/microsoft/go-mssqldb v1.10.0
 	github.com/parquet-go/parquet-go v0.29.0
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/prometheus/client_golang v1.22.0
-	github.com/rsharma155/sqlplan-analyzer v0.0.0-20260508154209-8ae9db2df8a0
+	github.com/rsharma155/sqlplan-analyzer v0.0.0-00010101000000-000000000000
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.35.0
@@ -88,6 +89,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/parquet-go/bitpack v1.0.0 // indirect
 	github.com/parquet-go/jsonlite v1.0.0 // indirect
+	github.com/pashagolub/pgxmock/v3 v3.4.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

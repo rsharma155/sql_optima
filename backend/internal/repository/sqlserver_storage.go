@@ -8,11 +8,21 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
 
-func (c *SqlServerRepository) CollectSQLServerStorageMetrics(instanceName string) ([]map[string]interface{}, error) {
+type TableSizeStats struct {
+	SchemaName string
+	TableName  string
+	RowCount   int64
+	TotalMB    float64
+	DataMB     float64
+	IndexMB    float64
+}
+
+func (c *SqlServerRepository) CollectSQLServerStorageMetrics(ctx context.Context, instanceName string) ([]map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
@@ -30,7 +40,9 @@ func (c *SqlServerRepository) CollectSQLServerStorageMetrics(instanceName string
 		GROUP BY database_id
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +65,7 @@ func (c *SqlServerRepository) CollectSQLServerStorageMetrics(instanceName string
 	return results, nil
 }
 
-func (c *SqlServerRepository) CollectSQLServerTableSizeMetrics(instanceName, databaseName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) FetchTableSizeStats(ctx context.Context, instanceName, databaseName string) ([]TableSizeStats, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
@@ -63,13 +75,11 @@ func (c *SqlServerRepository) CollectSQLServerTableSizeMetrics(instanceName, dat
 		/* SQL_OPTIMA */ 
 		USE [%s];
 		SELECT /* SQL_OPTIMA */   
-			DB_NAME() AS database_name,
 			SCHEMA_NAME(t.schema_id) AS schema_name,
 			t.name AS table_name,
 			p.rows AS row_count,
 			SUM(a.total_pages) * 8 / 1024.0 AS total_mb,
 			SUM(a.data_pages) * 8 / 1024.0 AS data_mb,
-			(SUM(a.total_pages) - SUM(a.used_pages)) * 8 / 1024.0 AS unused_mb,
 			(SUM(a.used_pages) - SUM(a.data_pages)) * 8 / 1024.0 AS index_mb
 		FROM sys.tables t WITH (NOLOCK)
 		INNER JOIN sys.indexes i WITH (NOLOCK) ON t.object_id = i.object_id
@@ -80,24 +90,21 @@ func (c *SqlServerRepository) CollectSQLServerTableSizeMetrics(instanceName, dat
 		ORDER BY total_mb DESC
 	`, strings.ReplaceAll(databaseName, "]", "]]"))
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var results []map[string]interface{}
+	var results []TableSizeStats
 	for rows.Next() {
-		var dbn, sn, tn string
-		var rc int64
-		var tmb, dmb, umb, imb float64
-		if err := rows.Scan(&dbn, &sn, &tn, &rc, &tmb, &dmb, &umb, &imb); err != nil {
+		var st TableSizeStats
+		if err := rows.Scan(&st.SchemaName, &st.TableName, &st.RowCount, &st.TotalMB, &st.DataMB, &st.IndexMB); err != nil {
 			continue
 		}
-		results = append(results, map[string]interface{}{
-			"database_name": dbn, "schema_name": sn, "table_name": tn, "row_count": rc,
-			"total_mb": tmb, "data_mb": dmb, "unused_mb": umb, "index_mb": imb,
-		})
+		results = append(results, st)
 	}
 	return results, nil
 }

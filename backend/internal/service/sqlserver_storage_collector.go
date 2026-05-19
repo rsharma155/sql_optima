@@ -1,176 +1,221 @@
-/*
- * SQL Optima — https://github.com/rsharma155/sql_optima
- *
- * Purpose: Dedicated SQL Server Storage & Index Health history collector.
- *          Captures daily snapshots of DB/Table/Index sizes and usage for TimescaleDB.
- *
- * Author: Ravi Sharma
- * Copyright (c) 2026 Ravi Sharma
- * SPDX-License-Identifier: MIT
- */
-
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Background collector for SQL Server Storage & Index Health.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package service
 
 import (
+	"fmt"
+	"log/slog"
 	"context"
-	"log"
+	"database/sql"
+	"strings"
 	"time"
 
-	"github.com/rsharma155/sql_optima/internal/collectors"
+	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
-// StartSqlServerStorageHistoryCollector starts the background task to collect storage snapshots.
 func (s *MetricsService) StartSqlServerStorageHistoryCollector(ctx context.Context) {
-	interval := s.FetchInterval(ctx, "SQL Server Storage", 24*time.Hour)
-	log.Printf("[Collector][SQLSERVER-Storage] History collector started (interval: %v)", interval)
+	interval := s.GetCollectorInterval(ctx, "SQL Server Storage History", 6*time.Hour)
+	slog.Info("[SQLServerStorage] Starting background collector (interval: %v)", "val", interval)
 
-	// Ticker for storage collection
 	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	go func() {
+		defer ticker.Stop()
+		// Run once immediately
+		if interval > 0 {
+			s.collectSqlServerStorageStats(ctx)
+		}
 
-	// Initial run after short delay
-	time.AfterFunc(1*time.Minute, func() {
-		s.RunSqlServerStorageSnapshotCollection(ctx)
-	})
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Dynamic interval check
+				newInterval := s.GetCollectorInterval(ctx, "SQL Server Storage History", 6*time.Hour)
+				if newInterval != interval && newInterval > 0 {
+					slog.Info("[SQLServerStorage] Frequency changed from", "arg1", interval, "arg2", newInterval)
+					interval = newInterval
+					ticker.Reset(interval)
+				}
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.RunSqlServerStorageSnapshotCollection(ctx)
-
-			// Refresh interval from DB
-			newInterval := s.FetchInterval(ctx, "SQL Server Storage", 24*time.Hour)
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
+				if interval > 0 {
+					s.collectSqlServerStorageStats(ctx)
+				}
 			}
 		}
-	}
+	}()
 }
 
-// RunSqlServerStorageSnapshotCollection performs a full sweep of monitored SQL instances.
-func (s *MetricsService) RunSqlServerStorageSnapshotCollection(ctx context.Context) {
-	if s.tsLogger == nil {
-		return
-	}
-
+func (s *MetricsService) collectSqlServerStorageStats(ctx context.Context) {
 	for _, inst := range s.Config.Instances {
-		if inst.Type != "sqlserver" {
+		if strings.ToLower(inst.Type) != "sqlserver" {
 			continue
 		}
 
-		log.Printf("[Collector][SQLSERVER-Storage] Collecting snapshots for instance: %s", inst.Name)
+		serverID := inst.ServerID
 
-		s.sihMu.Lock()
-		lastDefTime := s.sihLastDefsDaily[inst.Name]
-		s.sihMu.Unlock()
+		// Discover databases for this instance
+		db, ok := s.MsRepo.GetConn(inst.Name)
+		if !ok {
+			continue
+		}
 
-		// 1. Database Storage Metrics
-		dbMetrics, err := s.MsRepo.CollectSQLServerStorageMetrics(inst.Name)
+		var databases []string
+		rows, err := db.Query("SELECT name FROM sys.databases WHERE state = 0 AND name NOT IN ('master','tempdb','model','msdb')")
 		if err == nil {
-			var rows []hot.DBStorageHistoryRow
-			now := time.Now().UTC()
-			for _, m := range dbMetrics {
-				rows = append(rows, hot.DBStorageHistoryRow{
-					SnapshotTime: now,
-					ServerName:   inst.Name,
-					InstanceName: inst.Name,
-					DatabaseName: m["database_name"].(string),
-					TotalSizeMB:  m["total_size_mb"].(float64),
-					DataSizeMB:   m["data_size_mb"].(float64),
-					LogSizeMB:    m["log_size_mb"].(float64),
-				})
+			for rows.Next() {
+				var name string
+				if err := rows.Scan(&name); err == nil {
+					databases = append(databases, name)
+				}
 			}
-			_ = s.tsLogger.LogDBStorageHistory(ctx, rows)
+			rows.Close()
 		}
 
-		// 2. Table-level Metrics (Iterate through user databases)
-		databases, _ := s.MsRepo.ListSQLServerUserDatabases(inst.Name)
-		capture := time.Now().UTC()
-		for _, db := range databases {
-			// A: Table Sizes
-			tblMetrics, err := s.MsRepo.CollectSQLServerTableSizeMetrics(inst.Name, db)
-			if err == nil {
-				var rows []hot.TableSizeHistoryRow
-				for _, m := range tblMetrics {
-					rows = append(rows, hot.TableSizeHistoryRow{
-						SnapshotTime: capture,
-						ServerName:   inst.Name,
-						InstanceName: inst.Name,
-						DatabaseName: db,
-						SchemaName:   m["schema_name"].(string),
-						TableName:    m["table_name"].(string),
-						RowCount:     m["row_count"].(int64),
-						TotalMB:      m["total_mb"].(float64),
-						DataMB:       m["data_mb"].(float64),
-						IndexMB:      m["index_mb"].(float64),
+		for _, dbName := range databases {
+			// Table Size History
+			stats, err := s.MsRepo.FetchTableSizeStats(ctx, inst.Name, dbName)
+			if err != nil {
+				slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: FetchTableSizeStats error: %v", inst.Name, dbName, err))
+				_ = s.tsLogger.LogCollectorError(ctx, serverID, "Permission error or query failure: "+err.Error())
+				continue
+			}
+			if len(stats) > 0 {
+				var hotRows []hot.TableSizeHistoryRow
+				now := time.Now().UTC()
+				for _, st := range stats {
+					row := hot.TableSizeHistoryRow{
+						CaptureTimestamp: now,
+						ServerID:         serverID,
+						DatabaseName:     dbName,
+						SchemaName:       st.SchemaName,
+						TableName:        st.TableName,
+						RowCount:         st.RowCount,
+						TotalMB:          st.TotalMB,
+						DataMB:           st.DataMB,
+						IndexMB:          st.IndexMB,
+					}
+					hotRows = append(hotRows, row)
+
+					// Also populate unified monitor table
+					_ = s.tsLogger.InsertTableSizeHistory(ctx, models.TableSizeHistory{
+						Time:        now,
+						Engine:      "sqlserver",
+						ServerID:    serverID,
+						DBName:      dbName,
+						SchemaName:  st.SchemaName,
+						TableName:   st.TableName,
+						TableSizeMB: st.DataMB,
+						IndexSizeMB: st.IndexMB,
+						RowCount:    st.RowCount,
 					})
 				}
-				_ = s.tsLogger.LogTableSizeHistoryWithChangeDetection(ctx, inst.Name, rows)
+				_ = s.tsLogger.LogTableSizeHistoryWithChangeDetection(ctx, serverID, hotRows)
 			}
 
-			// B: Table Structure Risks
-			structMetrics, err := s.MsRepo.CollectSQLServerTableStructureMetrics(inst.Name, db)
-			if err == nil {
-				var rows []hot.TableStructureHistoryRow
-				for _, m := range structMetrics {
-					rows = append(rows, hot.TableStructureHistoryRow{
-						SnapshotTime:      capture,
-						ServerName:        inst.Name,
-						InstanceName:      inst.Name,
-						DatabaseName:      db,
-						SchemaName:        m["schema_name"].(string),
-						TableName:         m["table_name"].(string),
-						HasClusteredIndex: m["has_clustered_index"].(bool),
-						HasPrimaryKey:     m["has_primary_key"].(bool),
+			// Index Usage History
+			idxStats, err := s.MsRepo.CollectSQLServerIndexUsageMetrics(ctx, inst.Name, dbName)
+			if err != nil {
+				slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: IndexUsage error: %v", inst.Name, dbName, err))
+				_ = s.tsLogger.LogCollectorError(ctx, serverID, "Index usage collection error: "+err.Error())
+				continue
+			}
+			if len(idxStats) > 0 {
+				now := time.Now().UTC()
+				for _, st := range idxStats {
+					var lastSeek *time.Time
+					if lus, ok := st["last_user_seek"].(sql.NullTime); ok && lus.Valid {
+						t := lus.Time
+						lastSeek = &t
+					}
+					_ = s.tsLogger.InsertIndexUsageStat(ctx, models.IndexUsageStat{
+						Time:         now,
+						Engine:       "sqlserver",
+						ServerID:     serverID,
+						DBName:       dbName,
+						SchemaName:   st["schema_name"].(string),
+						TableName:    st["table_name"].(string),
+						IndexName:    st["index_name"].(string),
+						Seeks:        st["user_seeks"].(int64),
+						Scans:        st["user_scans"].(int64),
+						Lookups:      st["user_lookups"].(int64),
+						Updates:      st["user_updates"].(int64),
+						IndexSizeMB:  st["index_size_mb"].(float64),
+						IsPK:         st["is_pk"].(bool),
+						IsUnique:     st["is_unique"].(bool),
+						LastUserSeek: lastSeek,
 					})
 				}
-				_ = s.tsLogger.LogTableStructureHistoryWithChangeDetection(ctx, inst.Name, rows)
 			}
 
-
-			// C: Index Usage Stats (Deltas for SIH charts)
-			idxRows, ierr := collectors.CollectSQLServerIndexUsage(ctx, s.MsRepo.AsQueryer(inst.Name, db))
-			if ierr == nil {
-				_, _ = collectors.PersistSQLServerIndexUsageDeltas(ctx, s.tsLogger, inst.Name, db, idxRows, capture)
-			}
-
-			// D: Index Definitions (Daily)
-			defRows, derr := collectors.CollectSQLServerIndexDefinitions(ctx, s.MsRepo.AsQueryer(inst.Name, db), lastDefTime)
-			if derr == nil {
-				_, _ = collectors.PersistSQLServerIndexDefinitions(ctx, s.tsLogger, inst.Name, defRows, capture)
-			}
-
-			// E: Index Fragmentation (Daily)
-			fragMetrics, ferr := s.MsRepo.CollectSQLServerIndexFragmentationMetrics(inst.Name, db)
-			if ferr == nil {
-				var rows []hot.IndexFragHistoryRow
-				for _, m := range fragMetrics {
-					rows = append(rows, hot.IndexFragHistoryRow{
-						SnapshotTime:        capture,
-						ServerName:          inst.Name,
-						InstanceName:        inst.Name,
-						DatabaseName:        db,
-						SchemaName:          m["schema_name"].(string),
-						TableName:           m["table_name"].(string),
-						IndexName:           m["index_name"].(string),
-						AvgFragmentationPct: m["avg_fragmentation_pct"].(float64),
-						PageCount:           m["page_count"].(int64),
+			// Table Usage Stats — seq/idx scans, rows read/modified per table.
+			// Uses sys.dm_db_index_operational_stats (TVF) for row-level operation counters;
+			// sys.dm_db_index_usage_stats only has user_seeks/scans/lookups/updates, not leaf counts.
+			tableUsageRows, tableUsageErr := db.QueryContext(ctx, `
+				/* SQL_OPTIMA */
+				SELECT
+					ISNULL(s.name, 'dbo')                                             AS schema_name,
+					ISNULL(t.name, 'Unknown')                                          AS table_name,
+					ISNULL(SUM(ios.range_scan_count), 0)                               AS seq_scans,
+					ISNULL(SUM(ios.singleton_lookup_count), 0)                         AS idx_scans,
+					ISNULL(SUM(ios.leaf_insert_count + ios.leaf_delete_count +
+					           ios.leaf_update_count + ios.range_scan_count +
+					           ios.singleton_lookup_count), 0)                         AS rows_read,
+					ISNULL(SUM(ios.leaf_insert_count + ios.leaf_delete_count +
+					           ios.leaf_update_count), 0)                              AS rows_modified,
+					ISNULL(SUM(a.total_pages) * 8.0 / 1024.0, 0)                      AS table_size_mb,
+					ISNULL(SUM(CASE WHEN i.index_id > 1 THEN a.total_pages ELSE 0 END) * 8.0 / 1024.0, 0) AS index_size_mb,
+					ISNULL(MAX(p.rows), 0)                                             AS row_count
+				FROM sys.tables t WITH (NOLOCK)
+				JOIN sys.schemas s WITH (NOLOCK) ON t.schema_id = s.schema_id
+				LEFT JOIN sys.indexes i WITH (NOLOCK) ON t.object_id = i.object_id
+				LEFT JOIN sys.dm_db_index_operational_stats(DB_ID(), NULL, NULL, NULL) ios
+					ON i.object_id = ios.object_id AND i.index_id = ios.index_id
+				LEFT JOIN sys.partitions p WITH (NOLOCK)
+					ON i.object_id = p.object_id AND i.index_id = p.index_id
+				LEFT JOIN sys.allocation_units a WITH (NOLOCK)
+					ON p.partition_id = a.container_id
+				WHERE t.is_ms_shipped = 0
+				GROUP BY s.name, t.name
+				HAVING SUM(a.total_pages) > 0
+				ORDER BY table_size_mb DESC
+			`)
+			if tableUsageErr != nil {
+				slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: TableUsageStats error: %v", inst.Name, dbName, tableUsageErr))
+				_ = s.tsLogger.LogCollectorError(ctx, serverID, "Table usage stats collection error: "+tableUsageErr.Error())
+			} else {
+				now := time.Now().UTC()
+				for tableUsageRows.Next() {
+					var schemaName, tableName string
+					var seqScans, idxScans, rowsRead, rowsModified, rowCount int64
+					var tableSizeMB, indexSizeMB float64
+					if err := tableUsageRows.Scan(&schemaName, &tableName, &seqScans, &idxScans, &rowsRead, &rowsModified, &tableSizeMB, &indexSizeMB, &rowCount); err != nil {
+						continue
+					}
+					_ = s.tsLogger.InsertTableUsageStat(ctx, models.TableUsageStat{
+						Time:         now,
+						Engine:       "sqlserver",
+						ServerID:     serverID,
+						DBName:       dbName,
+						SchemaName:   schemaName,
+						TableName:    tableName,
+						SeqScans:     seqScans,
+						IdxScans:     idxScans,
+						RowsRead:     rowsRead,
+						RowsModified: rowsModified,
+						TableSizeMB:  tableSizeMB,
+						IndexSizeMB:  indexSizeMB,
+						RowCount:     rowCount,
 					})
 				}
-				_ = s.tsLogger.LogIndexFragmentationHistory(ctx, rows)
+				tableUsageRows.Close()
 			}
 		}
-
-		// Update last run time for index definitions to optimize next run
-		s.sihMu.Lock()
-		s.sihLastDefsDaily[inst.Name] = capture
-		s.sihMu.Unlock()
-
-		// 3. Global SIH Refreshes
-		_, _ = s.tsLogger.RefreshIndexUnusedCandidatesDaily(ctx, "sqlserver", inst.Name, capture, 100)
 	}
 }

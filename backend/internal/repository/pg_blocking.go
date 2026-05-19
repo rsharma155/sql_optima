@@ -8,12 +8,13 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
-	"log"
 )
 
 // CollectPgBlocking fetches PostgreSQL blocking queries
-func (c *PgRepository) CollectPgBlocking(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *PgRepository) CollectPgBlocking(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		/* SQL_OPTIMA */ 
 		SELECT   
@@ -33,9 +34,11 @@ func (c *PgRepository) CollectPgBlocking(db *sql.DB) ([]map[string]interface{}, 
 		ORDER BY blocked.duration DESC
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[PostgreSQL] Blocking Query Error: %v", err)
+		slog.Error("[PostgreSQL] Blocking Query Error", "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -60,7 +63,7 @@ func (c *PgRepository) CollectPgBlocking(db *sql.DB) ([]map[string]interface{}, 
 }
 
 // CollectPgLocks fetches PostgreSQL lock statistics
-func (c *PgRepository) CollectPgLocks(db *sql.DB) ([]map[string]interface{}, error) {
+func (c *PgRepository) CollectPgLocks(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
 		/* SQL_OPTIMA */ 
 		SELECT   
@@ -75,7 +78,9 @@ func (c *PgRepository) CollectPgLocks(db *sql.DB) ([]map[string]interface{}, err
 		ORDER BY count DESC
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

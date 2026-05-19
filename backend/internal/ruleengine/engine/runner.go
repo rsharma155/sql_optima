@@ -8,15 +8,16 @@
 package engine
 
 import (
+	"log/slog"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/expr-lang/expr"
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/ruleengine/collectors"
 	"github.com/rsharma155/sql_optima/internal/ruleengine/models"
 	"github.com/rsharma155/sql_optima/internal/ruleengine/postgres"
@@ -59,8 +60,8 @@ func (r *Runner) SetPostgresCollector(col *collectors.PostgresCollector) {
 	r.mu.Unlock()
 }
 
-func (r *Runner) Start(ctx context.Context, serverID int, instanceType string) error {
-	log.Printf("[Engine] Starting rule engine for server_id=%d, instance_type=%s", serverID, instanceType)
+func (r *Runner) Start(ctx context.Context, serverID uuid.UUID, instanceType string) error {
+	slog.Info("[Engine] Starting rule engine for server_id=", "arg1", serverID, "arg2", instanceType)
 
 	rules, err := r.pgClient.GetEnabledRules(ctx, instanceType)
 	if err != nil {
@@ -68,7 +69,7 @@ func (r *Runner) Start(ctx context.Context, serverID int, instanceType string) e
 	}
 
 	if len(rules) == 0 {
-		log.Printf("[Engine] No enabled rules found")
+		slog.Info("[Engine] No enabled rules found")
 		return nil
 	}
 
@@ -81,7 +82,7 @@ func (r *Runner) Start(ctx context.Context, serverID int, instanceType string) e
 		return fmt.Errorf("failed to start rule run: %w", err)
 	}
 
-	log.Printf("[Engine] Started run_id=%d with %d rules", runID, len(rules))
+	slog.Info("[Engine] Started run_id=", "arg1", runID, "arg2", len(rules))
 
 	rulesChan := make(chan models.Rule, len(rules))
 	for _, rule := range rules {
@@ -103,7 +104,7 @@ func (r *Runner) Start(ctx context.Context, serverID int, instanceType string) e
 
 	go r.resultProcessor(ctx, resultsChan, runID, serverID)
 
-	log.Printf("[Engine] Dispatched %d rules to worker pool", len(rules))
+	slog.Info("[Engine] Dispatched %d rules to worker pool", "val", len(rules))
 	return nil
 }
 
@@ -117,11 +118,11 @@ func (r *Runner) worker(ctx context.Context, workerID int, rulesChan <-chan mode
 
 func (r *Runner) processRule(ctx context.Context, workerID int, rule models.Rule, resultsChan chan<- models.DetectionPayload) {
 	payload := models.DetectionPayload{
-		RunID:      0,
-		RuleID:     rule.RuleID,
-		RuleName:   rule.RuleName,
-		Category:   rule.Category,
-		DetectedAt: time.Now(),
+		RunID:       0,
+		RuleID:      rule.RuleID,
+		RuleName:    rule.RuleName,
+		Category:    rule.Category,
+		DetectedAt:  time.Now(),
 		ContextTags: rule.ContextTags,
 		Confidence:  rule.Confidence,
 	}
@@ -183,7 +184,7 @@ func (r *Runner) processRule(ctx context.Context, workerID int, rule models.Rule
 	}
 
 	if err != nil {
-		log.Printf("[Worker-%d] Rule %s (ID=%s) failed: %v", workerID, rule.RuleName, rule.RuleID, err)
+		slog.Error(fmt.Sprintf("[Worker-%d] Rule %s (ID=%s) failed: %v", workerID, rule.RuleName, rule.RuleID, err))
 		payload.Error = err.Error()
 		resultsChan <- payload
 		return
@@ -215,14 +216,15 @@ func (r *Runner) processRule(ctx context.Context, workerID int, rule models.Rule
 		if rule.ExpectedCalc != "" {
 			program, err := expr.Compile(rule.ExpectedCalc, expr.Env(env))
 			if err != nil {
-				log.Printf("[Worker-%d] Rule %s: failed to compile expected_calc: %v", workerID, rule.RuleName, err)
+				slog.Error(fmt.Sprintf("[Worker-%d] Rule %s: failed to compile expected_calc: %v", workerID, rule.RuleName, err))
 			} else {
 				result, err := expr.Run(program, env)
 				if err != nil {
-					log.Printf("[Worker-%d] Rule %s: failed to run expected_calc: %v", workerID, rule.RuleName, err)
-				} else {
+					slog.Error(fmt.Sprintf("[Worker-%d] Rule %s: failed to run expected_calc: %v", workerID, rule.RuleName, err))
+				} else if result != nil {
 					env["Recommended"] = result
-					log.Printf("[Worker-%d] Rule %s: calculated Recommended=%v", workerID, rule.RuleName, result)
+					env["Expected"] = result
+					slog.Info(fmt.Sprintf("[Worker-%d] Rule %s: calculated Recommended=%v", workerID, rule.RuleName, result))
 				}
 			}
 		}
@@ -231,15 +233,15 @@ func (r *Runner) processRule(ctx context.Context, workerID int, rule models.Rule
 		if rule.EvaluationLogic != "" {
 			program, err := expr.Compile(rule.EvaluationLogic, expr.Env(env))
 			if err != nil {
-				log.Printf("[Worker-%d] Rule %s: failed to compile evaluation_logic: %v", workerID, rule.RuleName, err)
+				slog.Error(fmt.Sprintf("[Worker-%d] Rule %s: failed to compile evaluation_logic: %v", workerID, rule.RuleName, err))
 			} else {
 				result, err := expr.Run(program, env)
 				if err != nil {
-					log.Printf("[Worker-%d] Rule %s: failed to run evaluation_logic: %v", workerID, rule.RuleName, err)
+					slog.Error(fmt.Sprintf("[Worker-%d] Rule %s: failed to run evaluation_logic: %v", workerID, rule.RuleName, err))
 				} else {
 					statusStr := fmt.Sprintf("%v", result)
 					env["EvaluatedStatus"] = statusStr
-					log.Printf("[Worker-%d] Rule %s: evaluated status=%s", workerID, rule.RuleName, statusStr)
+					slog.Info(fmt.Sprintf("[Worker-%d] Rule %s: evaluated status=%s", workerID, rule.RuleName, statusStr))
 				}
 			}
 		}
@@ -278,10 +280,10 @@ func (r *Runner) processRule(ctx context.Context, workerID int, rule models.Rule
 	}
 }
 
-func (r *Runner) resultProcessor(ctx context.Context, resultsChan <-chan models.DetectionPayload, runID int, serverID int) {
+func (r *Runner) resultProcessor(ctx context.Context, resultsChan <-chan models.DetectionPayload, runID int, serverID uuid.UUID) {
 	for payload := range resultsChan {
 		if payload.Error != "" {
-			log.Printf("[Engine] Rule %s (ID=%s) error: %s", payload.RuleName, payload.RuleID, payload.Error)
+			slog.Error(fmt.Sprintf("[Engine] Rule %s (ID=%s) error: %s", payload.RuleName, payload.RuleID, payload.Error))
 			continue
 		}
 
@@ -301,7 +303,7 @@ func (r *Runner) resultProcessor(ctx context.Context, resultsChan <-chan models.
 
 		jsonPayload, err := json.Marshal(payload.RawResults)
 		if err != nil {
-			log.Printf("[Engine] Failed to marshal payload for rule %s: %v", payload.RuleID, err)
+			slog.Error("[Engine] Failed to marshal payload for rule", "target", payload.RuleID, "err", err)
 			continue
 		}
 
@@ -310,7 +312,7 @@ func (r *Runner) resultProcessor(ctx context.Context, resultsChan <-chan models.
 		cancel()
 
 		if err != nil {
-			log.Printf("[Engine] Failed to store result for rule %s: %v", payload.RuleID, err)
+			slog.Error("[Engine] Failed to store result for rule", "target", payload.RuleID, "err", err)
 		}
 	}
 
@@ -319,15 +321,15 @@ func (r *Runner) resultProcessor(ctx context.Context, resultsChan <-chan models.
 	cancel()
 
 	if err != nil {
-		log.Printf("[Engine] Failed to evaluate run %d: %v", runID, err)
+		slog.Error("[Engine] Failed to evaluate run", "target", runID, "err", err)
 		return
 	}
 
-	log.Printf("[Engine] Run %d completed and evaluated", runID)
+	slog.Info("[Engine] Run %d completed and evaluated", "val", runID)
 }
 
 func (r *Runner) Stop() {
 	close(r.stopChan)
 	r.wg.Wait()
-	log.Printf("[Engine] Runner stopped")
+	slog.Info("[Engine] Runner stopped")
 }

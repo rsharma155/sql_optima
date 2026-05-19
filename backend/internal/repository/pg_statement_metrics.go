@@ -10,8 +10,10 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
+	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 )
 
@@ -23,6 +25,7 @@ type PgQueryStat struct {
 	DbName            string  `json:"db_name"`
 	UserName          string  `json:"username"`
 	Query             string  `json:"query"`
+	QueryType         string  `json:"query_type"`
 	Calls             int64   `json:"calls"`
 	TotalTime         float64 `json:"total_time"`
 	MeanTime          float64 `json:"mean_time"`
@@ -44,88 +47,74 @@ type PgQueryStat struct {
 }
 
 // FetchQuerySnapshot returns a raw snapshot of pg_stat_statements.
-func (c *PgRepository) FetchQuerySnapshot(instanceName string) ([]PgQueryStat, error) {
+func (c *PgRepository) FetchQuerySnapshot(ctx context.Context, instanceName string, db *sql.DB) ([]PgQueryStat, error) {
 	c.mutex.RLock()
-	db, ok := c.conns[strings.ToUpper(instanceName)]
-	supported := c.pgssSupported[instanceName]
+	supported := c.pgssSupported[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
-
-	if !ok || db == nil {
-		return nil, fmt.Errorf("connection not found for instance: %s", instanceName)
-	}
 
 	if !supported {
 		return nil, fmt.Errorf("pg_stat_statements not supported or enabled on %s", instanceName)
 	}
 
-	version := c.GetPgVersion(instanceName)
+	version := c.GetPgVersion(ctx, instanceName)
+	hasBlkTime := c.GetPgssHasBlkTime(instanceName)
 
-	var query string
+	// Choose the exec-time column name: total_exec_time (PG13+) vs total_time (older).
+	execTimeCol := "s.total_time"
 	if version >= 130000 {
-		query = `/* SQL_OPTIMA */
-			SELECT
-				s.queryid,
-				s.userid,
-				s.dbid,
-				d.datname                               AS db_name,
-				COALESCE(r.rolname, s.userid::text)     AS username,
-				LEFT(s.query, 500),
-				s.calls,
-				s.total_exec_time,
-				s.rows,
-				s.temp_blks_read,
-				s.temp_blks_written,
-				s.blk_read_time,
-				s.blk_write_time,
-				s.shared_blks_read,
-				s.shared_blks_hit,
-				COALESCE(s.shared_blks_dirtied,0),
-				COALESCE(s.shared_blks_written,0),
-				COALESCE(s.wal_bytes,0),
-				COALESCE(s.wal_records,0),
-				COALESCE(s.wal_fpi,0),
-				COALESCE(s.total_plan_time,0),
-				COALESCE(s.plans,0)
-			FROM pg_stat_statements s
-			JOIN  pg_database d ON d.oid = s.dbid
-			LEFT JOIN pg_roles  r ON r.oid = s.userid
-			WHERE s.query NOT LIKE '%/* SQL_OPTIMA */%'
-			  AND d.datname NOT IN ('template0', 'template1')
-		`
-	} else {
-		query = `/* SQL_OPTIMA */
-			SELECT
-				s.queryid,
-				s.userid,
-				s.dbid,
-				d.datname                               AS db_name,
-				COALESCE(r.rolname, s.userid::text)     AS username,
-				LEFT(s.query, 500),
-				s.calls,
-				s.total_time,
-				s.rows,
-				s.temp_blks_read,
-				s.temp_blks_written,
-				s.blk_read_time,
-				s.blk_write_time,
-				s.shared_blks_read,
-				s.shared_blks_hit,
-				COALESCE(s.shared_blks_dirtied,0),
-				COALESCE(s.shared_blks_written,0),
-				0 as wal_bytes,
-				0 as wal_records,
-				0 as wal_fpi,
-				0 as total_plan_time,
-				0 as plans
-			FROM pg_stat_statements s
-			JOIN  pg_database d ON d.oid = s.dbid
-			LEFT JOIN pg_roles  r ON r.oid = s.userid
-			WHERE s.query NOT LIKE '%/* SQL_OPTIMA */%'
-			  AND d.datname NOT IN ('template0', 'template1')
-		`
+		execTimeCol = "s.total_exec_time"
 	}
 
-	rows, err := db.Query(query)
+	// Choose blk I/O time columns: use literal 0 when the column doesn't exist in the
+	// extension schema (can happen on any version with an old extension install).
+	blkReadCol := "0"
+	blkWriteCol := "0"
+	if hasBlkTime {
+		blkReadCol = "s.blk_read_time"
+		blkWriteCol = "s.blk_write_time"
+	}
+
+	// PG13+ exposes WAL counters and plan-time columns; older versions don't.
+	walCols := "0 as wal_bytes, 0 as wal_records, 0 as wal_fpi, 0 as total_plan_time, 0 as mean_plan_time, 0 as plans"
+	if version >= 130000 {
+		walCols = "COALESCE(s.wal_bytes,0), COALESCE(s.wal_records,0), COALESCE(s.wal_fpi,0), COALESCE(s.total_plan_time,0), (COALESCE(s.total_plan_time,0)/NULLIF(s.plans,0)), COALESCE(s.plans,0)"
+	}
+
+	query := fmt.Sprintf(`/* SQL_OPTIMA */
+		SELECT
+			s.queryid,
+			s.userid,
+			s.dbid,
+			d.datname                                        AS db_name,
+			COALESCE(r.rolname, s.userid::text)              AS username,
+			LEFT(s.query, 500),
+			'O' as query_type,
+			s.calls,
+			%s,
+			(%s / NULLIF(s.calls, 0))                        AS mean_time,
+			s.rows,
+			s.temp_blks_read,
+			s.temp_blks_written,
+			%s                                               AS blk_read_time,
+			%s                                               AS blk_write_time,
+			s.shared_blks_read,
+			s.shared_blks_hit,
+			COALESCE(s.shared_blks_dirtied,0),
+			COALESCE(s.shared_blks_written,0),
+			%s
+		FROM pg_stat_statements s
+		JOIN  pg_database d ON d.oid = s.dbid
+		LEFT JOIN pg_roles  r ON r.oid = s.userid
+		WHERE s.query NOT LIKE '%%/* SQL_OPTIMA */%%'
+		  AND d.datname NOT IN ('template0', 'template1')
+		ORDER BY %s DESC
+		LIMIT 200
+	`, execTimeCol, execTimeCol, blkReadCol, blkWriteCol, walCols, execTimeCol)
+
+
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -136,11 +125,11 @@ func (c *PgRepository) FetchQuerySnapshot(instanceName string) ([]PgQueryStat, e
 		var s PgQueryStat
 		err := rows.Scan(
 			&s.QueryID, &s.UserID, &s.DbID, &s.DbName, &s.UserName,
-			&s.Query, &s.Calls, &s.TotalTime, &s.Rows,
+			&s.Query, &s.QueryType, &s.Calls, &s.TotalTime, &s.MeanTime, &s.Rows,
 			&s.TempBlksRead, &s.TempBlksWritten, &s.BlkReadTime, &s.BlkWriteTime,
 			&s.SharedBlksRead, &s.SharedBlksHit, &s.SharedBlksDirtied, &s.SharedBlksWritten,
 			&s.WalBytes, &s.WalRecords, &s.WalFpi,
-			&s.TotalPlanTime, &s.Plans,
+			&s.TotalPlanTime, &s.MeanPlanTime, &s.Plans,
 		)
 		if err != nil {
 			continue
@@ -149,49 +138,6 @@ func (c *PgRepository) FetchQuerySnapshot(instanceName string) ([]PgQueryStat, e
 	}
 
 	return stats, rows.Err()
-}
-
-// ComputeDelta calculates the difference between current and previous snapshots.
-// Returns the delta row and a boolean indicating if a meaningful change exists.
-// If a reset is detected (counters decreased), it returns (current, false).
-func ComputeDelta(current, previous PgQueryStat) (PgQueryStat, bool) {
-	// Detect pg_stat_statements reset
-	if current.Calls < previous.Calls || current.TotalTime < previous.TotalTime {
-		return current, false
-	}
-
-	delta := current
-	delta.Calls = current.Calls - previous.Calls
-	delta.TotalTime = current.TotalTime - previous.TotalTime
-	delta.Rows = current.Rows - previous.Rows
-	delta.TempBlksRead = current.TempBlksRead - previous.TempBlksRead
-	delta.TempBlksWritten = current.TempBlksWritten - previous.TempBlksWritten
-	delta.BlkReadTime = current.BlkReadTime - previous.BlkReadTime
-	delta.BlkWriteTime = current.BlkWriteTime - previous.BlkWriteTime
-	delta.SharedBlksRead = current.SharedBlksRead - previous.SharedBlksRead
-	delta.SharedBlksHit = current.SharedBlksHit - previous.SharedBlksHit
-	delta.SharedBlksDirtied = current.SharedBlksDirtied - previous.SharedBlksDirtied
-	delta.SharedBlksWritten = current.SharedBlksWritten - previous.SharedBlksWritten
-	delta.WalBytes = current.WalBytes - previous.WalBytes
-	delta.WalRecords = current.WalRecords - previous.WalRecords
-	delta.WalFpi = current.WalFpi - previous.WalFpi
-	delta.TotalPlanTime = current.TotalPlanTime - previous.TotalPlanTime
-	delta.Plans = current.Plans - previous.Plans
-
-	// If no calls occurred, no meaningful change
-	if delta.Calls <= 0 {
-		return delta, false
-	}
-
-	// Recompute means
-	if delta.Calls > 0 {
-		delta.MeanTime = delta.TotalTime / float64(delta.Calls)
-	}
-	if delta.Plans > 0 {
-		delta.MeanPlanTime = delta.TotalPlanTime / float64(delta.Plans)
-	}
-
-	return delta, true
 }
 
 // NormalizedQueryStat represents normalized query statistics with query ID.
@@ -204,63 +150,8 @@ type NormalizedQueryStat struct {
 	Rows      int64
 }
 
-// FetchNormalizedQueryStats retrieves query statistics from pg_stat_statements.
-// Returns query ID, text, and execution metrics. Requires pg_stat_statements extension.
-func (c *PgRepository) FetchNormalizedQueryStats(instanceName string) ([]NormalizedQueryStat, error) {
-	c.mutex.RLock()
-	db, ok := c.conns[strings.ToUpper(instanceName)]
-	c.mutex.RUnlock()
-
-	if !ok || db == nil {
-		return nil, fmt.Errorf("connection not found")
-	}
-
-	if !c.GetPgssSupported(instanceName) {
-		return nil, fmt.Errorf("pg_stat_statements extension not available")
-	}
-
-	version := c.GetPgVersion(instanceName)
-	timeCol := "total_exec_time"
-	meanCol := "mean_exec_time"
-	if version < 130000 {
-		timeCol = "total_time"
-		meanCol = "total_time / NULLIF(calls, 0)"
-	}
-
-	query := fmt.Sprintf(`/* SQL_OPTIMA */ SELECT   
-			s.queryid,
-			s.query,
-			s.calls,
-			s.%s,
-			%s,
-			s.rows
-		FROM pg_stat_statements s
-		LEFT JOIN pg_roles r ON r.oid = s.userid
-		WHERE %s
-		ORDER BY s.%s DESC
-		LIMIT 100
-	`, timeCol, meanCol, buildPgStatStatementsFilters(), timeCol)
-
-	rows, err := db.Query(query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var stats []NormalizedQueryStat
-	for rows.Next() {
-		var s NormalizedQueryStat
-		if err := rows.Scan(&s.QueryID, &s.QueryText, &s.Calls, &s.TotalTime, &s.MeanTime, &s.Rows); err != nil {
-			continue
-		}
-		stats = append(stats, s)
-	}
-
-	return stats, rows.Err()
-}
-
 // ResetQueryStats resets pg_stat_statements statistics.
-func (c *PgRepository) ResetQueryStats(instanceName string) error {
+func (c *PgRepository) ResetQueryStats(ctx context.Context, instanceName string) error {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -269,11 +160,58 @@ func (c *PgRepository) ResetQueryStats(instanceName string) error {
 		return fmt.Errorf("connection not found")
 	}
 
-	_, err := db.Exec("/* SQL_OPTIMA */ SELECT   pg_stat_statements_reset()")
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	_, err := db.ExecContext(ctx, "/* SQL_OPTIMA */ SELECT   pg_stat_statements_reset()")
 	if err != nil {
 		return fmt.Errorf("failed to reset query stats: %w", err)
 	}
 
-	log.Printf("[POSTGRES] Reset pg_stat_statements on %s", instanceName)
+	slog.Info("[POSTGRES] Reset pg_stat_statements on", "val", instanceName)
 	return nil
+}
+
+// ComputeDelta calculates the difference between two PgQueryStat snapshots.
+// Returns a delta PgQueryStat and true if there was a meaningful change.
+func ComputeDelta(curr, prev PgQueryStat) (PgQueryStat, bool) {
+	if curr.Calls < prev.Calls {
+		// Reset detected
+		return PgQueryStat{}, false
+	}
+
+	delta := PgQueryStat{
+		QueryID:           curr.QueryID,
+		UserID:            curr.UserID,
+		DbID:              curr.DbID,
+		DbName:            curr.DbName,
+		UserName:          curr.UserName,
+		Query:             curr.Query,
+		QueryType:         curr.QueryType,
+		Calls:             curr.Calls - prev.Calls,
+		TotalTime:         curr.TotalTime - prev.TotalTime,
+		Rows:              curr.Rows - prev.Rows,
+		TempBlksRead:      curr.TempBlksRead - prev.TempBlksRead,
+		TempBlksWritten:   curr.TempBlksWritten - prev.TempBlksWritten,
+		BlkReadTime:       curr.BlkReadTime - prev.BlkReadTime,
+		BlkWriteTime:      curr.BlkWriteTime - prev.BlkWriteTime,
+		SharedBlksRead:    curr.SharedBlksRead - prev.SharedBlksRead,
+		SharedBlksHit:     curr.SharedBlksHit - prev.SharedBlksHit,
+		SharedBlksDirtied: curr.SharedBlksDirtied - prev.SharedBlksDirtied,
+		SharedBlksWritten: curr.SharedBlksWritten - prev.SharedBlksWritten,
+		WalBytes:          curr.WalBytes - prev.WalBytes,
+		WalRecords:        curr.WalRecords - prev.WalRecords,
+		WalFpi:            curr.WalFpi - prev.WalFpi,
+		TotalPlanTime:     curr.TotalPlanTime - prev.TotalPlanTime,
+		Plans:             curr.Plans - prev.Plans,
+	}
+
+	if delta.Calls > 0 {
+		delta.MeanTime = delta.TotalTime / float64(delta.Calls)
+		if delta.Plans > 0 {
+			delta.MeanPlanTime = delta.TotalPlanTime / float64(delta.Plans)
+		}
+		return delta, true
+	}
+
+	return PgQueryStat{}, false
 }

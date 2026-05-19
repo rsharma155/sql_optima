@@ -52,6 +52,10 @@
         "Enterprise Monitor": {
             description: "Deep-dive metrics for PostgreSQL internals including background writer, checkpointing, and WAL archiving health. This dashboard surfaces bottlenecks in the core engine processes that manage durability and memory-to-disk synchronization.",
             metrics: {
+                "Cache Hit Ratio": {
+                    title: "Shared Buffer Cache Hit Ratio (%)",
+                    text: "**What it is:** Percentage of block reads satisfied from PostgreSQL's shared buffer cache vs. those requiring physical I/O.\n\n**Why it matters:** Healthy systems run at 99%+. Values below 95% indicate that `shared_buffers` is too small for the working set, or that full-table scans are evicting useful pages."
+                },
                 "Checkpoint Ratio": {
                     title: "Timed vs Requested Checkpoints",
                     text: "**What it is:** Ratio of checkpoints triggered by time (`checkpoint_timeout`) vs. those triggered by data volume (`max_wal_size`).\n\n**Why it matters:** In a well-tuned system, most checkpoints should be timed. Frequent requested checkpoints indicate `max_wal_size` is too small, causing I/O spikes."

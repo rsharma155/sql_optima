@@ -8,6 +8,7 @@
 package repository
 
 import (
+	"log/slog"
 	"context"
 	"fmt"
 	"log"
@@ -24,19 +25,19 @@ var authErrorLog *log.Logger
 func init() {
 	logDir := "logs"
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		log.Printf("[UserAuth] Warning: Failed to create log directory: %v", err)
+		slog.Error("[UserAuth] Warning: Failed to create log directory", "err", err)
 		return
 	}
 
 	errorLogPath := filepath.Join(logDir, "auth_error.log")
 	file, err := os.OpenFile(errorLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Printf("[UserAuth] Warning: Failed to open auth error log file: %v", err)
+		slog.Error("[UserAuth] Warning: Failed to open auth error log file", "err", err)
 		return
 	}
 
 	authErrorLog = log.New(file, "[AUTH_ERROR] ", log.Ldate|log.Ltime|log.Lshortfile)
-	log.Printf("[UserAuth] Auth error log file: %s", errorLogPath)
+	slog.Error("[UserAuth] Auth error log file", "err", errorLogPath)
 }
 
 // UserRepository handles user authentication and management.
@@ -58,7 +59,7 @@ func (r *UserRepository) AuthenticateUser(ctx context.Context, username, passwor
 	err := r.pool.QueryRow(ctx, query, username).Scan(&u.UserID, &u.Username, &hash, &u.Role, &createdAt)
 	if err != nil {
 		errMsg := fmt.Sprintf("Login failed for user '%s': user not found in database. Time: %s, Error: %v", username, time.Now().Format(time.RFC3339), err)
-		log.Printf("[UserAuth] %s", errMsg)
+		slog.Info("[UserAuth]", "err", errMsg)
 		if authErrorLog != nil {
 			authErrorLog.Printf("%s", errMsg)
 		}
@@ -66,17 +67,17 @@ func (r *UserRepository) AuthenticateUser(ctx context.Context, username, passwor
 	}
 	u.CreatedAt = createdAt
 
-	log.Printf("[UserAuth] Attempting login for user '%s'", username)
+	slog.Info("[UserAuth] Attempting login for user '%s'", "val", username)
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
 		errMsg := fmt.Sprintf("Password mismatch for user '%s'. Time: %s, Error: %v", username, time.Now().Format(time.RFC3339), err)
-		log.Printf("[UserAuth] %s", errMsg)
+		slog.Info("[UserAuth]", "err", errMsg)
 		if authErrorLog != nil {
 			authErrorLog.Printf("%s", errMsg)
 		}
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	log.Printf("[UserAuth] Login successful for user '%s' (role: %s)", username, u.Role)
+	slog.Info("[UserAuth] Login successful for user '", "arg1", username, "arg2", u.Role)
 	return &u, nil
 }
 
@@ -94,7 +95,7 @@ func (r *UserRepository) CreateUser(ctx context.Context, username, password, rol
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	log.Printf("[UserRepo] Created user %s with role %s", username, role)
+	slog.Info("[UserRepo] Created user", "arg1", username, "arg2", role)
 	return &u, nil
 }
 
@@ -124,7 +125,7 @@ func (r *UserRepository) GetAllUsers(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var u User
 		if err := rows.Scan(&u.UserID, &u.Username, &u.Role, &u.CreatedAt); err != nil {
-			log.Printf("[UserRepo] Scan error: %v", err)
+			slog.Error("[UserRepo] Scan error", "err", err)
 			continue
 		}
 		users = append(users, u)

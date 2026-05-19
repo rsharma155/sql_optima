@@ -1,8 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: HTTP handlers for the enhanced pg_stat_statements dashboard API
-//
-//	including workload time-series, latency, top queries, regressions, and status.
+// Purpose: PostgreSQL pg_stat_statements (PGSS) API handlers for advanced query analysis.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -11,349 +9,190 @@ package handlers
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/rsharma155/sql_optima/internal/models"
-	_ "github.com/rsharma155/sql_optima/pkg/logger" // ensure redact handler is initialised
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	"github.com/rsharma155/sql_optima/internal/service"
 )
 
-// PgssStatus checks whether pg_stat_statements is active on the target instance.
-func (h *PostgresHandlers) PgssStatus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-
-	status := h.metricsSvc.GetPgssStatus(r.Context(), instance)
-	json.NewEncoder(w).Encode(status)
+type PgssHandlers struct {
+	metricsSvc *service.MetricsService
 }
 
-// PgssWorkload returns per-minute workload time-series for the dashboard charts.
-func (h *PostgresHandlers) PgssWorkload(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
+func NewPgssHandlers(svc *service.MetricsService) *PgssHandlers {
+	return &PgssHandlers{metricsSvc: svc}
+}
 
-	from, to := parseTimeRange(r)
-	points, err := h.metricsSvc.GetPgssWorkload(r.Context(), instance, from, to)
+func (h *PgssHandlers) GetStatus(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
 	if err != nil {
-		slog.Error("pgss_workload_error", "instance", instance, "error", err)
-		points = nil
-	}
-	json.NewEncoder(w).Encode(models.PgssWorkloadResponse{Instance: instance, Points: points})
-}
-
-// PgssLatency returns latency percentile time-series.
-func (h *PostgresHandlers) PgssLatency(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
 		return
 	}
 
-	from, to := parseTimeRange(r)
-	points, err := h.metricsSvc.GetPgssLatency(r.Context(), instance, from, to)
+	res, err := h.metricsSvc.GetPgssStatus(r.Context(), id)
 	if err != nil {
-		slog.Error("pgss_latency_error", "instance", instance, "error", err)
-		points = nil
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
-	json.NewEncoder(w).Encode(models.PgssLatencyResponse{Instance: instance, Points: points})
-}
-
-// PgssTop returns top queries sorted by the requested metric.
-func (h *PostgresHandlers) PgssTop(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-
-	from, to := parseTimeRange(r)
-	sortBy := strings.TrimSpace(r.URL.Query().Get("sort"))
-	if sortBy == "" {
-		sortBy = "total_time"
-	}
-	// Allowlist sort values
-	switch sortBy {
-	case "total_time", "mean_time", "calls", "io", "temp", "wal", "planning":
-	default:
-		sortBy = "total_time"
-	}
-	// Optional filter params — allowlist characters to prevent injection
-	dbName    := sanitizeFilterParam(r.URL.Query().Get("db_name"))
-	userName  := sanitizeFilterParam(r.URL.Query().Get("username"))
-	appName   := sanitizeFilterParam(r.URL.Query().Get("app_name"))
-	queryType := sanitizeQueryType(r.URL.Query().Get("query_type"))
-	hideSystem := r.URL.Query().Get("hide_system") == "true"
-
-	queries, err := h.metricsSvc.GetPgssTopQueries(r.Context(), instance, from, to, sortBy, 100, dbName, userName, appName, queryType, hideSystem)
-	if err != nil {
-		slog.Error("pgss_top_queries_error", "instance", instance, "sort", sortBy, "error", err)
-		queries = nil
-	}
-	json.NewEncoder(w).Encode(models.PgssTopQueriesResponse{Instance: instance, SortBy: sortBy, Queries: queries})
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-// PgssRegressions returns queries with degraded performance (last 30m vs previous 30m).
-func (h *PostgresHandlers) PgssRegressions(w http.ResponseWriter, r *http.Request) {
+func (h *PgssHandlers) GetWorkloadTrend(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	from, _ := time.Parse(time.RFC3339, fromStr)
+	to, _ := time.Parse(time.RFC3339, toStr)
+
+	res, err := h.metricsSvc.GetPgssWorkloadTrend(r.Context(), id, from, to)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-
-	regressions, err := h.metricsSvc.GetPgssRegressions(r.Context(), instance)
-	if err != nil {
-		slog.Error("pgss_regressions_error", "instance", instance, "error", err)
-		regressions = nil
-	}
-	json.NewEncoder(w).Encode(models.PgssRegressionsResponse{Instance: instance, Regressions: regressions})
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-// PgssSummary returns aggregate KPI metrics for the incident summary strip.
-func (h *PostgresHandlers) PgssSummary(w http.ResponseWriter, r *http.Request) {
+func (h *PgssHandlers) GetTopQueries(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	from, _ := time.Parse(time.RFC3339, fromStr)
+	to, _ := time.Parse(time.RFC3339, toStr)
+
+	sortBy := r.URL.Query().Get("sort")
+	limitStr := r.URL.Query().Get("limit")
+	limit, _ := strconv.Atoi(limitStr)
+	dbName := r.URL.Query().Get("db")
+	userName := r.URL.Query().Get("user")
+	appName := r.URL.Query().Get("app")
+	qType := r.URL.Query().Get("type")
+	hideSys := r.URL.Query().Get("hide_system") == "true"
+
+	res, err := h.metricsSvc.GetPgssTopQueries(r.Context(), id, from, to, sortBy, limit, dbName, userName, appName, qType, hideSys)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-
-	from, to := parseTimeRange(r)
-	summary, err := h.metricsSvc.GetPgssSummary(r.Context(), instance, from, to)
-	if err != nil {
-		slog.Error("pgss_summary_error", "instance", instance, "error", err)
-		json.NewEncoder(w).Encode(models.PgssSummaryResponse{Instance: instance})
-		return
-	}
-	if summary == nil {
-		json.NewEncoder(w).Encode(models.PgssSummaryResponse{Instance: instance})
-		return
-	}
-	json.NewEncoder(w).Encode(summary)
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-// PgssFilters returns distinct db_name, username, app_name values for filter dropdowns.
-func (h *PostgresHandlers) PgssFilters(w http.ResponseWriter, r *http.Request) {
+func (h *PgssHandlers) GetLatencyTrend(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	from, _ := time.Parse(time.RFC3339, fromStr)
+	to, _ := time.Parse(time.RFC3339, toStr)
+
+	res, err := h.metricsSvc.GetPgssLatencyTrend(r.Context(), id, from, to)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-
-	from, to := parseTimeRange(r)
-	opts, err := h.metricsSvc.GetPgssFilterOptions(r.Context(), instance, from, to)
-	if err != nil {
-		slog.Error("pgss_filters_error", "instance", instance, "error", err)
-	}
-	if opts == nil {
-		opts = &models.PgssFilterOptions{Instance: instance}
-	}
-	json.NewEncoder(w).Encode(opts)
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-// PgssDbBreakdown returns per-database workload summary for the By Database tab.
-func (h *PostgresHandlers) PgssDbBreakdown(w http.ResponseWriter, r *http.Request) {
+func (h *PgssHandlers) GetRegressions(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	res, err := h.metricsSvc.GetPgssRegressions(r.Context(), id)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-
-	from, to := parseTimeRange(r)
-	rows, err := h.metricsSvc.GetPgssDbBreakdown(r.Context(), instance, from, to)
-	if err != nil {
-		slog.Error("pgss_db_breakdown_error", "instance", instance, "error", err)
-		rows = nil
-	}
-	json.NewEncoder(w).Encode(models.PgssDbBreakdownResponse{Instance: instance, Rows: rows})
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-// PgssUserBreakdown returns per-login workload summary for the By User tab.
-func (h *PostgresHandlers) PgssUserBreakdown(w http.ResponseWriter, r *http.Request) {
+func (h *PgssHandlers) GetDbBreakdown(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	from, _ := time.Parse(time.RFC3339, fromStr)
+	to, _ := time.Parse(time.RFC3339, toStr)
+
+	res, err := h.metricsSvc.GetPgssDbBreakdown(r.Context(), id, from, to)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	instance := r.URL.Query().Get("instance")
-	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance not found"})
-		return
-	}
-	if !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "instance is not postgres"})
-		return
-	}
-
-	from, to := parseTimeRange(r)
-	rows, err := h.metricsSvc.GetPgssUserBreakdown(r.Context(), instance, from, to)
-	if err != nil {
-		slog.Error("pgss_user_breakdown_error", "instance", instance, "error", err)
-		rows = nil
-	}
-	json.NewEncoder(w).Encode(models.PgssUserBreakdownResponse{Instance: instance, Rows: rows})
+	_ = json.NewEncoder(w).Encode(res)
 }
 
-// sanitizeFilterParam strips characters outside the printable ASCII safe set (letters, digits, @._- ).
-// This prevents SQL injection through filter query parameters.
+func (h *PgssHandlers) GetUserBreakdown(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	from, _ := time.Parse(time.RFC3339, fromStr)
+	to, _ := time.Parse(time.RFC3339, toStr)
+
+	res, err := h.metricsSvc.GetPgssUserBreakdown(r.Context(), id, from, to)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
 func sanitizeFilterParam(s string) string {
-	s = strings.TrimSpace(s)
-	var out strings.Builder
-	for _, ch := range s {
-		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-			(ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.' || ch == '@' {
-			out.WriteRune(ch)
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' || r == '@' {
+			return r
 		}
-	}
-	return out.String()
+		return -1
+	}, s)
 }
 
-// sanitizeQueryType accepts only the known single-char query type codes.
 func sanitizeQueryType(s string) string {
-	s = strings.TrimSpace(strings.ToUpper(s))
-	switch s {
-	case "S", "I", "U", "D", "E", "O":
+	s = strings.ToUpper(strings.TrimSpace(s))
+	if s == "S" || s == "I" || s == "U" || s == "D" || s == "E" || s == "O" {
 		return s
-	default:
-		return ""
 	}
-}
-
-// parseTimeRange extracts from/to from query params with 1-hour default.
-func parseTimeRange(r *http.Request) (time.Time, time.Time) {
-	q := r.URL.Query()
-	toT := time.Now().UTC()
-	fromT := toT.Add(-1 * time.Hour)
-
-	var hasFrom, hasTo bool
-
-	if fromStr := strings.TrimSpace(q.Get("from")); fromStr != "" {
-		if t, err := time.Parse(time.RFC3339, fromStr); err == nil {
-			fromT = t
-			hasFrom = true
-		}
-	}
-	if toStr := strings.TrimSpace(q.Get("to")); toStr != "" {
-		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
-			toT = t
-			hasTo = true
-		}
-	}
-
-	if fromT.After(toT) {
-		fromT, toT = toT, fromT
-	}
-
-	// Cap range only when both bounds were explicitly provided.
-	const maxRange = 7 * 24 * time.Hour
-	if hasFrom && hasTo && toT.Sub(fromT) > maxRange {
-		fromT = toT.Add(-maxRange)
-	}
-
-	return fromT, toT
+	return ""
 }

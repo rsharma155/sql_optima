@@ -8,18 +8,18 @@
 package workload
 
 type PgTopQuery struct {
-	QueryID       string  `json:"queryid"`
-	Query         string  `json:"query"`
-	Calls         int64   `json:"calls"`
-	TotalTimePct  float64 `json:"total_time_pct"`
-	CPUPct        float64 `json:"cpu_pct"`
-	IOPct         float64 `json:"io_pct"`
-	MeanExecTime  float64 `json:"mean_exec_time"`
-	Rows          int64   `json:"rows"`
+	QueryID      string  `json:"queryid"`
+	Query        string  `json:"query"`
+	Calls        int64   `json:"calls"`
+	TotalTimePct float64 `json:"total_time_pct"`
+	CPUPct       float64 `json:"cpu_pct"`
+	IOPct        float64 `json:"io_pct"`
+	MeanExecTime float64 `json:"mean_exec_time"`
+	Rows         int64   `json:"rows"`
 }
 
 type WorkloadSummary struct {
-	TPS           float64      `json:"tps"`
-	ActiveSessions int         `json:"active_sessions"`
-	TopQueries    []PgTopQuery `json:"top_queries"`
+	TPS            float64      `json:"tps"`
+	ActiveSessions int          `json:"active_sessions"`
+	TopQueries     []PgTopQuery `json:"top_queries"`
 }

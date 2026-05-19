@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"time"
 )
 
@@ -23,16 +24,16 @@ type ServerStore interface {
 	Create(ctx context.Context, s Server, encryptedSecret, encryptedDEK []byte) (Server, error)
 	List(ctx context.Context, activeOnly bool) ([]Server, error)
 	GetByName(ctx context.Context, name string) (Server, error)
-	GetEncrypted(ctx context.Context, id string) (s Server, encryptedSecret, encryptedDEK []byte, err error)
+	GetEncrypted(ctx context.Context, id uuid.UUID) (s Server, encryptedSecret, encryptedDEK []byte, err error)
 	// Delete removes the server row from the registry (credentials and metadata).
-	Delete(ctx context.Context, id string) error
-	SetActive(ctx context.Context, id string, active bool) error
-	UpdateMetadata(ctx context.Context, id string, name, host string, port int, username, sslMode string) error
-	UpdateCredentials(ctx context.Context, id string, encryptedSecret, encryptedDEK []byte) error
-	TouchLastTest(ctx context.Context, id string, at time.Time) error
-	CheckDuplicate(ctx context.Context, excludeID string, name, host string, port int) (string, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+	SetActive(ctx context.Context, id uuid.UUID, active bool) error
+	UpdateMetadata(ctx context.Context, id uuid.UUID, name, host string, port int, username, sslMode string) error
+	UpdateCredentials(ctx context.Context, id uuid.UUID, encryptedSecret, encryptedDEK []byte) error
+	TouchLastTest(ctx context.Context, id uuid.UUID, at time.Time) error
+	CheckDuplicate(ctx context.Context, excludeID uuid.UUID, name, host string, port int) (string, error)
 }
 
 type AuditLogger interface {
-	Log(ctx context.Context, eventType string, serverID string, actor string, ipAddress string, metadata map[string]interface{}) error
+	Log(ctx context.Context, eventType string, serverID uuid.UUID, actor string, ipAddress string, metadata map[string]interface{}) error
 }

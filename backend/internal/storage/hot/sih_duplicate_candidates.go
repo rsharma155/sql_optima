@@ -16,7 +16,7 @@ import (
 func (tl *TimescaleLogger) sihDuplicateIndexCandidates(ctx context.Context, engine, serverID, to string, f SIHFilters) ([]map[string]interface{}, error) {
 	// Pull latest definitions per index (day bucket) in scope and do pairwise comparisons in Go.
 	args := []interface{}{engine, serverID, to}
-	where := `engine=$1 AND server_id=$2 AND time <= $3::timestamptz`
+	where := `engine=$1 AND server_id=$2 AND capture_timestamp <= $3::timestamptz`
 	n := 4
 	if len(f.DBNames) > 0 {
 		where += fmt.Sprintf(" AND db_name = ANY($%d)", n)
@@ -29,18 +29,18 @@ func (tl *TimescaleLogger) sihDuplicateIndexCandidates(ctx context.Context, engi
 		n++
 	}
 	if f.TableLike != "" {
-		where += fmt.Sprintf(" AND table_name ILIKE $%d", n)
-		args = append(args, "%"+f.TableLike+"%")
+		where += fmt.Sprintf(" AND table_name = $%d", n)
+		args = append(args, f.TableLike)
 	}
 
 	q := `
 		SELECT db_name, schema_name, table_name, index_name, key_columns, include_columns, filter_definition, COALESCE(is_pk,false), COALESCE(is_unique,false)
 		FROM (
 			SELECT DISTINCT ON (db_name, schema_name, table_name, index_name)
-				db_name, schema_name, table_name, index_name, key_columns, include_columns, filter_definition, is_pk, is_unique, time
+				db_name, schema_name, table_name, index_name, key_columns, include_columns, filter_definition, is_pk, is_unique, capture_timestamp
 			FROM monitor.index_definitions
 			WHERE ` + where + `
-			ORDER BY db_name, schema_name, table_name, index_name, time DESC
+			ORDER BY db_name, schema_name, table_name, index_name, capture_timestamp DESC
 		) t
 	`
 	rows, err := tl.pool.Query(ctx, q, args...)

@@ -14,7 +14,7 @@ func TestQueryAnalysisSummary_MissingInstance(t *testing.T) {
 	h := NewSqlServerQueryAnalysisHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/sqlserver/query-analysis/summary", nil)
 	rr := httptest.NewRecorder()
-	h.Summary(rr, req)
+	h.GetSummary(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want %d, got %d", http.StatusBadRequest, rr.Code)
 	}
@@ -24,7 +24,7 @@ func TestQueryAnalysisSummary_InstanceNotFound(t *testing.T) {
 	h := NewSqlServerQueryAnalysisHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/sqlserver/query-analysis/summary?instance=nonexistent", nil)
 	rr := httptest.NewRecorder()
-	h.Summary(rr, req)
+	h.GetSummary(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("want %d, got %d", http.StatusNotFound, rr.Code)
 	}
@@ -37,7 +37,7 @@ func TestQueryAnalysisSummary_WrongType(t *testing.T) {
 	h := NewSqlServerQueryAnalysisHandlers(&service.MetricsService{}, cfg)
 	req := httptest.NewRequest(http.MethodGet, "/api/sqlserver/query-analysis/summary?instance=pg-test", nil)
 	rr := httptest.NewRecorder()
-	h.Summary(rr, req)
+	h.GetSummary(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want %d, got %d", http.StatusBadRequest, rr.Code)
 	}
@@ -47,7 +47,7 @@ func TestQueryAnalysisRegressions_MissingInstance(t *testing.T) {
 	h := NewSqlServerQueryAnalysisHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/sqlserver/query-analysis/regressions", nil)
 	rr := httptest.NewRecorder()
-	h.Regressions(rr, req)
+	h.GetRegressions(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want %d, got %d", http.StatusBadRequest, rr.Code)
 	}
@@ -57,7 +57,7 @@ func TestQueryAnalysisRegressions_InstanceNotFound(t *testing.T) {
 	h := NewSqlServerQueryAnalysisHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/sqlserver/query-analysis/regressions?instance=nonexistent", nil)
 	rr := httptest.NewRecorder()
-	h.Regressions(rr, req)
+	h.GetRegressions(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("want %d, got %d", http.StatusNotFound, rr.Code)
 	}
@@ -67,16 +67,17 @@ func TestQueryAnalysisRegressions_OK_NilTsLogger(t *testing.T) {
 	h := NewSqlServerQueryAnalysisHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/sqlserver/query-analysis/regressions?instance=ms-test", nil)
 	rr := httptest.NewRecorder()
-	h.Regressions(rr, req)
+	h.GetRegressions(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("want %d, got %d: %s", http.StatusOK, rr.Code, rr.Body.String())
 	}
-	var body map[string]interface{}
+	// When TimescaleDB is not connected, handler returns an empty array (graceful degradation).
+	var body []interface{}
 	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body["instance"] != "ms-test" {
-		t.Fatalf("want instance ms-test, got %v", body["instance"])
+	if len(body) != 0 {
+		t.Fatalf("want empty array when tsLogger is nil, got %v", body)
 	}
 }
 
@@ -84,7 +85,7 @@ func TestQueryAnalysisPlanInstability_MissingInstance(t *testing.T) {
 	h := NewSqlServerQueryAnalysisHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/sqlserver/query-analysis/plan-instability", nil)
 	rr := httptest.NewRecorder()
-	h.PlanInstability(rr, req)
+	h.GetPlanInstability(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want %d, got %d", http.StatusBadRequest, rr.Code)
 	}
@@ -94,7 +95,7 @@ func TestQueryAnalysisTopQueries_MissingInstance(t *testing.T) {
 	h := NewSqlServerQueryAnalysisHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/sqlserver/query-analysis/top-queries", nil)
 	rr := httptest.NewRecorder()
-	h.TopQueries(rr, req)
+	h.GetTopQueries(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want %d, got %d", http.StatusBadRequest, rr.Code)
 	}
@@ -104,7 +105,7 @@ func TestQueryAnalysisQueryPlans_MissingParams(t *testing.T) {
 	h := NewSqlServerQueryAnalysisHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/sqlserver/query-analysis/query-plans?instance=ms-test", nil)
 	rr := httptest.NewRecorder()
-	h.QueryPlans(rr, req)
+	h.GetQueryPlans(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want %d, got %d", http.StatusBadRequest, rr.Code)
 	}
@@ -114,7 +115,7 @@ func TestQueryAnalysisWaitStats_MissingParams(t *testing.T) {
 	h := NewSqlServerQueryAnalysisHandlers(&service.MetricsService{}, sqlserverCfg())
 	req := httptest.NewRequest(http.MethodGet, "/api/sqlserver/query-analysis/query-wait-stats?instance=ms-test", nil)
 	rr := httptest.NewRecorder()
-	h.QueryWaitStats(rr, req)
+	h.GetQueryWaitStats(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want %d, got %d", http.StatusBadRequest, rr.Code)
 	}

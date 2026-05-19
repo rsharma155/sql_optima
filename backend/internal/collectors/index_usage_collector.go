@@ -8,12 +8,13 @@
 package collectors
 
 import (
+	"log/slog"
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/domain/storageindex"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/repository"
@@ -86,7 +87,7 @@ func CollectSQLServerIndexUsage(ctx context.Context, dbq repository.Queryer) ([]
 		if err := rows.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.IndexName, &r.SeeksTotal, &r.ScansTotal, &r.LookupsTotal, &r.UpdatesTotal, &r.LastUserSeek, &r.LastUserScan, &r.LastUserLookup, &r.IndexSizeMB, &r.IsUnique, &r.IsPK, &r.FillFactor); err != nil {
 			scanErrs++
 			if scanErrs == 1 {
-				log.Printf("[Collector][SIH] CollectSQLServerIndexUsage row Scan error (subsequent rows omitted from log): %v", err)
+				slog.Error("[Collector][SIH] CollectSQLServerIndexUsage row Scan error (subsequent rows omitted from log)", "err", err)
 			}
 			continue
 		}
@@ -102,11 +103,11 @@ func CollectSQLServerIndexUsage(ctx context.Context, dbq repository.Queryer) ([]
 }
 
 // PersistSQLServerIndexUsageDeltas computes deltas and writes to Timescale monitor.index_usage_stats.
-func PersistSQLServerIndexUsageDeltas(ctx context.Context, tl *hot.TimescaleLogger, serverID, dbName string, rows []SqlServerIndexUsageRow, capture time.Time) (inserted int, err error) {
+func PersistSQLServerIndexUsageDeltas(ctx context.Context, tl *hot.TimescaleLogger, serverID uuid.UUID, dbName string, rows []SqlServerIndexUsageRow, capture time.Time) (inserted int, err error) {
 	engine := "sqlserver"
 	for _, r := range rows {
 		// state key includes DBName from row (should match dbName argument)
-		prev, err := tl.GetIndexUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName)
+		prev, err := tl.GetIndexUsageState(ctx, engine, serverID.String(), r.DBName, r.SchemaName, r.TableName, r.IndexName)
 		if err != nil {
 			return inserted, fmt.Errorf("get index usage state: %w", err)
 		}
@@ -149,12 +150,12 @@ func PersistSQLServerIndexUsageDeltas(ctx context.Context, tl *hot.TimescaleLogg
 					stat.LastUserLookup = &t
 				}
 				if err := tl.InsertIndexUsageStat(ctx, stat); err != nil {
-					log.Printf("[Collector] index_usage_stats bootstrap insert failed: %v", err)
+					slog.Error("[Collector] index_usage_stats bootstrap insert failed", "err", err)
 				} else {
 					inserted++
 				}
 			}
-			if err := tl.UpsertIndexUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.SeeksTotal, r.ScansTotal, r.LookupsTotal, r.UpdatesTotal, r.IndexSizeMB); err != nil {
+			if err := tl.UpsertIndexUsageState(ctx, engine, serverID.String(), r.DBName, r.SchemaName, r.TableName, r.IndexName, r.SeeksTotal, r.ScansTotal, r.LookupsTotal, r.UpdatesTotal, r.IndexSizeMB); err != nil {
 				return inserted, fmt.Errorf("seed index usage state: %w", err)
 			}
 			continue
@@ -167,14 +168,14 @@ func PersistSQLServerIndexUsageDeltas(ctx context.Context, tl *hot.TimescaleLogg
 
 		// If any counter reset, refresh state and skip delta row.
 		if !(ok1 && ok2 && ok3 && ok4) {
-			_ = tl.UpsertIndexUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.SeeksTotal, r.ScansTotal, r.LookupsTotal, r.UpdatesTotal, r.IndexSizeMB)
+			_ = tl.UpsertIndexUsageState(ctx, engine, serverID.String(), r.DBName, r.SchemaName, r.TableName, r.IndexName, r.SeeksTotal, r.ScansTotal, r.LookupsTotal, r.UpdatesTotal, r.IndexSizeMB)
 			continue
 		}
 
 		// Optimization: Skip insert if no activity and size hasn't changed.
 		// We still update the state to refresh last_seen.
 		if ds == 0 && dsc == 0 && dl == 0 && du == 0 && r.IndexSizeMB == prev.IndexSizeMB {
-			_ = tl.UpsertIndexUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.SeeksTotal, r.ScansTotal, r.LookupsTotal, r.UpdatesTotal, r.IndexSizeMB)
+			_ = tl.UpsertIndexUsageState(ctx, engine, serverID.String(), r.DBName, r.SchemaName, r.TableName, r.IndexName, r.SeeksTotal, r.ScansTotal, r.LookupsTotal, r.UpdatesTotal, r.IndexSizeMB)
 			continue
 		}
 
@@ -208,12 +209,12 @@ func PersistSQLServerIndexUsageDeltas(ctx context.Context, tl *hot.TimescaleLogg
 			stat.LastUserLookup = &t
 		}
 		if err := tl.InsertIndexUsageStat(ctx, stat); err != nil {
-			log.Printf("[Collector] index_usage_stats insert failed: %v", err)
+			slog.Error("[Collector] index_usage_stats insert failed", "err", err)
 			continue
 		}
 		inserted++
 
-		if err := tl.UpsertIndexUsageState(ctx, engine, serverID, r.DBName, r.SchemaName, r.TableName, r.IndexName, r.SeeksTotal, r.ScansTotal, r.LookupsTotal, r.UpdatesTotal, r.IndexSizeMB); err != nil {
+		if err := tl.UpsertIndexUsageState(ctx, engine, serverID.String(), r.DBName, r.SchemaName, r.TableName, r.IndexName, r.SeeksTotal, r.ScansTotal, r.LookupsTotal, r.UpdatesTotal, r.IndexSizeMB); err != nil {
 			return inserted, fmt.Errorf("update index usage state: %w", err)
 		}
 	}

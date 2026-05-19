@@ -50,7 +50,7 @@ window.PgQueriesView = async function() {
 
     // Set Refresh Interval
     if (window.pgQueriesInterval) clearInterval(window.pgQueriesInterval);
-    window.pgQueriesInterval = setInterval(() => {
+    window.pgQueriesInterval = window.registerInterval(() => {
         if (window.appState.activeViewId === 'pg-queries' || window.appState.activeViewId === 'pg-stat-statements') {
             initPgQueries();
         } else {
@@ -379,7 +379,7 @@ function renderQueriesTable(queries, sortBy) {
         const avgClass = avgTime > 100 ? 'text-danger font-bold' : avgTime > 10 ? 'text-warning' : '';
 
         const fingerprint = query.query_id !== undefined ? String(query.query_id) : '-';
-        const user = query.user || '';
+        const user = query.username || '';
         const fullSql = pgssSmartDecode(query.query || '');
         const sqlPreview = fullSql.substring(0, 60) + (fullSql.length > 60 ? '...' : '');
         const escPreview = window.escapeHtml(sqlPreview);
@@ -611,7 +611,7 @@ function initPgssSection(instanceName) {
     });
 
     // Auto-refresh every 60 seconds
-    window._pgssRefreshTimer = setInterval(() => {
+    window._pgssRefreshTimer = window.registerInterval(() => {
         if (!document.getElementById('pgss-instance-label')) {
             clearInterval(window._pgssRefreshTimer);
             window._pgssRefreshTimer = null;
@@ -650,9 +650,37 @@ async function loadPgssAll() {
         loadPgssWorkload(),
         loadPgssLatency(),
         loadPgssTopQueries(),
-        loadPgssRegressions()
+        loadPgssRegressions(),
+        loadPgssFilters()
     ]);
 }
+
+async function loadPgssFilters() {
+    const inst = (window.appState.config.instances || [])[window.appState.currentInstanceIdx] || { name: '' };
+    const { from, to } = getPgssTimeRange();
+    try {
+        const resp = await window.apiClient.authenticatedFetch(
+            `/api/postgres/pgss/filters?instance=${encodeURIComponent(inst.name)}&from=${from}&to=${to}`
+        );
+        if (!resp.ok) return;
+        const data = await resp.json();
+        pgssPopulateSelect('pgss-filter-db', data.databases || [], 'All Databases');
+        pgssPopulateSelect('pgss-filter-user', data.users || [], 'All Users');
+        pgssPopulateSelect('pgss-filter-app', data.app_names || [], 'All Apps');
+    } catch (_) { /* non-fatal */ }
+}
+
+function pgssPopulateSelect(id, values, placeholder) {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = `<option value="">${placeholder}</option>` +
+        values.map(v => `<option value="${pgssEscapeHtml(v)}"${v === current ? ' selected' : ''}>${pgssEscapeHtml(v)}</option>`).join('');
+}
+
+window.pgssApplyFilters = function() {
+    loadPgssTopQueries();
+};
 
 async function loadPgssSummary() {
     const inst = (window.appState.config.instances || [])[window.appState.currentInstanceIdx] || { name: '' };
@@ -775,10 +803,16 @@ async function loadPgssTopQueries() {
     loadingDiv.innerHTML = '<div class="spinner"></div>';
     grid.appendChild(loadingDiv);
 
+    const dbFilter = (document.getElementById('pgss-filter-db')?.value) || '';
+    const userFilter = (document.getElementById('pgss-filter-user')?.value) || '';
+    const appFilter = (document.getElementById('pgss-filter-app')?.value) || '';
+    let topUrl = `/api/postgres/pgss/top?instance=${encodeURIComponent(inst.name)}&from=${from}&to=${to}&sort=${sort}`;
+    if (dbFilter) topUrl += `&db_name=${encodeURIComponent(dbFilter)}`;
+    if (userFilter) topUrl += `&username=${encodeURIComponent(userFilter)}`;
+    if (appFilter) topUrl += `&app_name=${encodeURIComponent(appFilter)}`;
+
     try {
-        const resp = await window.apiClient.authenticatedFetch(
-            `/api/postgres/pgss/top?instance=${encodeURIComponent(inst.name)}&from=${from}&to=${to}&sort=${sort}`
-        );
+        const resp = await window.apiClient.authenticatedFetch(topUrl);
         if (!resp.ok) { 
             loadingDiv.innerHTML = 'Error loading data'; 
             return; 

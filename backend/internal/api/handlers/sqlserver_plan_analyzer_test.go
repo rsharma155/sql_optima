@@ -15,7 +15,7 @@ import (
 func TestSqlServerPlanAnalyzer_Analyze(t *testing.T) {
 	// 1. Setup handler
 	metricsSvc := &service.MetricsService{}
-	h := NewSqlServerPlanAnalyzerHandlers(metricsSvc)
+	h := NewSqlServerPlanHandlers(metricsSvc, nil)
 
 	// 2. Load sample plan from examples directory
 	// Note: Adjust path if needed based on test execution context
@@ -31,7 +31,7 @@ func TestSqlServerPlanAnalyzer_Analyze(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// 4. Execute
-	h.Analyze(rr, req)
+	h.AnalyzePlan(rr, req)
 
 	// 5. Assertions
 	if rr.Code != http.StatusOK {

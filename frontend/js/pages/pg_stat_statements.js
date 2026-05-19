@@ -75,7 +75,7 @@ window.PgStatStatementsView = async function () {
     await loadPgssAll();
 
     if (window._pgssRefreshTimer) clearInterval(window._pgssRefreshTimer);
-    window._pgssRefreshTimer = setInterval(() => {
+    window._pgssRefreshTimer = window.registerInterval(() => {
         if (window.location.hash.includes('pg-stat-statements')) loadPgssAll();
     }, 60000);
 };
@@ -263,6 +263,7 @@ async function loadPgssWorkload() {
         const resp = await window.apiClient.authenticatedFetch(
             `/api/postgres/pgss/workload?instance=${encodeURIComponent(inst.name)}&from=${from}&to=${to}`
         );
+        if (!resp.ok) return;
         const data = await resp.json();
         const pts = data.points || [];
         const labels = pts.map(p => new Date(p.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
@@ -297,6 +298,7 @@ async function loadPgssLatency() {
         const resp = await window.apiClient.authenticatedFetch(
             `/api/postgres/pgss/latency?instance=${encodeURIComponent(inst.name)}&from=${from}&to=${to}`
         );
+        if (!resp.ok) return;
         const data = await resp.json();
         const pts = data.points || [];
         const labels = pts.map(p => new Date(p.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
@@ -419,8 +421,15 @@ function renderPagination(total, pageSize) {
 
     container.innerHTML = Array.from({ length: pages }, (_, i) =>
         `<button class="btn btn-sm ${i === s.page ? 'btn-primary' : 'btn-outline'}"
-                 onclick="window._pgssGoPage(${i})">${i + 1}</button>`
+                 data-action="pgss-page" data-page="${i}">${i + 1}</button>`
     ).join('');
+    if (!container.dataset.pgssBound) {
+        container.dataset.pgssBound = '1';
+        container.addEventListener('click', (e) => {
+            const btn = e.target?.closest?.('[data-action="pgss-page"]');
+            if (btn) window._pgssGoPage(Number(btn.dataset.page));
+        });
+    }
 }
 
 window._pgssGoPage = function(page) {
@@ -542,13 +551,21 @@ async function checkPgssStatus(instance) {
         const resp = await window.apiClient.authenticatedFetch(
             `/api/postgres/pgss/status?instance=${encodeURIComponent(instance)}`
         );
+        if (!resp.ok) return;
         const status = await resp.json();
         const banner = document.getElementById('pgss-status-banner');
         const msg    = document.getElementById('pgss-status-msg');
-        if (banner && !status.ready) {
+        if (!banner) return;
+
+        if (!status.enabled) {
             banner.style.display = 'block';
-            if (msg) msg.textContent = status.message || 'pg_stat_statements is not fully enabled.';
-        } else if (banner) {
+            banner.className = 'alert alert-warning mt-2';
+            if (msg) msg.textContent = 'pg_stat_statements extension is not enabled on this instance. Enable it in shared_preload_libraries and restart PostgreSQL.';
+        } else if (!status.has_data) {
+            banner.style.display = 'block';
+            banner.className = 'alert alert-info mt-2';
+            if (msg) msg.textContent = status.message || 'pg_stat_statements is enabled. Query data collection is in progress — charts will appear within 2–3 minutes.';
+        } else {
             banner.style.display = 'none';
         }
     } catch (_) { /* non-fatal */ }

@@ -8,20 +8,22 @@
 package repository
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 )
 
-func (c *SqlServerRepository) CollectSQLServerIndexUsageMetrics(instanceName, databaseName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectSQLServerIndexUsageMetrics(ctx context.Context, instanceName, databaseName string) ([]map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
 	}
 
 	query := fmt.Sprintf(`
-		/* SQL_OPTIMA */ 
+		/* SQL_OPTIMA */
 		USE [%s];
-		SELECT   
+		SELECT
 			DB_NAME() AS database_name,
 			SCHEMA_NAME(t.schema_id) AS schema_name,
 			t.name AS table_name,
@@ -31,14 +33,19 @@ func (c *SqlServerRepository) CollectSQLServerIndexUsageMetrics(instanceName, da
 			ISNULL(s.user_scans, 0) AS user_scans,
 			ISNULL(s.user_lookups, 0) AS user_lookups,
 			ISNULL(s.user_updates, 0) AS user_updates,
-			(SELECT /* SQL_OPTIMA */   SUM(a.total_pages) * 8 / 1024.0 FROM sys.partitions p WITH (NOLOCK) JOIN sys.allocation_units a WITH (NOLOCK) ON p.partition_id = a.container_id WHERE p.object_id = i.object_id AND p.index_id = i.index_id) AS index_size_mb
+			(SELECT /* SQL_OPTIMA */   SUM(a.total_pages) * 8 / 1024.0 FROM sys.partitions p WITH (NOLOCK) JOIN sys.allocation_units a WITH (NOLOCK) ON p.partition_id = a.container_id WHERE p.object_id = i.object_id AND p.index_id = i.index_id) AS index_size_mb,
+			CAST(i.is_primary_key AS BIT) AS is_pk,
+			CAST(i.is_unique AS BIT) AS is_unique,
+			s.last_user_seek
 		FROM sys.indexes i WITH (NOLOCK)
 		INNER JOIN sys.tables t WITH (NOLOCK) ON i.object_id = t.object_id
 		LEFT JOIN sys.dm_db_index_usage_stats s WITH (NOLOCK) ON s.object_id = i.object_id AND s.index_id = i.index_id AND s.database_id = DB_ID()
 		WHERE t.is_ms_shipped = 0 AND i.name IS NOT NULL
 	`, strings.ReplaceAll(databaseName, "]", "]]"))
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -48,19 +55,22 @@ func (c *SqlServerRepository) CollectSQLServerIndexUsageMetrics(instanceName, da
 	for rows.Next() {
 		var dbn, sn, tn, in, it string
 		var seeks, scans, lookups, updates int64
-		var sizeMB float64
-		if err := rows.Scan(&dbn, &sn, &tn, &in, &it, &seeks, &scans, &lookups, &updates, &sizeMB); err != nil {
+		var sizeMB sql.NullFloat64
+		var isPK, isUnique bool
+		var lastUserSeek sql.NullTime
+		if err := rows.Scan(&dbn, &sn, &tn, &in, &it, &seeks, &scans, &lookups, &updates, &sizeMB, &isPK, &isUnique, &lastUserSeek); err != nil {
 			continue
 		}
 		results = append(results, map[string]interface{}{
 			"database_name": dbn, "schema_name": sn, "table_name": tn, "index_name": in, "index_type": it,
-			"user_seeks": seeks, "user_scans": scans, "user_lookups": lookups, "user_updates": updates, "index_size_mb": sizeMB,
+			"user_seeks": seeks, "user_scans": scans, "user_lookups": lookups, "user_updates": updates,
+			"index_size_mb": sizeMB.Float64, "is_pk": isPK, "is_unique": isUnique, "last_user_seek": lastUserSeek,
 		})
 	}
 	return results, nil
 }
 
-func (c *SqlServerRepository) CollectSQLServerIndexFragmentationMetrics(instanceName, databaseName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectSQLServerIndexFragmentationMetrics(ctx context.Context, instanceName, databaseName string) ([]map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
@@ -82,7 +92,9 @@ func (c *SqlServerRepository) CollectSQLServerIndexFragmentationMetrics(instance
 		WHERE t.is_ms_shipped = 0 AND i.name IS NOT NULL AND s.page_count > 100
 	`, strings.ReplaceAll(databaseName, "]", "]]"))
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +115,7 @@ func (c *SqlServerRepository) CollectSQLServerIndexFragmentationMetrics(instance
 	return results, nil
 }
 
-func (c *SqlServerRepository) CollectSQLServerTableStructureMetrics(instanceName, databaseName string) ([]map[string]interface{}, error) {
+func (c *SqlServerRepository) CollectSQLServerTableStructureMetrics(ctx context.Context, instanceName, databaseName string) ([]map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
@@ -124,7 +136,9 @@ func (c *SqlServerRepository) CollectSQLServerTableStructureMetrics(instanceName
 		GROUP BY t.schema_id, t.name
 	`, strings.ReplaceAll(databaseName, "]", "]]"))
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

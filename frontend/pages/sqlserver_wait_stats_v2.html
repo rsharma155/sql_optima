@@ -1,0 +1,116 @@
+<!--
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: SQL Server Wait Statistics Dashboard (V2) - Advanced Bottleneck Analysis.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+-->
+<div class="page-view active dashboard-sky-theme">
+    <div class="page-title flex-between dashboard-page-title-compact">
+        <div class="dashboard-title-line">
+            <h1><i class="fa-solid fa-hourglass-half text-accent"></i> Wait Statistics Analyzer <span class="badge badge-pill badge-outline-accent ml-2">V2</span></h1>
+            <p class="subtitle">Instance: <span id="wsInstanceName">--</span> | Deep Bottleneck Visibility</p>
+        </div>
+        <div class="dashboard-page-title-actions flex-between" style="gap:1rem;">
+            <div id="time-picker-insertion-point"></div>
+            <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="WaitStatsV2View"><i class="fa-solid fa-refresh"></i> Refresh</button>
+        </div>
+    </div>
+
+    <!-- Row 1: Primary KPIs & Distribution -->
+    <div class="charts-grid mt-2" style="display:grid; grid-template-columns: 280px 1fr 1fr; gap:0.75rem;">
+        <!-- KPI Card Stack -->
+        <div class="flex-column" style="gap:0.75rem;">
+            <div class="glass-panel p-3 text-center">
+                <div class="text-muted small font-weight-bold uppercase mb-1">Signal Wait %</div>
+                <div class="h2 mb-0 font-weight-bold" id="kpi-signal-pct">--%</div>
+                <div class="progress mt-2" style="height:4px;"><div id="pb-signal" class="progress-bar bg-accent" style="width:0%"></div></div>
+                <div class="small text-muted mt-2">Target: &lt; 20% (CPU Health)</div>
+            </div>
+            <div class="glass-panel p-3 text-center">
+                <div class="text-muted small font-weight-bold uppercase mb-1">Total Wait Time</div>
+                <div class="h4 mb-0" id="kpi-total-wait">--</div>
+                <div class="small text-muted mt-1">Aggregate in selected window</div>
+            </div>
+            <div class="glass-panel p-3 text-center">
+                <div class="text-muted small font-weight-bold uppercase mb-1">Waiting Tasks</div>
+                <div class="h4 mb-0" id="kpi-total-tasks">--</div>
+                <div class="small text-muted mt-1">Total executions intercepted</div>
+            </div>
+        </div>
+
+        <!-- Wait Category Distribution (Pie) -->
+        <div class="chart-card glass-panel">
+            <div class="card-header"><h3 class="small font-weight-bold uppercase m-0">Category Distribution</h3></div>
+            <div class="chart-container" style="height:220px;"><canvas id="chart-ws-pie"></canvas></div>
+        </div>
+
+        <!-- Wait Trends (Stacked Area) -->
+        <div class="chart-card glass-panel">
+            <div class="card-header"><h3 class="small font-weight-bold uppercase m-0">Wait Time Trend (per Category)</h3></div>
+            <div class="chart-container" style="height:220px;"><canvas id="chart-ws-trend"></canvas></div>
+        </div>
+    </div>
+
+    <!-- Row 2: Heatmap & Top Waits Table -->
+    <div class="charts-grid mt-3" style="display:grid; grid-template-columns: 1fr 1.5fr; gap:0.75rem;">
+        <!-- Heatmap -->
+        <div class="chart-card glass-panel">
+            <div class="card-header flex-between">
+                <h3 class="small font-weight-bold uppercase m-0">Historical Wait Heatmap (7 Days)</h3>
+                <i class="fa-solid fa-circle-info text-muted" title="Darker colors indicate higher total wait time for that hour."></i>
+            </div>
+            <div class="chart-container" style="height:350px;"><canvas id="chart-ws-heatmap"></canvas></div>
+        </div>
+
+        <!-- Top Wait Types Table -->
+        <div class="chart-card glass-panel">
+            <div class="card-header"><h3 class="small font-weight-bold uppercase m-0">Top Wait Types (Drilldown)</h3></div>
+            <div class="table-responsive" style="height:350px; overflow-y:auto;">
+                <table class="data-table small">
+                    <thead class="sticky-top bg-surface">
+                        <tr>
+                            <th>Wait Type</th>
+                            <th>Category</th>
+                            <th>Wait Time</th>
+                            <th>Avg Wait</th>
+                            <th>% Total</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-top-waits">
+                        <tr><td colspan="6" class="text-center py-5 text-muted">Loading wait statistics...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 3: Active Wait Sessions (Live) -->
+    <div class="glass-panel mt-3">
+        <div class="card-header flex-between">
+            <h3 class="small font-weight-bold uppercase m-0"><i class="fa-solid fa-bolt text-warning mr-2"></i> Active Wait Sessions (Instant View)</h3>
+            <span class="badge badge-pill badge-warning" id="active-waits-count">0 Sessions</span>
+        </div>
+        <div class="table-responsive" style="max-height:300px;">
+            <table class="data-table small">
+                <thead>
+                    <tr>
+                        <th>SPID</th>
+                        <th>Wait Type</th>
+                        <th>Duration (ms)</th>
+                        <th>Blocker</th>
+                        <th>Database</th>
+                        <th>User</th>
+                        <th>Query Text</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-active-waits">
+                    <tr><td colspan="7" class="text-center py-4 text-muted">No active waits detected in the last 30s snapshot.</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

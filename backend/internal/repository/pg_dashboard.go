@@ -8,8 +8,9 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"database/sql"
-	"log"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 // - Cache hit % = delta blks_hit / (delta blks_hit + delta blks_read) * 100
 //
 // It down-samples pg_stat_database into 1-minute buckets, producing up to 30 minutes of history.
-func (c *PgRepository) FetchPgCoreThroughputTelemetry(instanceName string, prev models.PgCoreDashboardCache) models.PgCoreDashboardCache {
+func (c *PgRepository) FetchPgCoreThroughputTelemetry(ctx context.Context, instanceName string, prev models.PgCoreDashboardCache) models.PgCoreDashboardCache {
 	metrics := prev
 	metrics.InstanceName = instanceName
 	metrics.Timestamp = time.Now().Format("15:04:05")
@@ -30,18 +31,18 @@ func (c *PgRepository) FetchPgCoreThroughputTelemetry(instanceName string, prev 
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
-		log.Printf("[POSTGRES] FetchPgCoreThroughputTelemetry: connection not found for %s, attempting reconnect", instanceName)
-		if c.reconnectInstance(instanceName) {
+		slog.Info("[POSTGRES] FetchPgCoreThroughputTelemetry: connection not found for %s, attempting reconnect", "val", instanceName)
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 			if !ok || db == nil {
-				log.Printf("[POSTGRES] FetchPgCoreThroughputTelemetry: reconnect failed for %s", instanceName)
+				slog.Error("[POSTGRES] FetchPgCoreThroughputTelemetry: reconnect failed for", "val", instanceName)
 				return metrics
 			}
-			log.Printf("[POSTGRES] FetchPgCoreThroughputTelemetry: reconnect succeeded for %s", instanceName)
+			slog.Info("[POSTGRES] FetchPgCoreThroughputTelemetry: reconnect succeeded for", "val", instanceName)
 		} else {
-			log.Printf("[POSTGRES] FetchPgCoreThroughputTelemetry: reconnect failed for %s", instanceName)
+			slog.Error("[POSTGRES] FetchPgCoreThroughputTelemetry: reconnect failed for", "val", instanceName)
 			return metrics
 		}
 	}
@@ -68,7 +69,9 @@ func (c *PgRepository) FetchPgCoreThroughputTelemetry(instanceName string, prev 
 	snap := make(map[string]models.PgDbCounters)
 	var queryErr error
 
-	rows, err := db.Query(`
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, `
 			/* SQL_OPTIMA */ SELECT   
 			datname,
 			xact_commit,
@@ -101,14 +104,16 @@ func (c *PgRepository) FetchPgCoreThroughputTelemetry(instanceName string, prev 
 
 	// If query failed, try to reconnect and retry once
 	if queryErr != nil {
-		log.Printf("[POSTGRES] Query failed for %s, attempting reconnect: %v", instanceName, queryErr)
-		if c.reconnectInstance(instanceName) {
+		slog.Error("[POSTGRES] Query failed", "target", instanceName, "err", queryErr)
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, dbOk := c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
 
 			if dbOk && db != nil {
-				rows2, err2 := db.Query(`
+				ctx, cancel = WithQueryTimeout(ctx, 0)
+				defer cancel()
+				rows2, err2 := db.QueryContext(ctx, `
 					/* SQL_OPTIMA */ SELECT 
 						datname,
 						xact_commit,
@@ -134,9 +139,9 @@ func (c *PgRepository) FetchPgCoreThroughputTelemetry(instanceName string, prev 
 						}
 					}
 					queryErr = nil
-					log.Printf("[POSTGRES] Reconnection successful for %s, query retry succeeded", instanceName)
+					slog.Info("[POSTGRES] Reconnection successful for %s, query retry succeeded", "val", instanceName)
 				} else {
-					log.Printf("[POSTGRES] Query retry failed for %s after reconnect: %v", instanceName, err2)
+					slog.Error("[POSTGRES] Query retry failed", "target", instanceName, "err", err2)
 				}
 			}
 		}
@@ -145,7 +150,7 @@ func (c *PgRepository) FetchPgCoreThroughputTelemetry(instanceName string, prev 
 	// If query still failed, still update timestamp and keep previous data.
 	if queryErr != nil {
 		if queryErr != sql.ErrNoRows {
-			log.Printf("[POSTGRES] pg_stat_database snapshot failed for %s: %v", instanceName, queryErr)
+			slog.Error("[POSTGRES] pg_stat_database snapshot failed", "target", instanceName, "err", queryErr)
 		}
 		return metrics
 	}

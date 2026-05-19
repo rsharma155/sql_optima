@@ -8,6 +8,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ type PgDatabaseSizeStats struct {
 	Error            string              `json:"error,omitempty"`
 }
 
-func (c *PgRepository) GetDatabaseSizeStats(instanceName string) PgDatabaseSizeStats {
+func (c *PgRepository) GetDatabaseSizeStats(ctx context.Context, instanceName string) PgDatabaseSizeStats {
 	out := PgDatabaseSizeStats{
 		Instance:  instanceName,
 		Timestamp: time.Now().Format("15:04:05"),
@@ -41,7 +42,9 @@ func (c *PgRepository) GetDatabaseSizeStats(instanceName string) PgDatabaseSizeS
 		return out
 	}
 
-	rows, err := db.Query(`
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, `
 		/* SQL_OPTIMA */ SELECT    datname, pg_database_size(datname)
 		FROM pg_database
 		WHERE datistemplate = false

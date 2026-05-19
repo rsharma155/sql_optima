@@ -3,11 +3,13 @@ package result
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Result struct {
 	RunID        int64           `json:"run_id"`
-	ServerID     int             `json:"server_id"`
+	ServerID     uuid.UUID       `json:"server_id"`
 	RuleID       string          `json:"rule_id"`
 	TargetDBType string          `json:"target_db_type"`
 	Status       string          `json:"status"`

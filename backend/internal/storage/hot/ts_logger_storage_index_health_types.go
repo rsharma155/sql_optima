@@ -23,6 +23,18 @@ type StorageIndexHealthKPI struct {
 	Growth7dPct                    float64 `json:"growth_7d_pct"`
 }
 
+// StorageIndexHealthTopRow is a multipurpose row used across several dashboard sections.
+// Field semantics vary by usage context:
+//
+//   largest_tables:  value  = total_size_mb (data + index), value2 = index_size_mb
+//   largest_indexes: value  = index_size_mb,                value2 = parent_table_size_mb
+//   unused_indexes:  value  = SUM(seeks) in window,         value2 = index_size_mb
+//   high_scan_tables:value  = SUM(scans),                   value2 = SUM(seeks)
+//   top_scans:       value  = SUM(scans),                   value2 = SUM(seeks)
+//   top_growth_tables:value = growth_mb_7d,                 value2 = base_table_size_mb
+//
+// IndexName is only populated for index-level rows; TableName is always populated.
+// LastUserSeek is populated for unused_indexes rows only.
 type StorageIndexHealthTopRow struct {
 	DBName       string     `json:"db_name"`
 	SchemaName   string     `json:"schema_name"`
@@ -62,14 +74,16 @@ type StorageIndexHealthSeekScanLookupRow struct {
 
 type StorageIndexHealthDashboard struct {
 	Engine              string                                `json:"engine"`
-	Instance            string                                `json:"instance"`
+	Instance            string                                `json:"serverID"`
 	From                string                                `json:"from"`
 	To                  string                                `json:"to"`
+	CollectorError      string                                `json:"collector_error,omitempty"`
 	KPIs                StorageIndexHealthKPI                 `json:"kpis"`
 	TopScans            []StorageIndexHealthTopRow            `json:"top_scans"`
 	SeekScanLookup      []StorageIndexHealthSeekScanLookupRow `json:"seek_scan_lookup,omitempty"`
 	LargestTables       []StorageIndexHealthTopRow            `json:"largest_tables"`
 	LargestIndexes      []StorageIndexHealthTopRow            `json:"largest_indexes"`
+	TopGrowthTables     []StorageIndexHealthTopRow            `json:"top_growth_tables"`
 	Growth              []StorageIndexHealthGrowthPoint       `json:"growth"`
 	GrowthSummary       StorageIndexHealthGrowthSummary       `json:"growth_summary"`
 	UnusedIndexes       []StorageIndexHealthTopRow            `json:"unused_indexes"`
@@ -93,7 +107,7 @@ type SIHFilterOptions struct {
 	SourceRowCounts SIHFilterSourceRowCounts `json:"source_row_counts"`
 }
 
-// SIHFilterSourceRowCounts reports how many raw rows exist per SIH hypertable for the instance in the time window.
+// SIHFilterSourceRowCounts reports how many raw rows exist per SIH hypertable for the serverID in the time window.
 type SIHFilterSourceRowCounts struct {
 	TableSizeHistory int64 `json:"table_size_history"`
 	TableUsageStats  int64 `json:"table_usage_stats"`

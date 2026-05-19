@@ -8,6 +8,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -22,7 +23,7 @@ type PgSystemStatsDetail struct {
 
 // GetSystemStatsDetail tries to read host-level memory from pg_os_info() and CPU util from pg_stat_cpu().
 // If those helper views/functions are not available, it falls back to existing approximations.
-func (c *PgRepository) GetSystemStatsDetail(instanceName string) (*PgSystemStatsDetail, error) {
+func (c *PgRepository) GetSystemStatsDetail(ctx context.Context, instanceName string) (*PgSystemStatsDetail, error) {
 	c.mutex.RLock()
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
@@ -33,14 +34,18 @@ func (c *PgRepository) GetSystemStatsDetail(instanceName string) (*PgSystemStats
 	out := &PgSystemStatsDetail{}
 
 	// shared_buffers bytes (always available)
-	_ = db.QueryRow(`
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	_ = db.QueryRowContext(ctx, `
 		SELECT /* SQL_OPTIMA */   (setting::bigint * 8192)
 		FROM pg_settings
 		WHERE name = 'shared_buffers'
 	`).Scan(&out.SharedBuffersBytes)
 
 	// Prefer pg_os_info + pg_stat_cpu if available.
-	err := db.QueryRow(`
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err := db.QueryRowContext(ctx, `
 		/* SQL_OPTIMA */ 
 		SELECT   
 			COALESCE((SELECT /* SQL_OPTIMA */   util FROM pg_stat_cpu() WHERE util IS NOT NULL LIMIT 1), 0) AS cpu_usage,
@@ -55,7 +60,7 @@ func (c *PgRepository) GetSystemStatsDetail(instanceName string) (*PgSystemStats
 	}
 
 	// Fallback to existing lightweight approximations.
-	cpu, mem, err2 := c.GetSystemStats(instanceName)
+	cpu, mem, err2 := c.GetSystemStats(ctx, instanceName)
 	if err2 != nil {
 		return out, err2
 	}

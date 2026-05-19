@@ -12,10 +12,10 @@ import (
 func TestBlockingDetails_Reproduction(t *testing.T) {
 	// Setup a real but "empty" MetricsService and TimescaleLogger
 	// We want to see if it panics or returns 500 when the pool is nil
-	
+
 	// Create a HotStorage with nil pool
-	tsStorage := &hot.HotStorage{} 
-	
+	tsStorage := &hot.HotStorage{}
+
 	svc := service.NewMetricsService(nil, nil, nil, tsStorage)
 	h := NewSqlServerHandlers(svc, nil)
 

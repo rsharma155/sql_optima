@@ -1,12 +1,14 @@
 -- SQL Optima — https://github.com/rsharma155/sql_optima
 --
--- Purpose: Lightweight dynamic KPI collection for SQL Server Health Dashboard v2 (Excludes static info).
+-- Purpose: Lightweight KPI collection (cached edition/uptime) for SQL Server Health Dashboard v2.
+-- Metadata:
+--   - Version: 1.1
+--   - Scope: Instance
+--   - Frequency: 15s
 --
 -- Author: Ravi Sharma
 -- Copyright (c) 2026 Ravi Sharma
 -- SPDX-License-Identifier: MIT
-
-DECLARE @ts_now bigint = (SELECT ms_ticks FROM sys.dm_os_sys_info WITH (NOLOCK)); 
 
 SELECT 
     (SELECT TOP(1) [SQLProcessUtilization]
@@ -22,11 +24,14 @@ SELECT
      ORDER BY [timestamp] DESC) as sql_cpu_pct,
     (SELECT ISNULL(SUM(runnable_tasks_count), 0) FROM sys.dm_os_schedulers WITH (NOLOCK) WHERE status = 'VISIBLE ONLINE') as runnable_tasks,
     (SELECT COUNT(*) FROM sys.dm_exec_query_memory_grants WITH (NOLOCK) WHERE grant_time IS NULL) as grants_pending,
-    (SELECT cntr_value FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Page Reads/sec' AND object_name LIKE '%Buffer Manager%') as page_reads_delta,
-    (SELECT CAST(SUM(io_stall_write_ms) / CASE WHEN SUM(num_of_writes) = 0 THEN 1 ELSE SUM(num_of_writes) END AS DOUBLE PRECISION) 
-     FROM sys.dm_io_virtual_file_stats(NULL, NULL) 
-     WHERE file_id = 2) as log_write_wait_ms,
-    (SELECT cntr_value FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Batch Requests/sec' AND object_name LIKE '%SQL Statistics%') as batch_requests_delta,
-    (SELECT cntr_value FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'SQL Compilations/sec' AND object_name LIKE '%SQL Statistics%') as compilations_delta,
+    ISNULL((SELECT CAST(cntr_value AS DOUBLE PRECISION) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Page Reads/sec' AND object_name LIKE '%Buffer Manager%'), 0) as page_reads_delta,
+    ISNULL((SELECT CAST(SUM(io_stall_write_ms) / CASE WHEN SUM(num_of_writes) = 0 THEN 1 ELSE SUM(num_of_writes) END AS DOUBLE PRECISION)
+     FROM sys.dm_io_virtual_file_stats(NULL, NULL)
+     WHERE file_id = 2), 0) as log_write_wait_ms,
+    ISNULL((SELECT CAST(cntr_value AS DOUBLE PRECISION) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Batch Requests/sec' AND object_name LIKE '%SQL Statistics%'), 0) as batch_requests_delta,
+    ISNULL((SELECT CAST(cntr_value AS DOUBLE PRECISION) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'SQL Compilations/sec' AND object_name LIKE '%SQL Statistics%'), 0) as compilations_delta,
+    ISNULL((SELECT CAST(cntr_value AS DOUBLE PRECISION) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Logins/sec' AND object_name LIKE '%SQL Statistics%'), 0) as logins_delta,
+    ISNULL((SELECT CAST(cntr_value/1024.0 AS DOUBLE PRECISION) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Target Server Memory (KB)' AND object_name LIKE '%Memory Manager%'), 0) as target_mem_mb,
+    ISNULL((SELECT CAST(cntr_value/1024.0 AS DOUBLE PRECISION) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Total Server Memory (KB)' AND object_name LIKE '%Memory Manager%'), 0) as total_mem_mb,
     (SELECT COUNT(*) FROM sys.dm_exec_requests WITH (NOLOCK) WHERE blocking_session_id <> 0) as blocked_sessions,
     (SELECT COUNT(*) FROM sys.dm_exec_sessions WITH (NOLOCK) WHERE is_user_process = 1) as user_connections;

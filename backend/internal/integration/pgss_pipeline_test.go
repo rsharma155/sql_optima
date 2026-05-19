@@ -76,7 +76,7 @@ func bootstrapPgssSchema(t *testing.T, pool *pgxpool.Pool) {
 		`CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE`,
 		`CREATE TABLE IF NOT EXISTS postgres_query_stats (
 			capture_timestamp    TIMESTAMPTZ NOT NULL,
-			server_instance_name TEXT NOT NULL,
+			server_id TEXT NOT NULL,
 			query_id             BIGINT NOT NULL,
 			query_text           TEXT,
 			calls                BIGINT DEFAULT 0,
@@ -97,14 +97,14 @@ func bootstrapPgssSchema(t *testing.T, pool *pgxpool.Pool) {
 		)`,
 		`SELECT create_hypertable('postgres_query_stats', 'capture_timestamp', if_not_exists => TRUE)`,
 		`CREATE TABLE IF NOT EXISTS pgss_query_dim (
-			server_instance_name TEXT NOT NULL,
+			server_id TEXT NOT NULL,
 			query_id             BIGINT NOT NULL,
 			query_text           TEXT,
-			PRIMARY KEY (server_instance_name, query_id)
+			PRIMARY KEY (server_id, query_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS pgss_delta_1m (
 			capture_timestamp    TIMESTAMPTZ NOT NULL,
-			server_instance_name TEXT NOT NULL,
+			server_id TEXT NOT NULL,
 			query_id             BIGINT NOT NULL,
 			calls                BIGINT DEFAULT 0,
 			total_exec_time      DOUBLE PRECISION DEFAULT 0,
@@ -150,7 +150,7 @@ func seedSnapshots(t *testing.T, pool *pgxpool.Pool, instance string, t0, t1 tim
 	for _, s := range snap0 {
 		_, err := pool.Exec(ctx,
 			`INSERT INTO postgres_query_stats
-				(capture_timestamp, server_instance_name, query_id, calls, total_time_ms, mean_time_ms, rows,
+				(capture_timestamp, server_id, query_id, calls, total_time_ms, mean_time_ms, rows,
 				 shared_blks_hit, shared_blks_read, temp_blks_written, wal_bytes, total_plan_time)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 			t0, instance, s.qid, s.calls, s.total, s.mean, s.rows,
@@ -179,7 +179,7 @@ func seedSnapshots(t *testing.T, pool *pgxpool.Pool, instance string, t0, t1 tim
 	for _, s := range snap1 {
 		_, err := pool.Exec(ctx,
 			`INSERT INTO postgres_query_stats
-				(capture_timestamp, server_instance_name, query_id, calls, total_time_ms, mean_time_ms, rows,
+				(capture_timestamp, server_id, query_id, calls, total_time_ms, mean_time_ms, rows,
 				 shared_blks_hit, shared_blks_read, temp_blks_written, wal_bytes, total_plan_time)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 			t1, instance, s.qid, s.calls, s.total, s.mean, s.rows,

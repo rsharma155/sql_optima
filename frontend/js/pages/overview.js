@@ -46,30 +46,42 @@ window.PgDashboardView = async function() {
         if (window.appState.fetchingPgMetrics) return;
         window.appState.fetchingPgMetrics = true;
 
-        let url = `/api/postgres/control-center?instance=${encodeURIComponent(instName)}`;
+        let statsUrl = `/api/postgres/control-center?instance=${encodeURIComponent(instName)}`;
+        let histUrl = `/api/postgres/control-center/history?instance=${encodeURIComponent(instName)}&limit=120`;
         if (fromVal && toVal) {
-            url += `&from=${encodeURIComponent(new Date(fromVal).toISOString())}&to=${encodeURIComponent(new Date(toVal).toISOString())}`;
+            const fromISO = encodeURIComponent(new Date(fromVal).toISOString());
+            const toISO = encodeURIComponent(new Date(toVal).toISOString());
+            statsUrl += `&from=${fromISO}&to=${toISO}`;
+            histUrl += `&from=${fromISO}&to=${toISO}`;
         }
-        const resp = await window.apiClient.authenticatedFetch(url);
-        if (resp.ok) {
-            dashboardData = await resp.json();
+
+        const [statsResp, histResp] = await Promise.all([
+            window.apiClient.authenticatedFetch(statsUrl),
+            window.apiClient.authenticatedFetch(histUrl)
+        ]);
+
+        if (statsResp.ok) dashboardData = await statsResp.json() || {};
+        if (histResp.ok) {
+            const h = await histResp.json();
+            if (h && h.labels && h.labels.length > 0) dashboardData.history = h;
         }
-    } catch (e) { 
-        console.error("PG Control Center fetch failed:", e); 
+    } catch (e) {
+        console.error("PG Control Center fetch failed:", e);
     } finally {
         window.appState.fetchingPgMetrics = false;
     }
 
     await updateDashboardV2(instName, dashboardData, fromVal, toVal);
 
+    const dynInterval = window.collectorConfig ? window.collectorConfig.getInterval("Postgres System Metrics", 30000) : 30000;
     if (window.pgDashboardInterval) clearInterval(window.pgDashboardInterval);
-    window.pgDashboardInterval = setInterval(() => {
+    window.pgDashboardInterval = window.registerInterval(() => {
         if (window.appState.activeViewId === 'pg-dashboard') {
             window.PgDashboardView();
         } else {
             clearInterval(window.pgDashboardInterval);
         }
-    }, 30000); // 30s refresh
+    }, dynInterval);
 };
 
 async function updateDashboardV2(instName, dashboardData, from, to) {
@@ -138,6 +150,25 @@ async function updateDashboardV2(instName, dashboardData, from, to) {
         dlEl.className = 'metric-value ' + (v > 0 ? 'text-danger' : 'text-success');
     }
 
+    updateVal('stat-xid-pct', s.xid_wraparound_pct, v => Number(v || 0).toFixed(1) + '%');
+    const xidEl = document.getElementById('stat-xid-pct');
+    const xidCard = document.getElementById('kpi-card-xid');
+    if (xidEl) {
+        const v = s.xid_wraparound_pct || 0;
+        xidEl.className = 'metric-value ' + (v > 70 ? 'text-danger' : v > 25 ? 'text-warning' : 'text-success');
+        if (xidCard) {
+            xidCard.classList.toggle('border-danger', v > 70);
+            xidCard.classList.toggle('border-warning', v > 25 && v <= 70);
+        }
+    }
+
+    updateVal('stat-dead-tuple-pct', s.dead_tuple_pct, v => Number(v || 0).toFixed(1) + '%');
+    const dtEl = document.getElementById('stat-dead-tuple-pct');
+    if (dtEl) {
+        const v = s.dead_tuple_pct || 0;
+        dtEl.className = 'metric-value ' + (v > 20 ? 'text-danger' : v > 10 ? 'text-warning' : 'text-success');
+    }
+
     // 2. Fetch Multi-layer Metrics
     const hideBg = document.getElementById('pgLoadHideBgWorkers')?.checked !== false;
     const loadMetrics = ['cpu_load', 'io_wait_load', 'lock_wait_load', 'idle_in_txn_load'];
@@ -201,7 +232,20 @@ async function renderAASLoadChart(id, mData, from, to) {
     if (!el) return;
 
     const labels = (mData.cpu_load || []).map(d => new Date(d.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
-    if (labels.length === 0) return;
+    if (labels.length === 0) {
+        // Show a "no data" placeholder so the chart area isn't silently empty.
+        const parent = el.parentElement;
+        const w = parent ? parent.offsetWidth || 300 : 300;
+        const h = parent ? parent.offsetHeight || 230 : 230;
+        el.width = w; el.height = h;
+        const ctx = el.getContext('2d');
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = 'rgba(100,116,139,0.3)';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('No session-load data collected yet. Waiting for the next Control Center snapshot.', w / 2, h / 2);
+        return;
+    }
 
     const datasets = [
         { label: 'CPU Runnable', data: mData.cpu_load.map(d=>d.value), color: '#3b82f6' },
@@ -218,7 +262,7 @@ async function updateWaitCategories(instName) {
         const resp = await window.apiClient.authenticatedFetch(`/api/postgres/waits/history?instance=${encodeURIComponent(instName)}&limit=100`);
         if (resp.ok) {
             const payload = await resp.json();
-            const rows = payload.rows || [];
+            const rows = (payload && payload.rows) ? payload.rows : [];
             if (rows.length === 0) {
                 renderBarChart('pgWaitCategoryChart', ['None'], [0], '#94a3b8');
                 return;
@@ -252,8 +296,24 @@ async function updateCheckpointHealth(instName, from, to) {
         let url = `/api/postgres/checkpoint-health/history?instance=${encodeURIComponent(instName)}`;
         const resp = await window.apiClient.authenticatedFetch(url);
         if (resp.ok) {
-            const data = await resp.json();
-            if (!data || data.length === 0) return;
+            const data = await resp.json() || [];
+            if (!data || data.length === 0) {
+                // Show a soft placeholder so the chart is not silently blank.
+                const canvas = document.getElementById('pgCheckpointHealthChart');
+                if (canvas) {
+                    const parent = canvas.parentElement;
+                    const w = parent ? parent.offsetWidth || 300 : 300;
+                    const h = parent ? parent.offsetHeight || 160 : 160;
+                    canvas.width = w; canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, w, h);
+                    ctx.fillStyle = 'rgba(100,116,139,0.3)';
+                    ctx.font = '11px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('No checkpoint data yet — bgwriter stats are collected each cycle.', w / 2, h / 2);
+                }
+                return;
+            }
 
             const labels = data.map(d => new Date(d.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})).reverse();
             const writeTime = data.map(d => d.checkpoint_write_time).reverse();
@@ -279,7 +339,7 @@ async function updateIncidentFeed(instName) {
         const resp = await window.apiClient.authenticatedFetch(`/api/postgres/incident-feed?instance=${encodeURIComponent(instName)}&limit=30`);
         if (resp.ok) {
             const payload = await resp.json();
-            const incidents = payload.incidents || [];
+            const incidents = (payload && payload.incidents) ? payload.incidents : [];
             const tbody = document.getElementById('pgIncidentsFeedTbody');
             if (!tbody) return;
 
@@ -324,7 +384,7 @@ async function updateReplicaDetail(instName) {
             if (!tbody) return;
 
             // payload is { instance: "...", series: { "replica_name": { ... } } }
-            const series = payload.series || {};
+            const series = (payload && payload.series) ? payload.series : {};
             const replicas = Object.values(series);
             if (replicas.length === 0) {
                 if (container) container.style.display = 'none';
@@ -334,17 +394,27 @@ async function updateReplicaDetail(instName) {
 
             if (container) container.style.display = 'block';
             tbody.innerHTML = replicas.map(r => {
-                const latestLag = r.lag_mb && r.lag_mb.length > 0 ? r.lag_mb[r.lag_mb.length-1] : 0;
-                const lagClass = latestLag > 100 ? 'text-danger' : latestLag > 10 ? 'text-warning' : 'text-success';
+                const latestIdx = r.lag_mb && r.lag_mb.length > 0 ? r.lag_mb.length - 1 : -1;
+                const lagMB = latestIdx >= 0 ? r.lag_mb[latestIdx] : 0;
+                const writeSec = (r.write_lag_sec && latestIdx >= 0) ? r.write_lag_sec[latestIdx] : null;
+                const flushSec = (r.flush_lag_sec && latestIdx >= 0) ? r.flush_lag_sec[latestIdx] : null;
+                const replaySec = (r.replay_lag_sec && latestIdx >= 0) ? r.replay_lag_sec[latestIdx] : null;
+                const lagClass = lagMB > 100 ? 'text-danger' : lagMB > 10 ? 'text-warning' : 'text-success';
+                const syncBadge = r.sync_state === 'sync' ? 'badge-success' : r.sync_state === 'quorum' ? 'badge-warning' : 'badge-outline';
+                const syncLabel = r.sync_state ? r.sync_state.charAt(0).toUpperCase() + r.sync_state.slice(1) : 'Async';
+                const fmtLag = (v) => v !== null && v >= 0 ? (v < 1 ? (v * 1000).toFixed(0) + 'ms' : v.toFixed(2) + 's') : '--';
+                const stateIcon = (r.state === 'streaming')
+                    ? '<span class="text-success"><i class="fa-solid fa-circle-check"></i> Streaming</span>'
+                    : `<span class="text-warning">${r.state || 'Unknown'}</span>`;
                 return `
                     <tr>
                         <td><i class="fa-solid fa-server text-muted small"></i> ${r.replica_name || 'Unknown'}</td>
-                        <td class="${lagClass}">${latestLag.toFixed(1)} MB</td>
-                        <td>--</td>
-                        <td>--</td>
-                        <td><span class="badge badge-outline">Async</span></td>
-                        <td>--</td>
-                        <td><span class="text-success"><i class="fa-solid fa-circle-check"></i> Streaming</span></td>
+                        <td class="${lagClass}">${fmtLag(writeSec)}</td>
+                        <td class="${lagClass}">${fmtLag(flushSec)}</td>
+                        <td class="${lagClass}">${fmtLag(replaySec)}</td>
+                        <td><span class="badge ${syncBadge}">${syncLabel}</span></td>
+                        <td class="${lagClass}">${lagMB.toFixed(1)} MB</td>
+                        <td>${stateIcon}</td>
                     </tr>
                 `;
             }).join('');
@@ -442,7 +512,7 @@ async function fetchMetric(instance, metric, from, to, filterBg = false) {
         const resp = await window.apiClient.authenticatedFetch(url);
         if (resp.ok) {
             const payload = await resp.json();
-            return payload.data || [];
+            return (payload && payload.data) ? payload.data : [];
         }
     } catch (e) { console.error(`Failed to fetch metric ${metric}:`, e); }
     return [];
@@ -552,6 +622,30 @@ function renderHostResourceChart(cpuRaw, memRaw, from, to) {
 
     if (window.currentCharts && window.currentCharts[canvasId]) {
         window.currentCharts[canvasId].destroy();
+    }
+
+    // When the OS Collector is not deployed, both arrays will be empty.
+    // Replace the chart area with an informative notice rather than
+    // leaving a blank, unlabeled chart container.
+    if ((!cpuRaw || cpuRaw.length === 0) && (!memRaw || memRaw.length === 0)) {
+        const container = canvas.closest('.card');
+        if (container) {
+            container.style.display = 'flex';
+            container.style.alignItems = 'center';
+            container.style.justifyContent = 'center';
+            const noticeEl = container.querySelector('.host-res-notice') || document.createElement('div');
+            noticeEl.className = 'host-res-notice';
+            noticeEl.style.cssText = 'text-align:center; padding:0.75rem 1.25rem; font-size:0.72rem; color:var(--text-muted); line-height:1.6;';
+            noticeEl.innerHTML = '<i class="fa-solid fa-microchip" style="font-size:1.4rem; color:#475569; display:block; margin-bottom:0.4rem;"></i>'
+                + '<strong style="color:var(--text-secondary);">Host Resources (CPU/Mem)</strong><br>'
+                + 'OS-level metrics require the <strong>OS Collector agent</strong>.<br>'
+                + 'Deploy the agent on this host to see CPU%, memory%, and process metrics.';
+            canvas.style.display = 'none';
+            const header = container.querySelector('.card-header');
+            if (header) header.style.display = 'none';
+            if (!container.querySelector('.host-res-notice')) container.appendChild(noticeEl);
+        }
+        return;
     }
 
     const combined = [];

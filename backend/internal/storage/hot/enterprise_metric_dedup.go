@@ -13,39 +13,45 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	// Removed import to break import cycle
+
+	"github.com/google/uuid"
 )
 
-// Batch-kind keys for in-memory snapshot deduplication (per instance).
+// Batch-kind keys for in-memory snapshot deduplication (per serverID).
 const (
 	enterpriseKindLatchWaits         = "latch_waits"
 	enterpriseKindProcedure          = "procedure_stats"
 	enterpriseKindSpinlock           = "spinlock_stats"
 	enterpriseKindMemoryClerks       = "memory_clerks"
 	enterpriseKindWaitsDelta         = "waits_delta"
-	enterpriseKindTableStructure     = "table_structure"
 	enterpriseKindPgIndexDefinitions = "pg_index_definitions"
 	enterpriseKindTableSize          = "table_size"
 	enterpriseKindPgSessionActivity  = "pg_session_activity"
 	enterpriseKindPgQueryWaitProfile = "pg_query_wait_profile"
 )
 
-func enterpriseHashKey(instance, kind string) string {
-	return instance + "\x00" + kind
+func enterpriseHashKey(serverID uuid.UUID, kind string, dbName ...string) string {
+	instanceStr := serverID.String()
+	if len(dbName) > 0 && dbName[0] != "" {
+		return instanceStr + "\x00" + dbName[0] + "\x00" + kind
+	}
+	return instanceStr + "\x00" + kind
 }
 
-// EnterpriseSnapshotUnchanged reports whether this scrape matches the last stored snapshot for (instance, kind).
-func (tl *TimescaleLogger) EnterpriseSnapshotUnchanged(instance, kind string, sig uint64) bool {
+// EnterpriseSnapshotUnchanged reports whether this scrape matches the last stored snapshot for (serverID, kind).
+func (tl *TimescaleLogger) EnterpriseSnapshotUnchanged(serverID uuid.UUID, kind string, sig uint64, dbName ...string) bool {
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
-	prev, ok := tl.prevEnterpriseBatchHash[enterpriseHashKey(instance, kind)]
+	key := enterpriseHashKey(serverID, kind, dbName...)
+	prev, ok := tl.prevEnterpriseBatchHash[key]
 	return ok && prev == sig
 }
 
-func (tl *TimescaleLogger) RememberEnterpriseSnapshot(instance, kind string, sig uint64) {
+func (tl *TimescaleLogger) RememberEnterpriseSnapshot(serverID uuid.UUID, kind string, sig uint64, dbName ...string) {
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
-	tl.prevEnterpriseBatchHash[enterpriseHashKey(instance, kind)] = sig
+	key := enterpriseHashKey(serverID, kind, dbName...)
+	tl.prevEnterpriseBatchHash[key] = sig
 }
 
 func normalizeMapValue(v interface{}) string {
@@ -85,9 +91,9 @@ func compositeRowKey(r map[string]interface{}, keyNames []string) string {
 }
 
 // fingerprintMapRows hashes the full batch in stable row order for duplicate scrape detection.
-func fingerprintMapRows(instance, kind string, rows []map[string]interface{}, keyNames, valueNames []string) uint64 {
+func fingerprintMapRows(serverID uuid.UUID, kind string, rows []map[string]interface{}, keyNames, valueNames []string) uint64 {
 	h := fnv.New64a()
-	_, _ = fmt.Fprintf(h, "%s|%s|%d|", instance, kind, len(rows))
+	_, _ = fmt.Fprintf(h, "%s|%s|%d|", serverID.String(), kind, len(rows))
 	if len(rows) == 0 {
 		return h.Sum64()
 	}
@@ -109,9 +115,9 @@ func fingerprintMapRows(instance, kind string, rows []map[string]interface{}, ke
 }
 
 // waitDeltaSnapshotFingerprint hashes category totals for a single scrape (see ComputeAndLogWaitDeltas).
-func waitDeltaSnapshotFingerprint(instance string, rows []WaitDeltaRow) uint64 {
+func waitDeltaSnapshotFingerprint(serverID uuid.UUID, rows []WaitDeltaRow) uint64 {
 	h := fnv.New64a()
-	_, _ = fmt.Fprintf(h, "%s|%s|%d|", instance, enterpriseKindWaitsDelta, len(rows))
+	_, _ = fmt.Fprintf(h, "%s|%s|%d|", serverID.String(), enterpriseKindWaitsDelta, len(rows))
 	if len(rows) == 0 {
 		return h.Sum64()
 	}
@@ -128,28 +134,6 @@ func waitDeltaSnapshotFingerprint(instance string, rows []WaitDeltaRow) uint64 {
 	return h.Sum64()
 }
 
-// FingerprintTableStructureRows hashes table structure risks for change detection.
-func (tl *TimescaleLogger) FingerprintTableStructureRows(instance string, rows []TableStructureHistoryRow) uint64 {
-	h := fnv.New64a()
-	_, _ = fmt.Fprintf(h, "%s|%s|%d|", instance, enterpriseKindTableStructure, len(rows))
-	if len(rows) == 0 {
-		return h.Sum64()
-	}
-	cp := append([]TableStructureHistoryRow(nil), rows...)
-	sort.Slice(cp, func(i, j int) bool {
-		if cp[i].DatabaseName != cp[j].DatabaseName {
-			return cp[i].DatabaseName < cp[j].DatabaseName
-		}
-		if cp[i].SchemaName != cp[j].SchemaName {
-			return cp[i].SchemaName < cp[j].SchemaName
-		}
-		return cp[i].TableName < cp[j].TableName
-	})
-	for _, r := range cp {
-		_, _ = fmt.Fprintf(h, "%s.%s.%s:%v:%v|", r.DatabaseName, r.SchemaName, r.TableName, r.HasClusteredIndex, r.HasPrimaryKey)
-	}
-	return h.Sum64()
-}
 
 // IndexDefinitionCatalogRow is a minimal copy used to break an import cycle.
 type IndexDefinitionCatalogRow struct {
@@ -168,9 +152,9 @@ type IndexDefinitionCatalogRow struct {
 }
 
 // FingerprintIndexDefinitionRows hashes index definitions for change detection.
-func (tl *TimescaleLogger) FingerprintIndexDefinitionRows(instance string, rows []IndexDefinitionCatalogRow) uint64 {
+func (tl *TimescaleLogger) FingerprintIndexDefinitionRows(serverID uuid.UUID, rows []IndexDefinitionCatalogRow) uint64 {
 	h := fnv.New64a()
-	_, _ = fmt.Fprintf(h, "%s|%s|%d|", instance, enterpriseKindPgIndexDefinitions, len(rows))
+	_, _ = fmt.Fprintf(h, "%s|%s|%d|", serverID.String(), enterpriseKindPgIndexDefinitions, len(rows))
 	if len(rows) == 0 {
 		return h.Sum64()
 	}
@@ -193,9 +177,9 @@ func (tl *TimescaleLogger) FingerprintIndexDefinitionRows(instance string, rows 
 	return h.Sum64()
 }
 
-func (tl *TimescaleLogger) FingerprintTableSizeRows(instance string, rows []TableSizeHistoryRow) uint64 {
+func (tl *TimescaleLogger) FingerprintTableSizeRows(serverID uuid.UUID, rows []TableSizeHistoryRow) uint64 {
 	h := fnv.New64a()
-	_, _ = fmt.Fprintf(h, "%s|%s|%d|", instance, enterpriseKindTableSize, len(rows))
+	_, _ = fmt.Fprintf(h, "%s|%s|%d|", serverID.String(), enterpriseKindTableSize, len(rows))
 	if len(rows) == 0 {
 		return h.Sum64()
 	}

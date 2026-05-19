@@ -1,0 +1,46 @@
+name: cpu_saturation
+description: Sustained CPU saturation
+conditions:
+  - metric: avg_cpu_load
+    operator: ">"
+    value: 85
+  - metric: total_runnable_tasks
+    operator: ">"
+    value: 10
+logic: AND
+severity: high
+message: "avg_cpu_load has remained above 85% with {total_runnable_tasks} runnable tasks, indicating sustained compute pressure."
+recommendation:
+  - "Identify top CPU consumers in sqlserver_long_running_queries"
+  - "Review MAXDOP setting"
+  - "Consider scaling up CPU resources or query tuning"
+
+---
+name: scheduler_starvation
+description: Scheduler starvation
+conditions:
+  - metric: total_runnable_tasks
+    operator: ">"
+    value: 50
+logic: AND
+severity: critical
+message: "Scheduler starvation detected with {total_runnable_tasks} runnable tasks."
+recommendation:
+  - "Reduce concurrent workload immediately"
+  - "Check for worker thread exhaustion warning"
+  - "Review CXPACKET / CXCONSUMER waits"
+
+---
+name: cpu_burst
+description: Short-term CPU burst
+conditions:
+  - metric: avg_cpu_load
+    operator: ">"
+    value: 90
+logic: AND
+severity: medium
+message: "avg_cpu_load spiked above 90%, indicating short-term CPU burst activity."
+recommendation:
+  - "Identify peak workload windows"
+  - "Check if burst correlates with batch jobs"
+  - "Consider Resource Governor for workload isolation"

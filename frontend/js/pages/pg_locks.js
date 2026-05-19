@@ -21,7 +21,7 @@ window.PgLocksView = async function() {
     await initPgLocks();
 
     if (window.pgLocksInterval) clearInterval(window.pgLocksInterval);
-    window.pgLocksInterval = setInterval(() => {
+    window.pgLocksInterval = window.registerInterval(() => {
         if (window.appState.activeViewId === 'pg-locks') {
             initPgLocks();
         } else {
@@ -128,7 +128,7 @@ async function initPgLocks() {
         const resp = await window.apiClient.authenticatedFetch(`/api/postgres/locks?instance=${instQ}`);
         if (resp.ok && (resp.headers.get('content-type')||'').includes('application/json')) {
             const d = await resp.json();
-            locks = d.locks || [];
+            locks = (d && d.locks) ? d.locks : [];
         }
     } catch (e) { console.error('[PgLocks] locks fetch failed:', e); }
 
@@ -191,17 +191,17 @@ async function initPgLocks() {
             ]);
             if (tRes.ok && (tRes.headers.get('content-type')||'').includes('application/json')) {
                 const d = await tRes.json();
-                timelinePoints  = Array.isArray(d.timeline)   ? d.timeline   : [];
-                incidentWindows = Array.isArray(d.incidents)  ? d.incidents  : [];
+                timelinePoints  = (d && Array.isArray(d.timeline))   ? d.timeline   : [];
+                incidentWindows = (d && Array.isArray(d.incidents))  ? d.incidents  : [];
             }
             if (topRes.ok && (topRes.headers.get('content-type')||'').includes('application/json')) {
                 const d = await topRes.json();
-                topLockedTables = Array.isArray(d.tables) ? d.tables : [];
+                topLockedTables = (d && Array.isArray(d.tables)) ? d.tables : [];
             }
             if (dRes.ok && (dRes.headers.get('content-type')||'').includes('application/json')) {
                 const d = await dRes.json();
-                detailsTree      = Array.isArray(d.blocking_tree) ? d.blocking_tree : [];
-                detailsCapturedAt = d?.collected_at ? String(d.collected_at) : '';
+                detailsTree      = (d && Array.isArray(d.blocking_tree)) ? d.blocking_tree : [];
+                detailsCapturedAt = (d && d.collected_at) ? String(d.collected_at) : '';
             }
         } catch (e) { console.error('[PgLocks] range fetch failed:', e); }
 
@@ -213,7 +213,7 @@ async function initPgLocks() {
         renderBlockingDetails(detailsTree, detailsCapturedAt);
         renderBlockingSummary(detailsTree);
 
-        // Load incident history
+        // Load incident history (pass from/to for exact window matching)
         loadIncidentHistory(instQ, fromISO, toISO);
         // Load chronic blockers
         loadChronicBlockers(instQ, fromISO, toISO);
@@ -371,13 +371,20 @@ function renderBlockingTree(tree) {
 
     container.innerHTML = tree.map(root => renderTreeNode(root, 0, true)).join('');
 
-    // Delegate SQL button clicks on the tree (avoids inline onclick with special chars)
+    // Delegate all button clicks on the tree (avoids inline onclick for CSP compliance)
     if (!container.dataset.pgSqlBound) {
         container.dataset.pgSqlBound = '1';
         container.addEventListener('click', (e) => {
-            const btn = e.target?.closest?.('.pg-sql-btn');
+            const btn = e.target?.closest?.('[data-action], .pg-sql-btn');
             if (!btn) return;
-            window.pgShowSqlModal(btn.dataset.pid || '', btn.dataset.user || '', btn.dataset.sql || '');
+            const action = btn.dataset.action;
+            if (!action && btn.classList.contains('pg-sql-btn')) {
+                window.pgShowSqlModal(btn.dataset.pid || '', btn.dataset.user || '', btn.dataset.sql || '');
+            } else if (action === 'cancel-backend') {
+                window.pgCancelBackend(btn.dataset.pid);
+            } else if (action === 'terminate-backend') {
+                window.pgTerminateBackend(btn.dataset.pid);
+            }
         });
     }
 }
@@ -446,9 +453,9 @@ function renderTreeNode(node, depth, isRoot) {
               SQL
             </button>
             <button class="btn btn-xs btn-outline text-warning" style="font-size:0.68rem; padding:0.1rem 0.4rem;"
-                    onclick="pgCancelBackend(${pid})">Cancel</button>
+                    data-action="cancel-backend" data-pid="${pid}">Cancel</button>
             <button class="btn btn-xs btn-outline text-danger" style="font-size:0.68rem; padding:0.1rem 0.4rem;"
-                    onclick="pgTerminateBackend(${pid})">Kill</button>
+                    data-action="terminate-backend" data-pid="${pid}">Kill</button>
           </div>
         </div>
         ${metaLine ? `<div style="font-size:0.74rem; margin-top:0.2rem;">${metaLine}</div>` : ''}
@@ -507,9 +514,8 @@ async function loadIncidentHistory(instQ, fromISO, toISO) {
     const cntEl = document.getElementById('pgIncidentCount');
     if (!tbody) return;
     try {
-        const wh = Math.ceil((Date.parse(toISO) - Date.parse(fromISO)) / 3600000) || 24;
         const resp = await window.apiClient.authenticatedFetch(
-            `/api/postgres/locks-blocking/incidents?instance=${instQ}&window_hours=${wh}&limit=50`
+            `/api/postgres/locks-blocking/incidents?instance=${instQ}&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}&limit=50`
         );
         if (!resp.ok) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Error loading incidents</td></tr>'; return; }
         const d = await resp.json();
@@ -521,15 +527,15 @@ async function loadIncidentHistory(instQ, fromISO, toISO) {
             return;
         }
         tbody.innerHTML = incidents.map((inc, idx) => {
-            const started = inc.started_at ? new Date(inc.started_at).toLocaleString() : '—';
-            const dur     = formatDuration(inc.duration_seconds||0);
-            const victims = inc.peak_blocked_sessions || 0;
-            const rootPid = inc.root_blocker_pid != null ? inc.root_blocker_pid : '—';
-            const status  = window.escapeHtml(inc.status || '');
+            const started    = inc.started_at ? new Date(inc.started_at).toLocaleString() : '—';
+            const dur        = formatDuration(Math.round(inc.duration_seconds || 0));
+            const victims    = inc.peak_blocked_sessions || 0;
+            const rootPid    = inc.root_blocker_pid != null ? inc.root_blocker_pid : '—';
+            const status     = (inc.status || '').toLowerCase();
             const statusBadge = status === 'active'
                 ? '<span class="badge badge-danger" style="font-size:0.6rem;">active</span>'
                 : '<span class="badge badge-info" style="font-size:0.6rem;">resolved</span>';
-            const incId   = inc.incident_id || idx+1;
+            const incId      = inc.incident_id || idx + 1;
             return `<tr>
                 <td>${incId}</td>
                 <td class="text-muted">${started}</td>
@@ -563,10 +569,14 @@ function _pgIncidentClickHandler(e) {
 }
 
 window.pgDrilldownIncident = async function(inc) {
-    const fromT = inc.started_at ? new Date(new Date(inc.started_at).getTime() - 30000).toISOString() : null;
-    const toT   = inc.ended_at   ? new Date(new Date(inc.ended_at).getTime() + 30000).toISOString()
-                                 : new Date(new Date(inc.started_at).getTime() + 600000).toISOString();
-    if (!fromT) return;
+    const startDate = inc.started_at ? new Date(inc.started_at) : null;
+    const endDate   = inc.ended_at   ? new Date(inc.ended_at)   : null;
+    if (!startDate || isNaN(startDate.getTime())) return;
+
+    const fromT = new Date(startDate.getTime() - 30000).toISOString();
+    const toT   = (endDate && !isNaN(endDate.getTime()))
+                    ? new Date(endDate.getTime() + 30000).toISOString()
+                    : new Date(startDate.getTime() + 600000).toISOString();
 
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx]?.name;
     if (!inst) return;

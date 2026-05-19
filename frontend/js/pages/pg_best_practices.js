@@ -21,11 +21,9 @@ window.PgBestPracticesView = async function() {
     const subtitleEl = document.getElementById('pg-bp-subtitle');
     if (subtitleEl) subtitleEl.textContent = `Instance: ${inst.name} | PostgreSQL Refined Audit`;
 
-    const serverId = inst.id && inst.id !== 0 ? inst.id : window.appState.currentInstanceIdx + 1;
-
     try {
         const response = await window.apiClient.authenticatedFetch(
-            `/api/rules/best-practices?server_id=${serverId}&db_type=postgres`
+            `/api/rules/best-practices?instance=${encodeURIComponent(inst.name)}&db_type=postgres`
         );
         
         if (!response.ok) {

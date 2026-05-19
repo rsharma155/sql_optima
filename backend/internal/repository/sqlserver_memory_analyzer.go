@@ -37,7 +37,9 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 			SELECT /* SQL_OPTIMA */   ISNULL(total_mb, 0), ISNULL(target_mb, 0) FROM mem;
 		`
 		var totalMB, targetMB int64
-		_ = db.QueryRowContext(ctx, q).Scan(&totalMB, &targetMB)
+		qctx, cancel := WithQueryTimeout(ctx, 0)
+		_ = db.QueryRowContext(qctx, q).Scan(&totalMB, &targetMB)
+		cancel()
 		out["sql_memory_used_mb"] = totalMB
 		out["sql_memory_target_mb"] = targetMB
 	}
@@ -51,7 +53,9 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 			FROM sys.dm_os_sys_memory WITH (NOLOCK);
 		`
 		var totalOS, availOS int64
-		_ = db.QueryRowContext(ctx, q).Scan(&totalOS, &availOS)
+		qctx, cancel := WithQueryTimeout(ctx, 0)
+		_ = db.QueryRowContext(qctx, q).Scan(&totalOS, &availOS)
+		cancel()
 		out["os_total_memory_mb"] = totalOS
 		out["os_available_memory_mb"] = availOS
 	}
@@ -60,7 +64,9 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 	{
 		q := `/* SQL_OPTIMA */ SELECT   process_physical_memory_low, process_virtual_memory_low FROM sys.dm_os_process_memory WITH (NOLOCK);`
 		var physLow, virtLow sql.NullBool
-		_ = db.QueryRowContext(ctx, q).Scan(&physLow, &virtLow)
+		qctx, cancel := WithQueryTimeout(ctx, 0)
+		_ = db.QueryRowContext(qctx, q).Scan(&physLow, &virtLow)
+		cancel()
 		out["process_physical_low"] = physLow.Valid && physLow.Bool
 		out["process_virtual_low"] = virtLow.Valid && virtLow.Bool
 	}
@@ -73,7 +79,9 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 			WHERE counter_name='Memory Grants Pending';
 		`
 		var pending int64
-		_ = db.QueryRowContext(ctx, q).Scan(&pending)
+		qctx, cancel := WithQueryTimeout(ctx, 0)
+		_ = db.QueryRowContext(qctx, q).Scan(&pending)
+		cancel()
 		out["memory_grants_pending"] = pending
 	}
 
@@ -87,7 +95,9 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 			FROM sys.dm_exec_query_memory_grants WITH (NOLOCK);
 		`
 		var active, grantedMB, requestedMB int64
-		_ = db.QueryRowContext(ctx, q).Scan(&active, &grantedMB, &requestedMB)
+		qctx, cancel := WithQueryTimeout(ctx, 0)
+		_ = db.QueryRowContext(qctx, q).Scan(&active, &grantedMB, &requestedMB)
+		cancel()
 		out["active_memory_grants"] = active
 		out["granted_workspace_mb"] = grantedMB
 		out["requested_workspace_mb"] = requestedMB
@@ -101,7 +111,9 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 			WHERE grant_time IS NULL;
 		`
 		var waiting int64
-		_ = db.QueryRowContext(ctx, q).Scan(&waiting)
+		qctx, cancel := WithQueryTimeout(ctx, 0)
+		_ = db.QueryRowContext(qctx, q).Scan(&waiting)
+		cancel()
 		out["waiting_memory_grants"] = waiting
 	}
 
@@ -113,7 +125,9 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 			WHERE counter_name='Page life expectancy' AND object_name LIKE '%Buffer Manager%';
 		`
 		var ple int64
-		_ = db.QueryRowContext(ctx, q).Scan(&ple)
+		qctx, cancel := WithQueryTimeout(ctx, 0)
+		_ = db.QueryRowContext(qctx, q).Scan(&ple)
+		cancel()
 		out["ple_seconds"] = ple
 	}
 
@@ -121,7 +135,9 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 	{
 		q := `/* SQL_OPTIMA */ SELECT   ISNULL(SUM(size_in_bytes)/1024/1024, 0) FROM sys.dm_exec_cached_plans WITH (NOLOCK);`
 		var mb int64
-		_ = db.QueryRowContext(ctx, q).Scan(&mb)
+		qctx, cancel := WithQueryTimeout(ctx, 0)
+		_ = db.QueryRowContext(qctx, q).Scan(&mb)
+		cancel()
 		out["plan_cache_mb"] = mb
 	}
 
@@ -135,7 +151,9 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 			WHERE counter_name IN ('Sort Warnings', 'Hash Warnings');
 		`
 		var sortWarn, hashWarn sql.NullInt64
-		_ = db.QueryRowContext(ctx, q).Scan(&sortWarn, &hashWarn)
+		qctx, cancel := WithQueryTimeout(ctx, 0)
+		_ = db.QueryRowContext(qctx, q).Scan(&sortWarn, &hashWarn)
+		cancel()
 		if sortWarn.Valid {
 			out["sort_warnings_total"] = sortWarn.Int64
 		} else {
@@ -171,6 +189,9 @@ func (c *SqlServerRepository) FetchBufferPoolByDB(ctx context.Context, instanceN
 		ORDER BY buffer_mb DESC;
 	`, limit)
 
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+
 	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
@@ -182,6 +203,9 @@ func (c *SqlServerRepository) FetchBufferPoolByDB(ctx context.Context, instanceN
 		var dbName sql.NullString
 		var mb int64
 		if err := rows.Scan(&dbName, &mb); err != nil {
+			continue
+		}
+		if !dbName.Valid || dbName.String == "" {
 			continue
 		}
 		out = append(out, map[string]interface{}{

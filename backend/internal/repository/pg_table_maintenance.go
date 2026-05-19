@@ -8,6 +8,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -46,7 +47,7 @@ func deadPct(live, dead int64) float64 {
 	return p
 }
 
-func (c *PgRepository) GetTableMaintenanceStats(instanceName string, limit int) ([]PgTableMaintenanceStat, error) {
+func (c *PgRepository) GetTableMaintenanceStats(ctx context.Context, instanceName string, limit int) ([]PgTableMaintenanceStat, error) {
 	if limit <= 0 {
 		limit = 200
 	}
@@ -54,7 +55,7 @@ func (c *PgRepository) GetTableMaintenanceStats(instanceName string, limit int) 
 	db, ok := c.conns[strings.ToUpper(instanceName)]
 	c.mutex.RUnlock()
 	if !ok || db == nil {
-		if c.reconnectInstance(instanceName) {
+		if c.reconnectInstance(ctx, instanceName) {
 			c.mutex.RLock()
 			db, ok = c.conns[strings.ToUpper(instanceName)]
 			c.mutex.RUnlock()
@@ -64,10 +65,10 @@ func (c *PgRepository) GetTableMaintenanceStats(instanceName string, limit int) 
 		return nil, fmt.Errorf("connection not found")
 	}
 
-	return c.GetTableMaintenanceStatsForDB(db, limit)
+	return c.GetTableMaintenanceStatsForDB(ctx, db, limit)
 }
 
-func (c *PgRepository) GetTableMaintenanceStatsForDB(db *sql.DB, limit int) ([]PgTableMaintenanceStat, error) {
+func (c *PgRepository) GetTableMaintenanceStatsForDB(ctx context.Context, db *sql.DB, limit int) ([]PgTableMaintenanceStat, error) {
 	if limit <= 0 {
 		limit = 200
 	}
@@ -94,7 +95,9 @@ func (c *PgRepository) GetTableMaintenanceStatsForDB(db *sql.DB, limit int) ([]P
 		LIMIT $1
 	`
 
-	rows, err := db.Query(q, limit)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, q, limit)
 	if err != nil {
 		return nil, err
 	}

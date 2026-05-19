@@ -43,16 +43,15 @@ window.JobsView = function() {
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between dashboard-page-title-compact">
                 <div class="dashboard-title-line">
-                    <h1><i class="fa-solid fa-briefcase text-accent"></i> SQL Agent Jobs</h1>
+                    <h1 style="font-size:1.1rem; margin:0;"><i class="fa-solid fa-briefcase text-accent"></i> SQL Agent Jobs</h1>
                     <p class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Time-series status & history</p>
                 </div>
-                <div class="flex-between dashboard-page-title-actions" style="gap: 0.75rem; align-items: center;">
-                    <div class="date-picker-group glass-panel" style="display:flex; align-items:center; gap:0.5rem; padding:0.25rem 0.75rem; border-radius:8px;">
-                        <span class="text-muted" style="font-size:0.75rem;">Window:</span>
-                        <input type="datetime-local" id="jobsFrom" class="custom-date-input" value="${window.appState.jobsFrom}">
-                        <span class="text-muted">to</span>
-                        <input type="datetime-local" id="jobsTo" class="custom-date-input" value="${window.appState.jobsTo}">
-                        <button id="jobsApplyRange" class="btn btn-xs btn-accent">Update Status</button>
+                <div class="dashboard-page-title-actions" style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                    <div class="glass-panel" style="display:flex; align-items:center; gap:0.4rem; padding:0.2rem 0.5rem; border-radius:6px; font-size:0.72rem;">
+                        <input type="datetime-local" id="jobsFrom" class="custom-date-input" value="${window.appState.jobsFrom}" style="font-size:0.7rem; background:transparent; border:none; color:var(--text);">
+                        <span class="text-muted">→</span>
+                        <input type="datetime-local" id="jobsTo" class="custom-date-input" value="${window.appState.jobsTo}" style="font-size:0.7rem; background:transparent; border:none; color:var(--text);">
+                        <button id="jobsApplyRange" class="btn btn-xs btn-accent">Apply</button>
                     </div>
                     <button class="btn btn-sm btn-outline text-accent" data-action="navigate" data-route="dashboard"><i class="fa-solid fa-arrow-left"></i></button>
                 </div>
@@ -131,33 +130,38 @@ function renderJobsContent(inst, metrics) {
     const content = document.getElementById('jobsDashboardContent');
     if (!content) return;
 
+    // Store state for pagination
+    window.appState.allJobs = jList;
+    window.appState.jobsPage = 1;
+    const pageSize = 15;
+
     content.innerHTML = `
-        <div class="metrics-grid mt-3" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem;">
-            <div class="metric-card glass-panel" style="padding: 1rem; text-align:center;">
-                <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase;">Total Jobs</div>
-                <div class="metric-value" style="font-size:1.75rem; font-weight:700;">${sums.total_jobs}</div>
+        <div class="metrics-grid mt-2" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem;">
+            <div class="metric-card glass-panel" style="padding: 0.5rem 0.75rem; text-align:center;">
+                <div class="metric-header" style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Total Jobs</div>
+                <div class="metric-value" style="font-size:1.25rem; font-weight:700;">${sums.total_jobs}</div>
             </div>
-            <div class="metric-card glass-panel" style="padding: 1rem; text-align:center; border-bottom: 3px solid var(--success);">
-                <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase;">Enabled</div>
-                <div class="metric-value" style="font-size:1.75rem; font-weight:700; color:var(--success);">${sums.enabled_jobs}</div>
+            <div class="metric-card glass-panel" style="padding: 0.5rem 0.75rem; text-align:center; border-bottom: 3px solid var(--success);">
+                <div class="metric-header" style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Enabled</div>
+                <div class="metric-value" style="font-size:1.25rem; font-weight:700; color:var(--success);">${sums.enabled_jobs}</div>
             </div>
-            <div class="metric-card glass-panel" style="padding: 1rem; text-align:center;">
-                <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase;">Disabled</div>
-                <div class="metric-value" style="font-size:1.75rem; font-weight:700; color:var(--text-muted);">${sums.disabled_jobs}</div>
+            <div class="metric-card glass-panel" style="padding: 0.5rem 0.75rem; text-align:center;">
+                <div class="metric-header" style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Disabled</div>
+                <div class="metric-value" style="font-size:1.25rem; font-weight:700; color:var(--text-muted);">${sums.disabled_jobs}</div>
             </div>
-            <div class="metric-card glass-panel" style="padding: 1rem; text-align:center; border-bottom: 3px solid var(--warning);">
-                <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase;">Running</div>
-                <div class="metric-value" style="font-size:1.75rem; font-weight:700; color:var(--warning);">${sums.running_jobs}</div>
+            <div class="metric-card glass-panel" style="padding: 0.5rem 0.75rem; text-align:center; border-bottom: 3px solid var(--warning);">
+                <div class="metric-header" style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Running</div>
+                <div class="metric-value" style="font-size:1.25rem; font-weight:700; color:var(--warning);">${sums.running_jobs}</div>
             </div>
-            <div class="metric-card glass-panel" style="padding: 1rem; text-align:center; border-bottom: 3px solid var(--danger);">
-                <div class="metric-header" style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase;">Failed (Period)</div>
-                <div class="metric-value" style="font-size:1.75rem; font-weight:700; color:var(--danger);">${sums.failed_jobs}</div>
+            <div class="metric-card glass-panel" style="padding: 0.5rem 0.75rem; text-align:center; border-bottom: 3px solid var(--danger);">
+                <div class="metric-header" style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Failed</div>
+                <div class="metric-value" style="font-size:1.25rem; font-weight:700; color:var(--danger);">${sums.failed_jobs}</div>
             </div>
         </div>
 
-        <div class="chart-card glass-panel mt-3" style="padding: 0.75rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-chart-area text-accent"></i> Job Failure Trend</h3></div>
-            <div class="chart-container" style="height: 120px;"><canvas id="jobsFailuresChart"></canvas></div>
+        <div class="chart-card glass-panel mt-2" style="padding: 0.5rem 0.75rem; max-height: 200px; overflow:hidden;">
+            <div class="card-header" style="padding:0 0 0.25rem 0;"><h3 style="font-size:0.78rem; margin:0;"><i class="fa-solid fa-chart-area text-accent"></i> Job Failure Trend</h3></div>
+            <div class="chart-container" style="height: 150px;"><canvas id="jobsFailuresChart"></canvas></div>
         </div>
 
         <div class="tabs-container mt-3">
@@ -167,48 +171,18 @@ function renderJobsContent(inst, metrics) {
         </div>
 
         <div id="jobTab-list" class="tab-panel mt-2">
-            <div class="table-card glass-panel" style="padding:0;">
-                <div class="table-responsive" style="max-height:300px;">
-                    <table class="modern-table modern-table-compact">
-                        <thead><tr><th>Job Name</th><th>Category</th><th>Enabled</th><th>Status</th><th>Last Run</th><th>Last Result</th><th>Owner</th></tr></thead>
-                        <tbody>
-                            ${jList.map(j => `
-                                <tr>
-                                    <td>
-                                        <div style="display:flex; align-items:center; gap:0.5rem;">
-                                            <i class="fa-solid fa-gear ${j.current_status === 'Running' ? 'fa-spin text-warning' : 'text-muted'}"></i>
-                                            <strong title="${window.escapeHtml(j.description)}">${window.escapeHtml(j.job_name)}</strong>
-                                        </div>
-                                    </td>
-                                    <td><span class="small text-muted">${window.escapeHtml(j.category || 'Uncategorized')}</span></td>
-                                    <td>
-                                        <span class="badge ${j.enabled ? 'badge-success' : 'badge-outline'}" style="font-size:0.6rem;">
-                                            <i class="fa-solid ${j.enabled ? 'fa-check-circle' : 'fa-times-circle'}"></i> ${j.enabled ? 'Enabled' : 'Disabled'}
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <span class="badge ${j.current_status === 'Running' ? 'badge-warning' : 'badge-outline'}" style="font-size:0.6rem;">
-                                            ${window.escapeHtml(j.current_status)}
-                                        </span>
-                                    </td>
-                                    <td class="small">${parseRunTime(j.last_run_date, j.last_run_time)}</td>
-                                    <td>
-                                        <div style="display:flex; align-items:center; gap:0.4rem;">
-                                            <i class="fa-solid ${j.last_run_status === 'Succeeded' ? 'fa-circle-check text-success' : (j.last_run_status === 'Failed' ? 'fa-circle-xmark text-danger' : 'fa-circle-question text-muted')}"></i>
-                                            <span class="badge ${formatStringColor(j.last_run_status)}" style="font-size:0.6rem;">${window.escapeHtml(j.last_run_status)}</span>
-                                        </div>
-                                    </td>
-                                    <td class="text-muted small">${window.escapeHtml(j.owner)}</td>
-                                </tr>
-                            `).join('') || '<tr><td colspan="7" class="text-center text-muted">No jobs found</td></tr>'}
-                        </tbody>
-                    </table>
+            <div class="table-card glass-panel" style="padding:0; min-height:400px; background: rgba(15, 23, 42, 0.4);">
+                <div class="table-responsive" id="jobInventoryTableWrap">
+                    <!-- Table content will be injected by pagination -->
+                </div>
+                <div id="jobInventoryPagination" class="pagination-footer mt-2 p-2 flex-between" style="border-top: 1px solid var(--border-color); display: flex;">
+                    <!-- Pagination controls -->
                 </div>
             </div>
         </div>
 
         <div id="jobTab-schedules" class="tab-panel mt-2" style="display:none;">
-            <div class="table-card glass-panel" style="padding:0;">
+            <div class="table-card glass-panel" style="padding:0; background: rgba(15, 23, 42, 0.4);">
                 <table class="modern-table modern-table-compact">
                     <thead><tr><th>Job</th><th>Schedule</th><th>Active</th><th>Next Expected Run</th></tr></thead>
                     <tbody>
@@ -230,7 +204,7 @@ function renderJobsContent(inst, metrics) {
         </div>
 
         <div id="jobTab-failures" class="tab-panel mt-2" style="display:none;">
-            <div class="table-card glass-panel" style="padding:0;">
+            <div class="table-card glass-panel" style="padding:0; background: rgba(15, 23, 42, 0.4);">
                 <table class="modern-table modern-table-compact">
                     <thead><tr><th>Job</th><th>Step</th><th>Failed At</th><th>Message</th></tr></thead>
                     <tbody>
@@ -249,6 +223,74 @@ function renderJobsContent(inst, metrics) {
             </div>
         </div>
     `;
+
+    const renderPage = (page) => {
+        const start = (page - 1) * pageSize;
+        const end = start + pageSize;
+        const pageJobs = window.appState.allJobs.slice(start, end);
+        const totalPages = Math.ceil(window.appState.allJobs.length / pageSize);
+
+        const tableWrap = document.getElementById('jobInventoryTableWrap');
+        if (!tableWrap) return;
+
+        tableWrap.innerHTML = `
+            <table class="modern-table modern-table-compact">
+                <thead><tr><th>Job Name</th><th>Category</th><th>Enabled</th><th>Status</th><th>Last Run</th><th>Last Result</th><th>Owner</th></tr></thead>
+                <tbody>
+                    ${pageJobs.map(j => `
+                        <tr>
+                            <td>
+                                <div style="display:flex; align-items:center; gap:0.5rem;">
+                                    <i class="fa-solid fa-gear ${j.current_status === 'Running' ? 'fa-spin text-warning' : 'text-muted'}"></i>
+                                    <strong title="${window.escapeHtml(j.description)}">${window.escapeHtml(j.job_name)}</strong>
+                                </div>
+                            </td>
+                            <td><span style="font-size:0.75rem;">${window.escapeHtml(j.category || 'Uncategorized')}</span></td>
+                            <td>
+                                <span class="badge ${j.enabled ? 'badge-success' : 'badge-outline'}" style="font-size:0.6rem;">
+                                    <i class="fa-solid ${j.enabled ? 'fa-check-circle' : 'fa-times-circle'}"></i> ${j.enabled ? 'Enabled' : 'Disabled'}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge ${j.current_status === 'Running' ? 'badge-warning' : 'badge-outline'}" style="font-size:0.6rem;">
+                                    ${window.escapeHtml(j.current_status)}
+                                </span>
+                            </td>
+                            <td class="small">${parseRunTime(j.last_run_date, j.last_run_time)}</td>
+                            <td>
+                                <div style="display:flex; align-items:center; gap:0.4rem;">
+                                    <i class="fa-solid ${j.last_run_status === 'Succeeded' ? 'fa-circle-check text-success' : (j.last_run_status === 'Failed' ? 'fa-circle-xmark text-danger' : 'fa-circle-question text-muted')}"></i>
+                                    <span class="badge ${formatStringColor(j.last_run_status)}" style="font-size:0.6rem;">${window.escapeHtml(j.last_run_status)}</span>
+                                </div>
+                            </td>
+                            <td style="font-size:0.75rem;">${window.escapeHtml(j.owner)}</td>
+                        </tr>
+                    `).join('') || '<tr><td colspan="7" class="text-center text-muted">No jobs found</td></tr>'}
+                </tbody>
+            </table>
+        `;
+
+        const pag = document.getElementById('jobInventoryPagination');
+        if (pag) {
+            if (totalPages <= 1) {
+                pag.style.display = 'none';
+            } else {
+                pag.style.display = 'flex';
+                pag.innerHTML = `
+                    <div class="small text-muted">Showing ${start+1}-${Math.min(end, window.appState.allJobs.length)} of ${window.appState.allJobs.length} jobs</div>
+                    <div style="display:flex; gap:0.5rem;">
+                        <button class="btn btn-xs btn-outline" ${page === 1 ? 'disabled' : ''} id="jobsPrevPage"><i class="fa-solid fa-chevron-left"></i></button>
+                        <span class="small text-muted" style="align-self:center;">Page ${page} of ${totalPages}</span>
+                        <button class="btn btn-xs btn-outline" ${page === totalPages ? 'disabled' : ''} id="jobsNextPage"><i class="fa-solid fa-chevron-right"></i></button>
+                    </div>
+                `;
+                document.getElementById('jobsPrevPage')?.addEventListener('click', () => { window.appState.jobsPage--; renderPage(window.appState.jobsPage); });
+                document.getElementById('jobsNextPage')?.addEventListener('click', () => { window.appState.jobsPage++; renderPage(window.appState.jobsPage); });
+            }
+        }
+    };
+
+    renderPage(1);
 
     window.appState.jobFailureMessages = fails.map(f => f.message || '');
 

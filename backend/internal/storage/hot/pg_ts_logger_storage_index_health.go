@@ -14,7 +14,7 @@ import (
 
 func (tl *TimescaleLogger) sihPgHighScanTableCount(ctx context.Context, engine, serverID, from, to string, f SIHFilters) int {
 	args := []interface{}{engine, serverID, from, to}
-	where := `engine=$1 AND server_id=$2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
+	where := `engine=$1 AND server_id=$2 AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 	argN := 5
 	if len(f.DBNames) > 0 {
 		where += fmt.Sprintf(" AND db_name = ANY($%d)", argN)
@@ -27,8 +27,8 @@ func (tl *TimescaleLogger) sihPgHighScanTableCount(ctx context.Context, engine, 
 		argN++
 	}
 	if f.TableLike != "" {
-		where += fmt.Sprintf(" AND table_name ILIKE $%d", argN)
-		args = append(args, "%"+f.TableLike+"%")
+		where += fmt.Sprintf(" AND table_name = $%d", argN)
+		args = append(args, f.TableLike)
 	}
 	q := fmt.Sprintf(`
 		SELECT COUNT(*)::int
@@ -48,7 +48,7 @@ func (tl *TimescaleLogger) sihPgHighScanTableCount(ctx context.Context, engine, 
 
 func (tl *TimescaleLogger) sihPgTopScans(ctx context.Context, engine, serverID, from, to string, f SIHFilters) ([]StorageIndexHealthTopRow, error) {
 	args := []interface{}{engine, serverID, from, to}
-	where := `engine = $1 AND server_id = $2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
+	where := `engine = $1 AND server_id = $2 AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 	where, args, _ = sihAppendFilters(where, args, f, 5)
 	q := fmt.Sprintf(`
 		SELECT db_name, schema_name, table_name,
@@ -80,7 +80,7 @@ func (tl *TimescaleLogger) sihPgTopScans(ctx context.Context, engine, serverID, 
 
 func (tl *TimescaleLogger) sihPgSeekScanLookup(ctx context.Context, engine, serverID, from, to string, f SIHFilters) ([]StorageIndexHealthSeekScanLookupRow, error) {
 	args := []interface{}{engine, serverID, from, to}
-	where := `engine=$1 AND server_id=$2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
+	where := `engine=$1 AND server_id=$2 AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 	argN := 5
 	if len(f.DBNames) > 0 {
 		where += fmt.Sprintf(" AND db_name = ANY($%d)", argN)
@@ -93,8 +93,8 @@ func (tl *TimescaleLogger) sihPgSeekScanLookup(ctx context.Context, engine, serv
 		argN++
 	}
 	if f.TableLike != "" {
-		where += fmt.Sprintf(" AND table_name ILIKE $%d", argN)
-		args = append(args, "%"+f.TableLike+"%")
+		where += fmt.Sprintf(" AND table_name = $%d", argN)
+		args = append(args, f.TableLike)
 	}
 	// Note: We're abusing StorageIndexHealthSeekScanLookupRow to pass row_count for PG
 	q := fmt.Sprintf(`
@@ -128,7 +128,7 @@ func (tl *TimescaleLogger) sihPgSeekScanLookup(ctx context.Context, engine, serv
 
 func (tl *TimescaleLogger) sihPgHighScanTables(ctx context.Context, engine, serverID, from, to string, f SIHFilters) ([]StorageIndexHealthTopRow, error) {
 	args := []interface{}{engine, serverID, from, to}
-	where := `engine=$1 AND server_id=$2 AND time >= $3::timestamptz AND time <= $4::timestamptz`
+	where := `engine=$1 AND server_id=$2 AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 	n := 5
 	if len(f.DBNames) > 0 {
 		where += fmt.Sprintf(" AND db_name = ANY($%d)", n)
@@ -141,8 +141,8 @@ func (tl *TimescaleLogger) sihPgHighScanTables(ctx context.Context, engine, serv
 		n++
 	}
 	if f.TableLike != "" {
-		where += fmt.Sprintf(" AND table_name ILIKE $%d", n)
-		args = append(args, "%"+f.TableLike+"%")
+		where += fmt.Sprintf(" AND table_name = $%d", n)
+		args = append(args, f.TableLike)
 	}
 	q := fmt.Sprintf(`
 		SELECT db_name, schema_name, table_name,

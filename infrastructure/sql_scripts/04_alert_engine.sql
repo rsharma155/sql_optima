@@ -72,18 +72,20 @@ CREATE INDEX IF NOT EXISTS idx_alert_history_alert
 -- ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS optima_maintenance_windows (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    instance_name   TEXT        NOT NULL,
+    server_id       UUID        NOT NULL REFERENCES optima_servers(id) ON DELETE CASCADE,
+    instance_name   TEXT,       -- optional cached name
     engine          TEXT        NOT NULL CHECK (engine IN ('postgres', 'sqlserver')),
-    reason          TEXT,
-    starts_at       TIMESTAMPTZ NOT NULL,
-    ends_at         TIMESTAMPTZ NOT NULL,
+    category        TEXT,       -- optional: only suppress specific category
+    description     TEXT,       -- renamed from reason
+    start_time      TIMESTAMPTZ NOT NULL, -- renamed from starts_at
+    end_time        TIMESTAMPTZ NOT NULL, -- renamed from ends_at
     created_by      TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT chk_window_range CHECK (ends_at > starts_at)
+    CONSTRAINT chk_window_range CHECK (end_time > start_time)
 );
 
 CREATE INDEX IF NOT EXISTS idx_maint_window_active
-    ON optima_maintenance_windows (instance_name, starts_at, ends_at);
+    ON optima_maintenance_windows (server_id, start_time, end_time);
 
 -- ──────────────────────────────────────────────
 -- Alert rule configuration

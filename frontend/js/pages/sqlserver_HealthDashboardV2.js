@@ -34,7 +34,7 @@ window.SqlServerHealthV2View = async function() {
             .dash-v2-container {
                 display: flex;
                 flex-direction: column;
-                height: calc(100vh - 110px); /* Adjust for header/filters */
+                height: calc(100vh - 110px);
                 padding: 12px;
                 gap: 12px;
                 background: var(--bg-primary);
@@ -44,6 +44,16 @@ window.SqlServerHealthV2View = async function() {
                 display: grid;
                 grid-template-columns: repeat(12, 1fr);
                 gap: 12px;
+            }
+            @media (max-width: 1400px) {
+                #dash-v2-page-view { overflow-y: auto !important; height: auto !important; }
+                .dash-v2-container {
+                    height: auto;
+                    min-height: unset;
+                    overflow: visible;
+                }
+                .dash-v2-row .v2-panel { grid-column: span 12 !important; }
+                .elastic-row-2, .elastic-row-3 { min-height: unset; flex-grow: unset; }
             }
             
             /* ROW 1: KPI STRIP */
@@ -235,7 +245,7 @@ window.SqlServerHealthV2View = async function() {
             .info-icon-clickable:hover { color: var(--accent); }
         </style>
 
-        <div class="page-view active dashboard-sky-theme" style="padding:0; overflow:hidden; height:100%;">
+        <div class="page-view active dashboard-sky-theme" style="padding:0; overflow:hidden; height:100%;" id="dash-v2-page-view">
             <div class="page-title flex-between" style="padding: 10px 20px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); height: 65px;">
                 <div>
                     <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;">
@@ -245,7 +255,7 @@ window.SqlServerHealthV2View = async function() {
                     </h1>
                     <div style="display:flex; gap:12px; align-items:center; margin-top:2px;">
                         <span style="font-size:0.7rem; color:var(--text-secondary); font-weight:600;"><i class="fa-solid fa-server" style="font-size:0.6rem;"></i> ${window.escapeHtml(inst.name)}</span>
-                        <span style="font-size:0.7rem; color:var(--text-muted);"><i class="fa-solid fa-database" style="font-size:0.6rem;"></i> ${window.escapeHtml(window.appState.currentDatabase || 'master')}</span>
+                        <span style="font-size:0.7rem; color:var(--text-muted);"><i class="fa-solid fa-database" style="font-size:0.6rem;"></i> ${window.escapeHtml(window.appState.currentDatabase || inst.database || 'master')}</span>
                         <span id="v2-header-edition" style="font-size:0.65rem; background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:4px; color:var(--text-muted);">--</span>
                         <span id="v2-header-uptime" style="font-size:0.65rem; color:var(--success); font-weight:600;"><i class="fa-solid fa-clock" style="font-size:0.6rem;"></i> --</span>
                     </div>
@@ -255,7 +265,7 @@ window.SqlServerHealthV2View = async function() {
                     <div class="text-muted" style="font-size:0.65rem; background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px;">
                         Update: <span id="v2-last-update" class="text-accent">--:--:--</span>
                     </div>
-                    <button class="btn btn-xs btn-accent" onclick="SqlServerHealthV2View()"><i class="fa-solid fa-sync"></i></button>
+                    <button class="btn btn-xs btn-accent" id="v2-refresh-btn"><i class="fa-solid fa-sync"></i></button>
                 </div>
             </div>
 
@@ -326,13 +336,13 @@ window.SqlServerHealthV2View = async function() {
                                 <div class="mini-kpi"><span class="v" id="td-version">--</span><span class="l">Version Store</span></div>
                                 <div class="mini-kpi"><span class="v" id="td-log">--</span><span class="l">Log Status</span></div>
                             </div>
-                            <div style="height: calc(100% - 50px);"><canvas id="v2-tempdb-chart"></canvas></div>
+                            <div style="position:relative; height:160px;"><canvas id="v2-tempdb-chart" style="position:absolute;inset:0;width:100%;height:100%;"></canvas></div>
                         </div>
                     </div>
                     <div class="v2-panel" style="grid-column: span 4;" id="panel-active-problems">
                         <div class="v2-panel-header">
                             <h3><i class="fa-solid fa-list-check text-accent"></i> Active Problems</h3>
-                            <button class="btn btn-xs btn-outline" style="font-size:0.5rem;" onclick="window.appNavigate('sqlserver-locks')">Blocking Monitor <i class="fa-solid fa-external-link"></i></button>
+                            <button class="btn btn-xs btn-outline" style="font-size:0.5rem;" id="v2-blocking-nav-btn">Blocking Monitor <i class="fa-solid fa-external-link"></i></button>
                         </div>
                         <div class="problems-panel">
                             <div class="blocking-summary">
@@ -356,19 +366,34 @@ window.SqlServerHealthV2View = async function() {
         </div>
     `;
 
+    // Wire buttons that were rendered into innerHTML (inline onclick removed for CSP compliance)
+    document.getElementById('v2-refresh-btn')?.addEventListener('click', () => window.SqlServerHealthV2View());
+    document.getElementById('v2-blocking-nav-btn')?.addEventListener('click', () => window.appNavigate('sqlserver-locks'));
+
     // Initialize DBA Tooltips
     initDBATooltips();
 
     // Setup Refresh Logic
     window.refreshDashboardData = async () => {
         try {
-            const from = window.appState.fromTs || "";
-            const to = window.appState.toTs || "";
+            const instIdx = window.appState.currentInstanceIdx;
+            const inst = window.appState.config?.instances?.[instIdx];
+            if (!inst) return;
+
+            // Convert picker values (local) to ISO strings (UTC) for backend
+            const from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : "";
+            const to = window.appState.toTs ? new Date(window.appState.toTs).toISOString() : "";
+            
             const url = `/api/sqlserver/health-v2?instance=${encodeURIComponent(inst.name)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
             const response = await window.apiClient.authenticatedFetch(url);
             if (response.ok) {
                 const data = await response.json();
                 renderV2Dashboard(data);
+                
+                // Dynamically adjust refresh rate based on backend configuration
+                if (data.refresh_interval_ms && window.setDashboardRefresh) {
+                    window.setDashboardRefresh(data.refresh_interval_ms);
+                }
             }
         } catch (e) { console.warn("[V2] Auto-refresh failed", e); }
     };
@@ -380,14 +405,24 @@ window.SqlServerHealthV2View = async function() {
         }
     };
 
-    // Set default refresh rate to 30s (matching server-side lightweight collection)
-    if (window.setDashboardRefresh) window.setDashboardRefresh(30000);
+    window.setDashboardRefresh = (ms) => {
+        if (ms < 10000) ms = 10000; // Floor at 10s
+        if (window.dashboardRefreshInterval) {
+            // Only reset if interval changed significantly
+            return; 
+        }
+        window.dashboardRefreshInterval = window.registerInterval(window.refreshDashboardData, ms);
+    };
+
+    // Set initial default refresh rate
+    const dynamicInterval = window.collectorConfig ? window.collectorConfig.getInterval("SQL Server Health KPIs", 30000) : 30000;
+    window.setDashboardRefresh(dynamicInterval);
 
     if (window.initPageTimePicker) window.initPageTimePicker();
 
     try {
-        const from = window.appState.fromTs || "";
-        const to = window.appState.toTs || "";
+        const from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : "";
+        const to = window.appState.toTs ? new Date(window.appState.toTs).toISOString() : "";
         const url = `/api/sqlserver/health-v2?instance=${encodeURIComponent(inst.name)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
         const response = await window.apiClient.authenticatedFetch(url);
         if (!response.ok) throw new Error("API error: " + response.status);
@@ -396,7 +431,7 @@ window.SqlServerHealthV2View = async function() {
         renderV2Dashboard(data);
     } catch (err) {
         console.error("[V2] Load failed", err);
-        // Ensure UI is populated with something for verification
+        // Ensure UI is populated with empty state
         renderV2Dashboard({ kpis: {}, problems: { long_running: [], blocking: [] } });
     }
 };
@@ -417,10 +452,10 @@ function renderV2Dashboard(data) {
         instance_status: 'Healthy',
         ...(data.kpis || {})
     };
-    const waitData = (data.wait_trends && data.wait_trends.length) ? data.wait_trends : generateDummyPoints(20, 'wait');
-    const ioData = (data.io_latency && data.io_latency.length) ? data.io_latency : generateDummyPoints(20, 'io');
-    const tpData = (data.throughput && data.throughput.length) ? data.throughput : generateDummyPoints(20, 'throughput');
-    const tdData = (data.tempdb && data.tempdb.user_obj_mb > 0) ? data.tempdb : { user_obj_mb: 450, internal_obj_mb: 220, version_store_mb: 180, free_mb: 3500, contention_found: false };
+    const waitData = data.wait_trends || [];
+    const ioData = data.io_latency || [];
+    const tpData = data.throughput || [];
+    const tdData = data.tempdb || { user_obj_mb: 0, internal_obj_mb: 0, version_store_mb: 0, free_mb: 0, contention_found: false };
 
     renderKPIs(k, waitData, ioData, tpData);
     initWaitChart(waitData);
@@ -620,7 +655,15 @@ function renderKPIs(k, waits, ios, tps) {
 }
 
 function initSparkline(id, data, color) {
-    const ctx = document.getElementById(id).getContext('2d');
+    const canvas = document.getElementById(id);
+    if (!canvas) return;
+    
+    // Destroy existing chart if it exists in window.v2Charts
+    if (window.v2Charts[id]) {
+        window.v2Charts[id].destroy();
+    }
+
+    const ctx = canvas.getContext('2d');
     window.v2Charts[id] = new Chart(ctx, {
         type: 'line',
         data: { labels: data.map((_, i) => i), datasets: [{ data: data, borderColor: color, borderWidth: 1.5, fill: false, pointRadius: 0, tension: 0.4 }] },
@@ -636,7 +679,14 @@ function initWaitChart(trends) {
     const top = Object.keys(cats).reduce((a, b) => cats[a] > cats[b] ? a : b);
     document.getElementById('summary-waits').textContent = `Total: ${total.toFixed(0)} ms/s | Top: ${top}`;
 
-    const ctx = document.getElementById('v2-wait-chart').getContext('2d');
+    const canvas = document.getElementById('v2-wait-chart');
+    if (!canvas) return;
+
+    if (window.v2Charts['wait']) {
+        window.v2Charts['wait'].destroy();
+    }
+
+    const ctx = canvas.getContext('2d');
     window.v2Charts['wait'] = new Chart(ctx, {
         type: 'line',
         data: {
@@ -673,7 +723,14 @@ function initIOChart(data) {
     const last = data[data.length - 1] || {};
     document.getElementById('summary-io').textContent = `D: ${(last.data_read_ms || 0).toFixed(1)}ms | L: ${(last.log_write_ms || 0).toFixed(1)}ms | IOPS: ${(last.read_iops || 0) + (last.write_iops || 0)}`;
 
-    const ctx = document.getElementById('v2-io-chart').getContext('2d');
+    const canvas = document.getElementById('v2-io-chart');
+    if (!canvas) return;
+
+    if (window.v2Charts['io']) {
+        window.v2Charts['io'].destroy();
+    }
+
+    const ctx = canvas.getContext('2d');
     window.v2Charts['io'] = new Chart(ctx, {
         type: 'line',
         data: {
@@ -703,7 +760,14 @@ function initIOChart(data) {
 }
 
 function initThroughputChart(data) {
-    const ctx = document.getElementById('v2-throughput-chart').getContext('2d');
+    const canvas = document.getElementById('v2-throughput-chart');
+    if (!canvas) return;
+
+    if (window.v2Charts['tp']) {
+        window.v2Charts['tp'].destroy();
+    }
+
+    const ctx = canvas.getContext('2d');
     window.v2Charts['tp'] = new Chart(ctx, {
         type: 'line',
         data: {
@@ -733,10 +797,17 @@ function initTempDBChart(t) {
     // Update mini-KPIs first
     const total = t.user_obj_mb + t.internal_obj_mb + t.version_store_mb + t.free_mb;
     document.getElementById('td-size').textContent = (total / 1024).toFixed(1) + 'GB';
-    document.getElementById('td-version').textContent = ((t.version_store_mb / total) * 100).toFixed(1) + '%';
+    document.getElementById('td-version').textContent = (total > 0 ? ((t.version_store_mb / total) * 100) : 0).toFixed(1) + '%';
     document.getElementById('td-log').textContent = 'Healthy'; // Simplified for now as log usage isn't in t
 
-    const ctx = document.getElementById('v2-tempdb-chart').getContext('2d');
+    const canvas = document.getElementById('v2-tempdb-chart');
+    if (!canvas) return;
+
+    if (window.v2Charts['tempdb']) {
+        window.v2Charts['tempdb'].destroy();
+    }
+
+    const ctx = canvas.getContext('2d');
     window.v2Charts['tempdb'] = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -849,16 +920,31 @@ function renderProblems(problems, tab, kpis) {
         </thead>
         <tbody>`;
     
-    list.forEach(item => {
-        const secondary = tab === 'long-running' ? ((item.duration_ms / 1000).toFixed(1) + 's') : (item.blocking_session_id || '??');
+    list.forEach((item, idx) => {
+        const secondary = tab === 'long-running' ? ((item.total_elapsed_time_ms / 1000).toFixed(1) + 's') : (item.blocking_session_id || '??');
         html += `<tr style="border-bottom:1px solid var(--border-color);">
             <td style="padding:6px;"><span class="badge ${tab === 'long-running' ? 'badge-accent' : 'badge-danger'}" style="font-size:0.6rem;">${item.session_id}</span></td>
             <td style="padding:6px; font-weight:700;">${secondary}</td>
             <td style="padding:6px; opacity:0.8;">${window.escapeHtml(item.database_name || 'master')}</td>
-            <td style="padding:6px;" class="sql-preview" title="${window.escapeHtml(item.query_text)}">${window.truncate(item.query_text, 30)}</td>
+            <td style="padding:6px;" class="sql-preview v2-clickable-query" style="cursor:pointer;" data-idx="${idx}" title="Click to view full query">
+                ${window.truncate(item.query_text, 35)}
+            </td>
         </tr>`;
     });
     wrap.innerHTML = html + '</tbody></table>';
+
+    // Bind click events
+    wrap.querySelectorAll('.v2-clickable-query').forEach(el => {
+        el.onclick = () => {
+            const idx = el.dataset.idx;
+            const query = list[idx].query_text;
+            if (window.showQueryModal) {
+                window.showQueryModal(query);
+            } else {
+                console.log('Query:', query);
+            }
+        };
+    });
 }
 
 function generateDummyPoints(count, type) {

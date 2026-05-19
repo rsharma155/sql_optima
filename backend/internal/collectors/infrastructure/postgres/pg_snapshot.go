@@ -22,7 +22,7 @@ SELECT
  userid,
  dbid,
  queryid,
- query,
+ LEFT(query, 4096) AS query,  -- truncate long query text
  calls,
  total_exec_time,
  rows,
@@ -32,8 +32,10 @@ SELECT
 FROM pg_stat_statements
 WHERE dbid NOT IN (
  SELECT oid FROM pg_database
- WHERE datname IN ('postgres','template0','template1')
-);
+ WHERE datname IN ('template0','template1')
+)
+ORDER BY total_exec_time DESC
+LIMIT 200;
 `
 
 const pgStatActivitySQL = `
@@ -42,9 +44,9 @@ SELECT
   now() AS capture_time,
   pid,
   COALESCE(query_id, 0) as query_id,
-  usename,
-  datname,
-  application_name,
+  COALESCE(usename, '') AS usename,
+  COALESCE(datname, '') AS datname,
+  COALESCE(application_name, '') AS application_name,
   client_addr,
   state
 FROM pg_stat_activity

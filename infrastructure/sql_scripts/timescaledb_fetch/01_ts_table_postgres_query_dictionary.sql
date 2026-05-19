@@ -4,7 +4,7 @@
 -- Description: Stores query dictionary entries for PostgreSQL (query ID to text mapping)
 
 CREATE TABLE IF NOT EXISTS postgres_query_dictionary (
-    server_instance_name TEXT NOT NULL,
+    server_id TEXT NOT NULL,
     query_id BIGINT NOT NULL,
     query_text TEXT,
     first_seen TIMESTAMPTZ NOT NULL,

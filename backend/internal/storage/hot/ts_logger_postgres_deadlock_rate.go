@@ -7,17 +7,19 @@
 // SPDX-License-Identifier: MIT
 package hot
 
+import "github.com/google/uuid"
+
 // ComputePgDeadlockRate returns deadlocks per minute using delta tracking.
 // Returns (rate, true) on second+ call; (0, false) on first.
-func (tl *TimescaleLogger) ComputePgDeadlockRate(instanceName string, totalDeadlocks int64, intervalSec float64) (rate float64, ok bool) {
+func (tl *TimescaleLogger) ComputePgDeadlockRate(serverID uuid.UUID, totalDeadlocks int64, intervalSec float64) (rate float64, ok bool) {
 	if intervalSec <= 0 {
 		intervalSec = 60
 	}
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
 
-	prev, seen := tl.prevPgDeadlocksTotalAllDBs[instanceName]
-	tl.prevPgDeadlocksTotalAllDBs[instanceName] = totalDeadlocks
+	prev, seen := tl.prevPgDeadlocksTotalAllDBs[serverID]
+	tl.prevPgDeadlocksTotalAllDBs[serverID] = totalDeadlocks
 
 	if !seen {
 		return 0, false

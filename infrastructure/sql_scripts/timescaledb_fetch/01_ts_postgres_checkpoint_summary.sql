@@ -12,7 +12,7 @@ SELECT
     AVG(buffers_checkpoint) AS avg_buffers_checkpoint,
     MAX(buffers_checkpoint) AS max_buffers_checkpoint
 FROM postgres_bgwriter_stats
-WHERE server_instance_name = $1
+WHERE server_id = $1
   AND capture_timestamp >= NOW() - INTERVAL '24 hours'
 GROUP BY bucket
 ORDER BY bucket DESC

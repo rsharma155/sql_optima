@@ -290,6 +290,7 @@
                 var r = await fetch('/api/setup/bootstrap-admin', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
                     body: JSON.stringify({ username: username, password: password, password_verify: passwordVerify })
                 });
                 var j = await r.json().catch(function() { return {}; });

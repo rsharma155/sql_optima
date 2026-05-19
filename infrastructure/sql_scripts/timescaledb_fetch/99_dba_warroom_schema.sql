@@ -8,8 +8,8 @@
 
 -- Create incidents table for incident timeline tracking
 CREATE TABLE IF NOT EXISTS optima_incidents (
-    time TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
+    capture_timestamp TIMESTAMPTZ NOT NULL,
+    server_id UUID NOT NULL,
     severity TEXT NOT NULL,
     category TEXT NOT NULL,
     description TEXT,
@@ -19,27 +19,27 @@ CREATE TABLE IF NOT EXISTS optima_incidents (
 );
 
 -- Convert to hypertable partitioned by time
-SELECT create_hypertable('optima_incidents', 'time', 
+SELECT create_hypertable('optima_incidents', 'capture_timestamp', 
     chunk_time_interval => INTERVAL '1 day',
     if_not_exists => TRUE);
 
 -- Create index for efficient querying by server and time
 CREATE INDEX IF NOT EXISTS idx_incidents_server_time 
-    ON optima_incidents (server_instance_name, time DESC);
+    ON optima_incidents (server_id, capture_timestamp DESC);
 
 -- Create index for severity-based queries
 CREATE INDEX IF NOT EXISTS idx_incidents_severity 
-    ON optima_incidents (severity, time DESC);
+    ON optima_incidents (severity, capture_timestamp DESC);
 
 -- Create index for category queries
 CREATE INDEX IF NOT EXISTS idx_incidents_category 
-    ON optima_incidents (category, time DESC);
+    ON optima_incidents (category, capture_timestamp DESC);
 
 -- Add compression for older data
 ALTER TABLE optima_incidents SET (
     timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_instance_name, severity, category',
-    timescaledb.compress_orderby = 'time DESC'
+    timescaledb.compress_segmentby = 'server_id, severity, category',
+    timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
 
 -- Add compression policy (compress data older than 7 days)
@@ -57,7 +57,7 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'sqlserver_wait_history') THEN
         CREATE TABLE IF NOT EXISTS sqlserver_wait_history (
             capture_timestamp TIMESTAMPTZ NOT NULL,
-            server_instance_name TEXT NOT NULL,
+            server_id UUID NOT NULL,
             wait_type TEXT,
             disk_read_ms_per_sec DOUBLE PRECISION DEFAULT 0,
             blocking_ms_per_sec DOUBLE PRECISION DEFAULT 0,
@@ -71,7 +71,7 @@ BEGIN
             if_not_exists => TRUE);
             
         CREATE INDEX IF NOT EXISTS idx_wait_history_server_time 
-            ON sqlserver_wait_history (server_instance_name, capture_timestamp DESC);
+            ON sqlserver_wait_history (server_id, capture_timestamp DESC);
     END IF;
 END
 $$;
@@ -82,8 +82,8 @@ $$;
 CREATE MATERIALIZED VIEW IF NOT EXISTS hourly_wait_stats_baseline
 WITH (timescaledb.continuous) AS
 SELECT 
-    time_bucket('1 hour', capture_timestamp) AS time,
-    server_instance_name,
+    time_bucket('1 hour', capture_timestamp) AS capture_timestamp,
+    server_id,
     wait_type,
     AVG(disk_read_ms_per_sec) AS avg_disk_read_ms,
     AVG(blocking_ms_per_sec) AS avg_blocking_ms,
@@ -93,7 +93,7 @@ SELECT
 FROM sqlserver_wait_history
 GROUP BY 
     time_bucket('1 hour', capture_timestamp),
-    server_instance_name,
+    server_id,
     wait_type
 WITH NO DATA;
 
@@ -109,19 +109,18 @@ SELECT add_continuous_aggregate_policy('hourly_wait_stats_baseline',
 CREATE MATERIALIZED VIEW IF NOT EXISTS hourly_query_performance_baseline
 WITH (timescaledb.continuous) AS
 SELECT 
-    time_bucket('1 hour', ts) AS time,
-    instance_id AS server_instance_name,
+    time_bucket('1 hour', capture_timestamp) AS capture_timestamp,
+    server_id,
     query_hash,
-    AVG(total_elapsed_ms / NULLIF(total_executions, 0)) AS avg_exec_time_ms,
-    SUM(total_executions) AS total_execution_count,
-    AVG(total_cpu_ms / NULLIF(total_executions, 0)) AS avg_cpu_time_ms,
-    AVG(total_logical_reads / NULLIF(total_executions, 0)) AS avg_logical_reads,
-    COUNT(*) AS sample_count,
-    MIN(statement_text) AS sample_query_text
-FROM sqlserver_query_metrics_v2
+    AVG(total_elapsed_time_ms / NULLIF(execution_count, 0)) AS avg_exec_time_ms,
+    SUM(execution_count) AS total_execution_count,
+    AVG(total_worker_time_ms / NULLIF(execution_count, 0)) AS avg_cpu_time_ms,
+    AVG(total_logical_reads / NULLIF(execution_count, 0)) AS avg_logical_reads,
+    COUNT(*) AS sample_count
+FROM sqlserver_procedure_stats
 GROUP BY 
-    time_bucket('1 hour', ts),
-    instance_id,
+    time_bucket('1 hour', capture_timestamp),
+    server_id,
     query_hash
 WITH NO DATA;
 
@@ -134,16 +133,10 @@ SELECT add_continuous_aggregate_policy('hourly_query_performance_baseline',
 
 -- Create indexes on the materialized views for faster queries
 CREATE INDEX IF NOT EXISTS idx_hourly_wait_baseline_time 
-    ON hourly_wait_stats_baseline (time DESC, server_instance_name);
-
-CREATE INDEX IF NOT EXISTS idx_hourly_wait_baseline_type 
-    ON hourly_wait_stats_baseline (wait_type, time DESC);
+    ON hourly_wait_stats_baseline (capture_timestamp DESC, server_id);
 
 CREATE INDEX IF NOT EXISTS idx_hourly_query_baseline_time 
-    ON hourly_query_performance_baseline (time DESC, server_instance_name);
-
-CREATE INDEX IF NOT EXISTS idx_hourly_query_baseline_hash 
-    ON hourly_query_performance_baseline (query_hash, time DESC);
+    ON hourly_query_performance_baseline (capture_timestamp DESC, server_id);
 
 COMMENT ON MATERIALIZED VIEW hourly_wait_stats_baseline IS 'DBA War Room: Hourly baseline for wait statistics by wait type';
 COMMENT ON MATERIALIZED VIEW hourly_query_performance_baseline IS 'DBA War Room: Hourly baseline for query performance by query hash';

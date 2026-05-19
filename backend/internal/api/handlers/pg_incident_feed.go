@@ -1,8 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: HTTP handler for the PostgreSQL unified incident feed.
-//          Reads exclusively from monitor.pg_incident_feed_ts (TimescaleDB).
-//          Never queries monitored servers directly.
+// Purpose: PostgreSQL incident feed API handlers.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -10,45 +8,50 @@
 package handlers
 
 import (
+	"strconv"
 	"encoding/json"
 	"net/http"
-	"strconv"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	"github.com/rsharma155/sql_optima/internal/service"
 )
 
-// IncidentFeed handles GET /api/postgres/incident-feed
-func (h *PostgresHandlers) IncidentFeed(w http.ResponseWriter, r *http.Request) {
-	instance := r.URL.Query().Get("instance")
-	if instance == "" {
-		http.Error(w, "instance parameter is required", http.StatusBadRequest)
+type PgIncidentHandlers struct {
+	metricsSvc *service.MetricsService
+}
+
+func NewPgIncidentHandlers(svc *service.MetricsService) *PgIncidentHandlers {
+	return &PgIncidentHandlers{metricsSvc: svc}
+}
+
+func (h *PgIncidentHandlers) GetFeed(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	lookbackStr := r.URL.Query().Get("lookback_mins")
-	lookback := 1440 // default 24h
-	if lookbackStr != "" {
-		if val, err := strconv.Atoi(lookbackStr); err == nil {
-			lookback = val
-		}
-	}
-
-	limitStr := r.URL.Query().Get("limit")
-	limit := 50
-	if limitStr != "" {
-		if val, err := strconv.Atoi(limitStr); err == nil {
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if val, err := strconv.Atoi(l); err == nil {
 			limit = val
 		}
 	}
 
-	incidents, err := h.metricsSvc.GetPgIncidentFeed(r.Context(), instance, lookback, limit)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	severity := 0
+	if s := r.URL.Query().Get("severity"); s != "" {
+		if val, err := strconv.Atoi(s); err == nil {
+			severity = val
+		}
 	}
 
+	res, err := h.metricsSvc.GetPgIncidentFeed(r.Context(), id, severity, limit)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"instance":  instance,
-		"incidents": incidents,
-		"total":     len(incidents),
-	})
+	_ = json.NewEncoder(w).Encode(res)
 }

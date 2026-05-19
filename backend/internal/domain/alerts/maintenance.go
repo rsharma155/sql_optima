@@ -1,6 +1,8 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: MaintenanceWindow entity with validation and active-check logic.
+// Purpose: Define maintenance windows to suppress alerting during
+//
+//	known patching or deployment activities.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -9,39 +11,39 @@ package alerts
 
 import (
 	"errors"
-	"time"
-
 	"github.com/google/uuid"
+	"time"
 )
 
-// MaintenanceWindow represents a scheduled period during which alerts
-// for a given instance are suppressed.
+// MaintenanceWindow defines a period where alerts for a specific instance
+// and engine should be suppressed or downgraded.
 type MaintenanceWindow struct {
-	ID           uuid.UUID `json:"id"`
-	InstanceName string    `json:"instance_name"`
-	Engine       Engine    `json:"engine"`
-	Reason       string    `json:"reason,omitempty"`
-	StartsAt     time.Time `json:"starts_at"`
-	EndsAt       time.Time `json:"ends_at"`
-	CreatedBy    string    `json:"created_by,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID          uuid.UUID `json:"id"`
+	ServerID    uuid.UUID `json:"server_id"`
+	Engine      Engine    `json:"engine"`
+	Category    *string   `json:"category,omitempty"` // optional: only suppress specific category
+	StartTime   time.Time `json:"start_time"`
+	EndTime     time.Time `json:"end_time"`
+	Description string    `json:"description"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
-// IsActive returns true when the current time falls within the window.
-func (mw *MaintenanceWindow) IsActive(now time.Time) bool {
-	return !now.Before(mw.StartsAt) && now.Before(mw.EndsAt)
+// IsActive returns true if the given time falls within the window.
+func (mw *MaintenanceWindow) IsActive(t time.Time) bool {
+	return (t.Equal(mw.StartTime) || t.After(mw.StartTime)) && t.Before(mw.EndTime)
 }
 
-// Validate checks required fields and range constraint.
+// Validate ensures the maintenance window has required fields and a valid range.
 func (mw *MaintenanceWindow) Validate() error {
-	if mw.InstanceName == "" {
-		return ErrMissingInstanceName
+	if mw.ServerID == uuid.Nil {
+		return ErrMissingInstanceName // Keeping name for compatibility or could change to ErrMissingServerID
 	}
 	if !mw.Engine.Valid() {
 		return ErrInvalidEngine
 	}
-	if !mw.EndsAt.After(mw.StartsAt) {
-		return errors.New("ends_at must be after starts_at")
+	if !mw.EndTime.After(mw.StartTime) {
+		return errors.New("end time must be after start time")
 	}
 	return nil
 }

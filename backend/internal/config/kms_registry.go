@@ -4,7 +4,7 @@
 package config
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -23,15 +23,15 @@ func InitServerRegistryKMS(jwtSecret []byte) (kms servers.KeyManagementService, 
 		vMount := strings.TrimSpace(os.Getenv("VAULT_TRANSIT_MOUNT"))
 		k, kerr := security.InitVaultClient(security.VaultConfig{Addr: vaultAddr, Token: vTok, Namespace: vNs, TransitMount: vMount, TransitKey: vKey})
 		if kerr == nil {
-			log.Printf("[vault] KMS enabled (Transit)")
+			slog.Info("[vault] KMS enabled (Transit)")
 			return k, false
 		}
-		log.Printf("[vault] KMS init failed: %v", kerr)
+		slog.Error("[vault] KMS init failed", "err", kerr)
 	}
 	if lk, kerr := security.NewLocalEnvelopeKMS(jwtSecret); kerr == nil {
 		return lk, true
 	} else {
-		log.Printf("[kms] local envelope KMS unavailable: %v", kerr)
+		slog.Info("[kms] local envelope KMS unavailable", "err", kerr)
 	}
 	return nil, false
 }

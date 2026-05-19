@@ -11,13 +11,15 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/rsharma155/sql_optima/pkg/dashboard"
 )
 
 type RiskHealthRow struct {
 	CaptureTimestamp    time.Time `json:"capture_timestamp"`
-	ServerInstanceName  string    `json:"server_instance_name"`
+	ServerID            uuid.UUID `json:"server_id"`
 	BlockingSessions    int       `json:"blocking_sessions"`
 	MemoryGrantsPending int       `json:"memory_grants_pending"`
 	FailedLogins5m      int       `json:"failed_logins_5m"`
@@ -30,10 +32,10 @@ type RiskHealthRow struct {
 	BufferCacheHitPct   float64   `json:"buffer_cache_hit_ratio"`
 }
 
-func (tl *TimescaleLogger) LogSQLServerRiskHealth(ctx context.Context, instanceName string, row RiskHealthRow) error {
+func (tl *TimescaleLogger) LogSQLServerRiskHealth(ctx context.Context, serverID uuid.UUID, row RiskHealthRow) error {
 	q := `
 		INSERT INTO sqlserver_risk_health (
-			capture_timestamp, server_instance_name,
+			capture_timestamp, server_id,
 			blocking_sessions, memory_grants_pending, failed_logins_5m,
 			tempdb_used_percent,
 			max_log_db_name, max_log_used_percent,
@@ -43,7 +45,7 @@ func (tl *TimescaleLogger) LogSQLServerRiskHealth(ctx context.Context, instanceN
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 	`
 	_, err := tl.pool.Exec(ctx, q,
-		row.CaptureTimestamp, instanceName,
+		row.CaptureTimestamp, row.ServerID,
 		row.BlockingSessions, row.MemoryGrantsPending,
 		row.FailedLogins5m,
 		row.TempdbUsedPercent,
@@ -55,12 +57,12 @@ func (tl *TimescaleLogger) LogSQLServerRiskHealth(ctx context.Context, instanceN
 	return err
 }
 
-func (tl *TimescaleLogger) GetSQLServerRiskHealthHistory(ctx context.Context, instanceName string, from, to time.Time) ([]RiskHealthRow, error) {
+func (tl *TimescaleLogger) GetSQLServerRiskHealthHistory(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]RiskHealthRow, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	q := `
-		SELECT capture_timestamp, server_instance_name,
+		SELECT capture_timestamp, server_id,
 		       COALESCE(blocking_sessions,0),
 		       COALESCE(memory_grants_pending,0),
 		       COALESCE(failed_logins_5m,0),
@@ -72,11 +74,11 @@ func (tl *TimescaleLogger) GetSQLServerRiskHealthHistory(ctx context.Context, in
 		       COALESCE(batch_requests_per_sec,0),
 		       COALESCE(buffer_cache_hit_ratio,0)
 		FROM sqlserver_risk_health
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		ORDER BY capture_timestamp ASC
 	`
-	rows, err := tl.pool.Query(ctx, q, instanceName, from, to)
+	rows, err := tl.pool.Query(ctx, q, serverID, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +88,7 @@ func (tl *TimescaleLogger) GetSQLServerRiskHealthHistory(ctx context.Context, in
 	for rows.Next() {
 		var r RiskHealthRow
 		if err := rows.Scan(
-			&r.CaptureTimestamp, &r.ServerInstanceName,
+			&r.CaptureTimestamp, &r.ServerID,
 			&r.BlockingSessions, &r.MemoryGrantsPending,
 			&r.FailedLogins5m,
 			&r.TempdbUsedPercent,
@@ -102,12 +104,12 @@ func (tl *TimescaleLogger) GetSQLServerRiskHealthHistory(ctx context.Context, in
 	return results, rows.Err()
 }
 
-func (tl *TimescaleLogger) GetLatestSQLServerRiskHealth(ctx context.Context, instanceName string) (*RiskHealthRow, error) {
+func (tl *TimescaleLogger) GetLatestSQLServerRiskHealth(ctx context.Context, serverID uuid.UUID) (*RiskHealthRow, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	q := `
-		SELECT capture_timestamp, server_instance_name,
+		SELECT capture_timestamp, server_id,
 		       COALESCE(blocking_sessions,0),
 		       COALESCE(memory_grants_pending,0),
 		       COALESCE(failed_logins_5m,0),
@@ -119,13 +121,13 @@ func (tl *TimescaleLogger) GetLatestSQLServerRiskHealth(ctx context.Context, ins
 		       COALESCE(batch_requests_per_sec,0),
 		       COALESCE(buffer_cache_hit_ratio,0)
 		FROM sqlserver_risk_health
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
 		LIMIT 1
 	`
 	var r RiskHealthRow
-	err := tl.pool.QueryRow(ctx, q, instanceName).Scan(
-		&r.CaptureTimestamp, &r.ServerInstanceName,
+	err := tl.pool.QueryRow(ctx, q, serverID).Scan(
+		&r.CaptureTimestamp, &r.ServerID,
 		&r.BlockingSessions, &r.MemoryGrantsPending,
 		&r.FailedLogins5m,
 		&r.TempdbUsedPercent,
@@ -141,11 +143,11 @@ func (tl *TimescaleLogger) GetLatestSQLServerRiskHealth(ctx context.Context, ins
 }
 
 type WaitDeltaRow struct {
-	CaptureTimestamp   time.Time `json:"capture_timestamp"`
-	ServerInstanceName string    `json:"server_instance_name"`
-	WaitType           string    `json:"wait_type"`
-	WaitCategory       string    `json:"wait_category"`
-	WaitTimeMsDelta    float64   `json:"wait_time_ms"`
+	CaptureTimestamp time.Time `json:"capture_timestamp"`
+	ServerID         uuid.UUID `json:"server_id"`
+	WaitType         string    `json:"wait_type"`
+	WaitCategory     string    `json:"wait_category"`
+	WaitTimeMsDelta  float64   `json:"wait_time_ms"`
 }
 
 func (tl *TimescaleLogger) LogSQLServerWaitDeltas(ctx context.Context, rows []WaitDeltaRow) error {
@@ -156,9 +158,9 @@ func (tl *TimescaleLogger) LogSQLServerWaitDeltas(ctx context.Context, rows []Wa
 	for _, r := range rows {
 		batch.Queue(`
 			INSERT INTO sqlserver_wait_stats (
-				capture_timestamp, server_instance_name, wait_category, wait_time_ms
+				capture_timestamp, server_id, wait_category, wait_time_ms
 			) VALUES ($1,$2,$3,$4)
-		`, r.CaptureTimestamp, r.ServerInstanceName, r.WaitCategory, r.WaitTimeMsDelta)
+		`, r.CaptureTimestamp, r.ServerID, r.WaitCategory, r.WaitTimeMsDelta)
 	}
 
 	br := tl.pool.SendBatch(ctx, batch)
@@ -173,18 +175,18 @@ func (tl *TimescaleLogger) LogSQLServerWaitDeltas(ctx context.Context, rows []Wa
 
 // ComputeAndLogWaitDeltas computes deltas from cumulative waits using internal previous state,
 // categorizes them, and persists them into TimescaleDB.
-func (tl *TimescaleLogger) ComputeAndLogWaitDeltas(ctx context.Context, instanceName string, currWaitTotals map[string]float64) error {
+func (tl *TimescaleLogger) ComputeAndLogWaitDeltas(ctx context.Context, serverID uuid.UUID, currWaitTotals map[string]float64) error {
 	if len(currWaitTotals) == 0 {
 		return nil
 	}
 
 	tl.mu.Lock()
-	prev := tl.prevWaitHistory[instanceName]
+	prev := tl.prevWaitHistory[serverID]
 	if prev == nil {
 		prev = make(map[string]float64)
 	}
 	deltas, nextPrev := dashboard.ComputeWaitDeltas(prev, currWaitTotals)
-	tl.prevWaitHistory[instanceName] = nextPrev
+	tl.prevWaitHistory[serverID] = nextPrev
 	tl.mu.Unlock()
 
 	now := time.Now().UTC()
@@ -207,24 +209,24 @@ func (tl *TimescaleLogger) ComputeAndLogWaitDeltas(ctx context.Context, instance
 			continue
 		}
 		rows = append(rows, WaitDeltaRow{
-			CaptureTimestamp:   now,
-			ServerInstanceName: instanceName,
-			WaitType:           "__CATEGORY_TOTAL__",
-			WaitCategory:       cat,
-			WaitTimeMsDelta:    ms,
+			CaptureTimestamp: now,
+			ServerID:         serverID,
+			WaitType:         "__CATEGORY_TOTAL__",
+			WaitCategory:     cat,
+			WaitTimeMsDelta:  ms,
 		})
 	}
 	if len(rows) == 0 {
 		return nil
 	}
-	sig := waitDeltaSnapshotFingerprint(instanceName, rows)
-	if tl.EnterpriseSnapshotUnchanged(instanceName, enterpriseKindWaitsDelta, sig) {
+	sig := waitDeltaSnapshotFingerprint(serverID, rows)
+	if tl.EnterpriseSnapshotUnchanged(serverID, enterpriseKindWaitsDelta, sig) {
 		return nil
 	}
 	if err := tl.LogSQLServerWaitDeltas(ctx, rows); err != nil {
 		return err
 	}
-	tl.RememberEnterpriseSnapshot(instanceName, enterpriseKindWaitsDelta, sig)
+	tl.RememberEnterpriseSnapshot(serverID, enterpriseKindWaitsDelta, sig)
 	return nil
 }
 
@@ -234,7 +236,7 @@ type WaitCategoryAgg struct {
 }
 
 // GetWaitCategoryAgg returns summed wait_time_ms per category over the last N minutes or a specific range.
-func (tl *TimescaleLogger) GetWaitCategoryAgg(ctx context.Context, instanceName string, minutes int, from, to string) ([]WaitCategoryAgg, error) {
+func (tl *TimescaleLogger) GetWaitCategoryAgg(ctx context.Context, serverID uuid.UUID, minutes int, from, to string) ([]WaitCategoryAgg, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -254,12 +256,12 @@ func (tl *TimescaleLogger) GetWaitCategoryAgg(ctx context.Context, instanceName 
 		q = `
 			SELECT wait_category, SUM(wait_time_ms) AS wait_time_ms
 			FROM sqlserver_wait_stats
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 			GROUP BY wait_category
 			ORDER BY wait_time_ms DESC
 		`
-		rows, err = tl.pool.Query(ctx, q, instanceName, start, end)
+		rows, err = tl.pool.Query(ctx, q, serverID, start, end)
 	} else {
 		if minutes <= 0 {
 			minutes = 15
@@ -267,12 +269,12 @@ func (tl *TimescaleLogger) GetWaitCategoryAgg(ctx context.Context, instanceName 
 		q = `
 			SELECT wait_category, SUM(wait_time_ms) AS wait_time_ms
 			FROM sqlserver_wait_stats
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
 			GROUP BY wait_category
 			ORDER BY wait_time_ms DESC
 		`
-		rows, err = tl.pool.Query(ctx, q, instanceName, minutes)
+		rows, err = tl.pool.Query(ctx, q, serverID, minutes)
 	}
 	if err != nil {
 		return nil, err
@@ -291,7 +293,7 @@ func (tl *TimescaleLogger) GetWaitCategoryAgg(ctx context.Context, instanceName 
 }
 
 // GetBufferCacheHitTrend returns bucketed buffer cache hit ratio (%) for the last N minutes or a specific range.
-func (tl *TimescaleLogger) GetBufferCacheHitTrend(ctx context.Context, instanceName string, minutes int, from, to string) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetBufferCacheHitTrend(ctx context.Context, serverID uuid.UUID, minutes int, from, to string) ([]map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -312,12 +314,12 @@ func (tl *TimescaleLogger) GetBufferCacheHitTrend(ctx context.Context, instanceN
 			SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
 			       AVG(buffer_cache_hit_ratio) AS buffer_cache_hit_ratio
 			FROM sqlserver_risk_health
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 			GROUP BY bucket
 			ORDER BY bucket ASC
 		`
-		rows, err = tl.pool.Query(ctx, q, instanceName, start, end)
+		rows, err = tl.pool.Query(ctx, q, serverID, start, end)
 	} else {
 		if minutes <= 0 {
 			minutes = 60
@@ -326,12 +328,12 @@ func (tl *TimescaleLogger) GetBufferCacheHitTrend(ctx context.Context, instanceN
 			SELECT time_bucket('1 minute', capture_timestamp) AS bucket,
 			       AVG(buffer_cache_hit_ratio) AS buffer_cache_hit_ratio
 			FROM sqlserver_risk_health
-			WHERE UPPER(server_instance_name) = UPPER($1)
+			WHERE server_id = $1
 			  AND capture_timestamp >= NOW() - ($2::int * INTERVAL '1 minute')
 			GROUP BY bucket
 			ORDER BY bucket ASC
 		`
-		rows, err = tl.pool.Query(ctx, q, instanceName, minutes)
+		rows, err = tl.pool.Query(ctx, q, serverID, minutes)
 	}
 	if err != nil {
 		return nil, err

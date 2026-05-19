@@ -22,11 +22,10 @@ import (
 )
 
 func TestParseTimeRange(t *testing.T) {
-	h := &SqlServerHandlers{}
 
 	t.Run("Default Range", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", "/api/test", nil)
-		from, to := h.parseTimeRange(req)
+		from, to := ParseTimeRange(req.URL.Query().Get("from"), req.URL.Query().Get("to"))
 
 		now := time.Now().UTC()
 		if to.After(now) {
@@ -42,7 +41,7 @@ func TestParseTimeRange(t *testing.T) {
 		fromStr := "2026-05-01T10:00:00Z"
 		toStr := "2026-05-01T12:00:00Z"
 		req, _ := http.NewRequest("GET", "/api/test?from="+fromStr+"&to="+toStr, nil)
-		from, to := h.parseTimeRange(req)
+		from, to := ParseTimeRange(req.URL.Query().Get("from"), req.URL.Query().Get("to"))
 
 		expectedFrom, _ := time.Parse(time.RFC3339, fromStr)
 		expectedTo, _ := time.Parse(time.RFC3339, toStr)
@@ -57,7 +56,7 @@ func TestParseTimeRange(t *testing.T) {
 
 	t.Run("Invalid Range Fallback", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", "/api/test?from=invalid&to=invalid", nil)
-		from, to := h.parseTimeRange(req)
+		from, to := ParseTimeRange(req.URL.Query().Get("from"), req.URL.Query().Get("to"))
 
 		if from.IsZero() || to.IsZero() {
 			t.Error("expected non-zero times for invalid input fallback")

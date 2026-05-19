@@ -21,7 +21,7 @@ window.PgSessionsView = async function() {
 
     // Set Refresh Interval
     if (window.pgSessionsInterval) clearInterval(window.pgSessionsInterval);
-    window.pgSessionsInterval = setInterval(() => {
+    window.pgSessionsInterval = window.registerInterval(() => {
         if (window.appState.activeViewId === 'pg-sessions') {
             initPgSessions();
         } else {

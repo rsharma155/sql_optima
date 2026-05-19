@@ -1,4 +1,19 @@
 services:
+  intelligence-report:
+    build:
+      context: ../intelligence-report
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8765:8765"
+    environment:
+      IntelligenceReportSqloptima_DATABASE_URL: "postgresql+psycopg2://${DB_USER:-dbmonitor}:${DB_PASSWORD}@timescaledb:5432/${DB_NAME:-dbmonitor_metrics}"
+      IntelligenceReportSqloptima_REDIS_URL: "redis://redis:6379/0"
+      IntelligenceReportSqloptima_INTERNAL_API_TOKEN: "${INTERNAL_SERVICE_TOKEN:-change_me_internal_token}"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
   api:
     build:
       context: ..
@@ -23,6 +38,8 @@ services:
       DB_USER: ${DB_USER:-dbmonitor}
       DB_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
       DB_NAME: ${DB_NAME:-dbmonitor_metrics}
+      INTELLIGENCE_REPORT_URL: "http://intelligence-report:8765"
+      INTELLIGENCE_REPORT_TOKEN: "${INTERNAL_SERVICE_TOKEN:-change_me_internal_token}"
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -53,6 +70,8 @@ services:
     command:
       - postgres
       - -c
+      - max_connections=200
+      - -c
       - log_statement=none
       - -c
       - log_min_duration_statement=5000
@@ -73,18 +92,43 @@ services:
     ports:
       - "${VAULT_PORT:-8200}:8200"
     environment:
+      VAULT_ADDR: http://127.0.0.1:8200
       VAULT_TOKEN: ${VAULT_TOKEN:-root}
     command:
       - sh
       - -lc
       - |
-        exec vault server -dev \
-          -dev-root-token-id="$${VAULT_TOKEN}" \
-          -dev-listen-address="0.0.0.0:8200"
+        # If Vault is already initialized and sealed, unseal it automatically.
+        # This uses the single unseal key approach acceptable for single-node dev/prod-lite deployments.
+        vault server -config=/vault/config/vault.hcl &
+        VAULT_PID=$$!
+        sleep 2
+
+        export VAULT_ADDR=http://127.0.0.1:8200
+
+        # Initialize on first run; store unseal key to /vault/data/.unseal (on the persistent volume)
+        if ! vault status 2>/dev/null | grep -q "Initialized.*true"; then
+          echo "[vault-init] Initializing Vault for the first time..."
+          vault operator init -key-shares=1 -key-threshold=1 -format=json > /vault/data/.init.json
+          UNSEAL_KEY=$$(cat /vault/data/.init.json | grep unseal_keys_b64 | head -1 | tr -d ' ",' | cut -d: -f2 | tr -d '[]')
+          ROOT_TOKEN=$$(cat /vault/data/.init.json | grep root_token | tr -d ' ",' | cut -d: -f2)
+          echo "$$UNSEAL_KEY" > /vault/data/.unseal
+          echo "$$ROOT_TOKEN"  > /vault/data/.root_token
+          echo "[vault-init] Vault initialized. Root token stored to /vault/data/.root_token"
+        fi
+
+        # Unseal if sealed
+        if vault status 2>/dev/null | grep -q "Sealed.*true"; then
+          echo "[vault-init] Unsealing Vault..."
+          vault operator unseal "$$(cat /vault/data/.unseal)"
+        fi
+
+        wait $$VAULT_PID
+    volumes:
+      - vault_data:/vault/data
+      - ./vault-config.hcl:/vault/config/vault.hcl:ro
     healthcheck:
-      # Use the vault CLI (present in the image) instead of curl/wget.
-      # In dev mode this returns 0 once the server is ready and unsealed.
-      test: ["CMD", "sh", "-lc", "VAULT_ADDR=http://127.0.0.1:8200 vault status -format=json >/dev/null 2>&1"]
+      test: ["CMD", "sh", "-lc", "VAULT_ADDR=http://127.0.0.1:8200 vault status -format=json | grep -q '\"sealed\":false'"]
       interval: 5s
       timeout: 3s
       retries: 30
@@ -105,12 +149,14 @@ services:
       - |
         set -e
         export VAULT_ADDR="$$VAULT_ADDR"
-        export VAULT_TOKEN="$$VAULT_TOKEN"
-        echo "Vault bootstrap: enabling transit (idempotent) and ensuring key exists..."
-        vault login -no-print "$$VAULT_TOKEN" >/dev/null 2>&1 || true
+        # Read the root token from the persistent volume written by the vault init step
+        export VAULT_TOKEN=$$(cat /vault/data/.root_token 2>/dev/null || echo "${VAULT_TOKEN:-root}")
+        echo "[vault-setup] Enabling transit engine (idempotent)..."
         vault secrets enable -path=transit transit >/dev/null 2>&1 || true
         vault write -f "transit/keys/$$VAULT_TRANSIT_KEY" >/dev/null 2>&1 || true
-        echo "Vault bootstrap complete."
+        echo "[vault-setup] Done."
+    volumes:
+      - vault_data:/vault/data:ro
     restart: "no"
 
   schema-setup:
@@ -156,3 +202,4 @@ services:
 
 volumes:
   timescaledb_data: {}
+  vault_data: {}

@@ -58,9 +58,9 @@ CREATE TABLE IF NOT EXISTS ruleengine.rules (
     modified_date        TIMESTAMPTZ NULL
 );
 
--- 1.2: Servers Inventory Table
+-- 1.2: Servers Inventory Table (Legacy/Cache - mirrored from optima_servers)
 CREATE TABLE IF NOT EXISTS ruleengine.servers (
-    server_id    SERIAL PRIMARY KEY,
+    server_id    UUID PRIMARY KEY,
     server_name  TEXT NOT NULL UNIQUE,
     environment  TEXT,
     sql_version  TEXT,
@@ -73,31 +73,31 @@ CREATE TABLE IF NOT EXISTS ruleengine.servers (
 -- 1.3: Rule Execution Run Table (Tracks each polling cycle)
 CREATE TABLE IF NOT EXISTS ruleengine.rule_runs (
     run_id       BIGSERIAL PRIMARY KEY,
-    server_id    INT REFERENCES ruleengine.servers(server_id) ON DELETE CASCADE,
+    server_id    UUID REFERENCES ruleengine.servers(server_id) ON DELETE CASCADE,
     db_type     VARCHAR(20) DEFAULT 'sqlserver',
-    run_time     TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    capture_timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 1.4: Raw Rule Results Table (Timeseries - What the Go Agent sends)
 CREATE TABLE IF NOT EXISTS ruleengine.rule_results_raw (
     run_id       BIGINT REFERENCES ruleengine.rule_runs(run_id) ON DELETE CASCADE,
     rule_id      VARCHAR(50) REFERENCES ruleengine.rules(rule_id),
-    server_id    INT REFERENCES ruleengine.servers(server_id) ON DELETE CASCADE,
+    server_id    UUID REFERENCES ruleengine.servers(server_id) ON DELETE CASCADE,
     raw_payload  JSONB,
-    collected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    capture_timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Convert raw results to TimescaleDB hypertable
 SELECT create_hypertable(
     'ruleengine.rule_results_raw',
-    'collected_at',
+    'capture_timestamp',
     if_not_exists => TRUE
 );
 
 -- 1.5: Evaluated Results Table (Timeseries - What the UI reads)
 CREATE TABLE IF NOT EXISTS ruleengine.rule_results_evaluated (
     run_id        BIGINT REFERENCES ruleengine.rule_runs(run_id) ON DELETE CASCADE,
-    server_id     INT REFERENCES ruleengine.servers(server_id) ON DELETE CASCADE,
+    server_id     UUID REFERENCES ruleengine.servers(server_id) ON DELETE CASCADE,
     rule_id       VARCHAR(50) REFERENCES ruleengine.rules(rule_id),
     target_db_type VARCHAR(20) DEFAULT 'sqlserver',
     status        TEXT,
@@ -106,13 +106,13 @@ CREATE TABLE IF NOT EXISTS ruleengine.rule_results_evaluated (
     current_value TEXT,
     recommended   TEXT,
     context       JSONB,
-    evaluated_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    capture_timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Convert evaluated results to TimescaleDB hypertable
 SELECT create_hypertable(
     'ruleengine.rule_results_evaluated',
-    'evaluated_at',
+    'capture_timestamp',
     if_not_exists => TRUE
 );
 
@@ -205,7 +205,7 @@ END $$;
 -- ================================================================================
 
 -- FUNCTION: START NEW RULE RUN
-CREATE OR REPLACE FUNCTION ruleengine.start_rule_run(p_server_id INT)
+CREATE OR REPLACE FUNCTION ruleengine.start_rule_run(p_server_id UUID)
 RETURNS BIGINT AS $$
 DECLARE 
     v_run_id BIGINT;
@@ -221,13 +221,13 @@ $$ LANGUAGE plpgsql;
 -- FUNCTION: STORE RAW RESULT FROM AGENT
 CREATE OR REPLACE FUNCTION ruleengine.store_raw_result(
     p_run_id     BIGINT,
-    p_server_id  INT,
+    p_server_id  UUID,
     p_rule_id    VARCHAR(50),
     p_payload    JSONB
 )
 RETURNS VOID AS $$
 BEGIN
-    INSERT INTO ruleengine.rule_results_raw (run_id, rule_id, server_id, raw_payload, collected_at)
+    INSERT INTO ruleengine.rule_results_raw (run_id, rule_id, server_id, raw_payload, capture_timestamp)
     VALUES (p_run_id, p_rule_id, p_server_id, p_payload, CURRENT_TIMESTAMP);
 END;
 $$ LANGUAGE plpgsql;
@@ -264,7 +264,7 @@ BEGIN
         END IF;
 
         INSERT INTO ruleengine.rule_results_evaluated
-        (run_id, server_id, rule_id, target_db_type, status, current_value, recommended, context, confidence, evaluated_at)
+        (run_id, server_id, rule_id, target_db_type, status, current_value, recommended, context, confidence, capture_timestamp)
         VALUES
         (r.run_id, r.server_id, r.rule_id, r.target_db_type, v_status, v_current_value, v_recommended, r.context_tags, r.confidence, CURRENT_TIMESTAMP);
     END LOOP;
@@ -283,12 +283,12 @@ SELECT DISTINCT ON (s.server_id, r.rule_id)
     e.status,
     r.severity,
     r.dashboard_placement,
-    e.evaluated_at
+    e.capture_timestamp
 FROM ruleengine.rule_results_evaluated e
 JOIN ruleengine.rules r ON e.rule_id = r.rule_id
 JOIN ruleengine.servers s ON e.server_id = s.server_id
 WHERE r.dashboard_placement = 'Main'
-ORDER BY s.server_id, r.rule_id, e.evaluated_at DESC;
+ORDER BY s.server_id, r.rule_id, e.capture_timestamp DESC;
 
 -- BEST PRACTICES DASHBOARD VIEW
 CREATE OR REPLACE VIEW ruleengine.v_best_practices_dashboard AS
@@ -304,12 +304,12 @@ SELECT DISTINCT ON (s.server_id, r.rule_id)
     r.description,
     e.context AS context_tags,
     e.confidence,
-    e.evaluated_at
+    e.capture_timestamp
 FROM ruleengine.rule_results_evaluated e
 JOIN ruleengine.rules r ON e.rule_id = r.rule_id
 JOIN ruleengine.servers s ON e.server_id = s.server_id
 WHERE r.dashboard_placement = 'BestPractice'
-ORDER BY s.server_id, r.rule_id, e.evaluated_at DESC;
+ORDER BY s.server_id, r.rule_id, e.capture_timestamp DESC;
 
 -- BEST PRACTICES BY DB TYPE VIEW
 CREATE OR REPLACE VIEW ruleengine.v_best_practices_by_type AS
@@ -327,22 +327,16 @@ SELECT DISTINCT ON (s.server_id, r.rule_id)
     r.description,
     e.context AS context_tags,
     e.confidence,
-    e.evaluated_at
+    e.capture_timestamp
 FROM ruleengine.rule_results_evaluated e
 JOIN ruleengine.rules r ON e.rule_id = r.rule_id
 JOIN ruleengine.servers s ON e.server_id = s.server_id
 WHERE r.is_enabled = true
-ORDER BY s.server_id, r.rule_id, e.evaluated_at DESC;
+ORDER BY s.server_id, r.rule_id, e.capture_timestamp DESC;
 
 -- ================================================================================
 -- SECTION 4: COMPREHENSIVE RULES (Refined & Updated)
 -- ================================================================================
-
--- Clear existing rules for fresh start
-DELETE FROM ruleengine.rule_results_evaluated;
-DELETE FROM ruleengine.rule_results_raw;
-DELETE FROM ruleengine.rule_runs;
-DELETE FROM ruleengine.rules;
 
 -- Insert Refined Rules (SQL Server & PostgreSQL)
 INSERT INTO ruleengine.rules (
@@ -386,7 +380,30 @@ INSERT INTO ruleengine.rules (
 -- PG New Rules
 ('PG_UNUSED_INDEXES_031', 'Unused Indexes', 'Performance', 'Database', 'Warning', 'BestPractice', 'Indexes with zero scans after 7 days uptime.', 'SELECT COUNT(*) AS cnt, EXTRACT(EPOCH FROM (now() - pg_postmaster_start_time())) / 86400 AS server_uptime_days FROM pg_stat_user_indexes WHERE idx_scan = 0 AND schemaname NOT IN (''pg_catalog'', ''information_schema'');', NULL, 'server_uptime_days < 7 ? "INFO" : (cnt == 0 ? "OK" : "Warning")', '0', '0', NULL, 'DROP INDEX <index_name>;', 'threshold', '{"max": 0}', 31, 'postgres', TRUE, NULL, '{"requires": "7d_uptime"}', 'context_dependent'),
 ('PG_AUTOVAC_FREEZE_032', 'Autovacuum Freeze Max Age', 'Maintenance', 'Instance', 'Warning', 'BestPractice', 'Prevents transaction ID wraparound issues.', 'SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''autovacuum_freeze_max_age'';', NULL, 'setting > 800000000 ? "Critical" : (setting > 200000000 ? "Warning" : "OK")', '200000000', '200,000,000', NULL, 'ALTER SYSTEM SET autovacuum_freeze_max_age = 200000000;', 'threshold', '{"max": 200000000}', 32, 'postgres', TRUE, NULL, '{"category": "safety"}', 'context_dependent'),
-('PG_SEQUENCE_EXHAUSTION_033', 'Sequence Exhaustion Risk', 'Schema', 'Database', 'Critical', 'BestPractice', 'Checks sequences approaching their maximum value (80% threshold).', 'SELECT COUNT(*) AS cnt FROM pg_sequences WHERE maximum_value > 0 AND last_value IS NOT NULL AND (last_value::numeric - minimum_value::numeric + 1) / NULLIF((maximum_value::numeric - minimum_value::numeric + 1), 0) * 100 >= 80;', NULL, 'cnt == 0 ? "OK" : "Critical"', '0', '0', NULL, 'ALTER SEQUENCE <seq> AS BIGINT;', 'threshold', '{"max": 0}', 33, 'postgres', TRUE, NULL, '{"category": "availability"}', 'definitive');
+('PG_SEQUENCE_EXHAUSTION_033', 'Sequence Exhaustion Risk', 'Schema', 'Database', 'Critical', 'BestPractice', 'Checks sequences approaching their maximum value (80% threshold).', 'SELECT COUNT(*) AS cnt FROM pg_sequences WHERE maximum_value > 0 AND last_value IS NOT NULL AND (last_value::numeric - minimum_value::numeric + 1) / NULLIF((maximum_value::numeric - minimum_value::numeric + 1), 0) * 100 >= 80;', NULL, 'cnt == 0 ? "OK" : "Critical"', '0', '0', NULL, 'ALTER SEQUENCE <seq> AS BIGINT;', 'threshold', '{"max": 0}', 33, 'postgres', TRUE, NULL, '{"category": "availability"}', 'definitive')
+ON CONFLICT (rule_id) DO UPDATE SET
+    rule_name            = EXCLUDED.rule_name,
+    category             = EXCLUDED.category,
+    applies_to           = EXCLUDED.applies_to,
+    severity             = EXCLUDED.severity,
+    dashboard_placement  = EXCLUDED.dashboard_placement,
+    description          = EXCLUDED.description,
+    detection_sql        = EXCLUDED.detection_sql,
+    detection_sql_pg     = EXCLUDED.detection_sql_pg,
+    evaluation_logic     = EXCLUDED.evaluation_logic,
+    expected_calc        = EXCLUDED.expected_calc,
+    recommended_value    = EXCLUDED.recommended_value,
+    fix_script           = EXCLUDED.fix_script,
+    fix_script_pg        = EXCLUDED.fix_script_pg,
+    comparison_type      = EXCLUDED.comparison_type,
+    threshold_value      = EXCLUDED.threshold_value,
+    priority             = EXCLUDED.priority,
+    target_db_type       = EXCLUDED.target_db_type,
+    is_enabled           = EXCLUDED.is_enabled,
+    applicability_sql    = EXCLUDED.applicability_sql,
+    context_tags         = EXCLUDED.context_tags,
+    confidence           = EXCLUDED.confidence,
+    modified_date        = NOW();
 
 -- ================================================================================
 -- SECTION 6: VERIFICATION

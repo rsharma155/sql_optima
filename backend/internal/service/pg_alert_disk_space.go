@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Alert evaluator – PostgreSQL disk space threshold detection.
+// Purpose: Evaluator for PostgreSQL disk space usage.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -11,71 +11,76 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/rsharma155/sql_optima/internal/domain/alerts"
 )
 
-// PgDiskSpaceEvaluator checks for low free disk space on PostgreSQL hosts.
 type PgDiskSpaceEvaluator struct {
-	tsPool      *pgxpool.Pool
-	warningPct  float64
-	criticalPct float64
+	tsPool *pgxpool.Pool
 }
 
 func NewPgDiskSpaceEvaluator(tsPool *pgxpool.Pool) *PgDiskSpaceEvaluator {
-	return &PgDiskSpaceEvaluator{
-		tsPool:      tsPool,
-		warningPct:  20,
-		criticalPct: 10,
-	}
+	return &PgDiskSpaceEvaluator{tsPool: tsPool}
 }
 
 func (e *PgDiskSpaceEvaluator) Engine() alerts.Engine { return alerts.EnginePostgres }
 
-func (e *PgDiskSpaceEvaluator) Evaluate(ctx context.Context, instanceName string) ([]AlertEvaluatorResult, error) {
-	const q = `
-		SELECT COALESCE(disk_total_gb, 0), COALESCE(disk_used_gb, 0)
-		FROM system_stats_detail
-		WHERE server_instance_name = $1
+func (e *PgDiskSpaceEvaluator) Evaluate(ctx context.Context, serverID uuid.UUID) ([]AlertEvaluatorResult, error) {
+	q := `
+		SELECT mount_name, path, used_pct, total_bytes, free_bytes
+		FROM postgres_disk_stats
+		WHERE server_id = $1
+		  AND capture_timestamp >= now() - interval '5 minutes'
 		ORDER BY capture_timestamp DESC
-		LIMIT 1`
+	`
+	rows, err := e.tsPool.Query(ctx, q, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-	var totalGB, usedGB float64
-	if err := e.tsPool.QueryRow(ctx, q, instanceName).Scan(&totalGB, &usedGB); err != nil {
-		if isNoDataError(err) {
-			return nil, nil
+	var results []AlertEvaluatorResult
+	serverName := serverID.String()
+
+	seenMounts := make(map[string]bool)
+	for rows.Next() {
+		var mount, path string
+		var usedPct float64
+		var total, free int64
+		if err := rows.Scan(&mount, &path, &usedPct, &total, &free); err != nil {
+			continue
 		}
-		return nil, fmt.Errorf("pg_disk_space: %w", err)
-	}
-	if totalGB <= 0 {
-		return nil, nil
+		if seenMounts[mount] {
+			continue
+		}
+		seenMounts[mount] = true
+
+		if usedPct >= 85.0 {
+			sev := alerts.SeverityWarning
+			if usedPct >= 95.0 {
+				sev = alerts.SeverityCritical
+			}
+
+			results = append(results, AlertEvaluatorResult{
+				RuleName:    "PGDiskSpaceLow",
+				Category:    "Storage",
+				Severity:    sev,
+				Title:       fmt.Sprintf("PostgreSQL disk space low on %s (%.1f%% used)", mount, usedPct),
+				Description: fmt.Sprintf("Mount %s (%s) has %.1f%% disk usage. Free: %d MB", mount, path, usedPct, free/1024/1024),
+				Evidence: map[string]interface{}{
+					"mount":       mount,
+					"path":        path,
+					"used_pct":    usedPct,
+					"free_bytes":  free,
+					"total_bytes": total,
+				},
+				ServerID:   serverID,
+				ServerName: serverName,
+				Engine:     alerts.EnginePostgres,
+			})
+		}
 	}
 
-	freeGB := totalGB - usedGB
-	freePct := (freeGB / totalGB) * 100
-
-	var sev alerts.Severity
-	if freePct <= e.criticalPct {
-		sev = alerts.SeverityCritical
-	} else if freePct <= e.warningPct {
-		sev = alerts.SeverityWarning
-	} else {
-		return nil, nil
-	}
-
-	return []AlertEvaluatorResult{{
-		RuleName:     "pg_disk_space",
-		Category:     "disk",
-		Severity:     sev,
-		Title:        fmt.Sprintf("PostgreSQL low disk: %.1f%% free (%.1f GB)", freePct, freeGB),
-		Description:  fmt.Sprintf("Host for %s has only %.1f%% disk space free (%.1f GB of %.1f GB)", instanceName, freePct, freeGB, totalGB),
-		InstanceName: instanceName,
-		Engine:       alerts.EnginePostgres,
-		Evidence: map[string]interface{}{
-			"free_gb":  freeGB,
-			"total_gb": totalGB,
-			"free_pct": freePct,
-		},
-	}}, nil
+	return results, nil
 }

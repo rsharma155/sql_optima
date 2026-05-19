@@ -75,15 +75,6 @@
                 }
             }
         },
-        "Real-Time Diagnostics": {
-            description: "Live, high-frequency view of executing sessions, file I/O latency, and current wait states. The 'Task Manager' for SQL Server. This dashboard is intended for active troubleshooting of immediate performance issues, showing exactly what SQL Server is waiting for at this moment—whether it's CPU, disk I/O, or network delivery.",
-            metrics: {
-                "Batch Requests/sec": {
-                    title: "Batch Requests/sec",
-                    text: "**What it is:** The number of T-SQL command batches received per second.\n\n**Why it matters:** A primary measure of SQL Server throughput. Compare against baseline to detect surges in application activity or drops caused by bottlenecks."
-                }
-            }
-        },
         "Memory Analyzer": {
             description: "Deep-dive analysis of memory clerk allocation, buffer pool health, and workspace memory grants. Essential for diagnosing 'Internal' SQL Server memory pressure. While PLE measures the health of the buffer cache, this dashboard investigates how memory is distributed among internal components like the plan cache, connection memory, and sort/hash grants.",
             metrics: {

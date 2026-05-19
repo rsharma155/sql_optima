@@ -23,4 +23,4 @@ SELECT
         AND resource_description LIKE '2:%' -- Database 2 is tempdb
         AND (resource_description LIKE '%:1' OR resource_description LIKE '%:2' OR resource_description LIKE '%:3') -- PFS, GAM, SGAM
     ) THEN 1 ELSE 0 END AS BIT) as contention_found
-FROM sys.dm_db_file_space_usage WITH (NOLOCK);
+FROM tempdb.sys.dm_db_file_space_usage WITH (NOLOCK);

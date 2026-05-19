@@ -14,12 +14,12 @@ func TestHealthScore_PerfectInputsGives100(t *testing.T) {
 		ReplicationLagSeconds: 0,
 		XIDWraparoundPct:      0,
 		DeadTupleRatioPct:     0,
-		CacheHitRatioPct:    100,
-		ConnectionsUsagePct: 10,
+		CacheHitRatioPct:      100,
+		ConnectionsUsagePct:   10,
 		CheckpointReqRatio:    0,
 		WALRateMBPerMin:       0,
 		BlockingSessions:      0,
-		DeadlocksPerMin:     0,
+		DeadlocksPerMin:       0,
 	}
 	score, status := ComputePgHealthScore(in)
 	if score != 100 {
@@ -69,12 +69,12 @@ func TestHealthScore_ClampsToZero_WhenAllBad(t *testing.T) {
 		ReplicationLagSeconds: 1000,
 		XIDWraparoundPct:      100,
 		DeadTupleRatioPct:     100,
-		CacheHitRatioPct:    0,
-		ConnectionsUsagePct: 100,
+		CacheHitRatioPct:      0,
+		ConnectionsUsagePct:   100,
 		CheckpointReqRatio:    10,
 		WALRateMBPerMin:       5000,
 		BlockingSessions:      100,
-		DeadlocksPerMin:     100,
+		DeadlocksPerMin:       100,
 	}
 	score, _ := ComputePgHealthScore(in)
 	if score != 0 {

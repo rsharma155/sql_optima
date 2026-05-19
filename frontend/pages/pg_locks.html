@@ -47,157 +47,96 @@
     </div>
 
     <!-- ROW 1: KPIs -->
-    <div class="table-card glass-panel mt-2" style="padding:0.75rem;">
-        <div class="card-header">
-            <h3 style="font-size:0.85rem; margin:0;">Realtime Status (KPIs)</h3>
-        </div>
-        <div class="top-strips dashboard-top-strips" style="margin-top:0.25rem; display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem;">
-            <div class="strip-metric-cell" title="Distinct blocked sessions detected.">
-                <div class="strip-metric-label" style="font-size:0.6rem;">Active Blocking Sessions <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Locks & Blocking" data-metric="Active Blocking Sessions"></i></div>
+    <div class="table-card glass-panel mt-2" style="padding:0.5rem 0.75rem;">
+        <div class="top-strips dashboard-top-strips">
+            <div class="strip-metric-cell" style="padding:0.25rem 0.5rem;">
+                <div class="strip-metric-label" style="font-size:0.6rem;">Active Victims <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Locks & Blocking" data-metric="Active Blocking Sessions"></i></div>
                 <div class="strip-metric-value metric-value" id="pgKpiActiveVictims" style="font-size:1.1rem;">—</div>
-                <div class="text-muted sub" id="pgKpiIncidentMeta" style="font-size:0.6rem;">—</div>
             </div>
-            <div class="strip-metric-cell" title="Root blocker PID.">
+            <div class="strip-metric-cell" style="padding:0.25rem 0.5rem;">
                 <div class="strip-metric-label" style="font-size:0.6rem;">Root Blocker <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Blocked Sessions"></i></div>
                 <div class="strip-metric-value metric-value" id="pgKpiRootPid" style="font-size:1.1rem;">—</div>
-                <div class="text-muted sub" id="pgKpiRootQuery" style="font-size:0.6rem;">—</div>
             </div>
-            <div class="strip-metric-cell" title="Idle-in-transaction sessions with age > 30s.">
+            <div class="strip-metric-cell" style="padding:0.25rem 0.5rem;">
                 <div class="strip-metric-label" style="font-size:0.6rem;">Idle-in-Txn Risk <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Locks & Blocking" data-metric="Idle-in-Transaction Risk"></i></div>
                 <div class="strip-metric-value metric-value" id="pgKpiIdleRisk" style="font-size:1.1rem;">—</div>
-                <div class="text-muted sub" style="font-size:0.6rem;">age &gt; 30s</div>
             </div>
-            <div class="strip-metric-cell" title="Severity score.">
-                <div class="strip-metric-label" style="font-size:0.6rem;">Severity Score <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Health Score"></i></div>
+            <div class="strip-metric-cell" style="padding:0.25rem 0.5rem;">
+                <div class="strip-metric-label" style="font-size:0.6rem;">Severity <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Health Score"></i></div>
                 <div class="strip-metric-value metric-value" id="pgKpiSeverity" style="font-size:1.1rem;">—</div>
-                <div class="text-muted sub" id="pgKpiSeverityBand" style="font-size:0.6rem;">—</div>
             </div>
         </div>
     </div>
 
-    <!-- ROW 2: Charts -->
-    <div class="charts-grid mt-2" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
-        <div class="chart-card glass-panel col-span-2" style="padding:0.75rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Incident Timeline</h3></div>
-            <div class="chart-container" style="height:120px;"><canvas id="pgBlockingIncidentTimelineChart"></canvas></div>
-        </div>
-
-        <!-- Blocking Tree Visualizer (redesigned) -->
-        <div class="table-card glass-panel col-span-2 border-danger" style="padding:0.75rem;">
-            <div class="card-header flex-between" style="align-items:center;">
-                <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-sitemap"></i> Blocking Tree Visualizer</h3>
-                <span id="pgBlockingDetailsCapturedAt" class="text-muted" style="font-size:0.65rem;">Snapshot: —</span>
+    <!-- ROW 2: Main Workspace -->
+    <div class="grid-row mt-2" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(400px, 1fr)); gap:0.75rem;">
+        <!-- Left: Tree -->
+        <div class="table-card glass-panel border-danger" style="padding:0.75rem;">
+            <div class="card-header flex-between">
+                <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-sitemap"></i> Blocking Tree</h3>
+                <span id="pgBlockingDetailsCapturedAt" class="text-muted" style="font-size:0.65rem;">—</span>
             </div>
-            <div id="pgBlockingBreadcrumb" class="text-muted" style="font-size:0.72rem; margin:0.25rem 0; display:none;"></div>
-            <div style="background:rgba(0,0,0,0.15); border-radius:8px; padding:0.75rem; max-height:320px; overflow-y:auto;">
-                <div id="blockingTreeList">
-                    <span class="text-muted" style="font-style:italic; font-size:0.85rem;">Loading blocking tree...</span>
-                </div>
+            <div style="background:rgba(0,0,0,0.15); border-radius:8px; padding:0.5rem; height:280px; overflow-y:auto; margin-top:0.5rem;">
+                <div id="blockingTreeList"><span class="text-muted" style="font-style:italic; font-size:0.75rem;">Loading...</span></div>
             </div>
         </div>
 
-        <!-- Actionable summary -->
-        <div class="table-card glass-panel col-span-2" style="padding:0.75rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Actionable Blocking Summary</h3></div>
-            <div class="top-strips dashboard-top-strips" style="margin-top:0.25rem; display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem;">
-                <div class="strip-metric-cell">
-                    <div class="strip-metric-label" style="font-size:0.6rem;">Blocked Sessions</div>
-                    <div class="strip-metric-value metric-value" id="pgBlockedSessionsTotal" style="font-size:1.1rem;">0</div>
-                </div>
-                <div class="strip-metric-cell">
-                    <div class="strip-metric-label" style="font-size:0.6rem;">Top Blocker (PID)</div>
-                    <div class="strip-metric-value metric-value" id="pgTopBlockerPid" style="font-size:1.1rem;">—</div>
-                    <div class="text-muted sub" id="pgTopBlockerCount" style="font-size:0.6rem;">—</div>
-                </div>
-                <div class="strip-metric-cell">
-                    <div class="strip-metric-label" style="font-size:0.6rem;">Worst Blocked Duration</div>
-                    <div class="strip-metric-value metric-value" id="pgWorstBlockedDur" style="font-size:1.1rem;">—</div>
-                    <div class="text-muted sub" id="pgWorstBlockedPid" style="font-size:0.6rem;">—</div>
-                </div>
-                <div class="strip-metric-cell">
-                    <div class="strip-metric-label" style="font-size:0.6rem;">Idle-in-Txn Involved</div>
-                    <div class="strip-metric-value metric-value" id="pgIdleInTxnInvolved" style="font-size:1.1rem;">—</div>
-                </div>
+        <!-- Right: Charts -->
+        <div class="grid-row" style="display:grid; grid-template-rows: auto auto; gap:0.75rem;">
+            <div class="chart-card glass-panel" style="padding:0.5rem 0.75rem;">
+                <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Incident Timeline</h3></div>
+                <div class="chart-container" style="height:80px;"><canvas id="pgBlockingIncidentTimelineChart"></canvas></div>
+            </div>
+            <div class="chart-card glass-panel" style="padding:0.5rem 0.75rem;">
+                <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Lock Wait Trend</h3></div>
+                <div class="chart-container" style="height:80px;"><canvas id="pgLockWaitTrendChart"></canvas></div>
             </div>
         </div>
+    </div>
 
-        <!-- Lock wait history chart -->
-        <div class="chart-card glass-panel col-span-2" style="padding:0.75rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Sessions waiting on lock (history)</h3></div>
-            <div class="chart-container" style="height:150px;"><canvas id="pgLockWaitTrendChart"></canvas></div>
+    <!-- ROW 3: Forensics & History -->
+    <div class="grid-row mt-2" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(350px, 1fr)); gap:0.75rem;">
+        <div class="glass-panel" style="padding:0.75rem;">
+            <div class="card-header flex-between">
+                <h3 style="font-size:0.8rem; margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> Incident History</h3>
+            </div>
+            <div class="table-responsive" style="max-height:150px; overflow-y:auto; margin-top:0.5rem;">
+                <table class="data-table" style="font-size:0.65rem;">
+                    <thead><tr><th>#</th><th>Started</th><th>Dur</th><th>Peak</th><th>Root</th><th>Status</th><th></th></tr></thead>
+                    <tbody id="pgIncidentTbody"></tbody>
+                </table>
+            </div>
         </div>
-
-        <!-- Deadlocks chart -->
-        <div class="chart-card glass-panel" style="padding:0.75rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Deadlocks</h3></div>
-            <div class="chart-container" style="height:140px;"><canvas id="pgDeadlocksChart"></canvas></div>
-        </div>
-
-        <!-- Lock distribution -->
-        <div class="chart-card glass-panel" style="padding:0.75rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Lock Wait Distribution</h3></div>
-            <div class="chart-container" style="height:140px;"><canvas id="pgLockDistChart"></canvas></div>
+        <div class="glass-panel" style="padding:0.75rem;">
+            <div class="card-header flex-between">
+                <h3 style="font-size:0.8rem; margin:0;"><i class="fa-solid fa-repeat"></i> Chronic Blockers</h3>
+            </div>
+            <div class="table-responsive" style="max-height:150px; overflow-y:auto; margin-top:0.5rem;">
+                <table class="data-table" style="font-size:0.65rem;">
+                    <thead><tr><th>Query</th><th>Times</th><th>Total</th><th>Avg</th></tr></thead>
+                    <tbody id="pgChronicBlockersTbody"></tbody>
+                </table>
+            </div>
         </div>
     </div>
 
-    <!-- Blocking Incident History -->
-    <div class="glass-panel mt-2" id="pgIncidentHistoryCard" style="padding:0.75rem;">
-        <div class="card-header flex-between" style="align-items:center;">
-            <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> Blocking Incident History</h3>
-            <span class="text-muted" style="font-size:0.72rem;" id="pgIncidentCount"></span>
-        </div>
-        <div class="table-responsive" style="max-height:200px; overflow-y:auto; margin-top:0.5rem;">
-            <table class="data-table" style="font-size:0.72rem;">
-                <thead>
-                    <tr>
-                        <th>#</th><th>Started</th><th>Duration</th><th>Peak Victims</th>
-                        <th>Root PID</th><th>Status</th><th>Action</th>
-                    </tr>
-                </thead>
-                <tbody id="pgIncidentTbody">
-                    <tr><td colspan="7" class="text-center text-muted">Loading...</td></tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    <!-- Chronic Root Blocker Queries -->
-    <div class="glass-panel mt-2" id="pgChronicBlockersCard" style="padding:0.75rem;">
-        <div class="card-header flex-between" style="align-items:center;">
-            <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-repeat"></i> Chronic Root Blocker Queries</h3>
-            <span class="text-muted" style="font-size:0.72rem;">Top queries most often the root blocker</span>
-        </div>
-        <div class="table-responsive" style="max-height:200px; overflow-y:auto; margin-top:0.5rem;">
-            <table class="data-table" style="font-size:0.72rem;">
-                <thead>
-                    <tr><th>#</th><th>Query (truncated)</th><th>Times</th><th>Total Victims</th><th>Avg (s)</th><th>Max (s)</th></tr>
-                </thead>
-                <tbody id="pgChronicBlockersTbody">
-                    <tr><td colspan="6" class="text-center text-muted">Loading...</td></tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    <!-- Tables row -->
+    <!-- ROW 4: Details -->
     <div class="grid-row mt-2" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
         <div class="table-card glass-panel" style="padding:0.75rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Top Locked Tables</h3></div>
-            <div class="table-responsive" style="max-height:200px; overflow-y:auto;">
-                <table class="data-table" style="font-size:0.72rem;">
-                    <thead><tr><th>Relation</th><th>Waiting Locks</th><th>Max Wait (s)</th></tr></thead>
-                    <tbody id="pgTopLockedTablesTbody"><tr><td colspan="3" class="text-center text-muted">Loading...</td></tr></tbody>
+            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Top Locked Tables</h3></div>
+            <div class="table-responsive" style="max-height:120px; overflow-y:auto;">
+                <table class="data-table" style="font-size:0.65rem;">
+                    <thead><tr><th>Relation</th><th>Waiting</th><th>Max Wait</th></tr></thead>
+                    <tbody id="pgTopLockedTablesTbody"></tbody>
                 </table>
             </div>
         </div>
         <div class="table-card glass-panel" style="padding:0.75rem;">
-            <div class="card-header flex-between">
-                <h3 style="font-size:0.85rem; margin:0;">Blocking Details</h3>
-            </div>
-            <div class="table-responsive" style="max-height:200px; overflow-y:auto;">
-                <table class="data-table" style="font-size:0.72rem;">
-                    <thead><tr><th>PID</th><th>User</th><th>Duration</th><th>Wait</th><th>Query</th></tr></thead>
-                    <tbody id="pgBlockingDetailsTbody"><tr><td colspan="5" class="text-center text-muted">Loading...</td></tr></tbody>
+            <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Blocking Details</h3></div>
+            <div class="table-responsive" style="max-height:120px; overflow-y:auto;">
+                <table class="data-table" style="font-size:0.65rem;">
+                    <thead><tr><th>PID</th><th>User</th><th>Dur</th><th>Query</th></tr></thead>
+                    <tbody id="pgBlockingDetailsTbody"></tbody>
                 </table>
             </div>
         </div>

@@ -8,8 +8,9 @@
 package repository
 
 import (
+	"log/slog"
+	"context"
 	"fmt"
-	"log"
 )
 
 type DatabaseThroughputStats struct {
@@ -31,7 +32,7 @@ type DatabaseThroughputStats struct {
 	WriteLatencyMs int64
 }
 
-func (c *SqlServerRepository) FetchDatabaseThroughput(instanceName string) ([]DatabaseThroughputStats, error) {
+func (c *SqlServerRepository) FetchDatabaseThroughput(ctx context.Context, instanceName string) ([]DatabaseThroughputStats, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
@@ -57,9 +58,11 @@ func (c *SqlServerRepository) FetchDatabaseThroughput(instanceName string) ([]Da
 		ORDER BY (SUM(vfs.num_of_bytes_read) + SUM(vfs.num_of_bytes_written)) DESC
 	`
 
-	rows, err := db.Query(query)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("[SQLSERVER] FetchDatabaseThroughput Error for %s: %v", instanceName, err)
+		slog.Error("[SQLSERVER] FetchDatabaseThroughput Error", "target", instanceName, "err", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -76,7 +79,7 @@ func (c *SqlServerRepository) FetchDatabaseThroughput(instanceName string) ([]Da
 			&s.ReadLatencyMs,
 			&s.WriteLatencyMs,
 		); err != nil {
-			log.Printf("[SQLSERVER] FetchDatabaseThroughput Scan Error: %v", err)
+			slog.Error("[SQLSERVER] FetchDatabaseThroughput Scan Error", "err", err)
 			continue
 		}
 		// Map new metrics to total fields for compatibility
@@ -97,7 +100,9 @@ func (c *SqlServerRepository) FetchDatabaseThroughput(instanceName string) ([]Da
 		  AND object_name LIKE '%:Databases%'
 		  AND RTRIM(instance_name) NOT IN ('master', 'model', 'msdb', 'tempdb', 'mssqlsystemresource')
 	`
-	tpsRows, tpsErr := db.Query(tpsQuery)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	tpsRows, tpsErr := db.QueryContext(ctx, tpsQuery)
 	if tpsErr == nil {
 		defer tpsRows.Close()
 		tpsMap := make(map[string]float64)
@@ -125,7 +130,9 @@ func (c *SqlServerRepository) FetchDatabaseThroughput(instanceName string) ([]Da
 		GROUP BY r.database_id
 	`
 
-	batchRows, batchErr := db.Query(batchQuery)
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	batchRows, batchErr := db.QueryContext(ctx, batchQuery)
+	cancel()
 	if batchErr == nil {
 		defer batchRows.Close()
 		batchMap := make(map[string]float64)

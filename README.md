@@ -2,9 +2,7 @@
 
 A dual-engine (PostgreSQL & SQL Server) database monitoring platform with a single-page application UI. Built with Go and vanilla JavaScript, architected around Domain-Driven Design for cross-platform support (Windows, macOS, Linux).
 
-Features include PostgreSQL EXPLAIN plan analysis with optimization and index advisor workflows, live SQL Server diagnostics, TimescaleDB-backed historical dashboards, an **enhanced rules engine** for context-aware best-practice checks, **push-based OS metrics** for host-level telemetry, and a **cross-engine alert engine** with fingerprint-based deduplication, maintenance windows, and audit history.
-
-*Upcoming features currently in development include a **Query V2 Pipeline** with hash-based delta tracking, detailed **SQL Server Locks Dashboard**, **Data Export (CSV)** capabilities, and a **PostgreSQL Incident Feed**.*
+Features include PostgreSQL EXPLAIN plan analysis with optimization and index advisor workflows, live SQL Server diagnostics, TimescaleDB-backed historical dashboards, an **enhanced rules engine** for context-aware best-practice checks, **Autonomous SQL Server Health Intelligence** with predictive forecasting and multi-dimensional risk scoring, **push-based OS metrics** for host-level telemetry, a **cross-engine alert engine** with fingerprint-based deduplication, maintenance windows, and audit history, a **Query V2 Pipeline** with hash-based delta tracking for per-query trend analysis, a **SQL Server Locks & Blocking Dashboard**, **Data Export (CSV)** capabilities for both engines, and a **PostgreSQL Incident Feed** for connectivity and incident tracking.
 
 ---
 
@@ -38,6 +36,7 @@ Open **http://localhost:8080** — the Global Estate Overview loads immediately.
 | Service | Purpose |
 |---------|---------|
 | **api** | Go backend serving the API + SPA UI on port 8080 |
+| **intelligence-report** | Python-based engine for autonomous SQL Server health analysis |
 | **timescaledb** | TimescaleDB (pg16) for metric / time-series storage |
 | **vault** | HashiCorp Vault dev-mode (Transit KMS for credential encryption) |
 | **vault-setup** | One-shot: enables Transit engine and creates the encryption key |
@@ -87,7 +86,7 @@ docker logs dbmonitor_timescaledb    # verify healthy
 
 ### Phase 2 — Run the Go backend
 
-Requires [Go 1.25+](https://go.dev/dl/).
+Requires [Go 1.26+](https://go.dev/dl/).
 
 ```bash
 cd backend
@@ -125,7 +124,38 @@ Open **http://localhost:8080** and follow the **Setup Wizard**. The UI will:
 
 ---
 
-## Build standalone binaries
+## SQL Server Intelligence Report (Autonomous Analysis)
+
+The **Intelligence Report** is a dedicated module that performs deep-dive health analysis of SQL Server instances using an expert rule engine and time-series forecasting.
+
+### Key Capabilities
+- **Predictive Forecasting**: Uses linear regression to estimate "Days to Failure" for storage, memory, and CPU.
+- **Dynamic Thresholding**: Computes thresholds based on actual server hardware (cores, RAM) and historical P95 baselines.
+- **Risk Scoring**: Generates a 0-100 score across 6 domains (Performance, Capacity, Availability, Replication, Maintenance, Query).
+- **Data Sufficiency Guard**: Smart logic that requires at least 3 hours of data for rules and 24 hours for forecasting to ensure accuracy.
+
+### Running the Intelligence Engine
+When using **Option 1 (Docker Compose)**, the service starts automatically.
+
+If running the backend manually (**Option 2** or **3**), the Python engine must be started separately for the reports to work:
+
+1. **Navigate and Setup**:
+   ```bash
+   cd intelligence-report
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+2. **Configure Local Auth**:
+   Set `INTELLIGENCE_REPORT_TOKEN` in your Go environment and `IntelligenceReportSqloptima_INTERNAL_API_TOKEN` in the Python environment to match.
+3. **Start**:
+   ```bash
+   uvicorn app.main:app --port 8765
+   ```
+
+*Note: If the engine is offline, the SQL Monitoring UI will show a meaningful error message instead of failing.*
+
+---
 
 ```bash
 # Build API server
@@ -306,5 +336,5 @@ All endpoints are **Timescale reads** and require `engine` and `instance` query 
 
 ## PostgreSQL and SQL Server dashboards
 
-- **PostgreSQL**: Control Center, sessions, locks, queries, EXPLAIN analyzer, storage, replication/HA, autovacuum & bloat risk, enterprise monitor, best-practices, CPU/memory, alerts.
-- **SQL Server**: Instance dashboard (4-column KPI layout), CPU dashboard, live diagnostics, HA/AG, enterprise metrics, performance debt, memory drilldown, agent jobs (with auto-refresh), real-time delta metrics for queries, alerts, best practices; drilldowns for CPU, queries, bottlenecks, growth, indexes, locks, deadlocks.
+- **PostgreSQL**: Control Center, sessions, locks, queries (pg_stat_statements), EXPLAIN analyzer, storage, replication/HA, autovacuum & bloat risk, enterprise monitor, best-practices, CPU/memory, wait stats, backup/DR overview, security posture, incident feed, connection utilization, alerts.
+- **SQL Server**: Instance dashboard (real-time triage view with time-range selection), **Intelligence Report (Autonomous Analysis)**, CPU/memory drilldowns, live diagnostics, HA/AG, workload analytics, query analysis, enterprise metrics, performance debt, agent jobs (with auto-refresh), **Locks & Blocking Dashboard**, wait stats V2, watched query analyzer, plan analyzer, real-time delta metrics for queries, alerts, best practices; drilldowns for CPU, queries, bottlenecks, growth, indexes, locks, deadlocks.

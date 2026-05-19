@@ -16,7 +16,7 @@ SELECT
     MAX(redo_queue_kb) AS max_redo_queue_kb,
     COUNT(*) AS sample_count
 FROM sqlserver_ag_health
-WHERE server_instance_name = $1
+WHERE server_id = $1
   AND capture_timestamp >= NOW() - INTERVAL '1 hour'
 GROUP BY ag_name, replica_server_name, database_name, replica_role, synchronization_state, is_primary_replica
 ORDER BY MAX(log_send_queue_kb) DESC, MAX(redo_queue_kb) DESC

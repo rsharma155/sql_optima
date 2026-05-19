@@ -1,22 +1,28 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Service implementation for OS-level metrics processing.
+//
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
 package service
 
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 )
 
-// SaveOSMetrics saves OS level metrics collected from the host agent.
-func (s *MetricsService) SaveOSMetrics(ctx context.Context, hostname, instanceName string, metrics map[string]interface{}) error {
+func (s *MetricsService) SaveOSMetrics(ctx context.Context, serverID, collectorID uuid.UUID, metrics map[string]interface{}) error {
 	if s.tsLogger == nil {
-		return fmt.Errorf("tsLogger not available")
+		return fmt.Errorf("timescale logger not initialized")
 	}
-	return s.tsLogger.SaveOSMetrics(ctx, hostname, instanceName, metrics)
-}
-
-// GetOSCollectorStatus checks if we have received metrics from the OS collector recently.
-func (s *MetricsService) GetOSCollectorStatus(ctx context.Context, hostname string) (bool, error) {
-	if s.tsLogger == nil {
-		return false, nil
+	hostname := ""
+	for _, inst := range s.Config.Instances {
+		if inst.ServerID == serverID {
+			hostname = inst.Name
+			break
+		}
 	}
-	return s.tsLogger.CheckOSCollectorStatus(ctx, hostname)
+	return s.tsLogger.SaveOSMetrics(ctx, hostname, serverID, metrics)
 }

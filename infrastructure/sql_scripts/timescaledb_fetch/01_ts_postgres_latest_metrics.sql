@@ -5,6 +5,6 @@
 
 SELECT capture_timestamp, tps, cache_hit_pct
 FROM postgres_throughput_metrics
-WHERE server_instance_name = $1
+WHERE server_id = $1
 ORDER BY capture_timestamp DESC
 LIMIT 1;

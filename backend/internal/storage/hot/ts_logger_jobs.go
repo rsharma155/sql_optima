@@ -8,13 +8,15 @@
 package hot
 
 import (
+	"log/slog"
 	"context"
 	"fmt"
-	"log"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, instanceName string, jobs []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, serverID uuid.UUID, jobs []map[string]interface{}) error {
 	if len(jobs) == 0 {
 		return nil
 	}
@@ -37,7 +39,7 @@ func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, instanceN
 		lastRunTime := getInt(job, "last_run_time")
 		lastRunStatus := getStr(job, "last_run_status")
 
-		fullJobKey := fmt.Sprintf("%s||%s", instanceName, jobName)
+		fullJobKey := serverID.String() + "|" + jobName
 		prevJob := tl.prevJobDetails[fullJobKey]
 		shouldInsert := true
 		if prevJob != nil {
@@ -54,9 +56,9 @@ func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, instanceN
 
 		if shouldInsert {
 			_, err := tl.pool.Exec(ctx, `
-				INSERT INTO sqlserver_job_details (capture_timestamp, server_instance_name, job_name, job_category, job_description, job_enabled, job_owner, created_date, current_status, last_run_date, last_run_time, last_run_status)
+				INSERT INTO sqlserver_job_details (capture_timestamp, server_id, job_name, job_category, job_description, job_enabled, job_owner, created_date, current_status, last_run_date, last_run_time, last_run_status)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-				timestamp, instanceName,
+				timestamp, serverID,
 				jobName, category, description, enabled, owner, createdDate,
 				currentStatus, lastRunDate, lastRunTime, lastRunStatus)
 			if err != nil {
@@ -76,11 +78,11 @@ func (tl *TimescaleLogger) LogSQLServerJobDetails(ctx context.Context, instanceN
 		}
 	}
 
-	log.Printf("[TSLogger] LogSQLServerJobDetails: inserted %d rows for %s", insertCount, instanceName)
+	slog.Info("[TSLogger] LogSQLServerJobDetails: inserted", "arg1", insertCount, "arg2", serverID)
 	return nil
 }
 
-func (tl *TimescaleLogger) LogSQLServerJobSchedules(ctx context.Context, instanceName string, schedules []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogSQLServerJobSchedules(ctx context.Context, serverID uuid.UUID, schedules []map[string]interface{}) error {
 	if len(schedules) == 0 {
 		return nil
 	}
@@ -93,9 +95,9 @@ func (tl *TimescaleLogger) LogSQLServerJobSchedules(ctx context.Context, instanc
 	timestamp := time.Now().UTC()
 	for _, sched := range schedules {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO sqlserver_agent_schedules (capture_timestamp, server_instance_name, job_name, job_enabled, schedule_name, status)
+			INSERT INTO sqlserver_agent_schedules (capture_timestamp, server_id, job_name, job_enabled, schedule_name, status)
 			VALUES ($1, $2, $3, $4, $5, $6)`,
-			timestamp, instanceName,
+			timestamp, serverID,
 			getStr(sched, "job_name"), getBool(sched, "job_enabled"), getStr(sched, "schedule_name"), getStr(sched, "status"))
 		if err != nil {
 			return err
@@ -105,7 +107,7 @@ func (tl *TimescaleLogger) LogSQLServerJobSchedules(ctx context.Context, instanc
 	return tx.Commit(ctx)
 }
 
-func (tl *TimescaleLogger) LogSQLServerJobFailures(ctx context.Context, instanceName string, failures []map[string]interface{}) error {
+func (tl *TimescaleLogger) LogSQLServerJobFailures(ctx context.Context, serverID uuid.UUID, failures []map[string]interface{}) error {
 	if len(failures) == 0 {
 		return nil
 	}
@@ -123,7 +125,7 @@ func (tl *TimescaleLogger) LogSQLServerJobFailures(ctx context.Context, instance
 		runDate := getInt(fail, "run_date")
 		runTime := getInt(fail, "run_time")
 
-		failKey := fmt.Sprintf("%s||%s||%s||%d||%d", instanceName, jobName, stepName, runDate, runTime)
+		failKey := fmt.Sprintf("%s||%s||%s||%d||%d", serverID.String(), jobName, stepName, runDate, runTime)
 
 		prevMsg, exists := tl.prevJobFailures[failKey]
 		shouldInsert := true
@@ -133,9 +135,9 @@ func (tl *TimescaleLogger) LogSQLServerJobFailures(ctx context.Context, instance
 
 		if shouldInsert {
 			_, err := tl.pool.Exec(ctx, `
-				INSERT INTO sqlserver_job_failures (capture_timestamp, server_instance_name, job_name, step_name, error_message, run_date, run_time)
+				INSERT INTO sqlserver_job_failures (capture_timestamp, server_id, job_name, step_name, error_message, run_date, run_time)
 				VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-				timestamp, instanceName,
+				timestamp, serverID,
 				jobName, stepName, message, runDate, runTime)
 			if err != nil {
 				return err
@@ -146,17 +148,17 @@ func (tl *TimescaleLogger) LogSQLServerJobFailures(ctx context.Context, instance
 		tl.prevJobFailures[failKey] = message
 	}
 
-	log.Printf("[TSLogger] LogSQLServerJobFailures: inserted %d rows for %s", insertCount, instanceName)
+	slog.Error("[TSLogger] LogSQLServerJobFailures: inserted", "arg1", insertCount, "arg2", serverID)
 	return nil
 }
 
-func (tl *TimescaleLogger) LogSQLServerJobMetrics(ctx context.Context, instanceName string, jobMetrics map[string]interface{}) error {
+func (tl *TimescaleLogger) LogSQLServerJobMetrics(ctx context.Context, serverID uuid.UUID, jobMetrics map[string]interface{}) error {
 	timestamp := time.Now().UTC()
 
 	_, err := tl.pool.Exec(ctx, `
-		INSERT INTO sqlserver_job_metrics (capture_timestamp, server_instance_name, total_jobs, enabled_jobs, disabled_jobs, running_jobs, failed_jobs_24h, error_message)
+		INSERT INTO sqlserver_job_metrics (capture_timestamp, server_id, total_jobs, enabled_jobs, disabled_jobs, running_jobs, failed_jobs_24h, error_message)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		timestamp, instanceName,
+		timestamp, serverID,
 		getInt(jobMetrics, "total_jobs"),
 		getInt(jobMetrics, "enabled_jobs"),
 		getInt(jobMetrics, "disabled_jobs"),
@@ -167,26 +169,22 @@ func (tl *TimescaleLogger) LogSQLServerJobMetrics(ctx context.Context, instanceN
 }
 
 // GetSQLServerJobDetails returns the state of all jobs at the end of the window.
-func (tl *TimescaleLogger) GetSQLServerJobDetails(ctx context.Context, instanceName string, from, to string) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerJobDetails(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {
 	_, end, err := parseTimeRange(from, to)
 	if err != nil {
 		return nil, err
 	}
 
-	// We want the latest state for every job as of the 'end' timestamp.
-	// We don't filter by 'start' here because a job might not have changed during the window.
-	// However, we only care about jobs that have been seen relatively recently (e.g. last 7 days)
-	// to avoid showing long-deleted jobs.
 	rows, err := tl.pool.Query(ctx, `
 		SELECT DISTINCT ON (job_name)
 			capture_timestamp, job_name, job_category, job_description, job_enabled, job_owner, created_date,
 			current_status, last_run_date, last_run_time, last_run_status
 		FROM sqlserver_job_details
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND capture_timestamp <= $2
 		  AND capture_timestamp >= $2 - INTERVAL '7 days'
 		ORDER BY job_name, capture_timestamp DESC
-	`, instanceName, end)
+	`, serverID, end)
 	if err != nil {
 		return nil, fmt.Errorf("GetSQLServerJobDetails: %w", err)
 	}
@@ -229,7 +227,7 @@ func (tl *TimescaleLogger) GetSQLServerJobDetails(ctx context.Context, instanceN
 }
 
 // GetSQLServerJobSchedules returns the state of all job schedules at the end of the window.
-func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, instanceName string, from, to string) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {
 	_, end, err := parseTimeRange(from, to)
 	if err != nil {
 		return nil, err
@@ -239,11 +237,11 @@ func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, instanc
 		SELECT DISTINCT ON (job_name, schedule_name)
 			capture_timestamp, job_name, job_enabled, schedule_name, status, next_run_datetime
 		FROM sqlserver_agent_schedules
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND capture_timestamp <= $2
 		  AND capture_timestamp >= $2 - INTERVAL '7 days'
 		ORDER BY job_name, schedule_name, capture_timestamp DESC
-	`, instanceName, end)
+	`, serverID, end)
 	if err != nil {
 		return nil, fmt.Errorf("GetSQLServerJobSchedules: %w", err)
 	}
@@ -275,7 +273,7 @@ func (tl *TimescaleLogger) GetSQLServerJobSchedules(ctx context.Context, instanc
 }
 
 // GetSQLServerJobFailures returns recent job failure rows from TimescaleDB within a time range.
-func (tl *TimescaleLogger) GetSQLServerJobFailures(ctx context.Context, instanceName string, from, to string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerJobFailures(ctx context.Context, serverID uuid.UUID, from, to string, limit int) ([]map[string]interface{}, error) {
 	start, end, err := parseTimeRange(from, to)
 	if err != nil {
 		return nil, err
@@ -287,11 +285,11 @@ func (tl *TimescaleLogger) GetSQLServerJobFailures(ctx context.Context, instance
 	rows, err := tl.pool.Query(ctx, `
 		SELECT capture_timestamp, job_name, step_name, error_message, run_date, run_time
 		FROM sqlserver_job_failures
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		ORDER BY capture_timestamp DESC
 		LIMIT $4
-	`, instanceName, start, end, limit)
+	`, serverID, start, end, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +320,7 @@ func (tl *TimescaleLogger) GetSQLServerJobFailures(ctx context.Context, instance
 	return results, rows.Err()
 }
 
-func (tl *TimescaleLogger) GetSQLServerJobMetrics(ctx context.Context, instanceName string, from, to string, limit int) ([]map[string]interface{}, error) {
+func (tl *TimescaleLogger) GetSQLServerJobMetrics(ctx context.Context, serverID uuid.UUID, from, to string, limit int) ([]map[string]interface{}, error) {
 	start, end, err := parseTimeRange(from, to)
 	if err != nil {
 		return nil, err
@@ -335,13 +333,13 @@ func (tl *TimescaleLogger) GetSQLServerJobMetrics(ctx context.Context, instanceN
 	query := `
 		SELECT capture_timestamp, total_jobs, enabled_jobs, disabled_jobs, running_jobs, failed_jobs_24h, error_message
 		FROM sqlserver_job_metrics
-		WHERE UPPER(server_instance_name) = UPPER($1)
+		WHERE server_id = $1
 		  AND capture_timestamp >= $2 AND capture_timestamp <= $3
 		ORDER BY capture_timestamp DESC
 		LIMIT $4
 	`
 
-	rows, err := tl.pool.Query(ctx, query, instanceName, start, end, limit)
+	rows, err := tl.pool.Query(ctx, query, serverID, start, end, limit)
 	if err != nil {
 		return nil, err
 	}

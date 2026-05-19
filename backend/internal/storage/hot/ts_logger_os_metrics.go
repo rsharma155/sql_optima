@@ -4,16 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/google/uuid"
 	"time"
 )
 
 // SaveOSMetrics persists host-level OS telemetry.
-func (tl *TimescaleLogger) SaveOSMetrics(ctx context.Context, hostname, instanceName string, m map[string]interface{}) error {
+func (tl *TimescaleLogger) SaveOSMetrics(ctx context.Context, hostname string, serverID uuid.UUID, m map[string]interface{}) error {
 	// 1. Ensure host exists and get host_id
-	var hostID int64
+	var hostID uuid.UUID
 	err := tl.pool.QueryRow(ctx, `
-		INSERT INTO monitor.pg_os_host_instance (hostname, total_memory_bytes, cpu_cores)
-		VALUES ($1, $2, $3)
+		INSERT INTO monitor.pg_os_host_instance (hostname, total_memory_bytes, cpu_cores, host_id)
+		VALUES ($1, $2, $3, gen_random_uuid())
 		ON CONFLICT (hostname) DO UPDATE SET
 			total_memory_bytes = EXCLUDED.total_memory_bytes,
 			cpu_cores = EXCLUDED.cpu_cores
@@ -24,17 +25,17 @@ func (tl *TimescaleLogger) SaveOSMetrics(ctx context.Context, hostname, instance
 		return fmt.Errorf("failed to sync pg_os_host_instance: %w", err)
 	}
 
-	ts := m["ts"].(time.Time)
+	captureTime := m["ts"].(time.Time)
 
 	// 2. Insert OS memory samples
 	_, err = tl.pool.Exec(ctx, `
 		INSERT INTO monitor.pg_os_memory_samples (
-			ts, host_id, total_bytes, available_bytes, used_bytes, free_bytes, 
+			capture_timestamp, host_id, total_bytes, available_bytes, used_bytes, free_bytes, 
 			cached_bytes, buffers_bytes, shared_bytes, slab_bytes,
 			swap_total_bytes, swap_used_bytes, swap_free_bytes,
 			dirty_bytes, writeback_bytes
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-		ts, hostID, m["total_bytes"], m["available_bytes"], m["used_bytes"], m["free_bytes"],
+		captureTime, hostID, m["total_bytes"], m["available_bytes"], m["used_bytes"], m["free_bytes"],
 		m["cached_bytes"], m["buffers_bytes"], m["shared_bytes"], m["slab_bytes"],
 		m["swap_total_bytes"], m["swap_used_bytes"], m["swap_free_bytes"],
 		m["dirty_bytes"], m["writeback_bytes"],
@@ -59,9 +60,9 @@ func (tl *TimescaleLogger) SaveOSMetrics(ctx context.Context, hostname, instance
 
 		_, err = tl.pool.Exec(ctx, `
 			INSERT INTO monitor.pg_os_memory_pressure (
-				ts, host_id, memory_used_pct, memory_available_pct, swap_used_pct, pressure_score
+				capture_timestamp, host_id, memory_used_pct, memory_available_pct, swap_used_pct, pressure_score
 			) VALUES ($1, $2, $3, $4, $5, $6)`,
-			ts, hostID, usedPct, availPct, swapUsedPct, pressureScore,
+			captureTime, hostID, usedPct, availPct, swapUsedPct, pressureScore,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert pg_os_memory_pressure: %w", err)
@@ -72,9 +73,9 @@ func (tl *TimescaleLogger) SaveOSMetrics(ctx context.Context, hostname, instance
 	if m["postgres_rss_bytes"] != nil {
 		_, err = tl.pool.Exec(ctx, `
 			INSERT INTO monitor.pg_os_process_memory (
-				ts, host_id, postgres_rss_bytes, postgres_vsz_bytes, backend_count
+				capture_timestamp, host_id, postgres_rss_bytes, postgres_vsz_bytes, backend_count
 			) VALUES ($1, $2, $3, $4, $5)`,
-			ts, hostID, m["postgres_rss_bytes"], m["postgres_vsz_bytes"], m["backend_count"],
+			captureTime, hostID, m["postgres_rss_bytes"], m["postgres_vsz_bytes"], m["backend_count"],
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert pg_os_process_memory: %w", err)
@@ -84,10 +85,10 @@ func (tl *TimescaleLogger) SaveOSMetrics(ctx context.Context, hostname, instance
 	// 5. Insert CPU samples
 	_, err = tl.pool.Exec(ctx, `
 		INSERT INTO monitor.pg_os_cpu_samples (
-			ts, host_id, cpu_user_pct, cpu_system_pct, cpu_idle_pct, cpu_iowait_pct,
+			capture_timestamp, host_id, cpu_user_pct, cpu_system_pct, cpu_idle_pct, cpu_iowait_pct,
 			load_1m, load_5m, load_15m
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		ts, hostID, m["cpu_user_pct"], m["cpu_system_pct"], m["cpu_idle_pct"], m["cpu_iowait_pct"],
+		captureTime, hostID, m["cpu_user_pct"], m["cpu_system_pct"], m["cpu_idle_pct"], m["cpu_iowait_pct"],
 		m["load_1m"], m["load_5m"], m["load_15m"],
 	)
 	if err != nil {
@@ -95,6 +96,45 @@ func (tl *TimescaleLogger) SaveOSMetrics(ctx context.Context, hostname, instance
 	}
 
 	return nil
+}
+
+// GetPostgresCPUHistory returns CPU usage time-series for a host.
+func (tl *TimescaleLogger) GetPostgresCPUHistory(ctx context.Context, hostname string, from, to time.Time, limit int) ([]map[string]interface{}, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	query := `
+		SELECT 
+			c.capture_timestamp, c.cpu_user_pct, c.cpu_system_pct, c.cpu_idle_pct, c.cpu_iowait_pct, c.load_1m
+		FROM monitor.pg_os_cpu_samples c
+		JOIN monitor.pg_os_host_instance h ON c.host_id = h.host_id
+		WHERE h.hostname = $1 AND c.capture_timestamp >= $2 AND c.capture_timestamp <= $3
+		ORDER BY c.capture_timestamp DESC
+		LIMIT $4`
+
+	rows, err := tl.pool.Query(ctx, query, hostname, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var points []map[string]interface{}
+	for rows.Next() {
+		var ts time.Time
+		var user, sys, idle, io, load float64
+		if err := rows.Scan(&ts, &user, &sys, &idle, &io, &load); err != nil {
+			continue
+		}
+		points = append(points, map[string]interface{}{
+			"ts":             ts,
+			"cpu_user_pct":   user,
+			"cpu_system_pct": sys,
+			"cpu_idle_pct":   idle,
+			"cpu_iowait_pct": io,
+			"load_1m":        load,
+		})
+	}
+	return points, nil
 }
 
 // GetLatestOSCPUSaturation returns the latest CPU and load metrics from the OS collector.
@@ -119,11 +159,11 @@ func (tl *TimescaleLogger) GetLatestOSCPUSaturation(ctx context.Context, hostnam
 		JOIN monitor.pg_os_host_instance h ON c.host_id = h.host_id
 		LEFT JOIN LATERAL (
 			SELECT * FROM monitor.pg_os_process_memory p2 
-			WHERE p2.host_id = c.host_id AND p2.ts <= c.ts 
-			ORDER BY p2.ts DESC LIMIT 1
+			WHERE p2.host_id = c.host_id AND p2.capture_timestamp <= c.capture_timestamp 
+			ORDER BY p2.capture_timestamp DESC LIMIT 1
 		) p ON TRUE
 		WHERE h.hostname = $1
-		ORDER BY c.ts DESC LIMIT 1`
+		ORDER BY c.capture_timestamp DESC LIMIT 1`
 
 	err := tl.pool.QueryRow(ctx, query, hostname).Scan(
 		&m.User, &m.System, &m.Idle, &m.IOWait, &m.Load1m, &m.Cores, &m.RSS, &m.Backends,
@@ -144,14 +184,14 @@ func (tl *TimescaleLogger) GetLatestOSCPUSaturation(ctx context.Context, hostnam
 	}, nil
 }
 
-// CheckOSCollectorStatus returns true if OS metrics have been received for the host linked to this instance in the last 5 minutes.
+// CheckOSCollectorStatus returns true if OS metrics have been received for the host linked to this serverID in the last 5 minutes.
 func (tl *TimescaleLogger) CheckOSCollectorStatus(ctx context.Context, hostname string) (bool, error) {
 	var exists bool
 	err := tl.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM monitor.pg_os_memory_samples s
 			JOIN monitor.pg_os_host_instance h ON s.host_id = h.host_id
-			WHERE h.hostname = $1 AND s.ts > now() - INTERVAL '5 minutes'
+			WHERE h.hostname = $1 AND s.capture_timestamp > now() - INTERVAL '5 minutes'
 		)`, hostname).Scan(&exists)
 	return exists, err
 }

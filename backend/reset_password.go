@@ -10,9 +10,9 @@
 package main
 
 import (
+	"log/slog"
 	"context"
 	"fmt"
-	"log"
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,18 +43,21 @@ func main() {
 
 	pool, err := pgxpool.New(ctx, connStr)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		slog.Error("Failed to connect to database", "err", err)
+	os.Exit(1)
 	}
 	defer pool.Close()
 
 	// New password: MUST be provided via env to avoid leaking credentials in source control.
 	newPassword := os.Getenv("NEW_ADMIN_PASSWORD")
 	if newPassword == "" {
-		log.Fatalf("NEW_ADMIN_PASSWORD is required (refusing to use a hardcoded password)")
+		slog.Error("NEW_ADMIN_PASSWORD is required (refusing to use a hardcoded password)")
+	os.Exit(1)
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
-		log.Fatalf("Failed to hash password: %v", err)
+		slog.Error("Failed to hash password", "err", err)
+	os.Exit(1)
 	}
 
 	// Update or insert admin user
@@ -67,7 +70,8 @@ func main() {
 	`, "admin", string(hash), "admin").Scan(&userID)
 
 	if err != nil {
-		log.Fatalf("Failed to update password: %v", err)
+		slog.Error("Failed to update password", "err", err)
+	os.Exit(1)
 	}
 
 	fmt.Printf("Password reset successfully! User ID: %d\n", userID)

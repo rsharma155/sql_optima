@@ -8,11 +8,11 @@
 package collectors
 
 import (
+	"log/slog"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -83,7 +83,7 @@ func (c *PostgresCollector) scanRows(rows *sql.Rows) ([]map[string]interface{}, 
 	for rows.Next() {
 		err := rows.Scan(valuePtrs...)
 		if err != nil {
-			log.Printf("[PostgresCollector] Scan error: %v", err)
+			slog.Error("[PostgresCollector] Scan error", "err", err)
 			continue
 		}
 

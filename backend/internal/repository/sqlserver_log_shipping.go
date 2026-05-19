@@ -8,8 +8,8 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
-	"fmt"
 )
 
 type LogShippingHealth struct {
@@ -27,18 +27,29 @@ type LogShippingHealth struct {
 	IsPrimary               bool
 }
 
-func (c *SqlServerRepository) FetchLogShippingHealth(instanceName string) ([]LogShippingHealth, error) {
+func (c *SqlServerRepository) FetchLogShippingHealth(ctx context.Context, instanceName string) ([]LogShippingHealth, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
-		return nil, fmt.Errorf("no connection for %s", instanceName)
+		return []LogShippingHealth{}, nil
 	}
 
 	var results []LogShippingHealth
 
 	var primaryCount int
-	_ = db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM msdb.dbo.log_shipping_primary_databases WITH (NOLOCK)`).Scan(&primaryCount)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	
+	const checkPrimarySql = `
+		IF OBJECT_ID('msdb.dbo.log_shipping_primary_databases') IS NOT NULL 
+		   AND HAS_PERMS_BY_NAME('msdb.dbo.log_shipping_primary_databases', 'OBJECT', 'SELECT') = 1
+		BEGIN
+			SELECT COUNT(*) FROM msdb.dbo.log_shipping_primary_databases WITH (NOLOCK)
+		END
+		ELSE SELECT 0`
+
+	_ = db.QueryRowContext(ctx, checkPrimarySql).Scan(&primaryCount)
 	if primaryCount > 0 {
-		rows, err := db.Query(`
+		rows, err := db.QueryContext(ctx, `
 			/* SQL_OPTIMA */ SELECT  
 				ISNULL(CAST(SERVERPROPERTY('ServerName') AS NVARCHAR(128)), '') AS primary_server,
 				lp.primary_database,
@@ -70,9 +81,17 @@ func (c *SqlServerRepository) FetchLogShippingHealth(instanceName string) ([]Log
 	}
 
 	var secondaryCount int
-	_ = db.QueryRow(`SELECT /* SQL_OPTIMA */   COUNT(*) FROM msdb.dbo.log_shipping_secondary_databases WITH (NOLOCK)`).Scan(&secondaryCount)
+	const checkSecondarySql = `
+		IF OBJECT_ID('msdb.dbo.log_shipping_secondary_databases') IS NOT NULL 
+		   AND HAS_PERMS_BY_NAME('msdb.dbo.log_shipping_secondary_databases', 'OBJECT', 'SELECT') = 1
+		BEGIN
+			SELECT COUNT(*) FROM msdb.dbo.log_shipping_secondary_databases WITH (NOLOCK)
+		END
+		ELSE SELECT 0`
+
+	_ = db.QueryRowContext(ctx, checkSecondarySql).Scan(&secondaryCount)
 	if secondaryCount > 0 {
-		rows, err := db.Query(`
+		rows, err := db.QueryContext(ctx, `
 			/* SQL_OPTIMA */ SELECT  
 				ISNULL(lss.primary_server,    '')     AS primary_server,
 				ISNULL(lss.primary_database,  '')     AS primary_database,

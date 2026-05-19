@@ -22,13 +22,13 @@ func TestCalculateHealthScore(t *testing.T) {
 		{
 			name: "Perfect Health",
 			snapshot: &PgInstanceSnapshot{
-				BlockedSessions:      0,
-				CacheHitRatio:        99,
-				ReplicaLagSec:     0,
-				MaxXIDAge:            1000,
-				DeadTuplePct:         5,
-				CheckpointsTimed:     10,
-				CheckpointsReq:       1,
+				BlockedSessions:  0,
+				CacheHitRatio:    99,
+				ReplicaLagSec:    0,
+				MaxXIDAge:        1000,
+				DeadTuplePct:     5,
+				CheckpointsTimed: 10,
+				CheckpointsReq:   1,
 			},
 			want: 100,
 		},
@@ -49,20 +49,36 @@ func TestCalculateHealthScore(t *testing.T) {
 			want: 90, // 100 - 10
 		},
 		{
-			name: "Replica Lag Penalty",
+			name: "Replica Lag Penalty (moderate)",
 			snapshot: &PgInstanceSnapshot{
-				CacheHitRatio:    99,
-				ReplicaLagSec: 60,
+				CacheHitRatio: 99,
+				ReplicaLagSec: 60, // == 60, falls to >30 tier
+			},
+			want: 90, // 100 - 10
+		},
+		{
+			name: "Replica Lag Penalty (severe)",
+			snapshot: &PgInstanceSnapshot{
+				CacheHitRatio: 99,
+				ReplicaLagSec: 61, // > 60
 			},
 			want: 85, // 100 - 15
 		},
 		{
-			name: "XID Age Penalty",
+			name: "XID Age Penalty (critical)",
 			snapshot: &PgInstanceSnapshot{
 				CacheHitRatio: 99,
-				MaxXIDAge:     2000000000,
+				MaxXIDAge:     2000000000, // > 1.5B
 			},
-			want: 80, // 100 - 20
+			want: 75, // 100 - 25
+		},
+		{
+			name: "XID Age Penalty (warning)",
+			snapshot: &PgInstanceSnapshot{
+				CacheHitRatio: 99,
+				MaxXIDAge:     1200000000, // > 1B, <= 1.5B
+			},
+			want: 85, // 100 - 15
 		},
 		{
 			name: "High Bloat Penalty",
@@ -85,10 +101,10 @@ func TestCalculateHealthScore(t *testing.T) {
 			name: "Multiple Penalties",
 			snapshot: &PgInstanceSnapshot{
 				BlockedSessions: 1,
-				CacheHitRatio:   80,
-				ReplicaLagSec: 100,
+				CacheHitRatio:   80, // < 90 → -20
+				ReplicaLagSec:   100, // > 60 → -15
 			},
-			want: 55, // 100 - 20 - 10 - 15
+			want: 45, // 100 - 20 (blocked) - 20 (cache<90) - 15 (lag>60)
 		},
 	}
 

@@ -8,12 +8,12 @@
 package collectors
 
 import (
-	"testing"
 	"github.com/stretchr/testify/assert"
+	"testing"
 )
 
 func TestSQLValidity(t *testing.T) {
-	// This would normally use a real DB or mock. 
+	// This would normally use a real DB or mock.
 	// For this task, I'll ensure the code compiles and basic logic is sound.
 	assert.True(t, true)
 }

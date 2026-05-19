@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Alert evaluator – SQL Server failed agent job detection.
+// Purpose: Evaluator for SQL Server Agent failed jobs.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -10,13 +10,13 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/rsharma155/sql_optima/internal/domain/alerts"
 )
 
-// SqlServerFailedJobsEvaluator checks for SQL Agent jobs that failed in the last 24 hours.
 type SqlServerFailedJobsEvaluator struct {
 	tsPool *pgxpool.Pool
 }
@@ -27,38 +27,52 @@ func NewSqlServerFailedJobsEvaluator(tsPool *pgxpool.Pool) *SqlServerFailedJobsE
 
 func (e *SqlServerFailedJobsEvaluator) Engine() alerts.Engine { return alerts.EngineSQLServer }
 
-func (e *SqlServerFailedJobsEvaluator) Evaluate(ctx context.Context, instanceName string) ([]AlertEvaluatorResult, error) {
-	const q = `
-		SELECT COALESCE(failed_jobs_24h, 0)
-		FROM sqlserver_job_metrics
-		WHERE server_instance_name = $1
+func (e *SqlServerFailedJobsEvaluator) Evaluate(ctx context.Context, serverID uuid.UUID) ([]AlertEvaluatorResult, error) {
+	q := `
+		SELECT job_name, step_name, error_message, capture_timestamp
+		FROM sqlserver_job_failures
+		WHERE server_id = $1
+		  AND capture_timestamp >= now() - interval '1 hour'
 		ORDER BY capture_timestamp DESC
-		LIMIT 1`
+	`
+	rows, err := e.tsPool.Query(ctx, q, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-	var failedJobs int
-	if err := e.tsPool.QueryRow(ctx, q, instanceName).Scan(&failedJobs); err != nil {
-		if isNoDataError(err) {
-			return nil, nil
+	var results []AlertEvaluatorResult
+	serverName := serverID.String()
+
+	seenJobs := make(map[string]bool)
+	for rows.Next() {
+		var job, step, msg string
+		var ts time.Time
+		if err := rows.Scan(&job, &step, &msg, &ts); err != nil {
+			continue
 		}
-		return nil, fmt.Errorf("sqlserver_failed_jobs: %w", err)
-	}
-	if failedJobs == 0 {
-		return nil, nil
+		if seenJobs[job] {
+			continue
+		}
+		seenJobs[job] = true
+
+		results = append(results, AlertEvaluatorResult{
+			RuleName:    "MSJobFailed",
+			Category:    "Job Agent",
+			Severity:    alerts.SeverityWarning,
+			Title:       fmt.Sprintf("SQL Agent Job Failed: %s", job),
+			Description: fmt.Sprintf("Job '%s' (step: %s) failed at %s. Error: %s", job, step, ts.Format(time.RFC1123), msg),
+			Evidence: map[string]interface{}{
+				"job_name":      job,
+				"step_name":     step,
+				"error_message": msg,
+				"failed_at":     ts,
+			},
+			ServerID:   serverID,
+			ServerName: serverName,
+			Engine:     alerts.EngineSQLServer,
+		})
 	}
 
-	sev := alerts.SeverityWarning
-	if failedJobs >= 5 {
-		sev = alerts.SeverityCritical
-	}
-
-	return []AlertEvaluatorResult{{
-		RuleName:     "sqlserver_failed_jobs",
-		Category:     "jobs",
-		Severity:     sev,
-		Title:        fmt.Sprintf("SQL Server: %d failed jobs in last 24h", failedJobs),
-		Description:  fmt.Sprintf("%d SQL Agent jobs failed in the last 24 hours on %s", failedJobs, instanceName),
-		InstanceName: instanceName,
-		Engine:       alerts.EngineSQLServer,
-		Evidence:     map[string]interface{}{"failed_jobs_24h": failedJobs},
-	}}, nil
+	return results, nil
 }

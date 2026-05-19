@@ -29,14 +29,9 @@ window.navigate = function(route, params) {
     window.appNavigate(route);
 };
 
-let _msLocksRefreshTimer = null;
-
 window.sqlserver_LocksDashboard = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...', type: 'sqlserver'};
     const dbName = window.appState.currentDatabase || 'all';
-
-    // Clear any existing refresh timer from a previous visit to this page
-    if (_msLocksRefreshTimer) { clearInterval(_msLocksRefreshTimer); _msLocksRefreshTimer = null; }
 
     // 1. Initial Render
     window.routerOutlet.innerHTML = await window.loadTemplate('pages/sqlserver_locks.html', { inst, dbName });
@@ -52,15 +47,13 @@ window.sqlserver_LocksDashboard = async function() {
     // 4. Load Data
     await refreshMsLocksDashboard();
 
-    // 5. Auto-refresh every 15s so the blocking hierarchy stays current
-    _msLocksRefreshTimer = setInterval(() => {
-        if (!document.querySelector('.sqlserver-locks-page')) {
-            clearInterval(_msLocksRefreshTimer);
-            _msLocksRefreshTimer = null;
-            return;
+    // 5. Auto-refresh based on dynamic collector interval
+    const dynInterval = window.collectorConfig ? window.collectorConfig.getInterval("sqlserver_blocking", 15000) : 15000;
+    window.registerInterval(() => {
+        if (document.querySelector('.sqlserver-locks-page')) {
+            refreshMsLocksDashboard();
         }
-        refreshMsLocksDashboard();
-    }, 15000);
+    }, dynInterval);
 };
 
 function setupMsDashboardListeners() {

@@ -5,7 +5,7 @@
 
 CREATE TABLE IF NOT EXISTS postgres_connection_stats (
     capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_instance_name TEXT NOT NULL,
+    server_id TEXT NOT NULL,
     total_connections INTEGER DEFAULT 0,
     active_connections INTEGER DEFAULT 0,
     idle_connections INTEGER DEFAULT 0,
