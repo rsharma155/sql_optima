@@ -11,7 +11,7 @@
     <!-- Header -->
     <div class="page-title flex-between dashboard-page-title-compact">
         <div class="dashboard-title-line" style="flex:1; min-width:0;">
-            <h1><i class="fa-solid fa-clock-rotate-left text-accent"></i> Waits & Sessions <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Control Center" title="Learn more about this dashboard"></i></h1>
+            <h1><i class="fa-solid fa-clock-rotate-left text-accent"></i> Waits & Sessions <i class="fa-solid fa-circle-info text-accent info-icon-clickable cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Waits & Sessions" title="Learn more about this dashboard"></i></h1>
             <p class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></p>
         </div>
         
@@ -60,12 +60,12 @@
                 <div class="strip-metric-value" id="pgSessIdleInTxnNow">--</div>
             </div>
             <div class="strip-metric-cell" title="Longest active duration.">
-                <div class="strip-metric-label">Longest Active <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Active Sessions"></i></div>
+                <div class="strip-metric-label">Longest Active <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Waits & Sessions" data-metric="Longest Active"></i></div>
                 <div class="strip-metric-value" id="pgSessLongestActiveDur">--</div>
                 <div class="text-muted sub" id="pgSessLongestActivePid">--</div>
             </div>
             <div class="strip-metric-cell" title="Longest idle-in-transaction duration.">
-                <div class="strip-metric-label">Longest Idle Txn <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Locks & Blocking" data-metric="Idle-in-Transaction Risk"></i></div>
+                <div class="strip-metric-label">Longest Idle Txn <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Waits & Sessions" data-metric="Longest Idle Txn"></i></div>
                 <div class="strip-metric-value" id="pgSessLongestIdleInTxnDur">--</div>
                 <div class="text-muted sub" id="pgSessLongestIdleInTxnPid">--</div>
             </div>
@@ -83,11 +83,11 @@
     <!-- ROW 2: Trends -->
     <div class="grid-row mt-2" style="display:grid; grid-template-columns: 8fr 4fr; gap:0.5rem;">
         <div class="chart-card glass-panel" style="padding:0.75rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Session State Trend</h3></div>
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Session State Trend <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Waits & Sessions" data-metric="Session State Trend"></i></h3></div>
             <div class="chart-container" style="height:170px"><canvas id="pgSessionStateTrendChart"></canvas></div>
         </div>
         <div class="chart-card glass-panel" style="padding:0.75rem;">
-            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Idle-in-Txn Trend</h3></div>
+            <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Idle-in-Txn Trend <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Waits & Sessions" data-metric="Idle-in-Txn Trend"></i></h3></div>
             <div class="chart-container" style="height:170px"><canvas id="pgIdleInTxnTrendChart"></canvas></div>
         </div>
     </div>
@@ -95,7 +95,7 @@
     <!-- ROW 3: Session Table -->
     <div class="table-card glass-panel mt-2" style="padding:0.75rem;">
         <div class="card-header flex-between">
-            <h3 style="font-size:0.85rem; margin:0;">Sessions (Live)</h3>
+            <h3 style="font-size:0.85rem; margin:0;">Sessions (Live) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Waits & Sessions" data-metric="Live Sessions"></i></h3>
         </div>
         <div class="table-responsive mt-2" style="max-height:400px; overflow-y:auto;">
             <table class="data-table" style="font-size:0.7rem;">

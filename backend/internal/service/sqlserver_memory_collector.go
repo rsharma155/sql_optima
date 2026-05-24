@@ -14,6 +14,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/rsharma155/sql_optima/internal/repository"
 )
 
 // StartMemoryIntelligenceCollector collects SQL Server memory metrics into TimescaleDB.
@@ -54,7 +56,11 @@ func (s *MetricsService) collectMemoryIntelligence(ctx context.Context) {
 			continue
 		}
 
-		snapshot, err := s.MsRepo.FetchMemoryAnalyzerSnapshot(ctx, inst.Name)
+		snapshot, err := s.MsRepo.FetchMemoryAnalyzerSnapshot(ctx, inst.ServerID, inst.Name)
+		if err != nil && repository.IsMSSQLConnError(err) {
+			// Reconnect and let the next tick retry with the fresh pool.
+			_ = s.MsRepo.ReconnectInstance(ctx, inst.Name)
+		}
 		if err != nil {
 			slog.Error("[MemoryCollector]", "target", inst.Name, "err", err)
 			continue
@@ -70,6 +76,15 @@ func (s *MetricsService) collectMemoryIntelligence(ctx context.Context) {
 		}
 		if err := s.tsLogger.LogSQLServerBufferPoolByDB(ctx, inst.ServerID, bpRows); err != nil {
 			slog.Error("[MemoryCollector]", "target", inst.Name, "err", err)
+		}
+
+		clerkRows, err := s.MsRepo.FetchMemoryClerks(ctx, inst.Name)
+		if err != nil {
+			slog.Error("[MemoryCollector] clerks", "target", inst.Name, "err", err)
+			continue
+		}
+		if err := s.tsLogger.LogSqlServerMemoryClerksV2(ctx, inst.ServerID, clerkRows); err != nil {
+			slog.Error("[MemoryCollector] clerks log", "target", inst.Name, "err", err)
 		}
 	}
 }

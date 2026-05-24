@@ -44,7 +44,7 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		AppName:    getEnv("SQLOPTIMA_APP_NAME", "IntelligenceReportSqloptima"),
+		AppName:    getEnv("SQLOPTIMA_APP_NAME", "Intelligence Report Sqloptima"),
 		AppVersion: getEnv("SQLOPTIMA_APP_VERSION", "1.0.0"),
 		Debug:      getEnvBool("SQLOPTIMA_DEBUG", false),
 		Port:       getEnv("SQLOPTIMA_PORT", "8000"),

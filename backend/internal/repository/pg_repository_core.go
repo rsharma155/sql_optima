@@ -43,9 +43,16 @@ type PgRepository struct {
 	lastDbSizeAt    map[string]time.Time
 
 	// previousSnapshots stores the last observed metric values for delta computation.
-	previousSnapshots map[string]map[int64]PgQueryStat
+	// Keyed by "dbid:userid:queryid" to prevent collisions across DBs/users.
+	previousSnapshots map[string]map[string]PgQueryStat
 	// pgssSupported caches whether pg_stat_statements is available on the instance.
 	pgssSupported map[string]bool
+	// pgssSharedPreload caches whether pg_stat_statements is in shared_preload_libraries.
+	pgssSharedPreload map[string]bool
+	// pgssExtensionInstalled caches whether the pg_stat_statements extension is created.
+	pgssExtensionInstalled map[string]bool
+	// pgssSchema caches the schema name where pg_stat_statements is found.
+	pgssSchema map[string]string
 	// pgssHasBlkTime caches whether blk_read_time/blk_write_time columns exist in pg_stat_statements.
 	// These columns are absent on old extension schema versions even on modern servers.
 	pgssHasBlkTime map[string]bool
@@ -93,6 +100,38 @@ func (c *PgRepository) GetPgssSupported(instanceName string) bool {
 	return c.pgssSupported[strings.ToUpper(instanceName)]
 }
 
+// GetPgssSharedPreload returns true if pg_stat_statements is in shared_preload_libraries.
+func (c *PgRepository) GetPgssSharedPreload(instanceName string) bool {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.pgssSharedPreload[strings.ToUpper(instanceName)]
+}
+
+// GetPgssExtensionInstalled returns true if pg_stat_statements extension is created.
+func (c *PgRepository) GetPgssExtensionInstalled(instanceName string) bool {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.pgssExtensionInstalled[strings.ToUpper(instanceName)]
+}
+
+// GetPgssSchema returns the schema where pg_stat_statements is installed.
+func (c *PgRepository) GetPgssSchema(instanceName string) string {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.pgssSchema[strings.ToUpper(instanceName)]
+}
+
+// GetPgssTableName returns the schema-qualified name of the pg_stat_statements view.
+func (c *PgRepository) GetPgssTableName(instanceName string) string {
+	c.mutex.RLock()
+	schema := c.pgssSchema[strings.ToUpper(instanceName)]
+	c.mutex.RUnlock()
+	if schema == "" {
+		return "pg_stat_statements" // default fallback
+	}
+	return fmt.Sprintf("%s.pg_stat_statements", schema)
+}
+
 // GetPgssHasBlkTime returns true if the pg_stat_statements view on this instance
 // includes the blk_read_time / blk_write_time columns. These were added in extension
 // version 1.4 (PG 9.4+) but may be absent on older extension schemas even on modern servers.
@@ -103,25 +142,27 @@ func (c *PgRepository) GetPgssHasBlkTime(instanceName string) bool {
 }
 
 // GetPreviousSnapshot returns the last observed stat for a query.
-func (c *PgRepository) GetPreviousSnapshot(instanceName string, queryID int64) (PgQueryStat, bool) {
+func (c *PgRepository) GetPreviousSnapshot(instanceName string, dbid, userid, queryID int64) (PgQueryStat, bool) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	if m, ok := c.previousSnapshots[strings.ToUpper(instanceName)]; ok {
-		s, ok := m[queryID]
+		key := fmt.Sprintf("%d:%d:%d", dbid, userid, queryID)
+		s, ok := m[key]
 		return s, ok
 	}
 	return PgQueryStat{}, false
 }
 
 // UpdatePreviousSnapshot updates the last observed stat for a query.
-func (c *PgRepository) UpdatePreviousSnapshot(instanceName string, queryID int64, stat PgQueryStat) {
+func (c *PgRepository) UpdatePreviousSnapshot(instanceName string, stat PgQueryStat) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	upperName := strings.ToUpper(instanceName)
 	if c.previousSnapshots[upperName] == nil {
-		c.previousSnapshots[upperName] = make(map[int64]PgQueryStat)
+		c.previousSnapshots[upperName] = make(map[string]PgQueryStat)
 	}
-	c.previousSnapshots[upperName][queryID] = stat
+	key := fmt.Sprintf("%d:%d:%d", stat.DbID, stat.UserID, stat.QueryID)
+	c.previousSnapshots[upperName][key] = stat
 }
 
 // ClearPreviousSnapshots clears the snapshot cache for an instance (e.g. after reset).
@@ -252,8 +293,11 @@ func NewPgRepository(ctx context.Context, cfg *config.Config) *PgRepository {
 		cfg:               cfg,
 		lastDbSizeBytes:   make(map[string]int64),
 		lastDbSizeAt:      make(map[string]time.Time),
-		previousSnapshots: make(map[string]map[int64]PgQueryStat),
+		previousSnapshots: make(map[string]map[string]PgQueryStat),
 		pgssSupported:     make(map[string]bool),
+		pgssSharedPreload: make(map[string]bool),
+		pgssExtensionInstalled: make(map[string]bool),
+		pgssSchema:        make(map[string]string),
 		pgssHasBlkTime:    make(map[string]bool),
 		pgVersion:         make(map[string]int),
 	}
@@ -329,34 +373,77 @@ func NewPgRepository(ctx context.Context, cfg *config.Config) *PgRepository {
 			// Fetch version and cache it
 			_ = c.GetPgVersion(ctx, inst.Name)
 
-			// Check pg_stat_statements support more robustly
-			var exists bool
-			ctx, cancel := WithQueryTimeout(ctx, 0)
-			err = db.QueryRowContext(ctx, "SELECT /* SQL_OPTIMA */ EXISTS (SELECT 1 FROM pg_views WHERE viewname = 'pg_stat_statements') OR EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists)
-			cancel()
-			if err == nil && exists {
+			// Check pg_stat_statements support more robustly and discover schema.
+			// Use separate context variables to avoid shadowing ctx (which would cause
+			// all subsequent WithQueryTimeout(ctx, 0) calls to derive from a cancelled parent).
+			var schema string
+			ctxV, cancelV := WithQueryTimeout(ctx, 0)
+			err = db.QueryRowContext(ctxV, "SELECT schemaname FROM pg_views WHERE viewname = 'pg_stat_statements' LIMIT 1").Scan(&schema)
+			cancelV()
+
+			// Check shared_preload_libraries
+			var preloadLibs string
+			ctxP, cancelP := WithQueryTimeout(ctx, 0)
+			_ = db.QueryRowContext(ctxP, "SELECT setting FROM pg_settings WHERE name = 'shared_preload_libraries'").Scan(&preloadLibs)
+			cancelP()
+			if strings.Contains(preloadLibs, "pg_stat_statements") {
+				c.pgssSharedPreload[upperName] = true
+			}
+
+			// Check if extension is installed (even if view is missing from current search_path)
+			var extExists bool
+			ctxE, cancelE := WithQueryTimeout(ctx, 0)
+			_ = db.QueryRowContext(ctxE, "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&extExists)
+			cancelE()
+			if extExists {
+				c.pgssExtensionInstalled[upperName] = true
+			}
+
+			if err == nil && schema != "" {
 				c.pgssSupported[upperName] = true
-				slog.Info("[POSTGRES] pg_stat_statements supported on", "val", inst.Name)
+				c.pgssSchema[upperName] = schema
+				slog.Info("[POSTGRES] pg_stat_statements supported on", "val", inst.Name, "schema", schema)
 
 				// Detect whether blk_read_time column exists in the extension schema.
-				// Older extension versions lack this column even on modern server versions.
 				var hasBlkTime bool
 				ctx2, cancel2 := WithQueryTimeout(ctx, 0)
-				err2 := db.QueryRowContext(ctx2, `/* SQL_OPTIMA */
+				err2 := db.QueryRowContext(ctx2, fmt.Sprintf(`/* SQL_OPTIMA */
 					SELECT EXISTS (
 						SELECT 1
 						FROM pg_catalog.pg_attribute a
 						JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
 						JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-						WHERE c.relname = 'pg_stat_statements'
+						WHERE n.nspname = '%s'
+						  AND c.relname = 'pg_stat_statements'
 						  AND a.attname = 'blk_read_time'
 						  AND a.attnum > 0
 						  AND NOT a.attisdropped
-					)`).Scan(&hasBlkTime)
+					)`, schema)).Scan(&hasBlkTime)
 				cancel2()
 				if err2 == nil && hasBlkTime {
 					c.pgssHasBlkTime[upperName] = true
 					slog.Info("[POSTGRES] pg_stat_statements has blk_read_time on", "val", inst.Name)
+				}
+			} else {
+				// Fallback: extension in pg_extension but view not visible in pg_views.
+				// Look up the actual schema via pg_class so we don't hard-code "public".
+				if extExists {
+					var extSchema string
+					ctxF, cancelF := WithQueryTimeout(ctx, 0)
+					_ = db.QueryRowContext(ctxF, `
+						SELECT n.nspname
+						FROM pg_class cl
+						JOIN pg_namespace n ON n.oid = cl.relnamespace
+						WHERE cl.relname = 'pg_stat_statements'
+						  AND cl.relkind IN ('v','r','m')
+						LIMIT 1`).Scan(&extSchema)
+					cancelF()
+					if extSchema == "" {
+						extSchema = "public"
+					}
+					c.pgssSupported[upperName] = true
+					c.pgssSchema[upperName] = extSchema
+					slog.Info("[POSTGRES] pg_stat_statements found via extension on", "val", inst.Name, "schema", extSchema)
 				}
 			}
 		}
@@ -382,6 +469,37 @@ func (c *PgRepository) PingAll() {
 		}(name, db)
 	}
 	wg.Wait()
+}
+
+// StartBackgroundHealthCheck runs a loop to periodically ping active connections
+// and attempt to reconnect any instances marked as 'offline'.
+func (c *PgRepository) StartBackgroundHealthCheck(ctx context.Context) {
+	ticker := time.NewTicker(60 * time.Second)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.PingAll()
+
+				c.mutex.RLock()
+				var offlineTargets []string
+				for name, status := range c.status {
+					if status == "offline" {
+						offlineTargets = append(offlineTargets, name)
+					}
+				}
+				c.mutex.RUnlock()
+
+				for _, target := range offlineTargets {
+					slog.Info("[POSTGRES] Background health check: attempting to reconnect offline instance", "target", target)
+					c.reconnectInstance(ctx, target)
+				}
+			}
+		}
+	}()
 }
 
 // reconnectInstance attempts to reestablish a connection to a specific PostgreSQL instance.
@@ -471,17 +589,97 @@ func (c *PgRepository) reconnectInstance(ctx context.Context, instanceName strin
 
 	c.mutex.Lock()
 	var exists bool
+	var preloadLibs string
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
+
+	// 1. Check shared_preload_libraries
+	_ = newDb.QueryRowContext(ctx, "SELECT setting FROM pg_settings WHERE name = 'shared_preload_libraries'").Scan(&preloadLibs)
+	if strings.Contains(preloadLibs, "pg_stat_statements") {
+		c.pgssSharedPreload[upperName] = true
+	} else {
+		delete(c.pgssSharedPreload, upperName)
+	}
+
+	// 2. Check extension / view existence
 	err = newDb.QueryRowContext(ctx, "SELECT /* SQL_OPTIMA */ EXISTS (SELECT 1 FROM pg_views WHERE viewname = 'pg_stat_statements') OR EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&exists)
 	if err == nil && exists {
 		c.pgssSupported[upperName] = true
+		c.pgssExtensionInstalled[upperName] = true
 	} else {
 		delete(c.pgssSupported, upperName)
+		delete(c.pgssExtensionInstalled, upperName)
 	}
 	c.mutex.Unlock()
 
 	return true
+}
+
+// RefreshPgssStatus does a live probe of pg_stat_statements availability for the
+// given instance and updates the cached flags. Call this when the cached status
+// appears stale (e.g. the status endpoint reports "not enabled" but the operator
+// believes the extension is installed).
+func (c *PgRepository) RefreshPgssStatus(ctx context.Context, instanceName string) {
+	upperName := strings.ToUpper(instanceName)
+
+	c.mutex.RLock()
+	db, ok := c.conns[upperName]
+	c.mutex.RUnlock()
+	if !ok {
+		return
+	}
+
+	var preloadLibs string
+	ctxP, cancelP := WithQueryTimeout(ctx, 0)
+	_ = db.QueryRowContext(ctxP, "SELECT setting FROM pg_settings WHERE name = 'shared_preload_libraries'").Scan(&preloadLibs)
+	cancelP()
+
+	var extExists bool
+	ctxE, cancelE := WithQueryTimeout(ctx, 0)
+	_ = db.QueryRowContext(ctxE, "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&extExists)
+	cancelE()
+
+	var schema string
+	ctxV, cancelV := WithQueryTimeout(ctx, 0)
+	_ = db.QueryRowContext(ctxV, "SELECT schemaname FROM pg_views WHERE viewname = 'pg_stat_statements' LIMIT 1").Scan(&schema)
+	cancelV()
+
+	if schema == "" && extExists {
+		// Extension installed but view not found via pg_views — look up actual schema.
+		ctxF, cancelF := WithQueryTimeout(ctx, 0)
+		_ = db.QueryRowContext(ctxF, `
+			SELECT n.nspname
+			FROM pg_class cl
+			JOIN pg_namespace n ON n.oid = cl.relnamespace
+			WHERE cl.relname = 'pg_stat_statements'
+			  AND cl.relkind IN ('v','r','m')
+			LIMIT 1`).Scan(&schema)
+		cancelF()
+		if schema == "" {
+			schema = "public"
+		}
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if strings.Contains(preloadLibs, "pg_stat_statements") {
+		c.pgssSharedPreload[upperName] = true
+	} else {
+		delete(c.pgssSharedPreload, upperName)
+	}
+	if extExists {
+		c.pgssExtensionInstalled[upperName] = true
+	} else {
+		delete(c.pgssExtensionInstalled, upperName)
+	}
+	if schema != "" {
+		c.pgssSupported[upperName] = true
+		c.pgssSchema[upperName] = schema
+	} else {
+		delete(c.pgssSupported, upperName)
+		delete(c.pgssSchema, upperName)
+	}
 }
 
 // GetInstanceStatus returns the current connection status of a PostgreSQL instance.

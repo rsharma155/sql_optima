@@ -5,7 +5,12 @@ Until 1.0, releases may include breaking changes. We still aim to keep changes d
 
 ## Unreleased
 
-No unreleased changes.
+### New features
+- **Cold Storage — Tiered Metric Archival**: Optional pipeline that archives aged-out TimescaleDB metrics to S3-compatible object storage (MinIO, AWS S3) in Apache Parquet format. Nightly archiver batch-exports rows, uploads to S3, and purges the hot tier. Supports Apache Iceberg REST catalog registration (e.g. Project Nessie) for cross-tool queryability. Controlled via `COLD_STORAGE_*` environment variables; disabled by default.
+- **Wait Stats Collector (SQL Server)**: New `sqlserver_wait_stats_collector.go` continuously captures per-category wait stats deltas, enabling the Wait Stats V2 dashboard to surface trend data over configurable time windows.
+- **PostgreSQL CPU Settings Handler**: New `postgres_cpu_settings_handlers.go` exposes CPU-related configuration and tuning recommendations for PostgreSQL instances.
+- **Admin Notification Handlers**: New `admin_notification_handlers.go` provides endpoints for configuring alert notification channels (e.g. webhook, email) from the Admin panel.
+- **Server Probe Endpoint**: New `admin_server_probe.go` adds a lightweight connectivity probe endpoint for validating monitored server credentials without a full collection cycle.
 
 ## 0.4.0 (2026-05-19)
 
@@ -19,6 +24,7 @@ No unreleased changes.
 - **New PostgreSQL routes**: `pg-waits`, `pg-backup-dr`, `pg-security`, `pg-stat-statements`.
 
 ### Refactors
+- **SQL Server Intelligence Report**: Fully ported the Python-based intelligence engine to Go; removed the standalone `intelligence-report` service from Docker Compose and integrated the autonomous health analysis directly into the Go backend.
 - **Collector Engine**: Unified internal collectors into a domain-driven architecture (`application/`, `domain/`, `infrastructure/sqlserver/`, `infrastructure/timescaledb/`, `postgres/`).
 - **PostgreSQL collector modularization**: Split `pg_stats` into focused single-responsibility collectors (`pg_comprehensive_collector.go`, `pg_snapshot_collector.go`, `pg_locks_blocking/`, etc.) to isolate failures and improve resilience.
 - **Rule Engine Expansion**: 15+ new best-practice rule evaluators for both PG and SQL Server; rules are now signal-aware and evaluate against historical TimescaleDB snapshots.

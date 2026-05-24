@@ -96,17 +96,43 @@ window.showAdminTab = async function(tab) {
         window.loadAdminUsers();
     } else if (tab === 'servers') {
         content.innerHTML = `
-            <div class="glass-panel" style="padding:1.25rem;border-radius:12px;">
-                <div class="flex-between" style="margin-bottom:1rem;flex-wrap:wrap;gap:0.75rem;">
-                    <div>
-                        <h2 style="font-size:1rem;margin:0;font-weight:600;"><i class="fa-solid fa-server text-accent"></i> Monitoring servers</h2>
-                        <p class="text-muted" style="margin:0.35rem 0 0;font-size:0.8rem;max-width:42rem;">Targets are stored in TimescaleDB with envelope encryption.</p>
+            <div style="display:grid; grid-template-columns: 1fr 300px; gap:1.25rem; align-items:start;">
+                <div class="glass-panel" style="padding:1.25rem;border-radius:12px;">
+                    <div class="flex-between" style="margin-bottom:1rem;flex-wrap:wrap;gap:0.75rem;">
+                        <div>
+                            <h2 style="font-size:1rem;margin:0;font-weight:600;"><i class="fa-solid fa-server text-accent"></i> Monitoring servers</h2>
+                            <p class="text-muted" style="margin:0.35rem 0 0;font-size:0.8rem;max-width:42rem;">Targets are stored in TimescaleDB with envelope encryption.</p>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-accent" id="btn-show-add-server"><i class="fa-solid fa-plus"></i> Add server</button>
                     </div>
-                    <button type="button" class="btn btn-sm btn-accent" id="btn-show-add-server"><i class="fa-solid fa-plus"></i> Add server</button>
+                    <div id="admin-server-msg"></div>
+                    <div id="admin-server-add-slot"></div>
+                    <div id="admin-server-list"><div class="text-center text-muted" style="padding:2rem;">Loading servers…</div></div>
                 </div>
-                <div id="admin-server-msg"></div>
-                <div id="admin-server-add-slot"></div>
-                <div id="admin-server-list"><div class="text-center text-muted" style="padding:2rem;">Loading servers…</div></div>
+
+                <div class="glass-panel" style="padding:1rem; border-radius:12px; font-size:0.8rem;">
+                    <h3 style="font-size:0.9rem; margin:0 0 0.75rem; font-weight:600;"><i class="fa-solid fa-key text-accent"></i> Permission Setup</h3>
+                    <p class="text-muted" style="line-height:1.4; margin-bottom:0.75rem;">
+                        Monitoring requires read-only access. Run these scripts to set up the user:
+                    </p>
+                    <div style="display:flex; flex-direction:column; gap:0.5rem;">
+                        <button class="btn btn-xs btn-outline" onclick="window.onbShowPermissionScript('sqlserver')" style="justify-content:flex-start; padding:0.4rem 0.6rem;">
+                            <i class="fa-brands fa-microsoft"></i> SQL Server Script
+                        </button>
+                        <button class="btn btn-xs btn-outline" onclick="window.onbShowPermissionScript('postgres')" style="justify-content:flex-start; padding:0.4rem 0.6rem;">
+                            <i class="fa-solid fa-database"></i> PostgreSQL Script
+                        </button>
+                    </div>
+
+                    <div id="admin-dist-note" style="margin-top:1rem; padding:0.75rem; border-radius:6px; background:rgba(var(--accent-rgb), 0.05); border:1px solid rgba(var(--accent-rgb), 0.1); display:none;">
+                        <h4 style="font-size:0.75rem; margin:0 0 0.4rem; color:var(--accent); font-weight:700;">
+                            <i class="fa-solid fa-circle-info"></i> Distributor Note
+                        </h4>
+                        <p style="font-size:0.7rem; line-height:1.3; margin:0;">
+                            Remote Distributor? Run script on the <strong>Distributor instance</strong>.
+                        </p>
+                    </div>
+                </div>
             </div>
         `;
         document.getElementById('btn-show-add-server').addEventListener('click', () => window.showAddServerForm());
@@ -300,7 +326,7 @@ window.showAddServerForm = function() {
                     <div class="srv-fld"><label for="srv-user">Username</label><input class="custom-input" id="srv-user" /></div>
                     <div class="srv-fld"><label for="srv-pass">Password</label><input class="custom-input" id="srv-pass" type="password" autocomplete="new-password" /></div>
                     <div class="srv-fld srv-fld-ssl" style="grid-column:span 2;"><label for="srv-ssl">SSL mode (PostgreSQL / RDS)</label>
-                        <select class="custom-select" id="srv-ssl"><option value="require">require</option><option value="disable">disable</option><option value="verify-full">verify-full</option></select></div>
+                        <select class="custom-select" id="srv-ssl"><option value="disable" selected>disable</option><option value="require">require</option><option value="verify-full">verify-full</option></select></div>
                     <div class="srv-fld srv-fld-db"><label for="srv-db">Initial database <span class="text-muted" style="font-weight:400;">(optional)</span></label>
                         <input class="custom-input" id="srv-db" placeholder="postgres or master" /></div>
                     <div id="srv-trust-wrap" class="srv-fld" style="grid-column:1/-1;display:none;"><label style="display:flex;align-items:center;gap:0.45rem;cursor:pointer;margin:0;font-weight:500;font-size:0.8rem;">
@@ -327,11 +353,14 @@ window.showAddServerForm = function() {
     const typeSel = document.getElementById('srv-type');
     const trustWrap = document.getElementById('srv-trust-wrap');
     const pgGuide = document.getElementById('pg-extension-guide');
+    const distNote = document.getElementById('admin-dist-note');
 
     const syncTrustUI = () => {
         if (!typeSel) return;
-        if (trustWrap) trustWrap.style.display = typeSel.value === 'sqlserver' ? 'block' : 'none';
+        const isSqlServer = typeSel.value === 'sqlserver';
+        if (trustWrap) trustWrap.style.display = isSqlServer ? 'block' : 'none';
         if (pgGuide) pgGuide.style.display = typeSel.value === 'postgres' ? 'block' : 'none';
+        if (distNote) distNote.style.display = isSqlServer ? 'block' : 'none';
     };
     typeSel?.addEventListener('change', syncTrustUI);
     syncTrustUI();

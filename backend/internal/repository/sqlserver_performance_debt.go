@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type PerformanceDebtUnusedIndex struct {
@@ -29,16 +31,26 @@ type PerformanceDebtUnusedIndex struct {
 	IndexCreateDate time.Time // used to suppress newly created indexes
 }
 
-func (c *SqlServerRepository) FetchUnusedIndexes(ctx context.Context, instanceName, databaseName string, minUpdates int64, limit int) ([]PerformanceDebtUnusedIndex, error) {
-	db, ok := c.GetConn(instanceName)
-	if !ok || db == nil {
-		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
-	}
+func (c *SqlServerRepository) FetchUnusedIndexes(ctx context.Context, serverID uuid.UUID, instanceName, databaseName string, minUpdates int64, limit int) ([]PerformanceDebtUnusedIndex, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	if minUpdates <= 0 {
 		minUpdates = 1000
+	}
+
+	// Primary path: read from TimescaleDB cache to avoid hitting the monitored instance.
+	if c.LocalPool != nil {
+		rows, err := c.fetchUnusedIndexesFromTS(ctx, serverID, databaseName, minUpdates, limit)
+		if err == nil && len(rows) > 0 {
+			return rows, nil
+		}
+		// Fall through to live DMV on empty result or transient error.
+	}
+
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
 	}
 
 	// NOTE: Must be executed in the target database context because dm_db_index_usage_stats is per-db.
@@ -98,6 +110,45 @@ func (c *SqlServerRepository) FetchUnusedIndexes(ctx context.Context, instanceNa
 	return out, rows.Err()
 }
 
+// fetchUnusedIndexesFromTS reads the latest index_usage_stats snapshot from TimescaleDB,
+// filtering for indexes with zero reads and at least minUpdates write operations.
+func (c *SqlServerRepository) fetchUnusedIndexesFromTS(ctx context.Context, serverID uuid.UUID, databaseName string, minUpdates int64, limit int) ([]PerformanceDebtUnusedIndex, error) {
+	const q = `
+		SELECT db_name, table_name, index_name, seeks, scans, lookups, updates
+		FROM monitor.index_usage_stats
+		WHERE server_id = $1
+		  AND engine = 'sqlserver'
+		  AND db_name = $2
+		  AND seeks = 0 AND scans = 0 AND lookups = 0
+		  AND updates >= $3
+		  AND capture_timestamp = (
+		      SELECT MAX(capture_timestamp)
+		      FROM monitor.index_usage_stats
+		      WHERE server_id = $1 AND engine = 'sqlserver' AND db_name = $2
+		  )
+		ORDER BY updates DESC
+		LIMIT $4`
+
+	rows, err := c.LocalPool.Query(ctx, q, serverID, databaseName, minUpdates, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []PerformanceDebtUnusedIndex
+	for rows.Next() {
+		var r PerformanceDebtUnusedIndex
+		if err := rows.Scan(&r.DatabaseName, &r.TableName, &r.IndexName, &r.UserSeeks, &r.UserScans, &r.UserLookups, &r.UserUpdates); err != nil {
+			continue
+		}
+		r.TotalReads = r.UserSeeks + r.UserScans + r.UserLookups
+		// ServerStartTime and IndexCreateDate are not stored in TimescaleDB;
+		// leave them as zero values — callers treat zero as "unknown".
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 type PerformanceDebtMissingIndex struct {
 	ImprovementScore  float64 // composite ranking score (avg_total_user_cost * avg_user_impact * seeks+scans)
 	AvgUserImpact     float64 // actual estimated improvement % from sys.dm_db_missing_index_group_stats (0–100)
@@ -106,15 +157,24 @@ type PerformanceDebtMissingIndex struct {
 	InequalityColumns string
 	IncludedColumns   string
 	CreateStatement   string
+	ServerStartTime   time.Time
 }
 
-func (c *SqlServerRepository) FetchMissingIndexRecommendations(ctx context.Context, instanceName, databaseName string, limit int) ([]PerformanceDebtMissingIndex, error) {
+func (c *SqlServerRepository) FetchMissingIndexRecommendations(ctx context.Context, serverID uuid.UUID, instanceName, databaseName string, limit int) ([]PerformanceDebtMissingIndex, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	// Cache-first: read from sqlserver_missing_indexes (populated by MissingIndexCollector every 6h).
+	if c.LocalPool != nil {
+		rows, err := c.fetchMissingIndexesFromTS(ctx, serverID, databaseName, limit)
+		if err == nil && len(rows) > 0 {
+			return rows, nil
+		}
+	}
+	// Fallback: live DMV query.
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
-	}
-	if limit <= 0 {
-		limit = 25
 	}
 
 	q := fmt.Sprintf(`
@@ -131,15 +191,16 @@ func (c *SqlServerRepository) FetchMissingIndexRecommendations(ctx context.Conte
 				ISNULL(mid.equality_columns, '') +
 				CASE WHEN mid.equality_columns IS NOT NULL AND mid.inequality_columns IS NOT NULL THEN ',' ELSE '' END +
 				ISNULL(mid.inequality_columns, '') + ')' +
-				ISNULL(' INCLUDE (' + mid.included_columns + ')', '') AS create_statement
+				ISNULL(' INCLUDE (' + mid.included_columns + ')', '') AS create_statement,
+			(SELECT TOP 1 sqlserver_start_time FROM sys.dm_os_sys_info) AS server_start_time
 		FROM sys.dm_db_missing_index_group_stats migs
 		JOIN sys.dm_db_missing_index_groups mig
 		  ON migs.group_handle = mig.index_group_handle
 		JOIN sys.dm_db_missing_index_details mid
 		  ON mig.index_handle = mid.index_handle
 		WHERE mid.database_id = DB_ID()
-		  AND migs.user_seeks >= 100
-		  AND (migs.avg_total_user_cost * migs.avg_user_impact * (migs.user_seeks + migs.user_scans)) >= 500
+		  AND migs.user_seeks >= 500
+		  AND (migs.avg_total_user_cost * migs.avg_user_impact * (migs.user_seeks + migs.user_scans)) >= 5000
 		ORDER BY improvement_score DESC;
 	`, quoteDb(databaseName), limit)
 
@@ -155,8 +216,54 @@ func (c *SqlServerRepository) FetchMissingIndexRecommendations(ctx context.Conte
 	out := make([]PerformanceDebtMissingIndex, 0, limit)
 	for rows.Next() {
 		var r PerformanceDebtMissingIndex
-		if err := rows.Scan(&r.ImprovementScore, &r.AvgUserImpact, &r.TableName, &r.EqualityColumns, &r.InequalityColumns, &r.IncludedColumns, &r.CreateStatement); err != nil {
+		if err := rows.Scan(&r.ImprovementScore, &r.AvgUserImpact, &r.TableName, &r.EqualityColumns, &r.InequalityColumns, &r.IncludedColumns, &r.CreateStatement, &r.ServerStartTime); err != nil {
 			continue
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (c *SqlServerRepository) fetchMissingIndexesFromTS(ctx context.Context, serverID uuid.UUID, databaseName string, limit int) ([]PerformanceDebtMissingIndex, error) {
+	const q = `
+		SELECT table_name, schema_name, equality_columns, inequality_columns, included_columns,
+		       user_seeks, user_scans, avg_total_user_cost, avg_user_impact, improvement_score
+		FROM sqlserver_missing_indexes
+		WHERE server_id = $1 AND database_name = $2
+		  AND capture_timestamp = (
+		      SELECT MAX(capture_timestamp) FROM sqlserver_missing_indexes
+		      WHERE server_id = $1 AND database_name = $2
+		  )
+		ORDER BY improvement_score DESC
+		LIMIT $3`
+	rows, err := c.LocalPool.Query(ctx, q, serverID, databaseName, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []PerformanceDebtMissingIndex
+	for rows.Next() {
+		var r PerformanceDebtMissingIndex
+		var schemaName string
+		var userSeeks, userScans int64
+		var avgCost float64
+		if err := rows.Scan(&r.TableName, &schemaName, &r.EqualityColumns, &r.InequalityColumns,
+			&r.IncludedColumns, &userSeeks, &userScans, &avgCost, &r.AvgUserImpact, &r.ImprovementScore); err != nil {
+			continue
+		}
+		// Build CREATE INDEX statement from stored columns.
+		cols := r.EqualityColumns
+		if r.InequalityColumns != "" {
+			if cols != "" {
+				cols += ", "
+			}
+			cols += r.InequalityColumns
+		}
+		r.CreateStatement = fmt.Sprintf("CREATE INDEX [IX_SQLOPTIMA_%s_%s] ON [%s].[%s] (%s)",
+			schemaName, r.TableName, schemaName, r.TableName, cols)
+		if r.IncludedColumns != "" {
+			r.CreateStatement += " INCLUDE (" + r.IncludedColumns + ")"
 		}
 		out = append(out, r)
 	}
@@ -172,19 +279,27 @@ type PerformanceDebtIndexFrag struct {
 	PageCount  int64
 }
 
-func (c *SqlServerRepository) FetchIndexFragmentation(ctx context.Context, instanceName, databaseName string, minFragPct float64, minPages int64, limit int) ([]PerformanceDebtIndexFrag, error) {
-	db, ok := c.GetConn(instanceName)
-	if !ok || db == nil {
-		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
-	}
+func (c *SqlServerRepository) FetchIndexFragmentation(ctx context.Context, serverID uuid.UUID, instanceName, databaseName string, minFragPct float64, minPages int64, limit int) ([]PerformanceDebtIndexFrag, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	if minFragPct <= 0 {
-		minFragPct = 10 // collect both WARNING (10-30%) and CRITICAL (>30%) ranges
+		minFragPct = 5.0
 	}
 	if minPages <= 0 {
 		minPages = 100
+	}
+	// Cache-first: read from sqlserver_index_fragmentation (populated every 6h by IndexFragmentationCollector).
+	if c.LocalPool != nil {
+		rows, err := c.fetchIndexFragmentationFromTS(ctx, serverID, databaseName, minFragPct, minPages, limit)
+		if err == nil && len(rows) > 0 {
+			return rows, nil
+		}
+	}
+	// Fallback: live DMV query (SAMPLED mode — less impact than LIMITED for large tables).
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
 	}
 
 	q := fmt.Sprintf(`
@@ -197,7 +312,7 @@ func (c *SqlServerRepository) FetchIndexFragmentation(ctx context.Context, insta
 			ps.index_id,
 			ps.avg_fragmentation_in_percent,
 			ps.page_count
-		FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') ps
+		FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'SAMPLED') ps
 		JOIN sys.indexes i
 		  ON ps.object_id = i.object_id AND ps.index_id = i.index_id
 		JOIN sys.objects o
@@ -207,6 +322,7 @@ func (c *SqlServerRepository) FetchIndexFragmentation(ctx context.Context, insta
 		  AND ps.page_count >= %d
 		  AND i.is_disabled = 0
 		  AND i.is_hypothetical = 0
+		  AND i.type NOT IN (5, 6)          -- exclude Columnstore
 		  AND OBJECTPROPERTY(ps.object_id, 'IsUserTable') = 1
 		ORDER BY ps.avg_fragmentation_in_percent DESC;
 	`, quoteDb(databaseName), limit, minFragPct, minPages)
@@ -231,6 +347,37 @@ func (c *SqlServerRepository) FetchIndexFragmentation(ctx context.Context, insta
 	return out, rows.Err()
 }
 
+func (c *SqlServerRepository) fetchIndexFragmentationFromTS(ctx context.Context, serverID uuid.UUID, databaseName string, minFragPct float64, minPages int64, limit int) ([]PerformanceDebtIndexFrag, error) {
+	const q = `
+		SELECT schema_name, table_name, index_name, index_id,
+		       avg_fragmentation_pct, page_count
+		FROM sqlserver_index_fragmentation
+		WHERE server_id = $1 AND database_name = $2
+		  AND avg_fragmentation_pct >= $3
+		  AND page_count >= $4
+		  AND capture_timestamp = (
+		      SELECT MAX(capture_timestamp) FROM sqlserver_index_fragmentation
+		      WHERE server_id = $1 AND database_name = $2
+		  )
+		ORDER BY avg_fragmentation_pct DESC
+		LIMIT $5`
+	rows, err := c.LocalPool.Query(ctx, q, serverID, databaseName, minFragPct, minPages, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []PerformanceDebtIndexFrag
+	for rows.Next() {
+		var r PerformanceDebtIndexFrag
+		if err := rows.Scan(&r.SchemaName, &r.TableName, &r.IndexName, &r.IndexID, &r.FragPct, &r.PageCount); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 type PerformanceDebtStaleStats struct {
 	TableName           string
 	StatsName           string
@@ -238,6 +385,8 @@ type PerformanceDebtStaleStats struct {
 	Rows                int64
 	ModificationCounter int64
 	NoRecompute         bool
+	AutoCreated         bool
+	IsIncremental       bool
 }
 
 func (c *SqlServerRepository) FetchStaleStatistics(ctx context.Context, instanceName, databaseName string, limit int) ([]PerformanceDebtStaleStats, error) {
@@ -262,7 +411,9 @@ func (c *SqlServerRepository) FetchStaleStatistics(ctx context.Context, instance
 			STATS_DATE(s.object_id, s.stats_id) AS last_updated,
 			COALESCE(sp.rows,0) AS rows,
 			COALESCE(sp.modification_counter,0) AS modification_counter,
-			s.no_recompute
+			s.no_recompute,
+			s.auto_created,
+			s.is_incremental
 		FROM sys.stats s
 		CROSS APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp
 		WHERE OBJECTPROPERTY(s.object_id, 'IsUserTable') = 1
@@ -290,7 +441,7 @@ func (c *SqlServerRepository) FetchStaleStatistics(ctx context.Context, instance
 	out := make([]PerformanceDebtStaleStats, 0, limit)
 	for rows.Next() {
 		var r PerformanceDebtStaleStats
-		if err := rows.Scan(&r.TableName, &r.StatsName, &r.LastUpdated, &r.Rows, &r.ModificationCounter, &r.NoRecompute); err != nil {
+		if err := rows.Scan(&r.TableName, &r.StatsName, &r.LastUpdated, &r.Rows, &r.ModificationCounter, &r.NoRecompute, &r.AutoCreated, &r.IsIncremental); err != nil {
 			continue
 		}
 		out = append(out, r)
@@ -302,6 +453,8 @@ type PerformanceDebtFileGrowth struct {
 	FileName        string
 	FileType        int     // 0=data, 1=log
 	SizeMB          float64
+	UsedMB          float64
+	PctFull         float64
 	MaxSizeMB       float64 // -1 = unlimited
 	Growth          int64   // pages when fixed, percentage value when percent-based
 	IsPercentGrowth bool
@@ -322,8 +475,12 @@ func (c *SqlServerRepository) FetchAutogrowthRisks(ctx context.Context, instance
 		SELECT /* SQL_OPTIMA */ TOP (%d)
 			name,
 			type,
-			size*8/1024.0 AS size_mb,
-			CASE WHEN max_size IN (-1, 268435456) THEN -1 ELSE max_size*8/1024.0 END AS max_size_mb,
+			size * 8 / 1024.0                                           AS size_mb,
+			CAST(FILEPROPERTY(name, 'SpaceUsed') AS FLOAT) * 8 / 1024  AS used_mb,
+			CAST(FILEPROPERTY(name, 'SpaceUsed') AS FLOAT) * 100.0
+				/ NULLIF(size, 0)                                       AS pct_full,
+			CASE WHEN max_size IN (-1, 268435456) THEN -1
+				 ELSE max_size * 8 / 1024.0 END                        AS max_size_mb,
 			growth,
 			is_percent_growth
 		FROM sys.database_files
@@ -341,7 +498,7 @@ func (c *SqlServerRepository) FetchAutogrowthRisks(ctx context.Context, instance
 	out := make([]PerformanceDebtFileGrowth, 0, limit)
 	for rows.Next() {
 		var r PerformanceDebtFileGrowth
-		if err := rows.Scan(&r.FileName, &r.FileType, &r.SizeMB, &r.MaxSizeMB, &r.Growth, &r.IsPercentGrowth); err != nil {
+		if err := rows.Scan(&r.FileName, &r.FileType, &r.SizeMB, &r.UsedMB, &r.PctFull, &r.MaxSizeMB, &r.Growth, &r.IsPercentGrowth); err != nil {
 			continue
 		}
 		out = append(out, r)
@@ -349,25 +506,58 @@ func (c *SqlServerRepository) FetchAutogrowthRisks(ctx context.Context, instance
 	return out, rows.Err()
 }
 
-func (c *SqlServerRepository) FetchVLFCount(ctx context.Context, instanceName, databaseName string) (int64, error) {
+type VLFStats struct {
+	VLFCount         int64
+	LogSpaceUsedMB   float64
+	LogReuseWaitDesc string
+}
+
+func (c *SqlServerRepository) FetchVLFCount(ctx context.Context, instanceName, databaseName string) (VLFStats, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
-		return 0, fmt.Errorf("no connection for instance: %s", instanceName)
+		return VLFStats{}, fmt.Errorf("no connection for instance: %s", instanceName)
 	}
-	q := fmt.Sprintf(`
-		/* SQL_OPTIMA */ 
+
+	majorVersion := c.GetSqlMajorVersion(ctx, instanceName)
+
+	var stats VLFStats
+	var q string
+
+	if majorVersion >= 14 { // SQL Server 2017+
+		q = fmt.Sprintf(`
+			/* SQL_OPTIMA */
+			USE %s;
+			SELECT /* SQL_OPTIMA */
+				total_vlf_count,
+				active_log_size_mb,
+				log_truncation_holdup_reason
+			FROM sys.dm_db_log_stats(DB_ID());
+		`, quoteDb(databaseName))
+
+		qctx, cancel := WithQueryTimeout(ctx, 5*time.Second)
+		defer cancel()
+		err := db.QueryRowContext(qctx, q).Scan(&stats.VLFCount, &stats.LogSpaceUsedMB, &stats.LogReuseWaitDesc)
+		if err == nil {
+			return stats, nil
+		}
+		slog.Warn(fmt.Sprintf("[SQLSERVER] FetchVLFCount (dm_db_log_stats) failed for %s/%s, falling back: %v", instanceName, databaseName, err))
+	}
+
+	// Legacy method
+	q = fmt.Sprintf(`
+		/* SQL_OPTIMA */
 		USE %s;
-		SELECT /* SQL_OPTIMA */   COUNT(*) AS vlf_count
+		SELECT /* SQL_OPTIMA */ COUNT(*) AS vlf_count
 		FROM sys.dm_db_log_info(DB_ID());
 	`, quoteDb(databaseName))
-	var n int64
-	ctx, cancel := WithQueryTimeout(ctx, 0)
+
+	qctx, cancel := WithQueryTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if err := db.QueryRowContext(ctx, q).Scan(&n); err != nil {
+	if err := db.QueryRowContext(qctx, q).Scan(&stats.VLFCount); err != nil {
 		slog.Error(fmt.Sprintf("[SQLSERVER] FetchVLFCount error for %s/%s: %v", instanceName, databaseName, err))
-		return 0, err
+		return stats, err
 	}
-	return n, nil
+	return stats, nil
 }
 
 func (c *SqlServerRepository) FetchLastFullBackupAgeHours(ctx context.Context, instanceName, databaseName string) (float64, error) {
@@ -377,7 +567,7 @@ func (c *SqlServerRepository) FetchLastFullBackupAgeHours(ctx context.Context, i
 	}
 	q := `
 		/* SQL_OPTIMA */ SELECT   TOP 1 DATEDIFF(MINUTE, backup_finish_date, GETUTCDATE()) / 60.0 AS age_hours
-		FROM msdb.dbo.backupset
+		FROM msdb.dbo.backupset WITH (NOLOCK)
 		WHERE database_name = @p1
 		  AND type = 'D'
 		ORDER BY backup_finish_date DESC;
@@ -491,7 +681,7 @@ func (c *SqlServerRepository) FetchLastLogBackupAgeHours(ctx context.Context, in
 	}
 	q := `
 		/* SQL_OPTIMA */ SELECT TOP 1 DATEDIFF(MINUTE, backup_finish_date, GETUTCDATE()) / 60.0 AS age_hours
-		FROM msdb.dbo.backupset
+		FROM msdb.dbo.backupset WITH (NOLOCK)
 		WHERE database_name = @p1
 		  AND type = 'L'
 		ORDER BY backup_finish_date DESC;

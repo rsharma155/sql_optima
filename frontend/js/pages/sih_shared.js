@@ -41,7 +41,15 @@ window.sihShared = (function() {
             },
             options: {
                 responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                plugins: { 
+                    legend: { display: false }, 
+                    tooltip: { 
+                        enabled: true,
+                        callbacks: {
+                            label: (context) => fmt(context.raw, 1) + ' MB'
+                        }
+                    } 
+                },
                 scales: { x: { display: false }, y: { display: false } }
             }
         });
@@ -52,10 +60,14 @@ window.sihShared = (function() {
         if (!canvas) return;
         const existing = Chart.getChart(canvas);
         if (existing) existing.destroy();
+        if (!growth || !growth.length) {
+            canvas.parentElement.innerHTML = '<p class="text-center text-muted p-5" style="font-size:0.8rem;"><i class="fa-solid fa-chart-line mb-2 d-block" style="font-size:1.5rem; opacity:0.3;"></i>No growth history data available for this window.</p>';
+            return;
+        }
         const labels = growth.map(p => new Date(p.bucket).toLocaleDateString());
         const datasets = [
-            { label: 'Table Data', data: growth.map(p => p.table_size_mb), borderColor: '#3b82f6', backgroundColor: '#3b82f622', fill: true, tension: 0.3 },
-            { label: 'Indexes',    data: growth.map(p => p.index_size_mb), borderColor: '#10b981', backgroundColor: '#10b98122', fill: true, tension: 0.3 }
+            { label: 'Table Data', data: growth.map(p => p.table_size_mb), borderColor: '#3b82f6', backgroundColor: '#3b82f622', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 5 },
+            { label: 'Indexes',    data: growth.map(p => p.index_size_mb), borderColor: '#10b981', backgroundColor: '#10b98122', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 5 }
         ];
         new Chart(canvas, {
             type: 'line',
@@ -63,10 +75,30 @@ window.sihShared = (function() {
             options: {
                 responsive: true, maintainAspectRatio: false,
                 scales: {
-                    y: { beginAtZero: false, ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
-                    x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { display: false } }
+                    y: { 
+                        beginAtZero: false, 
+                        ticks: { color: '#94a3b8', font: { size: 10 } }, 
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        title: { display: true, text: 'Size (MB)', color: '#94a3b8', font: { size: 10 } }
+                    },
+                    x: { 
+                        ticks: { color: '#94a3b8', font: { size: 10 } }, 
+                        grid: { display: false },
+                        title: { display: true, text: 'Date', color: '#94a3b8', font: { size: 10 } }
+                    }
                 },
-                plugins: { legend: { labels: { color: '#94a3b8', font: { size: 10 } } } }
+                plugins: { 
+                    legend: { labels: { color: '#94a3b8', font: { size: 10 } } },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: function(context) {
+                                return context.dataset.label + ': ' + fmt(context.raw, 1) + ' MB';
+                            }
+                        }
+                    }
+                }
             }
         });
     }
@@ -76,8 +108,19 @@ window.sihShared = (function() {
         if (!canvas) return;
         const existing = Chart.getChart(canvas);
         if (existing) existing.destroy();
+        if (!topTables || !topTables.length) {
+            canvas.parentElement.innerHTML = '<p class="text-center text-muted p-5" style="font-size:0.8rem;"><i class="fa-solid fa-arrow-up-right-dots mb-2 d-block" style="font-size:1.5rem; opacity:0.3;"></i>No significant growth detected in the last 7 days.</p>';
+            return;
+        }
         const labels = topTables.map(t => `${t.schema_name}.${t.table_name}`);
-        const data   = topTables.map(t => Number(t.value) || 0);
+        const data   = topTables.map(t => {
+            const growth = Number(t.value) || 0;
+            const base   = Number(t.value2) || 0;
+            if (mode === 'pct') {
+                return base > 0 ? (growth / base) * 100 : 0;
+            }
+            return growth;
+        });
         const label  = mode === 'pct' ? 'Growth (%)' : 'Growth (MB)';
         new Chart(canvas, {
             type: 'bar',
@@ -85,10 +128,25 @@ window.sihShared = (function() {
             options: {
                 indexAxis: 'y', responsive: true, maintainAspectRatio: false,
                 scales: {
-                    x: { ticks: { color: '#94a3b8', font: { size: 9 } } },
-                    y: { ticks: { color: '#94a3b8', font: { size: 9 }, maxRotation: 0 } }
+                    x: { 
+                        ticks: { color: '#94a3b8', font: { size: 9 } },
+                        title: { display: true, text: mode === 'pct' ? 'Growth Percentage (%)' : 'Growth Size (MB)', color: '#94a3b8', font: { size: 10 } }
+                    },
+                    y: { 
+                        ticks: { color: '#94a3b8', font: { size: 9 }, maxRotation: 0 },
+                        title: { display: true, text: 'Table Name', color: '#94a3b8', font: { size: 10 } }
+                    }
                 },
-                plugins: { legend: { labels: { color: '#94a3b8', font: { size: 10 } } } }
+                plugins: { 
+                    legend: { labels: { color: '#94a3b8', font: { size: 10 } } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return label + ': ' + fmt(context.raw, 1) + (mode === 'pct' ? '%' : ' MB');
+                            }
+                        }
+                    }
+                }
             }
         });
     }
@@ -116,10 +174,30 @@ window.sihShared = (function() {
             },
             options: {
                 indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { position: 'top', labels: { color: '#94a3b8', font: { size: 10 } } }, tooltip: { mode: 'index', intersect: false } },
+                plugins: { 
+                    legend: { position: 'top', labels: { color: '#94a3b8', font: { size: 10 } } }, 
+                    tooltip: { 
+                        mode: 'index', 
+                        intersect: false,
+                        callbacks: {
+                            footer: (items) => {
+                                const total = items.reduce((s, i) => s + i.raw, 0);
+                                return 'Total Operations: ' + total.toLocaleString();
+                            }
+                        }
+                    } 
+                },
                 scales: {
-                    x: { stacked: true, ticks: { color: '#94a3b8', font: { size: 9 } } },
-                    y: { stacked: true, ticks: { color: '#94a3b8', font: { size: 9 }, maxRotation: 0 } }
+                    x: { 
+                        stacked: true, 
+                        ticks: { color: '#94a3b8', font: { size: 9 } },
+                        title: { display: true, text: 'Operation Count', color: '#94a3b8', font: { size: 10 } }
+                    },
+                    y: { 
+                        stacked: true, 
+                        ticks: { color: '#94a3b8', font: { size: 9 }, maxRotation: 0 },
+                        title: { display: true, text: 'Table Name', color: '#94a3b8', font: { size: 10 } }
+                    }
                 }
             }
         });
@@ -194,7 +272,8 @@ window.sihShared = (function() {
             const ratio  = seeks > 0 ? (scans / seeks).toFixed(1) : '∞';
             const risk   = scans > seeks * 20 ? 'danger' : (scans > seeks * 5 ? 'warning' : 'info');
             const riskLbl= risk === 'danger' ? 'CRITICAL' : (risk === 'warning' ? 'HIGH' : 'MEDIUM');
-            return `<tr style="border-left: 3px solid var(--${risk});">
+            const tooltip = `Table: ${r.schema_name}.${r.table_name}\nScans: ${scans.toLocaleString()}\nSeeks: ${seeks.toLocaleString()}\nScan/Seek Ratio: ${ratio}\nRisk: ${riskLbl}`;
+            return `<tr style="border-left: 3px solid var(--${risk});" title="${escH(tooltip)}">
                 <td><strong>${escH(r.schema_name)}.${escH(r.table_name)}</strong></td>
                 <td class="text-right">${fmt(scans, 0)}</td>
                 <td class="text-right">${fmt(seeks, 0)}</td>
@@ -211,7 +290,8 @@ window.sihShared = (function() {
             const idxMB   = Number(r.value)  || 0;
             const tblMB   = Number(r.value2) || 0;
             const pctTbl  = tblMB > 0 ? ((idxMB / tblMB) * 100).toFixed(1) : '--';
-            return `<tr>
+            const tooltip = `Index: ${r.index_name}\nTable: ${r.schema_name}.${r.table_name}\nSize: ${idxMB.toFixed(1)} MB\nPercentage of Table: ${pctTbl}%`;
+            return `<tr title="${escH(tooltip)}">
                 <td><strong>${escH(r.index_name)}</strong><br>
                     <span class="text-muted" style="font-size:0.6rem;">${escH(r.schema_name)}.${escH(r.table_name)}</span></td>
                 <td class="text-right">${fmt(idxMB, 1)}</td>
@@ -228,14 +308,15 @@ window.sihShared = (function() {
             const idxMB   = Number(t.value2) || 0;
             const dataMB  = Math.max(0, totalMB - idxMB);
             const idxPct  = totalMB > 0 ? ((idxMB / totalMB) * 100).toFixed(1) : '0.0';
-            return `<tr style="cursor:pointer;" data-action="${drilldownAction}"
+            const tooltip = `Table: ${t.schema_name}.${t.table_name}\nTotal Size: ${totalMB.toFixed(1)} MB\nData: ${dataMB.toFixed(1)} MB\nIndexes: ${idxMB.toFixed(1)} MB (${idxPct}%)`;
+            return `<tr style="cursor:pointer;" data-action="${drilldownAction}" title="${escH(tooltip)}"
                         data-db="${escH(t.db_name)}" data-schema="${escH(t.schema_name)}" data-table="${escH(t.table_name)}">
                 <td><strong>${escH(t.schema_name)}.${escH(t.table_name)}</strong></td>
                 <td class="text-right">${fmt(totalMB, 1)}</td>
                 <td class="text-right">${fmt(dataMB, 1)}</td>
                 <td class="text-right">${fmt(idxMB, 1)}</td>
                 <td class="text-right">${idxPct}%</td>
-                <td><button class="btn btn-xs btn-outline">▶</button></td>
+                <td><button class="btn btn-xs btn-outline" title="View detailed index usage">▶</button></td>
             </tr>`;
         }).join('') || emptyRow(6, 'No table data for selected window.');
     }
@@ -256,7 +337,8 @@ window.sihShared = (function() {
             const dropSql = isMs
                 ? `DROP INDEX [${idx.index_name}] ON [${idx.schema_name}].[${idx.table_name}];`
                 : `DROP INDEX IF EXISTS ${idx.schema_name}.${idx.index_name};`;
-            return `<tr>
+            const tooltip = `Index: ${idx.index_name}\nTable: ${idx.schema_name}.${idx.table_name}\nSize: ${sizeMB.toFixed(1)} MB\nSeeks in Window: ${seeks}\nLast User Seek: ${lastSeen}\nRecommendation: ${rec}`;
+            return `<tr title="${escH(tooltip)}">
                 <td>
                     <span class="text-muted" style="font-size:0.6rem;">${escH(idx.schema_name)}.${escH(idx.table_name)}</span><br>
                     <strong>${escH(idx.index_name)}</strong>
@@ -302,7 +384,8 @@ window.sihShared = (function() {
                     const tn = String(p.table_name   || '');
                     const isMs = engine === 'sqlserver';
                     const dropA = isMs ? `DROP INDEX [${ia}] ON [${sn}].[${tn}];` : `DROP INDEX IF EXISTS ${sn}.${ia};`;
-                    return `<div style="display:flex; align-items:center; gap:0.5rem; font-size:0.72rem; padding:0.25rem 0.5rem; background:rgba(255,255,255,0.03); border-radius:4px; margin-top:0.2rem; flex-wrap:wrap;">
+                    const tooltip = `Potential Duplicate Indexes:\n- ${ia}\n- ${ib}\nKeys: ${ka}\nThese indexes share the same leading columns and can often be consolidated.`;
+                    return `<div style="display:flex; align-items:center; gap:0.5rem; font-size:0.72rem; padding:0.25rem 0.5rem; background:rgba(255,255,255,0.03); border-radius:4px; margin-top:0.2rem; flex-wrap:wrap;" title="${escH(tooltip)}">
                         <span class="badge badge-warning">DUP</span>
                         <span><strong>${escH(ia)}</strong> vs <strong>${escH(ib)}</strong></span>
                         <span class="text-muted">Keys: ${escH(ka)}</span>
@@ -328,19 +411,21 @@ window.sihShared = (function() {
         }
         const sevCls  = { critical: 'danger', warning: 'warning', info: 'info' };
         const sevBdr  = { critical: 'var(--danger)', warning: 'var(--warning)', info: 'var(--info, #3b82f6)' };
-        el.innerHTML = sorted.map(ins => `
+        el.innerHTML = sorted.map(ins => {
+            const tooltip = `Severity: ${ins.severity.toUpperCase()}\n${ins.message}`;
+            return `
             <div style="display:flex; align-items:center; gap:0.75rem; padding:0.4rem 0.6rem; margin-bottom:0.3rem;
-                        background:rgba(255,255,255,0.03); border-radius:5px; border-left:3px solid ${sevBdr[ins.severity] || 'transparent'};">
+                        background:rgba(255,255,255,0.03); border-radius:5px; border-left:3px solid ${sevBdr[ins.severity] || 'transparent'};" title="${escH(tooltip)}">
                 <span class="badge badge-${sevCls[ins.severity] || 'secondary'}" style="min-width:4.5rem; text-align:center; flex-shrink:0;">
                     ${String(ins.severity || 'info').toUpperCase()}
                 </span>
                 <span style="flex:1; font-size:0.82rem;">${escH(ins.message)}</span>
                 ${ins.table_name ? `<button class="btn btn-xs btn-outline sih-insight-view"
-                    data-db="${escH(ins.db_name || '')}" data-schema="${escH(ins.schema_name || '')}" data-table="${escH(ins.table_name || '')}">
+                    data-db="${escH(ins.db_name || '')}" data-schema="${escH(ins.schema_name || '')}" data-table="${escH(ins.table_name || '')}" title="View details for ${ins.table_name}">
                     View
                 </button>` : ''}
             </div>
-        `).join('');
+        `; }).join('');
     }
 
     // Wire copy-to-clipboard on any sih-copy-drop buttons within container

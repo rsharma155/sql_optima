@@ -7,6 +7,78 @@
  * Copyright (c) 2026 Ravi Sharma
  * SPDX-License-Identifier: MIT
  */
+/* ---- Title inline status badge ---- */
+.pgss-title-left {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+.pgss-title-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    line-height: 1.4;
+    max-width: 420px;
+}
+.pgss-title-status-warn {
+    color: var(--warning, #f59e0b);
+    background: rgba(245,158,11,0.1);
+    border: 1px solid rgba(245,158,11,0.2);
+}
+.pgss-title-status-info {
+    color: var(--accent-blue, #38bdf8);
+    background: rgba(56,189,248,0.08);
+    border: 1px solid rgba(56,189,248,0.15);
+}
+
+/* ---- Title time range pickers + Apply ---- */
+.pgss-title-timerange {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+.pgss-tr-label {
+    font-size: 0.62rem;
+    color: var(--text-muted, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+}
+.pgss-tr-input {
+    font-size: 0.72rem !important;
+    padding: 2px 5px !important;
+    height: 26px !important;
+    width: 152px;
+}
+.pgss-tr-apply-btn {
+    padding: 2px 9px;
+    font-size: 0.72rem;
+    height: 26px;
+    white-space: nowrap;
+}
+
+/* ---- Filter bar Apply — compact ---- */
+.pgss-filter-apply-compact {
+    padding: 2px 8px;
+    font-size: 0.7rem;
+    line-height: 1.4;
+}
+
+/* ---- KPI Strip compact sizing ---- */
+#pgss-kpi-strip .h-kpi {
+    height: 62px !important;
+}
+#pgss-kpi-strip .metric-card-compact {
+    padding: 0.2rem 0.5rem;
+}
+#pgss-kpi-strip .metric-value {
+    font-size: 0.95rem;
+}
+
 /* ---- PGSS Regression table red theme ---- */
 .pgss-regression-table tr td:nth-child(4) { font-weight: 600; }
 .pgss-regression-table tr:hover { background: rgba(248,113,113,0.08); }
@@ -169,7 +241,7 @@
 .pgss-table-scroll {
     overflow-x: auto;
     overflow-y: auto;
-    max-height: 440px;
+    max-height: 480px;
 }
 
 /* ---- Responsive adjustments for pgss layout ---- */
@@ -245,10 +317,15 @@
     font-size: 0.8rem;
     padding: 0.3rem 0.5rem;
     border-radius: 5px;
-    background: var(--input-bg, rgba(15,23,42,0.6));
-    border: 1px solid var(--border, rgba(255,255,255,0.12));
-    color: var(--text-primary, #e2e8f0);
+    background: var(--bg-tertiary, rgba(35,39,56,0.95));
+    border: 1px solid var(--border-highlight, rgba(255,255,255,0.2));
+    color: var(--text-primary, #f8f9fa);
     min-width: 120px;
+}
+.pgss-filter-bar select:focus,
+.pgss-filter-bar input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent-blue, #3b82f6);
 }
 .pgss-filter-actions { display: flex; gap: 0.4rem; align-items: flex-end; }
 
@@ -307,7 +384,122 @@
     padding: 0.3rem 0.6rem;
     font-size: 0.8rem;
     border-radius: 5px;
-    background: var(--input-bg, rgba(15,23,42,0.6));
+    background: var(--bg-tertiary, rgba(35,39,56,0.95));
+    border: 1px solid var(--border-highlight, rgba(255,255,255,0.2));
+    color: var(--text-primary, #f8f9fa);
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.pgss-inline-search::placeholder {
+    color: var(--text-muted, #6c757d);
+}
+.pgss-inline-search:focus {
+    border-color: var(--accent-blue, #3b82f6);
+    box-shadow: 0 0 0 2px rgba(59,130,246,0.2);
+}
+
+/* ---- Top Queries toolbar (search + row count) ---- */
+.pgss-tq-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+.pgss-row-count {
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--text-muted, #64748b);
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---- Resizable table scroll container ---- */
+.pgss-table-resizable {
+    resize: vertical;
+    overflow: auto;
+    min-height: 220px;
+    max-height: 70vh;
+    border: 1px solid var(--border-color, rgba(255,255,255,0.1));
+    border-radius: 6px;
+}
+
+/* ---- Captured-at timestamp cell ---- */
+.pgss-grid .c-captured-ts {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-secondary, #94a3b8);
+    white-space: nowrap;
+    text-align: center;
+    letter-spacing: 0.01em;
+}
+
+/* ---- Pagination bar ---- */
+.pgss-pagination-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    padding: 0.5rem 0 0.25rem;
+}
+.pgss-pg-nav {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-radius: 5px;
     border: 1px solid var(--border, rgba(255,255,255,0.12));
+    background: var(--bg-surface, rgba(30,41,59,0.5));
+    color: var(--text-secondary, #94a3b8);
+    cursor: pointer;
+    font-size: 0.7rem;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+    line-height: 1;
+}
+.pgss-pg-nav:hover:not([disabled]) {
     color: var(--text-primary, #e2e8f0);
+    background: var(--bg-surface-hover, rgba(56,189,248,0.1));
+    border-color: var(--accent, #38bdf8);
+}
+.pgss-pg-nav[disabled] {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+.pgss-pg-nav i { font-size: 0.65rem; }
+.pgss-pg-nums {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+}
+.pgss-pg-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    height: 26px;
+    padding: 0 4px;
+    border-radius: 5px;
+    border: 1px solid var(--border, rgba(255,255,255,0.12));
+    background: var(--bg-surface, rgba(30,41,59,0.5));
+    color: var(--text-secondary, #94a3b8);
+    cursor: pointer;
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.pgss-pg-btn:hover {
+    color: var(--text-primary, #e2e8f0);
+    background: var(--bg-surface-hover, rgba(56,189,248,0.08));
+    border-color: var(--accent-blue, #38bdf8);
+}
+.pgss-pg-btn.active {
+    background: var(--accent, #38bdf8);
+    color: #0f172a;
+    border-color: var(--accent, #38bdf8);
+    font-weight: 700;
+    cursor: default;
 }

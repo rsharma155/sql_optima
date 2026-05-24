@@ -12,11 +12,11 @@
 -- SPDX-License-Identifier: MIT
 
 SELECT 
-    SUM(user_object_reserved_page_count) * 8 / 1024 as user_obj_mb,
-    SUM(internal_object_reserved_page_count) * 8 / 1024 as internal_obj_mb,
-    SUM(version_store_reserved_page_count) * 8 / 1024 as version_store_mb,
-    SUM(unallocated_extent_page_count) * 8 / 1024 as free_mb,
-    (SELECT cntr_value FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Log File(s) Used Size (KB)' AND instance_name = 'tempdb') / 1024 as log_used_mb,
+    ISNULL(SUM(user_object_reserved_page_count) * 8 / 1024, 0) as user_obj_mb,
+    ISNULL(SUM(internal_object_reserved_page_count) * 8 / 1024, 0) as internal_obj_mb,
+    ISNULL(SUM(version_store_reserved_page_count) * 8 / 1024, 0) as version_store_mb,
+    ISNULL(SUM(unallocated_extent_page_count) * 8 / 1024, 0) as free_mb,
+    ISNULL((SELECT cntr_value FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Log File(s) Used Size (KB)' AND instance_name = 'tempdb'), 0) / 1024 as log_used_mb,
     CAST(CASE WHEN EXISTS (
         SELECT 1 FROM sys.dm_os_waiting_tasks 
         WHERE wait_type IN ('PAGELATCH_UP', 'PAGELATCH_SH', 'PAGELATCH_EX', 'PAGELATCH_DT')

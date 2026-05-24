@@ -56,7 +56,7 @@
             database: document.getElementById('ts-db')?.value?.trim() || '',
             username: document.getElementById('ts-user')?.value?.trim() || '',
             password: document.getElementById('ts-pass')?.value || '',
-            ssl_mode: document.getElementById('ts-ssl')?.value || 'require',
+            ssl_mode: document.getElementById('ts-ssl')?.value || 'disable',
             use_vault: !!document.getElementById('ts-vault-toggle')?.checked,
             vault_secret_path: document.getElementById('ts-vault-path')?.value?.trim() || ''
         };
@@ -148,7 +148,7 @@
             '<div class="setup-ref-field setup-ref-field--full"><label for="ts-host"><i class="fa-solid fa-network-wired"></i> Host</label><input class="custom-input" id="ts-host" placeholder="timescaledb.internal" autocomplete="off" /></div>' +
             '<div class="setup-ref-field"><label for="ts-port"><i class="fa-solid fa-hashtag"></i> Port</label><input class="custom-input" id="ts-port" value="5432" inputmode="numeric" autocomplete="off" /></div>' +
             '<div class="setup-ref-field"><label for="ts-db"><i class="fa-solid fa-database"></i> Database</label><input class="custom-input" id="ts-db" placeholder="dbmonitor_metrics" autocomplete="off" /></div>' +
-            '<div class="setup-ref-field"><label for="ts-ssl"><i class="fa-solid fa-lock"></i> SSL mode</label><select class="custom-select" id="ts-ssl"><option value="require" selected>require</option><option value="verify-full">verify-full</option><option value="disable">disable</option></select></div>' +
+            '<div class="setup-ref-field"><label for="ts-ssl"><i class="fa-solid fa-lock"></i> SSL mode</label><select class="custom-select" id="ts-ssl"><option value="disable" selected>disable</option><option value="require">require</option><option value="verify-full">verify-full</option></select></div>' +
             '<div class="setup-ref-field"><label for="ts-user"><i class="fa-solid fa-user"></i> Username</label><input class="custom-input" id="ts-user" placeholder="dbmonitor" autocomplete="off" /></div>' +
             '<div class="setup-ref-field setup-ref-field--pass-span"><label for="ts-pass"><i class="fa-solid fa-key"></i> Password</label><input class="custom-input" id="ts-pass" type="password" autocomplete="new-password" /></div>' +
             '</div>' +

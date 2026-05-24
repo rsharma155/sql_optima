@@ -3,7 +3,6 @@ package scheduler
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -18,14 +17,39 @@ func (m *MockConfigRepo) GetActiveConfigs(ctx context.Context) ([]Config, error)
 	return args.Get(0).([]Config), args.Error(1)
 }
 
-func TestScheduler_ShouldRun(t *testing.T) {
-	lastRun := time.Now().Add(-60 * time.Second)
-	frequency := 30
+func TestJobSchedulerService_GetJobsToRun(t *testing.T) {
+	ctx := context.Background()
+	mockRepo := new(MockConfigRepo)
+	scheduler := NewJobSchedulerService(mockRepo)
 
-	// If now - lastRun >= frequency, it should run
-	assert.True(t, time.Since(lastRun) >= time.Duration(frequency)*time.Second)
+	configs := []Config{
+		{Name: "Job1", FrequencySeconds: 30},
+		{Name: "Job2", FrequencySeconds: 60},
+	}
 
-	lastRun = time.Now().Add(-10 * time.Second)
-	frequency = 30
-	assert.False(t, time.Since(lastRun) >= time.Duration(frequency)*time.Second)
+	mockRepo.On("GetActiveConfigs", ctx).Return(configs, nil).Once()
+
+	// 1. Initial run: all jobs should run
+	jobs, err := scheduler.GetJobsToRun(ctx)
+	assert.NoError(t, err)
+	assert.Len(t, jobs, 2)
+	assert.Equal(t, "Job1", jobs[0].Name)
+	assert.Equal(t, "Job2", jobs[1].Name)
+
+	// Mark Job1 as run
+	scheduler.MarkAsRun("Job1")
+
+	// 2. Immediate second check: Job1 should NOT run, Job2 SHOULD run
+	mockRepo.On("GetActiveConfigs", ctx).Return(configs, nil).Once()
+	jobs, err = scheduler.GetJobsToRun(ctx)
+	assert.NoError(t, err)
+	assert.Len(t, jobs, 1)
+	assert.Equal(t, "Job2", jobs[0].Name)
+
+	// 3. Fast forward time (conceptual): This is hard with real time.Now()
+	// but we can test the logic by setting a manual lastRun if we refactored scheduler
+	// For now, let's verify error handling
+	mockRepo.On("GetActiveConfigs", ctx).Return([]Config{}, assert.AnError).Once()
+	_, err = scheduler.GetJobsToRun(ctx)
+	assert.Error(t, err)
 }

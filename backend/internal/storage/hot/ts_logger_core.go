@@ -55,6 +55,7 @@ type TimescaleLogger struct {
 	prevCumulSnapHash map[uuid.UUID]uint64
 	prevFileIOHashKey map[string]uint64  // key: serverID+":"+dbName+":"+fileName
 	prevConnHashByKey map[string]uint64  // key: serverID+":"+dbName+":"+loginName
+	prevVolumeHashByKey map[string]uint64 // key: serverID+":"+dbName+":"+logicalFileName
 }
 
 func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
@@ -92,6 +93,7 @@ func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
 		prevCumulSnapHash:          make(map[uuid.UUID]uint64),
 		prevFileIOHashKey:          make(map[string]uint64),
 		prevConnHashByKey:          make(map[string]uint64),
+		prevVolumeHashByKey:        make(map[string]uint64),
 	}
 }
 

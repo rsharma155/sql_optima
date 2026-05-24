@@ -12,6 +12,11 @@ Please **do not** open a public GitHub issue for security problems.
 ## Threat model
 See `docs/threat_model.md` for assets, boundaries, and mitigations.
 
+## Data Privacy & Telemetry
+- **No Phone Home**: SQL Optima is completely self-hosted. It does **not** send any telemetry, usage statistics, or monitored database data to external servers.
+- **Local Storage**: All collected metrics, alerts, and audit logs are stored in your local TimescaleDB instance.
+- **Credential Safety**: Monitored server credentials never leave your infrastructure. They are encrypted at rest and only decrypted in-memory by the Go backend when establishing connections.
+
 ## Security principles (project rules)
 - **Monitoring must be non-destructive**: dynamic SQL execution paths must remain **read-only**, **single-statement**, and **bounded** (row limit + timeout). Export handlers (`csv_export`, `pg_export`, `sqlserver_export`) apply the same constraints — they read but never write to monitored targets.
 - **Least privilege**: monitored database users must have the minimum permissions needed (see `infrastructure/sql_scripts/pgsql_init.sql` and `infrastructure/sql_scripts/sqlserver_init.sql`).

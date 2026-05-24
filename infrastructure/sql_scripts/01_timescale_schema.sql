@@ -35,6 +35,132 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 -- 1.2: SQL SERVER - Core Metrics
 -- --------------------------------------------------------------------------
 
+-- sqlserver_active_sessions — unified session snapshot
+-- One row per session per collection cycle. Used by blocking detection,
+-- connection stats, and health workers instead of hitting DMVs directly.
+CREATE TABLE IF NOT EXISTS sqlserver_active_sessions (
+    capture_timestamp       TIMESTAMPTZ     NOT NULL,
+    server_id               UUID            NOT NULL,
+    session_id              INT             NOT NULL,
+    login_name              TEXT            NOT NULL DEFAULT '',
+    host_name               TEXT            NOT NULL DEFAULT '',
+    program_name            TEXT            NOT NULL DEFAULT '',
+    database_name           TEXT            NOT NULL DEFAULT '',
+    request_status          TEXT            NOT NULL DEFAULT '',
+    wait_type               TEXT            NOT NULL DEFAULT '',
+    wait_time_ms            BIGINT          NOT NULL DEFAULT 0,
+    blocking_session_id     INT             NOT NULL DEFAULT 0,
+    cpu_time_ms             BIGINT          NOT NULL DEFAULT 0,
+    total_elapsed_ms        BIGINT          NOT NULL DEFAULT 0,
+    logical_reads           BIGINT          NOT NULL DEFAULT 0,
+    reads                   BIGINT          NOT NULL DEFAULT 0,
+    writes                  BIGINT          NOT NULL DEFAULT 0,
+    granted_query_memory_kb BIGINT          NOT NULL DEFAULT 0,
+    dop                     INT             NOT NULL DEFAULT 0,
+    query_hash              TEXT            NOT NULL DEFAULT '',
+    query_text              TEXT            NOT NULL DEFAULT ''
+);
+
+SELECT create_hypertable('sqlserver_active_sessions', 'capture_timestamp',
+    if_not_exists => TRUE, migrate_data => TRUE);
+
+CREATE INDEX IF NOT EXISTS idx_sqlserver_sessions_server_time
+    ON sqlserver_active_sessions (server_id, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_sessions_blocking
+    ON sqlserver_active_sessions (server_id, capture_timestamp DESC, blocking_session_id)
+    WHERE blocking_session_id > 0;
+
+SELECT add_retention_policy('sqlserver_active_sessions',
+    INTERVAL '30 days', if_not_exists => TRUE);
+
+-- sqlserver_memory_grants_detail — per-session memory grant detail
+CREATE TABLE IF NOT EXISTS sqlserver_memory_grants_detail (
+    capture_timestamp       TIMESTAMPTZ     NOT NULL,
+    server_id               UUID            NOT NULL,
+    session_id              INT             NOT NULL,
+    login_name              TEXT            NOT NULL DEFAULT '',
+    database_name           TEXT            NOT NULL DEFAULT '',
+    query_cost              NUMERIC(19,4)   NOT NULL DEFAULT 0,
+    requested_memory_kb     BIGINT          NOT NULL DEFAULT 0,
+    granted_memory_kb       BIGINT          NOT NULL DEFAULT 0,
+    used_memory_kb          BIGINT          NOT NULL DEFAULT 0,
+    max_used_memory_kb      BIGINT          NOT NULL DEFAULT 0,
+    dop                     INT             NOT NULL DEFAULT 0,
+    grant_time              TIMESTAMPTZ,
+    queue_time              TIMESTAMPTZ
+);
+
+SELECT create_hypertable('sqlserver_memory_grants_detail', 'capture_timestamp',
+    if_not_exists => TRUE, migrate_data => TRUE);
+
+CREATE INDEX IF NOT EXISTS idx_sqlserver_grants_detail_server_time
+    ON sqlserver_memory_grants_detail (server_id, capture_timestamp DESC);
+
+SELECT add_retention_policy('sqlserver_memory_grants_detail',
+    INTERVAL '30 days', if_not_exists => TRUE);
+
+-- sqlserver_index_fragmentation — physical index health
+-- Collected every 6 hours using SAMPLED mode. Only stores indexes where
+-- avg_fragmentation_in_percent >= 5.0 AND page_count >= 100.
+CREATE TABLE IF NOT EXISTS sqlserver_index_fragmentation (
+    capture_timestamp           TIMESTAMPTZ     NOT NULL,
+    server_id                   UUID            NOT NULL,
+    database_name               TEXT            NOT NULL DEFAULT '',
+    schema_name                 TEXT            NOT NULL DEFAULT '',
+    table_name                  TEXT            NOT NULL DEFAULT '',
+    index_name                  TEXT            NOT NULL DEFAULT '',
+    index_id                    INT             NOT NULL DEFAULT 0,
+    index_type_desc             TEXT            NOT NULL DEFAULT '',
+    avg_fragmentation_pct       NUMERIC(8,2)    NOT NULL DEFAULT 0,
+    page_count                  BIGINT          NOT NULL DEFAULT 0,
+    avg_page_space_used_pct     NUMERIC(8,2)    NOT NULL DEFAULT 0,
+    record_count                BIGINT          NOT NULL DEFAULT 0,
+    fragment_count              BIGINT          NOT NULL DEFAULT 0,
+    avg_fragment_size_pages     NUMERIC(8,2)    NOT NULL DEFAULT 0
+);
+
+SELECT create_hypertable('sqlserver_index_fragmentation', 'capture_timestamp',
+    if_not_exists => TRUE, migrate_data => TRUE);
+
+CREATE INDEX IF NOT EXISTS idx_sqlserver_idx_frag_server_time
+    ON sqlserver_index_fragmentation (server_id, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_idx_frag_db
+    ON sqlserver_index_fragmentation (server_id, database_name, capture_timestamp DESC);
+
+SELECT add_retention_policy('sqlserver_index_fragmentation',
+    INTERVAL '14 days', if_not_exists => TRUE);
+
+-- sqlserver_missing_indexes — advisor output from dm_db_missing_index_* DMVs
+-- Collected every 6 hours. Only stores top 100 by improvement_score.
+CREATE TABLE IF NOT EXISTS sqlserver_missing_indexes (
+    capture_timestamp           TIMESTAMPTZ     NOT NULL,
+    server_id                   UUID            NOT NULL,
+    database_name               TEXT            NOT NULL DEFAULT '',
+    schema_name                 TEXT            NOT NULL DEFAULT '',
+    table_name                  TEXT            NOT NULL DEFAULT '',
+    equality_columns            TEXT            NOT NULL DEFAULT '',
+    inequality_columns          TEXT            NOT NULL DEFAULT '',
+    included_columns            TEXT            NOT NULL DEFAULT '',
+    user_seeks                  BIGINT          NOT NULL DEFAULT 0,
+    user_scans                  BIGINT          NOT NULL DEFAULT 0,
+    avg_total_user_cost         NUMERIC(19,4)   NOT NULL DEFAULT 0,
+    avg_user_impact             NUMERIC(8,2)    NOT NULL DEFAULT 0,
+    improvement_score           NUMERIC(19,4)   NOT NULL DEFAULT 0,
+    last_user_seek              TIMESTAMPTZ,
+    last_user_scan              TIMESTAMPTZ
+);
+
+SELECT create_hypertable('sqlserver_missing_indexes', 'capture_timestamp',
+    if_not_exists => TRUE, migrate_data => TRUE);
+
+CREATE INDEX IF NOT EXISTS idx_sqlserver_missing_idx_server_time
+    ON sqlserver_missing_indexes (server_id, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_missing_idx_db
+    ON sqlserver_missing_indexes (server_id, database_name, capture_timestamp DESC);
+
+SELECT add_retention_policy('sqlserver_missing_indexes',
+    INTERVAL '14 days', if_not_exists => TRUE);
+
 -- SQL Server System Metrics (main table)
 CREATE TABLE IF NOT EXISTS sqlserver_metrics (
     capture_timestamp TIMESTAMPTZ NOT NULL,
@@ -66,6 +192,7 @@ CREATE TABLE IF NOT EXISTS sqlserver_cpu_history (
     sql_process DOUBLE PRECISION,
     system_idle DOUBLE PRECISION,
     other_process DOUBLE PRECISION,
+    scheduler_count INT,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
 );
 SELECT create_hypertable('sqlserver_cpu_history', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
@@ -438,7 +565,19 @@ ALTER TABLE monitor.sqlserver_ha_failover_events SET (
 SELECT add_compression_policy('monitor.sqlserver_ha_failover_events', INTERVAL '7 days', if_not_exists => true);
 SELECT add_retention_policy('monitor.sqlserver_ha_failover_events', INTERVAL '365 days', if_not_exists => true);
 
--- 5. Replication Topology (15 min interval)
+-- 5. AG Cluster Info (non-hypertable, cluster-scoped, low write frequency)
+CREATE TABLE IF NOT EXISTS monitor.sqlserver_ag_cluster_info (
+    capture_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    server_id         UUID        NOT NULL,
+    cluster_name      TEXT,
+    quorum_type       TEXT,
+    quorum_state      TEXT,
+    members_json      JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_ag_cluster_server_time
+    ON monitor.sqlserver_ag_cluster_info (server_id, capture_timestamp DESC);
+
+-- 6. Replication Topology (15 min interval)
 CREATE TABLE IF NOT EXISTS monitor.sqlserver_replication_topology (
     capture_timestamp   timestamptz NOT NULL,
     server_id           uuid        NOT NULL,
@@ -601,6 +740,7 @@ CREATE TABLE IF NOT EXISTS sqlserver_job_metrics (
     disabled_jobs INTEGER,
     running_jobs INTEGER,
     failed_jobs_24h INTEGER,
+    critical_jobs_disabled INTEGER DEFAULT 0,
     error_message TEXT,
     inserted_at TIMESTAMPTZ DEFAULT NOW(),
     CONSTRAINT sqlserver_job_metrics_unique UNIQUE (capture_timestamp, server_id)
@@ -710,6 +850,11 @@ ALTER TABLE sqlserver_server_properties SET (
 );
 SELECT add_compression_policy('sqlserver_server_properties', INTERVAL '30 days', if_not_exists => TRUE);
 
+-- Idempotent additions for existing deployments
+ALTER TABLE sqlserver_server_properties ADD COLUMN IF NOT EXISTS sqlserver_start_time TIMESTAMPTZ;
+ALTER TABLE sqlserver_server_properties ADD COLUMN IF NOT EXISTS ms_ticks             BIGINT DEFAULT 0;
+ALTER TABLE sqlserver_server_properties ADD COLUMN IF NOT EXISTS scheduler_count      INT    DEFAULT 0;
+
 -- --------------------------------------------------------------------------
 -- SQL SERVER - DBA Homepage (Phase 2)
 -- --------------------------------------------------------------------------
@@ -810,6 +955,7 @@ SELECT add_retention_policy('sqlserver_scheduler_wg', INTERVAL '30 days', if_not
 -- --------------------------------------------------------------------------
 
 -- SQL Server Query Dictionary (Normalization)
+-- public.sqlserver_query_dictionary: UNIMPLEMENTED (Reserved for future ontology mapping)
 CREATE TABLE IF NOT EXISTS sqlserver_query_dictionary (
     server_id UUID NOT NULL,
     query_hash BIGINT NOT NULL,
@@ -946,20 +1092,53 @@ CREATE TABLE IF NOT EXISTS sqlserver_memory_metrics (
     -- Spill indicators (rates computed from counter deltas)
     sort_warnings_per_sec DOUBLE PRECISION DEFAULT 0,
     hash_warnings_per_sec DOUBLE PRECISION DEFAULT 0,
+    os_system_memory_state VARCHAR(60) DEFAULT '',
+    sql_physical_memory_in_use_mb  BIGINT  DEFAULT 0,
+    sql_memory_utilization_pct     INT     DEFAULT 0,
+    sql_page_fault_count           BIGINT  DEFAULT 0,
+    sql_locked_page_alloc_mb       BIGINT  DEFAULT 0,
+    sql_large_page_alloc_mb        BIGINT  DEFAULT 0,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('sqlserver_memory_metrics', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
-CREATE INDEX IF NOT EXISTS idx_memory_metrics_server_time ON sqlserver_memory_metrics (server_id, capture_timestamp DESC);
-ALTER TABLE sqlserver_memory_metrics SET (
+    );
+    SELECT create_hypertable('sqlserver_memory_metrics', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
+    CREATE INDEX IF NOT EXISTS idx_memory_metrics_server_time ON sqlserver_memory_metrics (server_id, capture_timestamp DESC);
+    ALTER TABLE sqlserver_memory_metrics SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_id',
     timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('sqlserver_memory_metrics', INTERVAL '7 days', if_not_exists => TRUE);
-SELECT add_retention_policy('sqlserver_memory_metrics', INTERVAL '90 days', if_not_exists => TRUE);
-COMMENT ON TABLE sqlserver_memory_metrics IS 'Memory Performance Analyzer: SQL vs target, OS pressure, workspace grants, PLE, plan cache, and spill indicators';
+    );
+    SELECT add_compression_policy('sqlserver_memory_metrics', INTERVAL '7 days', if_not_exists => TRUE);
+    SELECT add_retention_policy('sqlserver_memory_metrics', INTERVAL '90 days', if_not_exists => TRUE);
+    COMMENT ON TABLE sqlserver_memory_metrics IS 'Memory Performance Analyzer: SQL vs target, OS pressure, workspace grants, PLE, plan cache, and spill indicators';
 
--- Page Life Expectancy history (written by ts_logger_sqlserver LogSQLServerPLE)
+    -- sqlserver_volume_stats — per-volume storage metrics
+    CREATE TABLE IF NOT EXISTS sqlserver_volume_stats (
+    capture_timestamp   TIMESTAMPTZ   NOT NULL,
+    server_id           UUID          NOT NULL, -- REFERENCES monitored_servers(id) -- Omitted for flexibility in schema script
+    database_name       VARCHAR(128)  NOT NULL,
+    logical_file_name   VARCHAR(128)  NOT NULL,
+    physical_name       TEXT          NOT NULL,
+    file_type           VARCHAR(10)   NOT NULL,   -- 'ROWS' or 'LOG'
+    file_size_mb        FLOAT,
+    volume_mount_point  VARCHAR(512)  NOT NULL,
+    volume_label        VARCHAR(256),
+    volume_total_gb     FLOAT,
+    volume_available_gb FLOAT,
+    volume_free_pct     FLOAT
+    );
+    SELECT create_hypertable('sqlserver_volume_stats', 'capture_timestamp', if_not_exists => TRUE);
+    SELECT add_retention_policy('sqlserver_volume_stats', INTERVAL '90 days', if_not_exists => TRUE);
+    CREATE INDEX IF NOT EXISTS idx_vs_server_ts
+    ON sqlserver_volume_stats (server_id, capture_timestamp DESC);
+    ALTER TABLE sqlserver_volume_stats SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'server_id',
+    timescaledb.compress_orderby = 'capture_timestamp DESC'
+    );
+    SELECT add_compression_policy('sqlserver_volume_stats', INTERVAL '7 days', if_not_exists => TRUE);
+
+    -- Page Life Expectancy history (written by ts_logger_sqlserver LogSQLServerPLE)
+
 CREATE TABLE IF NOT EXISTS sqlserver_memory_history (
     capture_timestamp       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     server_id               UUID NOT NULL,
@@ -1152,18 +1331,6 @@ SELECT add_compression_policy('sqlserver_tempdb_files', INTERVAL '7 days', if_no
 SELECT add_retention_policy('sqlserver_tempdb_files', INTERVAL '14 days', if_not_exists => TRUE);
 COMMENT ON TABLE sqlserver_tempdb_files IS 'Tracks tempdb file-level usage for Enterprise Metrics dashboard';
 
--- SQL Server Health Dashboard v2: Snapshots
-CREATE TABLE IF NOT EXISTS sqlserver_health_snapshots (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_id UUID NOT NULL,
-    metric_category TEXT NOT NULL, -- 'KPI', 'WAIT', 'TEMPDB'
-    metric_name TEXT NOT NULL,
-    metric_value DOUBLE PRECISION NOT NULL,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
-);
-SELECT create_hypertable('sqlserver_health_snapshots', 'capture_timestamp', if_not_exists => TRUE);
-CREATE INDEX IF NOT EXISTS idx_sqlserver_health_snapshots_serverid_ct ON sqlserver_health_snapshots (server_id, capture_timestamp DESC);
-
 -- SQL Server Database Catalog
 -- Periodic snapshot of sys.databases settings per instance: state, recovery
 -- model, isolation, features, ownership, and replication flags.
@@ -1209,7 +1376,8 @@ CREATE TABLE IF NOT EXISTS sqlserver_database_catalog (
     is_subscribed                        BOOLEAN,
     is_distributor                       BOOLEAN,
     -- availability group
-    group_database_id                    TEXT
+    group_database_id                    TEXT,
+    is_query_store_on                    BOOLEAN DEFAULT false
 );
 SELECT create_hypertable('sqlserver_database_catalog', 'capture_timestamp', if_not_exists => TRUE, migrate_data => FALSE);
 CREATE INDEX IF NOT EXISTS idx_db_catalog_server_time ON sqlserver_database_catalog (server_id, capture_timestamp DESC);
@@ -1264,7 +1432,7 @@ ALTER TABLE postgres_query_stats SET (
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
 SELECT add_compression_policy('postgres_query_stats', INTERVAL '7 days', if_not_exists => TRUE);
-SELECT add_retention_policy('postgres_query_stats', INTERVAL '90 days', if_not_exists => TRUE);
+SELECT add_retention_policy('postgres_query_stats', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- PostgreSQL Throughput Metrics
 CREATE TABLE IF NOT EXISTS postgres_throughput_metrics (
@@ -1393,7 +1561,7 @@ ALTER TABLE pgss_delta_1m SET (
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
 SELECT add_compression_policy('pgss_delta_1m', INTERVAL '7 days', if_not_exists => TRUE);
-SELECT add_retention_policy('pgss_delta_1m', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_retention_policy('pgss_delta_1m', INTERVAL '90 days', if_not_exists => TRUE);
 
 -- PostgreSQL index catalog snapshot (written by LogPgIndexDefinitions)
 CREATE TABLE IF NOT EXISTS pg_index_definitions (
@@ -1868,17 +2036,20 @@ CREATE TABLE IF NOT EXISTS optima_servers (
     encrypted_secret BYTEA NOT NULL,
     encrypted_dek BYTEA NOT NULL,
 
-    ssl_mode TEXT DEFAULT 'require',
+    ssl_mode TEXT DEFAULT 'disable',
     is_active BOOLEAN DEFAULT TRUE,
 
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now(),
     created_by TEXT,
-    last_test_at TIMESTAMPTZ
+    last_test_at TIMESTAMPTZ,
+    engine_edition INT
 );
 CREATE INDEX IF NOT EXISTS idx_optima_servers_active ON optima_servers (is_active);
 CREATE INDEX IF NOT EXISTS idx_optima_servers_name ON optima_servers (name);
 CREATE INDEX IF NOT EXISTS idx_optima_servers_type ON optima_servers (db_type);
+-- Idempotent migration: add engine_edition if this table was created before this column existed.
+ALTER TABLE optima_servers ADD COLUMN IF NOT EXISTS engine_edition INT;
 
 CREATE TABLE IF NOT EXISTS optima_audit_logs (
     id BIGSERIAL PRIMARY KEY,
@@ -2268,25 +2439,13 @@ BEGIN
     RAISE NOTICE '============================================';
 END $$;
 
--- ============================================================================
--- MIGRATION: Add error_message column to existing sqlserver_job_metrics table
--- Run this only if you already have the schema and need to add the column
--- ============================================================================
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'sqlserver_job_metrics' 
-        AND column_name = 'error_message'
-    ) THEN
-        ALTER TABLE sqlserver_job_metrics ADD COLUMN error_message TEXT;
-        RAISE NOTICE 'Migration: Added error_message column to sqlserver_job_metrics';
-    ELSE
-        RAISE NOTICE 'Migration: error_message column already exists in sqlserver_job_metrics';
-    END IF;
-END $$;
+-- MIGRATION: Add error_message and critical_jobs_disabled columns to sqlserver_job_metrics
+-- Uses ADD COLUMN IF NOT EXISTS (PostgreSQL 9.6+) — safe to re-run on any existing schema.
+ALTER TABLE sqlserver_job_metrics ADD COLUMN IF NOT EXISTS error_message TEXT;
+ALTER TABLE sqlserver_job_metrics ADD COLUMN IF NOT EXISTS critical_jobs_disabled INTEGER DEFAULT 0;
 
 COMMENT ON COLUMN sqlserver_job_metrics.error_message IS 'Stores error message if job collection failed (e.g., permission denied on msdb tables)';
+COMMENT ON COLUMN sqlserver_job_metrics.critical_jobs_disabled IS 'Count of disabled SQL Agent jobs in backup/maintenance/database categories (DEFECT-15 Phase B)';
 
 -- ============================================================================
 -- LEGACY MIGRATION COMPATIBILITY OBJECTS
@@ -2295,7 +2454,7 @@ COMMENT ON COLUMN sqlserver_job_metrics.error_message IS 'Stores error message i
 
 -- Legacy migration blocks removed for deprecated tables.
 
--- Optimized Continuous Aggregates for HA and Throughput
+-- Continuous Aggregate for HA replica health — reads from canonical monitor schema
 DROP MATERIALIZED VIEW IF EXISTS sqlserver_ag_health_summary CASCADE;
 CREATE MATERIALIZED VIEW sqlserver_ag_health_summary
 WITH (timescaledb.continuous) AS
@@ -2304,20 +2463,20 @@ SELECT
     server_id,
     ag_name,
     replica_server_name,
-    database_name,
-    AVG(CASE WHEN synchronization_state = 'SYNCHRONIZING' THEN 1.0 ELSE 0.0 END) AS sync_pct,
-    AVG(CASE WHEN synchronization_state = 'SYNCHRONIZED' THEN 1.0 ELSE 0.0 END) AS healthy_pct,
-    AVG(log_send_queue_kb) AS avg_log_send_queue_kb,
-    AVG(redo_queue_kb) AS avg_redo_queue_kb,
-    MAX(log_send_queue_kb) AS max_log_send_queue_kb,
-    MAX(redo_queue_kb) AS max_redo_queue_kb
-FROM sqlserver_ag_health
-GROUP BY 1, 2, 3, 4, 5
+    AVG(log_send_queue_kb)     AS avg_log_send_queue_kb,
+    AVG(redo_queue_kb)         AS avg_redo_queue_kb,
+    MAX(log_send_queue_kb)     AS max_log_send_queue_kb,
+    MAX(redo_queue_kb)         AS max_redo_queue_kb,
+    MAX(secondary_lag_seconds) AS max_secondary_lag_secs
+FROM monitor.sqlserver_ha_replica_state
+GROUP BY 1, 2, 3, 4
 WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('sqlserver_ag_health_summary',
     start_offset => INTERVAL '1 hour', end_offset => INTERVAL '5 minutes',
     schedule_interval => INTERVAL '5 minutes', if_not_exists => TRUE);
+
+COMMENT ON TABLE sqlserver_ag_health IS 'DEPRECATED: legacy AG health table (public schema). No new writes. Retained for existing data rolloff. Use monitor.sqlserver_ha_replica_state for all new queries.';
 
 DROP MATERIALIZED VIEW IF EXISTS sqlserver_db_throughput_summary CASCADE;
 CREATE MATERIALIZED VIEW sqlserver_db_throughput_summary
@@ -2629,25 +2788,6 @@ CREATE INDEX IF NOT EXISTS idx_hourly_query_baseline_time
 CREATE SCHEMA IF NOT EXISTS snapshot;
 
 -- 1) Database Storage History
-CREATE TABLE IF NOT EXISTS snapshot.sqlserver_db_storage_history (
-    capture_timestamp  TIMESTAMPTZ NOT NULL,
-    server_id          UUID NOT NULL,
-    database_name      TEXT NOT NULL,
-    total_size_mb      NUMERIC(18,2),
-    data_size_mb       NUMERIC(18,2),
-    log_size_mb        NUMERIC(18,2)
-);
-
-SELECT create_hypertable(
-    'snapshot.sqlserver_db_storage_history',
-    'capture_timestamp',
-    chunk_time_interval => INTERVAL '7 days',
-    if_not_exists => TRUE
-);
-
-CREATE INDEX IF NOT EXISTS idx_sqlserver_db_storage_history_lookup ON snapshot.sqlserver_db_storage_history
-(server_id, database_name, capture_timestamp DESC);
-
 -- 2) Table Size History
 CREATE TABLE IF NOT EXISTS snapshot.sqlserver_table_size_history (
     capture_timestamp TIMESTAMPTZ NOT NULL,
@@ -2671,83 +2811,7 @@ SELECT create_hypertable(
 CREATE INDEX IF NOT EXISTS idx_sqlserver_table_size_history_lookup ON snapshot.sqlserver_table_size_history
 (server_id, database_name, schema_name, table_name, capture_timestamp DESC);
 
--- 3) Index Usage + Size History
-CREATE TABLE IF NOT EXISTS snapshot.sqlserver_index_usage_history (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_id       UUID NOT NULL,
-    database_name   TEXT NOT NULL,
-    schema_name     TEXT NOT NULL,
-    table_name      TEXT NOT NULL,
-    index_name      TEXT NOT NULL,
-    index_type      TEXT,
-    index_size_mb   NUMERIC(18,2),
-    user_seeks      BIGINT,
-    user_scans      BIGINT,
-    user_lookups    BIGINT,
-    user_updates    BIGINT
-);
-
-SELECT create_hypertable(
-    'snapshot.sqlserver_index_usage_history',
-    'capture_timestamp',
-    chunk_time_interval => INTERVAL '7 days',
-    if_not_exists => TRUE
-);
-
-CREATE INDEX IF NOT EXISTS idx_sqlserver_index_usage_history_lookup ON snapshot.sqlserver_index_usage_history
-(server_id, database_name, schema_name, table_name, index_name, capture_timestamp DESC);
-
--- 4) Index Fragmentation History
-CREATE TABLE IF NOT EXISTS snapshot.sqlserver_index_fragmentation_history (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    server_id       UUID NOT NULL,
-    database_name   TEXT NOT NULL,
-    schema_name     TEXT NOT NULL,
-    table_name      TEXT NOT NULL,
-    index_name      TEXT NOT NULL,
-    avg_fragmentation_pct DOUBLE PRECISION,
-    page_count      BIGINT
-);
-
-SELECT create_hypertable(
-    'snapshot.sqlserver_index_fragmentation_history',
-    'capture_timestamp',
-    chunk_time_interval => INTERVAL '7 days',
-    if_not_exists => TRUE
-);
-
-CREATE INDEX IF NOT EXISTS idx_sqlserver_index_frag_history_lookup ON snapshot.sqlserver_index_fragmentation_history
-(server_id, database_name, schema_name, table_name, index_name, capture_timestamp DESC);
-
--- 5) Table Structure / Risk Snapshot
-CREATE TABLE IF NOT EXISTS snapshot.sqlserver_table_structure_history (
-    capture_timestamp   TIMESTAMPTZ NOT NULL,
-    server_id           UUID NOT NULL,
-    database_name       TEXT NOT NULL,
-    schema_name         TEXT NOT NULL,
-    table_name          TEXT NOT NULL,
-    has_clustered_index BOOLEAN,
-    has_primary_key     BOOLEAN
-);
-
-SELECT create_hypertable(
-    'snapshot.sqlserver_table_structure_history',
-    'capture_timestamp',
-    chunk_time_interval => INTERVAL '30 days',
-    if_not_exists => TRUE
-);
-
-CREATE INDEX IF NOT EXISTS idx_sqlserver_table_struct_history_lookup ON snapshot.sqlserver_table_structure_history
-(server_id, database_name, schema_name, table_name, capture_timestamp DESC);
-
 -- 6) Compression Policies
-ALTER TABLE snapshot.sqlserver_db_storage_history SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_id,database_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('snapshot.sqlserver_db_storage_history', INTERVAL '7 days', if_not_exists => TRUE);
-
 ALTER TABLE snapshot.sqlserver_table_size_history SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_id,database_name',
@@ -2755,33 +2819,8 @@ ALTER TABLE snapshot.sqlserver_table_size_history SET (
 );
 SELECT add_compression_policy('snapshot.sqlserver_table_size_history', INTERVAL '7 days', if_not_exists => TRUE);
 
-ALTER TABLE snapshot.sqlserver_index_usage_history SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_id,database_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('snapshot.sqlserver_index_usage_history', INTERVAL '7 days', if_not_exists => TRUE);
-
-ALTER TABLE snapshot.sqlserver_index_fragmentation_history SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_id,database_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('snapshot.sqlserver_index_fragmentation_history', INTERVAL '7 days', if_not_exists => TRUE);
-
-ALTER TABLE snapshot.sqlserver_table_structure_history SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'server_id,database_name',
-    timescaledb.compress_orderby = 'capture_timestamp DESC'
-);
-SELECT add_compression_policy('snapshot.sqlserver_table_structure_history', INTERVAL '30 days', if_not_exists => TRUE);
-
 -- 7) Retention Policies
-SELECT add_retention_policy('snapshot.sqlserver_db_storage_history', INTERVAL '2 years', if_not_exists => TRUE);
 SELECT add_retention_policy('snapshot.sqlserver_table_size_history', INTERVAL '2 years', if_not_exists => TRUE);
-SELECT add_retention_policy('snapshot.sqlserver_index_usage_history', INTERVAL '2 years', if_not_exists => TRUE);
-SELECT add_retention_policy('snapshot.sqlserver_index_fragmentation_history', INTERVAL '2 years', if_not_exists => TRUE);
-SELECT add_retention_policy('snapshot.sqlserver_table_structure_history', INTERVAL '2 years', if_not_exists => TRUE);
 -- SQL Optima — https://github.com/rsharma155/sql_optima
 --
 -- Purpose: Enhanced PostgreSQL Memory Intelligence schema.
@@ -2825,24 +2864,19 @@ CREATE INDEX IF NOT EXISTS idx_host_mem_instance_ts ON monitor.host_memory_sampl
 CREATE TABLE IF NOT EXISTS monitor.pg_memory_samples (
     capture_timestamp       TIMESTAMPTZ NOT NULL,
     server_id    UUID NOT NULL,
-
     -- postgres process memory
     postgres_rss_mb         BIGINT,
     postgres_vsz_mb         BIGINT,
-
     -- connections
     active_connections      INT,
     idle_connections        INT,
     total_connections       INT,
-
     -- buffer/cache stats
     blks_hit                BIGINT,
     blks_read               BIGINT,
-
     -- temp spill stats
     temp_files              BIGINT,
     temp_bytes              BIGINT,
-
     -- bgwriter stats
     buffers_checkpoint      BIGINT,
     buffers_clean           BIGINT,
@@ -2870,9 +2904,6 @@ CREATE TABLE IF NOT EXISTS monitor.pg_memory_components (
     effective_cache_size_mb BIGINT,
     max_connections         INTEGER DEFAULT 100
 );
-
--- Idempotent migration: add effective_cache_size_mb if this table was created before this column existed.
-ALTER TABLE monitor.pg_memory_components ADD COLUMN IF NOT EXISTS effective_cache_size_mb BIGINT;
 
 SELECT create_hypertable(
     'monitor.pg_memory_components',
@@ -2943,8 +2974,6 @@ CREATE TABLE IF NOT EXISTS optima_collector_configs (
     -- 10=Pulse, 20=Background, 30-180=dedicated goroutines, NULL=system/framework.
     run_order INT
 );
--- Idempotent migration: add run_order if the table already existed without it.
-ALTER TABLE optima_collector_configs ADD COLUMN IF NOT EXISTS run_order INT;
 
 -- Notification Config (Admin-managed outbound alert destinations)
 CREATE TABLE IF NOT EXISTS optima_notification_config (
@@ -3177,6 +3206,7 @@ CREATE INDEX IF NOT EXISTS idx_sqlserver_session_snapshots_server_ts
     ON sqlserver_session_snapshots (server_id, capture_timestamp DESC);
 
 -- SQL Server Query Identity Dimension (Identity Bridge)
+-- public.sqlserver_query_identity_dim: UNIMPLEMENTED (Reserved for future ontology mapping)
 CREATE TABLE IF NOT EXISTS sqlserver_query_identity_dim (
     server_id       UUID NOT NULL,
     query_hash        BIGINT NOT NULL,
@@ -3722,16 +3752,22 @@ CREATE INDEX IF NOT EXISTS idx_sqlserver_wait_stats_instance_time ON sqlserver_w
 -- 2) PERF COUNTERS (DELTA)
 DROP TABLE IF EXISTS sqlserver_perf_counters CASCADE;
 CREATE TABLE IF NOT EXISTS sqlserver_perf_counters (
-    capture_timestamp TIMESTAMPTZ NOT NULL,
-    metric_time TIMESTAMPTZ GENERATED ALWAYS AS (capture_timestamp) STORED,
-    server_id UUID NOT NULL,
-    counter_name TEXT NOT NULL,
-    value_per_sec DOUBLE PRECISION DEFAULT 0,
-    inserted_at TIMESTAMPTZ DEFAULT NOW()
+    capture_timestamp TIMESTAMPTZ       NOT NULL,
+    metric_time       TIMESTAMPTZ       GENERATED ALWAYS AS (capture_timestamp) STORED,
+    server_id         UUID              NOT NULL,
+    counter_name      TEXT              NOT NULL,
+    instance_name     VARCHAR(128)      NOT NULL DEFAULT '',
+    cntr_value        BIGINT            NOT NULL DEFAULT 0,
+    cntr_type         INT               NOT NULL DEFAULT 0,
+    value_per_sec     DOUBLE PRECISION  DEFAULT 0,   -- kept for backward compat; stores rate_per_sec
+    inserted_at       TIMESTAMPTZ       DEFAULT NOW()
 );
 
 SELECT create_hypertable('sqlserver_perf_counters', 'capture_timestamp', if_not_exists => TRUE, migrate_data => TRUE);
 CREATE INDEX IF NOT EXISTS idx_sqlserver_perf_counters_instance_time ON sqlserver_perf_counters (server_id, counter_name, capture_timestamp DESC);
+-- Unique index enables ON CONFLICT DO NOTHING deduplication
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pc_dedup
+    ON sqlserver_perf_counters (server_id, counter_name, instance_name, capture_timestamp);
 
 -- 3) HEALTH KPIs (V2)
 DROP TABLE IF EXISTS sqlserver_health_kpis_v2 CASCADE;
@@ -3778,6 +3814,27 @@ SELECT create_hypertable('sqlserver_file_io', 'capture_timestamp', if_not_exists
 CREATE INDEX IF NOT EXISTS idx_sqlserver_file_io_instance_time ON sqlserver_file_io (server_id, capture_timestamp DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sqlserver_file_io_dedup
     ON sqlserver_file_io (server_id, database_name, file_name, capture_timestamp);
+
+-- File catalog: static per-file metadata (physical path, size, type).
+-- Refreshed every 6 hours; ON CONFLICT deduplication avoids re-inserting unchanged rows.
+CREATE TABLE IF NOT EXISTS sqlserver_file_catalog (
+    capture_timestamp   TIMESTAMPTZ  NOT NULL,
+    server_id           UUID         NOT NULL,
+    database_id         INT          NOT NULL,
+    db_name             TEXT         NOT NULL,
+    file_id             INT          NOT NULL,
+    type_desc           TEXT         NOT NULL DEFAULT '',
+    physical_name       TEXT         NOT NULL DEFAULT '',
+    size_mb             NUMERIC(19,4) DEFAULT 0,
+    max_size_mb         NUMERIC(19,4) DEFAULT -1,
+    is_percent_growth   BOOLEAN      DEFAULT false,
+    growth              INT          DEFAULT 0
+);
+SELECT create_hypertable('sqlserver_file_catalog', 'capture_timestamp', if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS idx_file_catalog_server_time ON sqlserver_file_catalog (server_id, capture_timestamp DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_file_catalog_dedup
+    ON sqlserver_file_catalog (server_id, database_id, file_id, capture_timestamp);
+SELECT add_retention_policy('sqlserver_file_catalog', INTERVAL '30 days', if_not_exists => TRUE);
 
 -- 4) PLAN CACHE SNAPSHOT
 DROP TABLE IF EXISTS sqlserver_plan_cache CASCADE;
@@ -4110,38 +4167,6 @@ CREATE TABLE IF NOT EXISTS pg_instance_snapshot (
 
 -- 2. Time-Series Hypertables
 
--- WAL Metrics
-CREATE TABLE IF NOT EXISTS pg_ts_wal_metrics(
-    capture_timestamp timestamptz NOT NULL,
-    server_id UUID NOT NULL,
-    wal_mb numeric
-);
-SELECT create_hypertable('pg_ts_wal_metrics','capture_timestamp', if_not_exists=>TRUE);
-
--- TPS
-CREATE TABLE IF NOT EXISTS pg_ts_tps(
-    capture_timestamp timestamptz NOT NULL,
-    server_id UUID NOT NULL,
-    tps numeric
-);
-SELECT create_hypertable('pg_ts_tps','capture_timestamp', if_not_exists=>TRUE);
-
--- Dead Tuple Trend
-CREATE TABLE IF NOT EXISTS pg_ts_bloat(
-    capture_timestamp timestamptz NOT NULL,
-    server_id UUID NOT NULL,
-    dead_tuple_pct numeric
-);
-SELECT create_hypertable('pg_ts_bloat','capture_timestamp', if_not_exists=>TRUE);
-
--- Replication Lag
-CREATE TABLE IF NOT EXISTS pg_ts_replication_lag(
-    capture_timestamp timestamptz NOT NULL,
-    server_id UUID NOT NULL,
-    replica text,
-    lag_sec numeric
-);
-SELECT create_hypertable('pg_ts_replication_lag','capture_timestamp', if_not_exists=>TRUE);
 -- ============================================================================
 -- SQL Optima: New Postgres Dashboards (Waits, Backup, Security)
 -- ============================================================================
@@ -4441,24 +4466,20 @@ CREATE SCHEMA IF NOT EXISTS snapshot;
 CREATE TABLE IF NOT EXISTS snapshot.pg_backup_dr_timeseries (
     capture_timestamp              timestamptz NOT NULL,
     server_id               UUID NOT NULL,
-
     -- WAL
     wal_bytes_total           bigint,
     wal_records_total         bigint,
     wal_fpi_total             bigint,
-
     -- Archiver
     archived_count            bigint,
     archive_failed_count      bigint,
     last_archived_time        timestamptz,
     last_failed_time          timestamptz,
-
     -- Checkpoints
     checkpoints_timed         bigint,
     checkpoints_req           bigint,
     checkpoint_write_time_ms  double precision,
     checkpoint_sync_time_ms   double precision,
-
     -- Instance role
     is_in_recovery            boolean
 );
@@ -4968,6 +4989,9 @@ CREATE TABLE IF NOT EXISTS staging.sqlserver_io_raw (
 );
 SELECT create_hypertable('staging.sqlserver_io_raw', 'capture_timestamp', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_stg_ss_io_lookup ON staging.sqlserver_io_raw (server_id, database_id, capture_timestamp DESC);
+-- Dedup guard: prevents duplicate (server, file, timestamp) rows from concurrent writers.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_stg_ss_io_dedup
+    ON staging.sqlserver_io_raw (server_id, database_id, file_id, capture_timestamp);
 ALTER TABLE staging.sqlserver_io_raw SET (
     timescaledb.compress = true,
     timescaledb.compress_segmentby = 'server_id',
@@ -5137,5 +5161,126 @@ SELECT
 FROM monitor.metric_freshness
 GROUP BY server_id;
 
+-- ============================================================================
+-- INTELLIGENCE REPORT — Persistence Schema (v2 redesign)
+-- Stores computed analysis snapshots for trend charts and historical comparison.
+-- Only IntelligenceReportService writes here — no collector writes.
+-- Added: 2026-05-21 (Intelligence_report_redesign.md §7.0)
+-- ============================================================================
+CREATE SCHEMA IF NOT EXISTS intelreport;
 
- 
+CREATE TABLE IF NOT EXISTS intelreport.intel_snapshots (
+    run_id              UUID        NOT NULL DEFAULT gen_random_uuid(),
+    server_id           UUID        NOT NULL,
+    capture_timestamp   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    overall_risk        FLOAT8      NOT NULL DEFAULT 0,
+    performance_risk    FLOAT8      NOT NULL DEFAULT 0,
+    capacity_risk       FLOAT8      NOT NULL DEFAULT 0,
+    availability_risk   FLOAT8      NOT NULL DEFAULT 0,
+    replication_risk    FLOAT8      NOT NULL DEFAULT 0,
+    maintenance_risk    FLOAT8      NOT NULL DEFAULT 0,
+    query_risk          FLOAT8      NOT NULL DEFAULT 0,
+    utilization_class   TEXT        NOT NULL DEFAULT 'unknown',
+    -- Headline metrics captured at report time (avoids re-querying for trend charts)
+    cpu_p50             FLOAT8      NOT NULL DEFAULT 0,
+    cpu_p95             FLOAT8      NOT NULL DEFAULT 0,
+    cpu_avg             FLOAT8      NOT NULL DEFAULT 0,
+    mem_p95             FLOAT8      NOT NULL DEFAULT 0,
+    ple_current         FLOAT8      NOT NULL DEFAULT 0,
+    disk_used_pct       FLOAT8      NOT NULL DEFAULT 0,
+    disk_days_remaining INT         NOT NULL DEFAULT 0,
+    -- Report quality
+    data_completeness   FLOAT8      NOT NULL DEFAULT 0,   -- 0.0–1.0
+    data_coverage_days  INT         NOT NULL DEFAULT 0,
+    rule_count_critical INT         NOT NULL DEFAULT 0,
+    rule_count_high     INT         NOT NULL DEFAULT 0,
+    -- Full report output
+    report_json         JSONB,
+    report_html         TEXT,
+    PRIMARY KEY (server_id, capture_timestamp, run_id)
+);
+
+SELECT create_hypertable('intelreport.intel_snapshots', 'capture_timestamp',
+    if_not_exists => TRUE);
+
+ALTER TABLE intelreport.intel_snapshots SET (
+    timescaledb.compress           = true,
+    timescaledb.compress_segmentby = 'server_id',
+    timescaledb.compress_orderby   = 'capture_timestamp DESC'
+);
+SELECT add_compression_policy('intelreport.intel_snapshots',
+    INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_retention_policy('intelreport.intel_snapshots',
+    INTERVAL '90 days', if_not_exists => TRUE);
+
+CREATE INDEX IF NOT EXISTS idx_intel_snapshots_server_time
+    ON intelreport.intel_snapshots (server_id, capture_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_intel_snapshots_run_id
+    ON intelreport.intel_snapshots (run_id);
+
+-- ============================================================================
+-- BACKWARD-COMPATIBLE COLUMN MIGRATIONS
+-- These ADD COLUMN IF NOT EXISTS statements are safe to re-run on existing
+-- deployments that were initialized before the schema was redesigned.
+-- Each is idempotent and does NOT drop or truncate any table.
+-- ============================================================================
+
+
+-- ============================================================================
+-- BACKWARD-COMPATIBLE COLUMN MIGRATIONS
+-- These ADD COLUMN IF NOT EXISTS statements are safe to re-run on existing
+-- deployments that were initialized before the schema was redesigned.
+-- Each is idempotent and does NOT drop or truncate any table.
+-- ============================================================================
+
+-- sqlserver_file_io: add throughput columns (added alongside File IO delta collector)
+ALTER TABLE IF EXISTS sqlserver_file_io ADD COLUMN IF NOT EXISTS read_bytes_per_sec  DOUBLE PRECISION;
+ALTER TABLE IF EXISTS sqlserver_file_io ADD COLUMN IF NOT EXISTS write_bytes_per_sec DOUBLE PRECISION;
+ALTER TABLE IF EXISTS sqlserver_file_io ADD COLUMN IF NOT EXISTS inserted_at         TIMESTAMPTZ;
+
+-- sqlserver_perf_counters: add instance_name, cntr_type, value_per_sec (added for full DMV capture)
+ALTER TABLE IF EXISTS sqlserver_perf_counters ADD COLUMN IF NOT EXISTS instance_name VARCHAR(128) NOT NULL DEFAULT '';
+ALTER TABLE IF EXISTS sqlserver_perf_counters ADD COLUMN IF NOT EXISTS cntr_type     INT          NOT null DEFAULT 0;;
+ALTER TABLE IF EXISTS sqlserver_perf_counters ADD COLUMN IF NOT EXISTS value_per_sec DOUBLE PRECISION;
+ALTER TABLE IF EXISTS sqlserver_perf_counters ADD COLUMN IF NOT EXISTS inserted_at   TIMESTAMPTZ;
+
+-- sqlserver_plan_cache: add aggregated cache health columns (added for plan cache health view)
+ALTER TABLE IF EXISTS sqlserver_plan_cache ADD COLUMN IF NOT EXISTS total_cache_mb       NUMERIC(19,4);
+ALTER TABLE IF EXISTS sqlserver_plan_cache ADD COLUMN IF NOT EXISTS single_use_cache_mb  NUMERIC(19,4);
+ALTER TABLE IF EXISTS sqlserver_plan_cache ADD COLUMN IF NOT EXISTS single_use_cache_pct NUMERIC(19,4);
+ALTER TABLE IF EXISTS sqlserver_plan_cache ADD COLUMN IF NOT EXISTS adhoc_cache_mb       NUMERIC(19,4);
+ALTER TABLE IF EXISTS sqlserver_plan_cache ADD COLUMN IF NOT EXISTS prepared_cache_mb    NUMERIC(19,4);
+ALTER TABLE IF EXISTS sqlserver_plan_cache ADD COLUMN IF NOT EXISTS proc_cache_mb        NUMERIC(19,4);
+ALTER TABLE IF EXISTS sqlserver_plan_cache ADD COLUMN IF NOT EXISTS inserted_at          TIMESTAMPTZ;
+
+-- sqlserver_health_kpis_v2: add new KPI columns (added for extended health worker)
+ALTER TABLE IF EXISTS sqlserver_health_kpis_v2 ADD COLUMN IF NOT EXISTS logins_per_sec           DOUBLE PRECISION;
+ALTER TABLE IF EXISTS sqlserver_health_kpis_v2 ADD COLUMN IF NOT EXISTS target_server_memory_mb  DOUBLE PRECISION;
+ALTER TABLE IF EXISTS sqlserver_health_kpis_v2 ADD COLUMN IF NOT EXISTS total_server_memory_mb   DOUBLE PRECISION;
+ALTER TABLE IF EXISTS sqlserver_health_kpis_v2 ADD COLUMN IF NOT EXISTS inserted_at              TIMESTAMPTZ;
+
+-- Recreate perf_counters dedup index with instance_name (only if column was just added).
+-- Uses DO block to avoid failure when duplicate rows prevent unique index creation.
+DO $$
+BEGIN
+    -- Only attempt if idx_pc_dedup doesn't already include instance_name
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE tablename = 'sqlserver_perf_counters'
+          AND indexname = 'idx_pc_dedup'
+          AND indexdef LIKE '%instance_name%'
+    ) THEN
+        DROP INDEX IF EXISTS idx_pc_dedup;
+        BEGIN
+            CREATE UNIQUE INDEX idx_pc_dedup
+                ON sqlserver_perf_counters (server_id, counter_name, instance_name, capture_timestamp);
+        EXCEPTION WHEN others THEN
+            RAISE NOTICE 'Could not create idx_pc_dedup: %. Deduplication index will be missing.', SQLERRM;
+        END;
+    END IF;
+END $$;
+
+
+
+
+

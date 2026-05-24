@@ -1,15 +1,16 @@
+// Package intel provides the SQL Optima autonomous health intelligence engine.
+// This file implements linear regression and exponential smoothing forecasting.
+//
+// Design context:
+//   - DEFECT-9 fix: inferFailureThreshold is used only as a fallback; callers should
+//     pass a thresholdMap derived from DynamicThresholds for hardware-accurate thresholds.
+//   - DEFECT-10 fix: every ForecastSeries now carries a ReliabilityTier computed from R².
+//     Callers must check this tier before displaying numerical date estimates.
+//
 // SQL Optima — https://github.com/rsharma155/sql_optima
-//
-// Purpose: Health Intelligence Engine
-//
-// Author: Ravi Sharma
-// Copyright (c) 2026 Ravi Sharma
-// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Ravi Sharma. SPDX-License-Identifier: MIT
 
 package forecasting
-
-
-
 
 import (
 	"math"
@@ -19,12 +20,17 @@ import (
 	"github.com/rsharma155/sql_optima/internal/intel/utils"
 )
 
-func ForecastLinear(values []float64, metricName string, horizonDays int, confidenceLevel float64) ForecastSeries {
+// ForecastLinear performs OLS linear regression on the value series and projects
+// horizonDays into the future. The returned ForecastSeries includes a ReliabilityTier
+// derived from R² (DEFECT-10). An optional thresholdMap can override the name-based
+// failure threshold inference (DEFECT-9).
+func ForecastLinear(values []float64, metricName string, horizonDays int, confidenceLevel float64, thresholdMap ...map[string]float64) ForecastSeries {
 	if len(values) < 3 {
 		return ForecastSeries{
-			MetricName:  metricName,
-			HorizonDays: horizonDays,
-			Confidence:  0.0,
+			MetricName:      metricName,
+			HorizonDays:     horizonDays,
+			Confidence:      0.0,
+			ReliabilityTier: "Unreliable",
 		}
 	}
 
@@ -47,10 +53,22 @@ func ForecastLinear(values []float64, metricName string, horizonDays int, confid
 	}
 	stdError := utils.StdError(residuals)
 
+	r2 := lr.RSquared
+
+	// Resolve failure threshold: prefer explicit thresholdMap, fall back to name-based inference.
+	var failureThreshold *float64
+	if len(thresholdMap) > 0 && thresholdMap[0] != nil {
+		if v, ok := thresholdMap[0][metricName]; ok {
+			failureThreshold = &v
+		}
+	}
+	if failureThreshold == nil {
+		failureThreshold = inferFailureThreshold(metricName)
+	}
+
 	now := time.Now().UTC()
 	var points []ForecastPoint
 	var predictedFailureDays *int
-	failureThreshold := inferFailureThreshold(metricName)
 
 	for i := 1; i <= horizonDays; i++ {
 		futureX := float64(n + i - 1)
@@ -91,8 +109,6 @@ func ForecastLinear(values []float64, metricName string, horizonDays int, confid
 		growthRate = slope / meanVal * 100
 	}
 
-	r2 := lr.RSquared
-
 	trend := "stable"
 	stdV := utils.StdDev(values)
 	if stdV > 0 {
@@ -115,15 +131,18 @@ func ForecastLinear(values []float64, metricName string, horizonDays int, confid
 		PredictedFailureDays: predictedFailureDays,
 		TrendDirection:       trend,
 		GrowthRatePct:        growthRate,
+		ReliabilityTier:      ReliabilityTierFromR2(r2),
 	}
 }
 
+// ForecastExponentialSmoothing applies single exponential smoothing with alpha decay.
 func ForecastExponentialSmoothing(values []float64, metricName string, horizonDays int, alpha float64) ForecastSeries {
 	if len(values) < 2 {
 		return ForecastSeries{
-			MetricName:  metricName,
-			HorizonDays: horizonDays,
-			Confidence:  0.0,
+			MetricName:      metricName,
+			HorizonDays:     horizonDays,
+			Confidence:      0.0,
+			ReliabilityTier: "Unreliable",
 		}
 	}
 
@@ -203,9 +222,12 @@ func ForecastExponentialSmoothing(values []float64, metricName string, horizonDa
 		PredictedFailureDays: predictedFailureDays,
 		TrendDirection:       trend,
 		GrowthRatePct:        growthRate,
+		ReliabilityTier:      "Indicative", // exponential smoothing is always indicative
 	}
 }
 
+// inferFailureThreshold derives a default threshold from the metric name.
+// Prefer passing an explicit thresholdMap (DEFECT-9 fix) over this function.
 func inferFailureThreshold(metricName string) *float64 {
 	lower := strings.ToLower(metricName)
 	if strings.Contains(lower, "disk") || strings.Contains(lower, "space") || strings.Contains(lower, "storage") {

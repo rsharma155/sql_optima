@@ -1,0 +1,109 @@
+<!--
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * File: frontend/pages/admin_cold_storage.html
+ * Purpose: Admin interface for monitoring cold storage archival status, lag, and audit logs.
+ *
+ * Author: Gemini CLI (AI Agent)
+ * Date: May 2026
+ * SPDX-License-Identifier: MIT
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cold Storage Monitor - SQL Optima</title>
+    <link rel="stylesheet" href="/assets/css/main.css">
+    <style>
+        .status-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .status-table th, .status-table td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        .status-table tr:hover { background: #f9f9f9; }
+        .status-badge { padding: 2px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; }
+        .status-success { background: #e8f5e9; color: #2e7d32; }
+        .status-partial { background: #fff3e0; color: #ef6c00; }
+        .status-failed { background: #ffebee; color: #c62828; }
+        .status-running { background: #e3f2fd; color: #1565c0; }
+        .metric-value { font-family: monospace; font-weight: bold; }
+        .tabs { display: flex; margin-bottom: 20px; border-bottom: 1px solid #ddd; }
+        .tab { padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; }
+        .tab.active { border-bottom: 2px solid #007bff; font-weight: bold; color: #007bff; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <div class="header-container">
+                <div class="logo">SQL Optima <span class="badge">Admin</span></div>
+                <nav>
+                    <a href="/pages/overview.html">Dashboard</a>
+                    <a href="/pages/admin_collector_control.html">Collectors</a>
+                    <a href="/pages/admin_cold_storage.html" class="active">Cold Storage</a>
+                </nav>
+                <div class="user-info">
+                    <span id="username-display">Admin</span>
+                    <button id="logout-btn">Logout</button>
+                </div>
+            </div>
+        </header>
+
+        <main class="container">
+            <div class="page-header">
+                <h1>Cold Storage Monitor</h1>
+                <p>Track the health and progress of the long-term metric archival pipeline.</p>
+            </div>
+
+            <div class="tabs">
+                <div id="tab-status" class="tab active">Current Status</div>
+                <div id="tab-runs" class="tab">Recent Runs</div>
+            </div>
+
+            <div id="status-content" class="card">
+                <div class="card-header">
+                    <h2>Table Archival Progress</h2>
+                </div>
+                <div id="status-loading" class="loading">Loading status...</div>
+                <div id="status-container" style="display: none;">
+                    <table class="status-table">
+                        <thead>
+                            <tr>
+                                <th>Table Name</th>
+                                <th>Server</th>
+                                <th>Last Exported</th>
+                                <th>Lag (Age)</th>
+                                <th>Watermark Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody id="status-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="runs-content" class="card" style="display: none;">
+                <div class="card-header">
+                    <h2>Recent Archival Runs</h2>
+                </div>
+                <div id="runs-loading" class="loading">Loading runs...</div>
+                <div id="runs-container" style="display: none;">
+                    <table class="status-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Started</th>
+                                <th>Finished</th>
+                                <th>Status</th>
+                                <th>Tables (OK/Fail)</th>
+                                <th>Total Rows</th>
+                                <th>Volume (MB)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="runs-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script type="module" src="/js/pages/admin_cold_storage.js"></script>
+</body>
+</html>

@@ -30,24 +30,23 @@ window.MemoryDrilldown = async function() {
     
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">
-            <!-- ROW 0: HEADER -->
-            <div class="page-title flex-between dashboard-page-title-compact">
-                <div class="dashboard-title-line">
+            <div class="page-title flex-between" style="padding: 10px 20px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); height: 65px;">
+                <div>
                     <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;">
                         <i class="fa-solid fa-memory text-accent"></i>
                         SQL Server Memory Intelligence
                         <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Memory Analyzer" title="Learn more about this dashboard"></i>
                     </h1>
-                    <span class="subtitle" style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px; display:block;">Instance: ${window.escapeHtml(inst.name)} | Detailed Memory Pressure & Buffer Pool Analytics</span>
-                </div>
-                <div class="flex-center dashboard-page-title-actions" style="gap: 0.75rem;">
-                    <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem;">
-                        <input type="datetime-local" id="memDrillFrom" class="bg-transparent border-none text-primary" style="width:12rem;" />
-                        <span class="text-muted">→</span>
-                        <input type="datetime-local" id="memDrillTo" class="bg-transparent border-none text-primary" style="width:12rem;" />
-                        <button class="btn btn-xs btn-accent" id="memApplyRange">Apply</button>
+                    <div style="display:flex; gap:12px; align-items:center; margin-top:2px;">
+                        <span style="font-size:0.7rem; color:var(--text-secondary); font-weight:600;"><i class="fa-solid fa-server" style="font-size:0.6rem;"></i> ${window.escapeHtml(inst.name)}</span>
+                        <span style="font-size:0.7rem; color:var(--text-muted);"><i class="fa-solid fa-database" style="font-size:0.6rem;"></i> Detailed Memory Pressure &amp; Buffer Pool Analytics</span>
                     </div>
-                    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshMemoryDrilldown"><i class="fa-solid fa-refresh"></i> Refresh</button>
+                </div>
+                <div class="flex-between" style="align-items:center; gap:1rem;">
+                    <div id="time-picker-insertion-point"></div>
+                    <div class="text-muted" style="font-size:0.65rem; background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px;">
+                        Update: <span id="mem-last-update" class="text-accent">--:--:--</span>
+                    </div>
                 </div>
             </div>
 
@@ -147,19 +146,13 @@ window.MemoryDrilldown = async function() {
         </div>
     `;
 
-    const now = new Date();
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    const pad = n => String(n).padStart(2, '0');
-    const fmtL = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    if (window.initPageTimePicker) window.initPageTimePicker();
 
-    document.getElementById('memDrillFrom').value = fmtL(oneHourAgo);
-    document.getElementById('memDrillTo').value = fmtL(now);
-    document.getElementById('memApplyRange').addEventListener('click', () => window.applyMemoryDrilldownRange());
-
-    await window.loadMemoryDrilldownData(inst.name, document.getElementById('memDrillFrom').value, document.getElementById('memDrillTo').value);
+    await window.loadMemoryDrilldownData(inst.name, window.appState.fromTs, window.appState.toTs);
 };
 
 window.loadMemoryDrilldownData = async function(instanceName, fromLocal, toLocal) {
+    if (!fromLocal || !toLocal) return;
     const fromISO = new Date(fromLocal).toISOString();
     const toISO = new Date(toLocal).toISOString();
     try {
@@ -167,6 +160,8 @@ window.loadMemoryDrilldownData = async function(instanceName, fromLocal, toLocal
         const res = await window.apiClient.authenticatedFetch(url);
         const data = await res.json();
         window.renderMemoryDrilldownCharts(data);
+        const updateEl = document.getElementById('mem-last-update');
+        if (updateEl) updateEl.textContent = new Date().toLocaleTimeString();
     } catch (e) { console.error('Memory drilldown load failed:', e); }
 };
 

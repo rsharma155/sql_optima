@@ -114,6 +114,10 @@ func (c *SqlServerRepository) FetchBlockingSnapshots(ctx context.Context, db *sq
 			JOIN sys.dm_tran_active_transactions at ON st.transaction_id = at.transaction_id
 			LEFT JOIN sys.dm_tran_database_transactions dt ON at.transaction_id = dt.transaction_id
 			GROUP BY st.session_id
+		),
+		connections AS (
+			SELECT session_id, most_recent_sql_handle
+			FROM sys.dm_exec_connections WITH (NOLOCK)
 		)
 		SELECT DISTINCT
 			SYSUTCDATETIME() AS ts,
@@ -137,15 +141,17 @@ func (c *SqlServerRepository) FetchBlockingSnapshots(ctx context.Context, db *sq
 			ISNULL(t.log_bytes_reserved, 0) AS log_bytes_reserved,
 			ISNULL(w.resource_description, ISNULL(r.wait_resource, '')) AS wait_resource,
 			ISNULL(r.percent_complete, 0.0) AS percent_complete,
-			ISNULL(r.sql_hash, '') AS sql_hash,
+			ISNULL(r.sql_hash, CONVERT(VARCHAR(64), c.most_recent_sql_handle, 1)) AS sql_hash,
 			ISNULL(r.plan_hash, '') AS plan_hash,
-			st.text AS query_text,
+			ISNULL(st.text, cst.text) AS query_text,
 			qp.query_plan
 		FROM sessions s
 		LEFT JOIN requests r ON s.session_id = r.session_id
 		LEFT JOIN waiting_agg w ON s.session_id = w.session_id
 		LEFT JOIN transactions t ON s.session_id = t.session_id
+		LEFT JOIN connections c ON s.session_id = c.session_id
 		OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) st
+		OUTER APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) cst
 		OUTER APPLY (
 			SELECT CAST(query_plan AS NVARCHAR(MAX)) AS query_plan 
 			FROM sys.dm_exec_query_plan(r.plan_handle) 
@@ -257,29 +263,9 @@ func (c *SqlServerRepository) FetchBlockingLocks(ctx context.Context, db *sql.DB
 
 // FetchDeadlockEvents reads deadlock events from Extended Events
 func (c *SqlServerRepository) FetchDeadlockEvents(ctx context.Context, db *sql.DB) ([]models.SQLServerDeadlockEvent, error) {
-	// First, find the actual file path/name from the session target
-	pathQuery := `
-		SELECT CAST(t.target_data AS XML).value('(/EventFileTarget/File/@name)[1]', 'nvarchar(max)')
-		FROM sys.dm_xe_session_targets t
-		JOIN sys.dm_xe_sessions s ON s.address = t.event_session_address
-		WHERE s.name = 'dbamon_deadlocks' AND t.target_name = 'event_file'
-	`
-	var targetPath string
-	ctx, cancel := WithQueryTimeout(ctx, 0)
-	defer cancel()
-	err := db.QueryRowContext(ctx, pathQuery).Scan(&targetPath)
-	if err != nil || targetPath == "" {
-		// Fallback to default if we can't find it in dm_xe_session_targets (maybe session is stopped)
-		targetPath = "dbamon_deadlocks*.xel"
-	} else {
-		// The path in target_data often needs a wildcard to find all segments
-		if !strings.Contains(targetPath, "*") {
-			if strings.HasSuffix(targetPath, ".xel") {
-				targetPath = strings.Replace(targetPath, ".xel", "*.xel", 1)
-			} else {
-				targetPath += "*.xel"
-			}
-		}
+	sessionName, targetPath, err := c.discoverDeadlockXESession(ctx, db)
+	if err != nil || sessionName == "" {
+		return nil, nil
 	}
 
 	query := fmt.Sprintf(`
@@ -293,7 +279,7 @@ func (c *SqlServerRepository) FetchDeadlockEvents(ctx context.Context, db *sql.D
 		WHERE CAST(event_data AS XML).value('(/event/@timestamp)[1]', 'datetime2') > DATEADD(hour, -24, GETUTCDATE());
 	`, targetPath)
 
-	ctx, cancel = WithQueryTimeout(ctx, 0)
+	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -312,9 +298,15 @@ func (c *SqlServerRepository) FetchDeadlockEvents(ctx context.Context, db *sql.D
 	return results, nil
 }
 
-// IsDeadlockXESessionEnabled checks if the deadlock XE session is active
+// IsDeadlockXESessionEnabled checks if a deadlock XE session is defined
 func (c *SqlServerRepository) IsDeadlockXESessionEnabled(ctx context.Context, db *sql.DB) (bool, error) {
-	checkQuery := `SELECT COUNT(*) FROM sys.server_event_sessions WHERE name = 'dbamon_deadlocks'`
+	checkQuery := `
+		SELECT COUNT(*) 
+		FROM sys.server_event_session_events e
+		JOIN sys.server_event_sessions s ON e.event_session_id = s.event_session_id
+		WHERE e.name = 'xml_deadlock_report'
+		  AND s.name <> 'system_health'
+	`
 	var count int
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	err := db.QueryRowContext(ctx, checkQuery).Scan(&count)
@@ -327,35 +319,106 @@ func (c *SqlServerRepository) IsDeadlockXESessionEnabled(ctx context.Context, db
 
 // EnsureDeadlockXESession creates the XE session if missing
 func (c *SqlServerRepository) EnsureDeadlockXESession(ctx context.Context, db *sql.DB) error {
-	checkQuery := `SELECT 1 FROM sys.server_event_sessions WHERE name = 'dbamon_deadlocks'`
-	var exists int
-	ctx, cancel := WithQueryTimeout(ctx, 0)
-	defer cancel()
-	err := db.QueryRowContext(ctx, checkQuery).Scan(&exists)
-	if err == sql.ErrNoRows {
+	sessionName, _, _ := c.discoverDeadlockXESession(ctx, db)
+	
+	if sessionName == "" || sessionName == "system_health" {
+		// Create preferred session if no custom session exists
 		createSQL := `
-			CREATE EVENT SESSION [dbamon_deadlocks]
-			ON SERVER
-			ADD EVENT sqlserver.xml_deadlock_report
-			ADD TARGET package0.event_file
-			(
-				SET filename = 'dbamon_deadlocks.xel',
-					max_file_size = 50,
-					max_rollover_files = 10
-			)
-			WITH (STARTUP_STATE = ON);
-
-			ALTER EVENT SESSION [dbamon_deadlocks] ON SERVER STATE = START;
+			IF NOT EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = 'sqloptima_deadlocks')
+			BEGIN
+				CREATE EVENT SESSION [sqloptima_deadlocks]
+				ON SERVER
+				ADD EVENT sqlserver.xml_deadlock_report
+				ADD TARGET package0.event_file
+				(
+					SET filename = 'sqloptima_deadlocks.xel',
+						max_file_size = 50,
+						max_rollover_files = 10
+				)
+				WITH (STARTUP_STATE = ON);
+			END
 		`
-		ctx, cancel = WithQueryTimeout(ctx, 0)
+		ctx, cancel := WithQueryTimeout(ctx, 0)
 		defer cancel()
-		_, err = db.ExecContext(ctx, createSQL)
+		_, err := db.ExecContext(ctx, createSQL)
 		if err != nil {
 			slog.Error("[SQLSERVER] Failed to create Deadlock XE session", "err", err)
 			return err
 		}
+		sessionName = "sqloptima_deadlocks"
 	}
-	return nil
+
+	// Ensure the session is running
+	startSQL := fmt.Sprintf(`
+		IF NOT EXISTS (SELECT 1 FROM sys.dm_xe_sessions WHERE name = '%s')
+		BEGIN
+			DECLARE @sql NVARCHAR(MAX) = 'ALTER EVENT SESSION [' + @p1 + '] ON SERVER STATE = START';
+			EXEC sp_executesql @sql;
+		END
+	`, sessionName)
+	
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	_, err := db.ExecContext(ctx, startSQL, sessionName)
+	return err
+}
+
+// discoverDeadlockXESession finds any session capturing deadlock reports and its file path
+func (c *SqlServerRepository) discoverDeadlockXESession(ctx context.Context, db *sql.DB) (string, string, error) {
+	// Find the session name first
+	sessionQuery := `
+		SELECT TOP 1 s.name
+		FROM sys.server_event_session_events e
+		JOIN sys.server_event_sessions s ON e.event_session_id = s.event_session_id
+		WHERE e.name = 'xml_deadlock_report'
+		ORDER BY CASE 
+			WHEN s.name = 'sqloptima_deadlocks' THEN 0 
+			WHEN s.name = 'dbamon_deadlocks' THEN 1 
+			WHEN s.name = 'system_health' THEN 3
+			ELSE 2 END
+	`
+	var sessionName string
+	ctx, cancel := WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err := db.QueryRowContext(ctx, sessionQuery).Scan(&sessionName)
+	if err != nil {
+		return "", "", err
+	}
+
+	// Find the target path
+	pathQuery := `
+		SELECT TOP 1 
+			ISNULL(
+				CAST(t.target_data AS XML).value('(/EventFileTarget/File/@name)[1]', 'nvarchar(max)'),
+				(SELECT CAST(f.value AS NVARCHAR(MAX)) 
+				 FROM sys.server_event_session_fields f 
+				 WHERE f.event_session_id = s.event_session_id AND f.name = 'filename')
+			) AS target_path
+		FROM sys.server_event_sessions s
+		LEFT JOIN sys.dm_xe_sessions ds ON ds.name = s.name
+		LEFT JOIN sys.dm_xe_session_targets t ON t.event_session_address = ds.address AND t.target_name = 'event_file'
+		WHERE s.name = @p1
+	`
+
+	var targetPath string
+	ctx, cancel = WithQueryTimeout(ctx, 0)
+	defer cancel()
+	err = db.QueryRowContext(ctx, pathQuery, sessionName).Scan(&targetPath)
+	
+	if targetPath == "" {
+		targetPath = sessionName + "*.xel"
+	}
+
+	// Ensure wildcard
+	if !strings.Contains(targetPath, "*") {
+		if strings.HasSuffix(targetPath, ".xel") {
+			targetPath = strings.Replace(targetPath, ".xel", "*.xel", 1)
+		} else if !strings.Contains(targetPath, ".xel") {
+			targetPath += "*.xel"
+		}
+	}
+
+	return sessionName, targetPath, nil
 }
 
 // --------------------------------------------------------------------------

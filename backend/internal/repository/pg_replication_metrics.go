@@ -104,6 +104,7 @@ func (c *PgRepository) GetReplicationStats(ctx context.Context, instanceName str
 				COALESCE(client_addr::text, '') AS pod_ip,
 				COALESCE(state, '') AS state,
 				COALESCE(sync_state, '') AS sync_state,
+				COALESCE(sent_lsn::text, '') AS sent_lsn,
 				COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) / 1024.0 / 1024.0, 0) AS replay_lag_mb,
 				COALESCE(EXTRACT(EPOCH FROM write_lag), 0)  AS write_lag_sec,
 				COALESCE(EXTRACT(EPOCH FROM flush_lag), 0)  AS flush_lag_sec,
@@ -120,7 +121,7 @@ func (c *PgRepository) GetReplicationStats(ctx context.Context, instanceName str
 			var maxLagMB float64
 			for rows.Next() {
 				var stat models.PgReplicationStat
-				if err := rows.Scan(&stat.ReplicaPodName, &stat.PodIP, &stat.State, &stat.SyncState,
+				if err := rows.Scan(&stat.ReplicaPodName, &stat.PodIP, &stat.State, &stat.SyncState, &stat.SentLSN,
 					&stat.ReplayLagMB, &stat.WriteLagSec, &stat.FlushLagSec, &stat.ReplayLagSec); err != nil {
 					slog.Error("[POSTGRES] GetReplicationStats: scan error", "target", instanceName, "err", err)
 					continue

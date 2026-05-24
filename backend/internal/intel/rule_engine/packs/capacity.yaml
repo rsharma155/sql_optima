@@ -1,36 +1,11 @@
-name: storage_exhaustion
-description: Storage exhaustion forecast
-conditions:
-  - metric: delta_data_mb
-    operator: ">"
-    value: 100
-  - metric: free_disk_mb
-    operator: "<"
-    value: 50000
-logic: AND
-severity: critical
-message: "Data is growing at {delta_data_mb} MB per interval with {free_disk_mb} MB remaining."
-recommendation:
-  - "Purge old backup files immediately"
-  - "Archive historical data"
-  - "Add storage capacity"
+# storage_exhaustion removed (DEFECT-7): delta_data_mb and free_disk_mb are already
+# covered by dynamic rules rapid_disk_growth and low_disk_space with hardware-tuned
+# thresholds. Keeping this rule caused a third duplicate entry for the same condition.
 
----
-name: database_growth_acceleration
-description: Database growth acceleration
-conditions:
-  - metric: delta_data_mb
-    operator: ">"
-    value: 1000
-logic: AND
-severity: medium
-message: "Database growing rapidly at {delta_data_mb} MB per interval."
-recommendation:
-  - "Implement table partitioning"
-  - "Move historical data to archive"
-  - "Review index maintenance strategy"
+# database_growth_acceleration removed (DEFECT-7): delta_data_mb > 1000 per interval
+# overlaps directly with dynamic rapid_disk_growth. Different rule name caused a
+# duplicate CurrentIssues entry pointing to the same root cause.
 
----
 name: backup_failure_risk
 description: Failed jobs indicate backup risk
 conditions:

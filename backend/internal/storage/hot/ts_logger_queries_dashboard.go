@@ -180,6 +180,10 @@ func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, serverID
 
 	query := fmt.Sprintf(`
 		SELECT time_bucket('%s', q.capture_timestamp) AS time,
+		       SUM(q.total_cpu_ms)::float8 AS cpu_ms,
+		       SUM(q.total_logical_reads)::float8 AS logical_reads,
+		       SUM(q.total_elapsed_ms)::float8 AS total_duration_ms,
+		       SUM(q.total_executions)::float8 AS executions,
 		       SUM(q.%s)::float8 AS value
 		FROM sqlserver_query_metrics_v2 q
 		LEFT JOIN sqlserver_query_classification_dim class
@@ -209,15 +213,21 @@ func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, serverID
 	var results []map[string]interface{}
 	for rows.Next() {
 		var ts time.Time
-		var value float64
+		var cpu, reads, dur, exec, val float64
 
-		if err := rows.Scan(&ts, &value); err != nil {
+		if err := rows.Scan(&ts, &cpu, &reads, &dur, &exec, &val); err != nil {
 			continue
 		}
 
 		results = append(results, map[string]interface{}{
-			"time":  ts,
-			"value": value,
+			"timestamp":          ts,
+			"cpu_ms":             cpu,
+			"logical_reads":      reads,
+			"total_duration_ms":  dur,
+			"avg_duration_ms":    dur / (exec + 0.00001), // prevent div by zero
+			"executions":         exec,
+			"executions_per_sec": exec / 300.0,            // assuming 5-min buckets
+			"value":              val,
 		})
 	}
 	return results, rows.Err()

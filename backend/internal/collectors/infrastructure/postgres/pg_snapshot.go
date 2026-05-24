@@ -3,19 +3,25 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
+	"sync"
 
 	"github.com/rsharma155/sql_optima/internal/collectors/domain"
 )
 
 type PGSnapshotRepository struct {
-	db *sql.DB
+	db             *sql.DB
+	resolvedQuery  string
+	resolvedSchema string
+	mu             sync.Mutex
 }
 
 func NewPGSnapshotRepository(db *sql.DB) *PGSnapshotRepository {
 	return &PGSnapshotRepository{db: db}
 }
 
-const pgStatStatementsSQL = `
+const pgStatStatementsBaseSQL = `
 /* SQL_OPTIMA */
 SELECT
  now() AS capture_time,
@@ -29,7 +35,7 @@ SELECT
  shared_blks_hit,
  shared_blks_read,
  temp_blks_written
-FROM pg_stat_statements
+FROM %s
 WHERE dbid NOT IN (
  SELECT oid FROM pg_database
  WHERE datname IN ('template0','template1')
@@ -37,6 +43,54 @@ WHERE dbid NOT IN (
 ORDER BY total_exec_time DESC
 LIMIT 200;
 `
+
+func (r *PGSnapshotRepository) resolvePGSS(ctx context.Context) (string, error) {
+	r.mu.Lock()
+	if r.resolvedQuery != "" {
+		q := r.resolvedQuery
+		r.mu.Unlock()
+		return q, nil
+	}
+	r.mu.Unlock()
+
+	// Try to find the schema where pg_stat_statements is installed via pg_views.
+	var schema string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT schemaname
+		FROM pg_views
+		WHERE viewname = 'pg_stat_statements'
+		LIMIT 1
+	`).Scan(&schema)
+
+	if err != nil || schema == "" {
+		// Fallback: pg_views may not surface the view if the extension was installed
+		// in a non-default schema. Check pg_class directly.
+		var fallbackSchema string
+		_ = r.db.QueryRowContext(ctx, `
+			SELECT n.nspname
+			FROM pg_class cl
+			JOIN pg_namespace n ON n.oid = cl.relnamespace
+			WHERE cl.relname = 'pg_stat_statements'
+			  AND cl.relkind IN ('v','r','m')
+			LIMIT 1`).Scan(&fallbackSchema)
+
+		if fallbackSchema == "" {
+			// Determine which database this connection targets for a clearer error.
+			var dbName string
+			_ = r.db.QueryRowContext(ctx, "SELECT current_database()").Scan(&dbName)
+			return "", fmt.Errorf("pg_stat_statements not found in database %q. Run 'CREATE EXTENSION pg_stat_statements;' in that database.", dbName)
+		}
+		schema = fallbackSchema
+	}
+
+	r.mu.Lock()
+	r.resolvedSchema = schema
+	r.resolvedQuery = fmt.Sprintf(pgStatStatementsBaseSQL, fmt.Sprintf("%s.pg_stat_statements", schema))
+	q := r.resolvedQuery
+	r.mu.Unlock()
+
+	return q, nil
+}
 
 const pgStatActivitySQL = `
 /* SQL_OPTIMA */
@@ -55,8 +109,19 @@ AND usename <> 'postgres';
 `
 
 func (r *PGSnapshotRepository) FetchSnapshot(ctx context.Context) ([]domain.PGQuerySnapshot, error) {
-	rows, err := r.db.QueryContext(ctx, pgStatStatementsSQL)
+	query, err := r.resolvePGSS(ctx)
 	if err != nil {
+		return nil, err
+	}
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		// If it fails even after resolution (e.g. permissions), we reset the cache
+		if strings.Contains(err.Error(), "does not exist") {
+			r.mu.Lock()
+			r.resolvedQuery = ""
+			r.mu.Unlock()
+		}
 		return nil, err
 	}
 	defer rows.Close()

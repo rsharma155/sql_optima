@@ -88,7 +88,7 @@ async function initPgReplication(instName) {
     try {
         const [replResp, histResp, lagResp] = await Promise.all([
             window.apiClient.authenticatedFetch(buildUrl('/api/postgres/replication')),
-            window.apiClient.authenticatedFetch(buildUrl('/api/postgres/control-center/history')),
+            window.apiClient.authenticatedFetch(buildUrl('/api/postgres/checkpoint-health/history')),
             window.apiClient.authenticatedFetch(buildUrl('/api/postgres/replication-lag/history')),
         ]);
         
@@ -97,8 +97,7 @@ async function initPgReplication(instName) {
             replData = payload?.stats || replData;
         }
         if (histResp.ok) {
-            const payload = await histResp.json();
-            ccHistory = payload && payload.history ? payload.history : null;
+            ccHistory = await histResp.json();
         }
         if (lagResp.ok) {
             const payload = await lagResp.json();
@@ -130,15 +129,15 @@ async function initPgReplication(instName) {
         if (standbys.length === 0) {
             tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted">${isPrimary ? 'No standbys connected' : 'Instance is not a primary'}</td></tr>`;
         } else {
-            tbody.innerHTML = standbys.map(s => `
+            tbody.innerHTML = standbys.filter(s => s !== null).map(s => `
                 <tr>
-                    <td><strong>${window.escapeHtml(s.application_name || 'unknown')}</strong></td>
-                    <td>${window.escapeHtml(s.client_addr || '-')}</td>
+                    <td><strong>${window.escapeHtml(s.application_name || s.replica_pod_name || 'unknown')}</strong></td>
+                    <td>${window.escapeHtml(s.client_addr || s.pod_ip || '-')}</td>
                     <td><span class="badge badge-success">${window.escapeHtml(s.state || '-')}</span></td>
                     <td><span class="text-accent">${window.escapeHtml(s.sync_state || '-')}</span></td>
                     <td>${window.escapeHtml(s.sent_lsn || '-')}</td>
                     <td class="text-right ${Number(s.replay_lag_mb) > 10 ? 'text-danger font-bold' : ''}">${(s.replay_lag_mb || 0).toFixed(1)} MB</td>
-                    <td>${window.escapeHtml(s.replay_lag_time || '-')}</td>
+                    <td>${window.escapeHtml(s.replay_lag_time || (s.replay_lag_sec !== undefined ? s.replay_lag_sec.toFixed(1) + 's' : '-'))}</td>
                 </tr>
             `).join('');
         }
@@ -185,9 +184,9 @@ function renderReplicationCharts(lagSeries, ccHistory) {
 
     // Checkpointer Chart
     const checkCtx = document.getElementById('pgCheckChart');
-    if (checkCtx && ccHistory) {
+    if (checkCtx && ccHistory && Array.isArray(ccHistory)) {
         if (window.currentCharts['pgCheckChart']) window.currentCharts['pgCheckChart'].destroy();
-        const labels = ccHistory.map(p => new Date(p.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+        const labels = ccHistory.map(p => new Date(p.capture_timestamp || p.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
         const timed = ccHistory.map(p => p.checkpoints_timed || 0);
         const req = ccHistory.map(p => p.checkpoints_req || 0);
         window.currentCharts['pgCheckChart'] = new Chart(checkCtx, {

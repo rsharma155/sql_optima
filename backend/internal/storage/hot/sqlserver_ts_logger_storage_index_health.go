@@ -48,7 +48,7 @@ func (tl *TimescaleLogger) sihSqlServerHighScanTableCount(ctx context.Context, e
 
 func (tl *TimescaleLogger) sihSqlServerTopScans(ctx context.Context, engine, serverID, from, to string, f SIHFilters) ([]StorageIndexHealthTopRow, error) {
 	args := []interface{}{engine, serverID, from, to}
-	where := `engine = $1 AND server_id = $2 AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
+	where := `engine = $1 AND server_id = $2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 	where, args, _ = sihAppendFilters(where, args, f, 5)
 	q := fmt.Sprintf(`
 		SELECT db_name, schema_name, table_name,

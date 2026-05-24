@@ -91,9 +91,11 @@ export async function loadCollectorConfigs() {
             'SQL Server AG Health': 'Dashboard: SQL Server HA | Metric: AG replication health',
             'SQL Server Enterprise Metrics': 'Dashboard: SQL Server Enterprise | Metric: Enterprise KPIs',
             'SQL Server Agent Jobs': 'Dashboard: SQL Server Jobs | Metric: Job status',
-            'sqlserver_query_snapshot': 'Dashboard: SQL Server Overview | Metric: Query metrics snapshot',
-            'sqlserver_session_enrichment': 'Dashboard: SQL Server Overview | Metric: Session enrichment data',
-            'sqlserver_blocking': 'Dashboard: SQL Server Locks | Metric: Blocking chain',            'pg_queries_v2': 'Dashboard: Queries | Metric: Query metrics v2',
+            'Query V2 Pipeline': 'System: V2 pipeline orchestrator | Governs: sqlserver_query_snapshot (60 s), sqlserver_session_enrichment (30 s), pg_queries_v2 (60 s) | Toggle: ENABLE_QUERY_V2_PIPELINE env var',
+            'sqlserver_query_snapshot': 'Dashboards: SQL Server Workload, Query Analysis, Health | Metric: Watermark-based DMV snapshot with restart detection → sqlserver_query_metrics_v2',
+            'sqlserver_session_enrichment': 'Dashboard: SQL Server Workload (app/login timelines) | Metric: plan_handle → login_name/application_name enrichment, correlated by query_snapshot',
+            'sqlserver_blocking': 'Dashboard: SQL Server Locks | Metric: Blocking chain',
+            'pg_queries_v2': 'Dashboard: Postgres Query Analysis (staged — no dashboard reader yet) | Metric: Delta-tracked pg_stat_statements per query_id → pg_query_metrics_v2',
             'Performance Debt Collection': 'Dashboard: Performance Debt | Metric: Best practices score',
             'Alert Evaluation Loop': 'System: Alerting Engine | Metric: Alert triggers',
             'Base Collector Ticker': 'System: Core Collector | Metric: Heartbeat',
@@ -119,6 +121,8 @@ export async function loadCollectorConfigs() {
             'SQL Server Connections Live': 'Dashboard: SQL Server Live | Metric: Live connections'
         };
 
+        const v2PipelineJobs = new Set(['Query V2 Pipeline', 'sqlserver_query_snapshot', 'sqlserver_session_enrichment', 'pg_queries_v2']);
+
         if (!configs || configs.length === 0) {
             body.innerHTML = '<tr><td colspan="6" class="text-center text-muted" style="padding:2rem;">No collectors configured.</td></tr>';
         } else {
@@ -135,9 +139,13 @@ export async function loadCollectorConfigs() {
                     ? `<span style="font-family:monospace; font-weight:600;">${c.run_order}</span>`
                     : `<span class="text-muted">—</span>`;
 
+                const v2Badge = v2PipelineJobs.has(c.collector_name)
+                    ? `<span style="background:rgba(99,102,241,0.15);color:#6366f1;font-size:0.6rem;font-weight:700;padding:0.1rem 0.4rem;border-radius:4px;margin-left:0.4rem;vertical-align:middle;letter-spacing:0.03em;">V2</span>`
+                    : '';
+
                 tr.innerHTML = `
                     <td style="padding:1rem; border-top-left-radius:8px; border-bottom-left-radius:8px;">
-                        <div style="font-weight:600; font-size:0.9rem;">${window.escapeHtml(c.collector_name)}</div>
+                        <div style="font-weight:600; font-size:0.9rem;">${window.escapeHtml(c.collector_name)}${v2Badge}</div>
                         <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.2rem;">ID: ${c.id}</div>
                     </td>
                     <td style="padding:1rem;">

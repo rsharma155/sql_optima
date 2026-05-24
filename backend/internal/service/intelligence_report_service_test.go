@@ -148,7 +148,7 @@ func TestGetReportInProcess(t *testing.T) {
 	}
 	mock.ExpectQuery(`SELECT capture_timestamp, blocking_sessions`).WillReturnRows(pgxmock.NewRows([]string{"a"}).AddRow(time.Now()))
 
-	content, err := svc.GetReport(ctx, serverID.String(), "json")
+	content, err := svc.GetReport(ctx, serverID.String(), "json", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

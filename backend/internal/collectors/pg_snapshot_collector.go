@@ -273,7 +273,7 @@ func (c *PgSnapshotCollector) Collect(ctx context.Context, inst config.Instance)
 		now := time.Now().UTC()
 		for _, w := range waitCounts {
 			waitRows = append(waitRows, hot.PostgresWaitEventRow{
-				CaptureTimestamp: now,
+				Timestamp:        now,
 				ServerID:         serverID,
 				WaitEventType:    w.WaitEventType,
 				WaitEvent:        w.WaitEvent,
@@ -290,7 +290,7 @@ func (c *PgSnapshotCollector) Collect(ctx context.Context, inst config.Instance)
 		now := time.Now().UTC()
 		for _, d := range dbStats {
 			ioRows = append(ioRows, hot.PostgresDbIORow{
-				CaptureTimestamp: now,
+				Timestamp:        now,
 				ServerID:         serverID,
 				DatabaseName:     d.DatabaseName,
 				BlksRead:         d.BlksRead,

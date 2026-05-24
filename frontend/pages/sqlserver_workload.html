@@ -2,20 +2,23 @@
  * SQL Optima — SQL Server Workload Observability
 -->
 <div class="page-view active dashboard-sky-theme workload-page-modern">
-    <!-- ROW 0: HEADER -->
-    <div class="wl-page-header">
-        <div class="dashboard-title-line">
-            <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-gauge-high"></i> SQL Server Workload <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Workload Analytics" title="Learn more about this dashboard"></i></h1>
-            <span class="subtitle" style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px; display:block;">Instance: <span id="wlInstanceName" class="text-accent">--</span> | Workload Intelligence &amp; Root Cause Analytics</span>
-        </div>
-        <div class="wl-header-actions">
-            <div class="glass-panel wl-range-picker">
-                <input type="datetime-local" id="wlFrom" class="wl-dt-input" />
-                <span class="text-muted">→</span>
-                <input type="datetime-local" id="wlTo" class="wl-dt-input" />
-                <button type="button" class="btn btn-xs btn-accent" id="wlApplyRange"><i class="fa-solid fa-filter"></i> Apply</button>
+    <div class="page-title flex-between" style="padding: 10px 20px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); height: 65px;">
+        <div>
+            <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;">
+                <i class="fa-solid fa-gauge-high text-accent"></i>
+                SQL Server Workload
+                <i class="fa-solid fa-circle-info text-accent info-icon-clickable cursor-pointer" style="font-size: 0.9rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Workload Analytics" title="Learn more about this dashboard"></i>
+            </h1>
+            <div style="display:flex; gap:12px; align-items:center; margin-top:2px;">
+                <span style="font-size:0.7rem; color:var(--text-secondary); font-weight:600;"><i class="fa-solid fa-server" style="font-size:0.6rem;"></i> <span id="wlInstanceName" class="text-accent">--</span></span>
+                <span style="font-size:0.7rem; color:var(--text-muted);"><i class="fa-solid fa-database" style="font-size:0.6rem;"></i> Workload Intelligence &amp; Root Cause Analytics</span>
             </div>
-            <button class="btn btn-sm btn-outline text-accent" id="wlRefreshBtn" data-action="call" data-fn="wlRefreshAll"><i class="fa-solid fa-refresh"></i> Refresh</button>
+        </div>
+        <div class="flex-between" style="align-items:center; gap:1rem;">
+            <div id="time-picker-insertion-point"></div>
+            <div class="text-muted" style="font-size:0.65rem; background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px;">
+                Update: <span id="wl-last-update" class="text-accent">--:--:--</span>
+            </div>
         </div>
     </div>
 
@@ -89,10 +92,10 @@
                             <table class="modern-table modern-table-compact" id="wlTopQueriesTable">
                                 <thead>
                                     <tr>
-                                        <th class="sortable" data-sort="last_seen">Last Seen</th>
+                                        <th class="sortable" data-sort="last_seen" title="Last execution time as reported by SQL Server (server local time)">Last Seen <i class="fa-solid fa-circle-info" style="font-size:0.65rem; color:var(--text-muted);"></i></th>
                                         <th class="query-column">Query Statement</th>
-                                        <th class="text-end sortable" data-sort="total_executions">Execs</th>
-                                        <th class="text-end sortable" data-sort="avg_cpu_ms">Avg CPU</th>
+                                        <th class="text-end sortable" data-sort="total_executions" title="Total executions in the selected time window (sum of per-cycle deltas)">Execs</th>
+                                        <th class="text-end sortable" data-sort="avg_cpu_ms" title="Average CPU time per execution (ms)">Avg CPU (ms)</th>
                                         <th class="text-end sortable" data-sort="total_logical_reads">Reads</th>
                                         <th>Database</th>
                                         <th>Application</th>

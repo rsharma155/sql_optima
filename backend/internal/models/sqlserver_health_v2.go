@@ -23,6 +23,7 @@ type HealthV2DashboardResponse struct {
 	Problems          ActiveProblems    `json:"problems"`
 	LastUpdate        time.Time         `json:"last_update"`
 	RefreshIntervalMs int               `json:"refresh_interval_ms"`
+	Tooltips          map[string]string `json:"tooltips,omitempty"`
 }
 
 type HealthV2KPIs struct {
@@ -38,6 +39,10 @@ type HealthV2KPIs struct {
 	LoginsPerSec          float64 `json:"logins_per_sec"`
 	TargetServerMemoryMB  float64 `json:"target_server_memory_mb"`
 	TotalServerMemoryMB   float64 `json:"total_server_memory_mb"`
+	MemoryUtilizationPct  float64 `json:"memory_utilization_pct"`
+	DataCacheLifeLifeSec  float64 `json:"data_cache_life_sec"` // Descriptive name for PLE
+	StorageMinimumFreePct float64 `json:"storage_minimum_free_pct"`
+	VolumesTracked        int     `json:"volumes_tracked"`
 	InstanceStatus        string  `json:"instance_status"` // "Healthy", "Warning", "Critical"
 	Edition          string  `json:"edition"`
 	Uptime           string  `json:"uptime"`

@@ -88,7 +88,7 @@ func PersistSQLServerTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogg
 
 		// Store a “delta” row with zeros for scan counters; sizes + row_count as snapshot values.
 		stat := models.TableUsageStat{
-			Time:         capture.UTC(),
+			Timestamp:    capture.UTC(),
 			Engine:       engine,
 			ServerID:     serverID,
 			DBName:       r.DBName,
@@ -116,7 +116,7 @@ func PersistSQLServerTableSizeHistory(ctx context.Context, tl *hot.TimescaleLogg
 	engine := "sqlserver"
 	for _, r := range rows {
 		h := models.TableSizeHistory{
-			Time:        capture.UTC(),
+			Timestamp:   capture.UTC(),
 			Engine:      engine,
 			ServerID:    serverID,
 			DBName:      r.DBName,

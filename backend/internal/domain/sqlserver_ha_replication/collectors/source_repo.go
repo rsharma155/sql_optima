@@ -11,6 +11,7 @@ package collectors
 
 import (
 	"context"
+	dbsql "database/sql"
 	"fmt"
 	"strings"
 
@@ -64,21 +65,26 @@ func (r *SourceQuerier) FetchFeatureDetection(ctx context.Context, instanceName 
 		IF EXISTS (SELECT 1 FROM sys.database_mirroring WHERE mirroring_state IS NOT NULL) SET @mir = 1;
 
 		-- Replication detection: check if published, subscribed, or is a distributor
-		IF EXISTS (SELECT 1 FROM sys.databases WHERE is_published = 1 OR is_subscribed = 1) 
+		IF EXISTS (SELECT 1 FROM sys.databases WHERE is_published = 1 OR is_subscribed = 1 OR is_merge_published = 1 OR is_distributor = 1) 
 		   OR CAST(SERVERPROPERTY('IsDistributor') AS BIT) = 1
-		   OR EXISTS (SELECT 1 FROM sys.databases WHERE name = 'distribution')
+		   OR EXISTS (SELECT 1 FROM sys.servers WHERE server_id = 0 AND (is_publisher = 1 OR is_subscriber = 1 OR is_distributor = 1))
 		BEGIN
 			SET @repl = 1;
 		END
 
 		-- Detect replication types if possible
 		DECLARE @repl_types TABLE (ptype INT);
-		IF EXISTS (SELECT 1 FROM sys.databases WHERE name = 'distribution')
+		IF EXISTS (SELECT 1 FROM sys.databases WHERE name = 'distribution' OR is_distributor = 1)
 		BEGIN
 			-- 1 = Transactional, 2 = Snapshot, 3 = Merge
 			BEGIN TRY
+				-- We try to find the distribution database name dynamically
+				DECLARE @dist_db NVARCHAR(256) = (SELECT TOP 1 name FROM sys.databases WHERE is_distributor = 1);
+				IF @dist_db IS NULL SET @dist_db = 'distribution';
+
+				DECLARE @dist_sql NVARCHAR(MAX) = N'SELECT DISTINCT publication_type FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSpublications';
 				INSERT INTO @repl_types (ptype)
-				SELECT DISTINCT publication_type FROM distribution.dbo.MSpublications;
+				EXEC sp_executesql @dist_sql;
 			END TRY BEGIN CATCH END CATCH
 		END
 
@@ -288,67 +294,130 @@ func (r *SourceQuerier) FetchReplicationTopology(ctx context.Context, instanceNa
 	const sql = `
 		/* SQL_OPTIMA — replication_topology_live */
 		SET NOCOUNT ON;
-		IF EXISTS (SELECT 1 FROM sys.databases WHERE name = 'distribution')
+		DECLARE @dist_db NVARCHAR(256) = (SELECT TOP 1 name FROM sys.databases WHERE is_distributor = 1);
+		IF @dist_db IS NULL AND EXISTS (SELECT 1 FROM sys.databases WHERE name = 'distribution') SET @dist_db = 'distribution';
+
+		IF @dist_db IS NOT NULL
 		BEGIN
+			DECLARE @q NVARCHAR(MAX) = N'
 			SELECT
 				ISNULL(mss2.srvname, @@SERVERNAME)              AS publisher,
-				ISNULL(mss.srvname,  '')                        AS subscriber,
-				ISNULL(da.publication, '')                      AS publication,
-				ISNULL(da.publisher_db, '')                     AS publication_db,
-				ISNULL(da.subscriber_db, '')                    AS subscriber_db,
-				-- publication_type: 0=Transactional, 1=Snapshot, 2=Merge
+				ISNULL(mss.srvname,  '''')                        AS subscriber,
+				ISNULL(da.publication, '''')                      AS publication,
+				ISNULL(da.publisher_db, '''')                     AS publication_db,
+				ISNULL(da.subscriber_db, '''')                    AS subscriber_db,
 				CASE mp.publication_type
-					WHEN 0 THEN 'Transactional'
-					WHEN 1 THEN 'Snapshot'
-					WHEN 2 THEN 'Merge'
-					ELSE 'Unknown'
+					WHEN 0 THEN ''Transactional''
+					WHEN 1 THEN ''Snapshot''
+					WHEN 2 THEN ''Merge''
+					ELSE ''Unknown''
 				END                                             AS replication_type,
-				'Continuous'                                    AS sync_type,
-				ISNULL(ag.agent_status, 'Unknown')              AS agent_status,
+				''Continuous''                                    AS sync_type,
+				ISNULL(ag.agent_status, ''Unknown'')              AS agent_status,
 				ag.last_start_time                              AS last_sync_time
-			FROM distribution.dbo.MSdistribution_agents da
-			LEFT JOIN distribution.dbo.MSpublications mp 
+			FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSdistribution_agents da
+			LEFT JOIN ' + QUOTENAME(@dist_db) + N'.dbo.MSpublications mp 
 				ON mp.publisher_db = da.publisher_db 
 				AND mp.publication = da.publication
 			LEFT JOIN master.sys.sysservers mss  ON mss.srvid  = da.subscriber_id
 			LEFT JOIN master.sys.sysservers mss2 ON mss2.srvid = da.publisher_id
-			-- latest agent run from history
 			OUTER APPLY (
 				SELECT TOP 1
 					CASE h.runstatus
-						WHEN 1 THEN 'Idle'
-						WHEN 2 THEN 'Running'
-						WHEN 3 THEN 'Error'
-						WHEN 4 THEN 'Idle'
-						WHEN 5 THEN 'Retrying'
-						WHEN 6 THEN 'Failed'
-						ELSE 'Unknown'
+						WHEN 1 THEN ''Idle''
+						WHEN 2 THEN ''Running''
+						WHEN 3 THEN ''Error''
+						WHEN 4 THEN ''Idle''
+						WHEN 5 THEN ''Retrying''
+						WHEN 6 THEN ''Failed''
+						ELSE ''Unknown''
 					END AS agent_status,
 					h.start_time AS last_start_time
-				FROM distribution.dbo.MSdistribution_history h 
+				FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSdistribution_history h 
 				WHERE h.agent_id = da.id
 				ORDER BY h.timestamp DESC
 			) ag
-			WHERE da.subscriber_id >= 0;
+			WHERE da.subscriber_id >= 0';
+
+			IF OBJECT_ID(QUOTENAME(@dist_db) + '.dbo.MSmerge_agents') IS NOT NULL
+			   AND HAS_PERMS_BY_NAME(QUOTENAME(@dist_db) + '.dbo.MSmerge_sessions', 'OBJECT', 'SELECT') = 1
+			BEGIN
+				SET @q = @q + N' UNION ALL
+				SELECT
+					ISNULL(mss2.srvname, @@SERVERNAME)              AS publisher,
+					ISNULL(mss.srvname,  '''')                        AS subscriber,
+					ISNULL(ma.publication, '''')                      AS publication,
+					ISNULL(ma.publisher_db, '''')                     AS publication_db,
+					ISNULL(ma.subscriber_db, '''')                    AS subscriber_db,
+					''Merge''                                         AS replication_type,
+					''Continuous''                                    AS sync_type,
+					ISNULL(mh.agent_status, ''Unknown'')              AS agent_status,
+					mh.last_start_time                              AS last_sync_time
+				FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSmerge_agents ma
+				LEFT JOIN master.sys.sysservers mss  ON mss.srvid  = ma.subscriber_id
+				LEFT JOIN master.sys.sysservers mss2 ON mss2.srvid = ma.publisher_id
+				OUTER APPLY (
+					SELECT TOP 1
+						CASE h.runstatus
+							WHEN 1 THEN ''Idle''
+							WHEN 2 THEN ''Running''
+							WHEN 3 THEN ''Error''
+							WHEN 4 THEN ''Idle''
+							WHEN 5 THEN ''Retrying''
+							WHEN 6 THEN ''Failed''
+							ELSE ''Unknown''
+						END AS agent_status,
+						h.start_time AS last_start_time
+					FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSmerge_sessions h 
+					WHERE h.agent_id = ma.id
+					ORDER BY h.start_time DESC
+				) mh
+				WHERE ma.subscriber_id >= 0';
+			END
+			EXEC sp_executesql @q;
 		END
 		ELSE
 		BEGIN
-			-- Fallback: use local sys.publications (valid when connected as publisher).
+			-- Fallback: use local sys.publications + sys.subscriptions (valid when connected as publisher).
 			SELECT
-				@@SERVERNAME AS publisher,
-				'' AS subscriber,
-				sp.name AS publication,
-				DB_NAME() AS publication_db,
-				'' AS subscriber_db,
-				CASE sp.repl_freq
-					WHEN 0 THEN 'Transactional'
-					WHEN 1 THEN 'Snapshot'
-					ELSE 'Unknown'
-				END AS replication_type,
-				'Unknown' AS sync_type,
-				'Active'  AS agent_status,
-				NULL AS last_sync_time
-			FROM sys.publications sp;
+			        @@SERVERNAME AS publisher,
+			        ISNULL(srv.name, s.subscriber_server) AS subscriber,
+			        p.name AS publication,
+			        DB_NAME() AS publication_db,
+			        ISNULL(s.db_name, '') AS subscriber_db,
+			        CASE p.repl_freq
+			                WHEN 0 THEN 'Snapshot'
+			                WHEN 1 THEN 'Transactional'
+			                ELSE 'Unknown'
+			        END AS replication_type,
+			        CASE s.subscription_type
+			                WHEN 0 THEN 'Push'
+			                WHEN 1 THEN 'Pull'
+			                ELSE 'Unknown'
+			        END AS sync_type,
+			        'Active'  AS agent_status,
+			        NULL AS last_sync_time
+			FROM sys.publications p
+			LEFT JOIN sys.subscriptions s ON p.pubid = s.pubid
+			LEFT JOIN sys.servers srv ON s.srvid = srv.server_id
+			UNION ALL
+			SELECT
+			        @@SERVERNAME AS publisher,
+			        ISNULL(srv.name, s.subscriber_server) AS subscriber,
+			        p.name AS publication,
+			        DB_NAME() AS publication_db,
+			        ISNULL(s.db_name, '') AS subscriber_db,
+			        'Merge' AS replication_type,
+			        CASE s.subscription_type
+			                WHEN 0 THEN 'Push'
+			                WHEN 1 THEN 'Pull'
+			                ELSE 'Unknown'
+			        END AS sync_type,
+			        'Active'  AS agent_status,
+			        NULL AS last_sync_time
+			FROM sys.mergepublications p
+			LEFT JOIN sys.mergesubscriptions s ON p.pubid = s.pubid
+			LEFT JOIN sys.servers srv ON s.srvid = srv.server_id;
 		END`
 
 	db, ok := r.msRepo.GetConn(instanceName)
@@ -365,12 +434,16 @@ func (r *SourceQuerier) FetchReplicationTopology(ctx context.Context, instanceNa
 	var result []domain.ReplicationTopologyRow
 	for rows.Next() {
 		var row domain.ReplicationTopologyRow
+		var lastSync dbsql.NullTime
 		if err := rows.Scan(
 			&row.Publisher, &row.Subscriber, &row.Publication,
 			&row.PublicationDB, &row.SubscriberDB, &row.ReplicationType,
-			&row.SyncType, &row.AgentStatus, &row.LastSyncTime,
+			&row.SyncType, &row.AgentStatus, &lastSync,
 		); err != nil {
 			continue
+		}
+		if lastSync.Valid {
+			row.LastSyncTime = lastSync.Time
 		}
 		result = append(result, row)
 	}
@@ -382,42 +455,103 @@ func (r *SourceQuerier) FetchReplicationLatency(ctx context.Context, instanceNam
 	const sql = `
 		/* SQL_OPTIMA — replication_latency_live */
 		SET NOCOUNT ON;
-		IF EXISTS (SELECT 1 FROM sys.databases WHERE name = 'distribution')
+		DECLARE @dist_db NVARCHAR(256) = (SELECT TOP 1 name FROM sys.databases WHERE is_distributor = 1);
+		IF @dist_db IS NULL AND EXISTS (SELECT 1 FROM sys.databases WHERE name = 'distribution') SET @dist_db = 'distribution';
+
+		IF @dist_db IS NOT NULL
 		BEGIN
+			DECLARE @q NVARCHAR(MAX) = N'
 			SELECT
-				ISNULL(mss2.srvname, '')                        AS publisher,
-				ISNULL(mss.srvname, '')                         AS subscriber,
-				ISNULL(mda.publication, '')                     AS publication,
+				ISNULL(mss2.srvname, @@SERVERNAME)              AS publisher,
+				ISNULL(mss.srvname, '''')                         AS subscriber,
+				ISNULL(mda.publication, '''')                     AS publication,
 				ISNULL(mda_hist.delivery_latency / 1000, 0)     AS latency_seconds,
 				ISNULL(mds.UndelivCmdsInDistDB, 0)              AS undistributed_commands,
 				ISNULL(mda_hist.delivery_rate, 0)               AS delivery_rate_cmds_sec,
 				CASE mda_hist.runstatus
-					WHEN 1 THEN 'Idle'
-					WHEN 2 THEN 'Running'
-					WHEN 3 THEN 'Error'
-					WHEN 4 THEN 'Idle'
-					WHEN 5 THEN 'Retrying'
-					WHEN 6 THEN 'Failed'
-					ELSE 'Unknown'
+					WHEN 1 THEN ''Idle''
+					WHEN 2 THEN ''Running''
+					WHEN 3 THEN ''Error''
+					WHEN 4 THEN ''Idle''
+					WHEN 5 THEN ''Retrying''
+					WHEN 6 THEN ''Failed''
+					ELSE ''Unknown''
 				END                                             AS status
-			FROM distribution.dbo.MSdistribution_agents mda
+			FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSdistribution_agents mda
 			OUTER APPLY (
 				SELECT TOP 1 h.delivery_latency, h.delivery_rate, h.runstatus
-				FROM distribution.dbo.MSdistribution_history h
+				FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSdistribution_history h
 				WHERE h.agent_id = mda.id
 				ORDER BY h.timestamp DESC
 			) mda_hist
-			LEFT JOIN distribution.dbo.MSdistribution_status mds
+			LEFT JOIN ' + QUOTENAME(@dist_db) + N'.dbo.MSdistribution_status mds
 				ON mds.agent_id = mda.id
 			LEFT JOIN master.sys.sysservers mss
 				ON mss.srvid = mda.subscriber_id
 			LEFT JOIN master.sys.sysservers mss2
-				ON mss2.srvid = mda.publisher_id;
+				ON mss2.srvid = mda.publisher_id';
+
+			IF OBJECT_ID(QUOTENAME(@dist_db) + '.dbo.MSmerge_agents') IS NOT NULL
+			   AND HAS_PERMS_BY_NAME(QUOTENAME(@dist_db) + '.dbo.MSmerge_sessions', 'OBJECT', 'SELECT') = 1
+			BEGIN
+				SET @q = @q + N' UNION ALL
+				SELECT
+					ISNULL(mss2.srvname, @@SERVERNAME)              AS publisher,
+					ISNULL(mss.srvname, '''')                         AS subscriber,
+					ISNULL(ma.publication, '''')                      AS publication,
+					0                                               AS latency_seconds,
+					0                                               AS undistributed_commands,
+					ISNULL(mh.delivery_rate, 0)                      AS delivery_rate_cmds_sec,
+					CASE mh.runstatus
+						WHEN 1 THEN ''Idle''
+						WHEN 2 THEN ''Running''
+						WHEN 3 THEN ''Error''
+						WHEN 4 THEN ''Idle''
+						WHEN 5 THEN ''Retrying''
+						WHEN 6 THEN ''Failed''
+						ELSE ''Unknown''
+					END                                             AS status
+				FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSmerge_agents ma
+				OUTER APPLY (
+					SELECT TOP 1 h.delivery_rate, h.runstatus
+					FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSmerge_sessions h
+					WHERE h.agent_id = ma.id
+					ORDER BY h.start_time DESC
+				) mh
+				LEFT JOIN master.sys.sysservers mss
+					ON mss.srvid = ma.subscriber_id
+				LEFT JOIN master.sys.sysservers mss2
+					ON mss2.srvid = ma.publisher_id';
+			END
+			EXEC sp_executesql @q;
 		END
 		ELSE
 		BEGIN
-			SELECT TOP 0 '' AS publisher, '' AS subscriber, '' AS publication, 0 AS latency_seconds, 0 AS undistributed_commands, 0 AS delivery_rate_cmds_sec, '' AS status
-			WHERE 1=0;
+			-- If we are on a Publisher but don't have access to the Distributor, we return basic rows
+			-- so the charts at least show placeholders or last known status.
+			SELECT 
+				@@SERVERNAME AS publisher, 
+				ISNULL(srv.name, s.subscriber_server) AS subscriber, 
+				p.name AS publication, 
+				0 AS latency_seconds, 
+				0 AS undistributed_commands, 
+				0 AS delivery_rate_cmds_sec, 
+				'Active' AS status
+			FROM sys.publications p
+			LEFT JOIN sys.subscriptions s ON p.pubid = s.pubid
+			LEFT JOIN sys.servers srv ON s.srvid = srv.server_id
+			UNION ALL
+			SELECT 
+				@@SERVERNAME AS publisher, 
+				ISNULL(srv.name, s.subscriber_server) AS subscriber, 
+				p.name AS publication, 
+				0 AS latency_seconds, 
+				0 AS undistributed_commands, 
+				0 AS delivery_rate_cmds_sec, 
+				'Active' AS status
+			FROM sys.mergepublications p
+			LEFT JOIN sys.mergesubscriptions s ON p.pubid = s.pubid
+			LEFT JOIN sys.servers srv ON s.srvid = srv.server_id;
 		END`
 
 	db, ok := r.msRepo.GetConn(instanceName)
@@ -451,53 +585,122 @@ func (r *SourceQuerier) FetchReplicationArticles(ctx context.Context, instanceNa
 	const sql = `
 		/* SQL_OPTIMA — replication_articles_live */
 		SET NOCOUNT ON;
-		IF EXISTS (SELECT 1 FROM sys.databases WHERE name = 'distribution')
+		DECLARE @dist_db NVARCHAR(256) = (SELECT TOP 1 name FROM sys.databases WHERE is_distributor = 1);
+		IF @dist_db IS NULL AND EXISTS (SELECT 1 FROM sys.databases WHERE name = 'distribution') SET @dist_db = 'distribution';
+
+		IF @dist_db IS NOT NULL
 		BEGIN
+			DECLARE @q NVARCHAR(MAX) = N'
+			-- Transactional/Snapshot articles
 			SELECT
-				da.publication                      AS publication,
+				p.publication                       AS publication,
 				ma.publisher_db                     AS database_name,
 				ma.source_owner                     AS schema_name,
 				ma.source_object                    AS table_name,
-				ISNULL(s.srvname, '')               AS subscriber,
+				ISNULL(s.srvname, ''No Subscriber'')  AS subscriber,
 				ISNULL(da_hist.delivery_rate, 0)    AS rows_per_sec,
 				ISNULL(da_hist.delivery_latency / 1000, 0) AS latency_seconds,
 				0                                   AS conflicts_detected,
 				CASE da_hist.runstatus
-					WHEN 1 THEN 'Starting' WHEN 2 THEN 'Succeeded'
-					WHEN 3 THEN 'Active'   WHEN 4 THEN 'Idle'
-					WHEN 5 THEN 'Retry'    WHEN 6 THEN 'Failed'
-					ELSE 'Unknown'
+					WHEN 1 THEN ''Starting'' WHEN 2 THEN ''Succeeded''
+					WHEN 3 THEN ''Active''   WHEN 4 THEN ''Idle''
+					WHEN 5 THEN ''Retry''    WHEN 6 THEN ''Failed''
+					ELSE ''Unknown''
 				END AS status
-			FROM distribution.dbo.MSdistribution_agents da
-			JOIN distribution.dbo.MSpublications p
+			FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSpublications p
+			JOIN ' + QUOTENAME(@dist_db) + N'.dbo.MSarticles ma 
+				ON ma.publisher_id = p.publisher_id 
+				AND ma.publisher_db = p.publisher_db
+				AND ma.publication_id = p.publication_id
+			LEFT JOIN ' + QUOTENAME(@dist_db) + N'.dbo.MSdistribution_agents da
 				ON p.publisher_id = da.publisher_id
 				AND p.publisher_db = da.publisher_db
 				AND p.publication = da.publication
-			JOIN distribution.dbo.MSarticles ma 
-				ON ma.publisher_id = p.publisher_id 
-				AND ma.publisher_db = p.publisher_db
-				AND ma.[publication_id] = p.[publication_id]
 			LEFT JOIN master.sys.sysservers s ON s.srvid = da.subscriber_id
 			OUTER APPLY (
-				SELECT TOP 1
-					h.delivery_rate,
-					h.delivery_latency,
-					h.runstatus
-				FROM distribution.dbo.MSdistribution_history h 
+				SELECT TOP 1 h.delivery_rate, h.delivery_latency, h.runstatus
+				FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSdistribution_history h 
 				WHERE h.agent_id = da.id
 				ORDER BY h.timestamp DESC
-			) da_hist;
+			) da_hist';
+
+			IF OBJECT_ID(QUOTENAME(@dist_db) + '.dbo.MSmerge_articles') IS NOT NULL
+			   AND HAS_PERMS_BY_NAME(QUOTENAME(@dist_db) + '.dbo.MSmerge_sessions', 'OBJECT', 'SELECT') = 1
+			BEGIN
+				SET @q = @q + N' UNION ALL
+				-- Merge articles
+				SELECT
+					p.publication                       AS publication,
+					ma.publisher_db                     AS database_name,
+					ma.source_owner                     AS schema_name,
+					ma.source_object                    AS table_name,
+					ISNULL(s.srvname, ''No Subscriber'')  AS subscriber,
+					ISNULL(mh.delivery_rate, 0)         AS rows_per_sec,
+					0                                   AS latency_seconds,
+					ISNULL(mh.conflicts, 0)             AS conflicts_detected,
+					CASE mh.runstatus
+						WHEN 1 THEN ''Starting'' WHEN 2 THEN ''Succeeded''
+						WHEN 3 THEN ''Active''   WHEN 4 THEN ''Idle''
+						WHEN 5 THEN ''Retry''    WHEN 6 THEN ''Failed''
+						ELSE ''Unknown''
+					END AS status
+				FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSpublications p
+				JOIN ' + QUOTENAME(@dist_db) + N'.dbo.MSmerge_articles ma 
+					ON ma.publisher_id = p.publisher_id 
+					AND ma.publisher_db = p.publisher_db
+					AND ma.publication_id = p.publication_id
+				LEFT JOIN ' + QUOTENAME(@dist_db) + N'.dbo.MSmerge_agents da
+					ON p.publisher_id = da.publisher_id
+					AND p.publisher_db = da.publisher_db
+					AND p.publication = da.publication
+				LEFT JOIN master.sys.sysservers s ON s.srvid = da.subscriber_id
+				OUTER APPLY (
+					SELECT TOP 1 
+						h.delivery_rate, 
+						h.runstatus,
+						(h.upload_conflicts + h.download_conflicts) AS conflicts
+					FROM ' + QUOTENAME(@dist_db) + N'.dbo.MSmerge_sessions h 
+					WHERE h.agent_id = da.id
+					ORDER BY h.start_time DESC
+				) mh';
+			END
+			EXEC sp_executesql @q;
 		END
 		ELSE
 		BEGIN
-			SELECT TOP 0
-				'' AS publication, '' AS database_name, '' AS schema_name,
-				'' AS table_name,  '' AS subscriber,    0  AS rows_per_sec,
-				0  AS latency_seconds, 0 AS conflicts_detected, '' AS status
-			WHERE 1=0;
+			-- Fallback for Publisher side: list articles from sys.articles/sys.mergearticles
+			SELECT 
+				p.name AS publication,
+				DB_NAME() AS database_name,
+				SCHEMA_NAME(o.schema_id) AS schema_name,
+				o.name AS table_name,
+				ISNULL(srv.name, s.subscriber_server) AS subscriber,
+				0 AS rows_per_sec,
+				0 AS latency_seconds,
+				0 AS conflicts_detected,
+				'Active' AS status
+			FROM sys.articles a
+			JOIN sys.publications p ON a.pubid = p.pubid
+			JOIN sys.objects o ON a.objid = o.object_id
+			LEFT JOIN sys.subscriptions s ON p.pubid = s.pubid AND a.artid = s.artid
+			LEFT JOIN sys.servers srv ON srv.server_id = s.srvid
+			UNION ALL
+			SELECT 
+				p.name AS publication,
+				DB_NAME() AS database_name,
+				SCHEMA_NAME(o.schema_id) AS schema_name,
+				o.name AS table_name,
+				ISNULL(srv.name, s.subscriber_server) AS subscriber,
+				0 AS rows_per_sec,
+				0 AS latency_seconds,
+				0 AS conflicts_detected,
+				'Active' AS status
+			FROM sys.mergearticles a
+			JOIN sys.mergepublications p ON a.pubid = p.pubid
+			JOIN sys.objects o ON a.objid = o.objid
+			LEFT JOIN sys.mergesubscriptions s ON p.pubid = s.pubid
+			LEFT JOIN sys.servers srv ON srv.server_id = s.srvid;
 		END`
-
-
 
 	db, ok := r.msRepo.GetConn(instanceName)
 	if !ok {
@@ -523,4 +726,5 @@ func (r *SourceQuerier) FetchReplicationArticles(ctx context.Context, instanceNa
 	}
 	return result, rows.Err()
 }
+
 

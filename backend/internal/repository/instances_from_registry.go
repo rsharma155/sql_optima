@@ -1,11 +1,16 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
 // Purpose: Build config.Instance slices from optima_servers + envelope secrets (API, worker).
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
+// SPDX-License-Identifier: MIT
+
 package repository
 
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,10 +38,12 @@ func LoadInstancesFromServerRegistry(ctx context.Context, pool *pgxpool.Pool, km
 	for _, s := range active {
 		s2, encSecret, encDEK, err := repo.GetEncrypted(ctx, s.ID)
 		if err != nil {
+			slog.Warn("[registry] failed to fetch encrypted credentials", "server", s.Name, "err", err)
 			continue
 		}
 		dek, err := kms.DecryptDataKey(ctx, encDEK)
 		if err != nil {
+			slog.Warn("[registry] DEK decryption failed — KMS key mismatch or Vault unavailable", "server", s.Name, "err", err)
 			continue
 		}
 		plainJSON, err := box.Decrypt(encSecret, dek)
@@ -44,6 +51,7 @@ func LoadInstancesFromServerRegistry(ctx context.Context, pool *pgxpool.Pool, km
 			dek[i] = 0
 		}
 		if err != nil {
+			slog.Warn("[registry] credential decryption failed", "server", s.Name, "err", err)
 			continue
 		}
 		var cred servers.CredentialPayload
@@ -51,12 +59,14 @@ func LoadInstancesFromServerRegistry(ctx context.Context, pool *pgxpool.Pool, km
 			for i := range plainJSON {
 				plainJSON[i] = 0
 			}
+			slog.Warn("[registry] credential JSON unmarshal failed", "server", s.Name, "err", err)
 			continue
 		}
 		for i := range plainJSON {
 			plainJSON[i] = 0
 		}
 		if strings.TrimSpace(cred.Password) == "" {
+			slog.Warn("[registry] skipping server with empty password", "server", s.Name)
 			continue
 		}
 

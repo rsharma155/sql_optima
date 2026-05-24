@@ -89,6 +89,7 @@ func (r *ServerRegistryRepository) List(ctx context.Context, activeOnly bool) ([
 			t := lastTest.Time.UTC()
 			s.LastTestAt = &t
 		}
+		s.ComputeFeatures()
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -119,6 +120,7 @@ func (r *ServerRegistryRepository) GetByName(ctx context.Context, name string) (
 		t := lastTest.Time.UTC()
 		s.LastTestAt = &t
 	}
+	s.ComputeFeatures()
 	return s, nil
 }
 
@@ -196,6 +198,17 @@ func (r *ServerRegistryRepository) TouchLastTest(ctx context.Context, id uuid.UU
 		return fmt.Errorf("timescale not configured")
 	}
 	_, err := r.pool.Exec(ctx, "UPDATE optima_servers SET last_test_at = $1 WHERE id = $2", at, id)
+	return err
+}
+
+func (r *ServerRegistryRepository) SetEngineEdition(ctx context.Context, id uuid.UUID, edition int) error {
+	if r == nil || r.pool == nil {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx,
+		"UPDATE optima_servers SET engine_edition = $1, updated_at = NOW() WHERE id = $2",
+		edition, id,
+	)
 	return err
 }
 

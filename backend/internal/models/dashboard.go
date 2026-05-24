@@ -21,10 +21,13 @@ type DashboardMetrics struct {
 	// Top Header KPIs
 	AvgCPULoad  float64 `json:"avg_cpu_load"`
 	MemoryUsage float64 `json:"memory_usage"`
+	MemoryUtilizationPct float64 `json:"memory_utilization_pct"`
 	PLE         float64 `json:"ple"`
 	ActiveUsers int     `json:"active_users"`
 	TotalLocks  int     `json:"total_locks"`
 	Deadlocks   int     `json:"deadlocks"`
+	VolumesTracked int  `json:"volumes_tracked"`
+	StorageMinFreePct float64 `json:"storage_min_free_pct"`
 
 	LocksByDB map[string]LockStat `json:"locks_by_db"`
 	DiskByDB  map[string]DiskStat `json:"disk_by_db"`
@@ -98,6 +101,8 @@ type WaitStat struct {
 type BlockingNode struct {
 	SessionID          int    `json:"session_id"`
 	BlockingSessionID  int    `json:"blocking_session_id"`
+	SqlHash            string `json:"sql_hash"`
+	PlanHash           string `json:"plan_hash"`
 	LoginName          string `json:"login_name"`
 	HostName           string `json:"host_name"`
 	ProgramName        string `json:"program_name"`
@@ -268,19 +273,22 @@ type CPUSchedulerStats struct {
 
 // ServerProperties represents server hardware properties
 type ServerProperties struct {
-	CaptureTimestamp   string  `json:"capture_timestamp"`
-	ServerID           uuid.UUID `json:"server_id"`
-	CPUCount           int     `json:"cpu_count"`
-	HyperthreadRatio   int     `json:"hyperthread_ratio"`
-	SocketCount        int     `json:"socket_count"`
-	CoresPerSocket     int     `json:"cores_per_socket"`
-	PhysicalMemoryGB   float64 `json:"physical_memory_gb"`
-	VirtualMemoryGB    float64 `json:"virtual_memory_gb"`
-	CPUType            string  `json:"cpu_type"`
-	HyperthreadEnabled bool    `json:"hyperthread_enabled"`
-	NUMANodes          int     `json:"numa_nodes"`
-	MaxWorkersCount    int     `json:"max_workers_count"`
-	PropertiesHash     string  `json:"properties_hash"`
+	CaptureTimestamp    string    `json:"capture_timestamp"`
+	ServerID            uuid.UUID `json:"server_id"`
+	CPUCount            int       `json:"cpu_count"`
+	HyperthreadRatio    int       `json:"hyperthread_ratio"`
+	SocketCount         int       `json:"socket_count"`
+	CoresPerSocket      int       `json:"cores_per_socket"`
+	PhysicalMemoryGB    float64   `json:"physical_memory_gb"`
+	VirtualMemoryGB     float64   `json:"virtual_memory_gb"`
+	CPUType             string    `json:"cpu_type"`
+	HyperthreadEnabled  bool      `json:"hyperthread_enabled"`
+	NUMANodes           int       `json:"numa_nodes"`
+	MaxWorkersCount     int       `json:"max_workers_count"`
+	PropertiesHash      string    `json:"properties_hash"`
+	SQLServerStartTime  string    `json:"sqlserver_start_time,omitempty"`
+	MsTicks             int64     `json:"ms_ticks,omitempty"`
+	SchedulerCount      int       `json:"scheduler_count,omitempty"`
 }
 
 // CPULastCollected tracks the last collection timestamps for deduplication

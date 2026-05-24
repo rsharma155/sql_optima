@@ -24,7 +24,7 @@ func CollectSessionSnapshot(ctx context.Context, db *sql.DB) ([]models.SQLServer
 			COALESCE(s.login_name, '') as login_name,
 			COALESCE(s.original_login_name, '') as original_login_name,
 			COALESCE(s.host_name, '') as host_name,
-			DB_NAME(r.database_id) as database_name,
+			DB_NAME(COALESCE(r.database_id, s.database_id)) as database_name,
 			COALESCE(s.program_name, '') as program_name,
 			s.status,
 			s.is_user_process,
@@ -34,7 +34,7 @@ func CollectSessionSnapshot(ctx context.Context, db *sql.DB) ([]models.SQLServer
 			s.reads,
 			s.writes,
 			s.logical_reads,
-			COALESCE(r.open_transaction_count, 0) as open_transaction_count,
+			COALESCE(r.open_transaction_count, s.open_transaction_count) as open_transaction_count,
 			COALESCE(r.wait_type, '') as wait_type,
 			COALESCE(r.wait_time, 0) as wait_time_ms,
 			COALESCE(r.last_wait_type, '') as last_wait_type,
@@ -42,10 +42,12 @@ func CollectSessionSnapshot(ctx context.Context, db *sql.DB) ([]models.SQLServer
 			COALESCE(r.blocking_session_id, 0) as blocking_session_id,
 			CAST(r.query_hash as VARBINARY(8)) as query_hash,
 			CAST(r.query_plan_hash as VARBINARY(8)) as query_plan_hash,
-			COALESCE(st.text, '') as query_text
+			COALESCE(st.text, cst.text, '') as query_text
 		FROM sys.dm_exec_sessions s WITH (NOLOCK)
 		LEFT JOIN sys.dm_exec_requests r WITH (NOLOCK) ON s.session_id = r.session_id
+		LEFT JOIN sys.dm_exec_connections c WITH (NOLOCK) ON s.session_id = c.session_id
 		OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) st
+		OUTER APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) cst
 		WHERE s.session_id > 50 AND s.session_id <> @@SPID
 	`
 
@@ -133,24 +135,45 @@ func CollectLongRunningQueries(ctx context.Context, db *sql.DB) ([]models.LongRu
 
 func CollectBlockingLocks(ctx context.Context, db *sql.DB) ([]models.BlockingNode, error) {
 	query := `
-		/* SQL_OPTIMA */ SELECT   
-			r.session_id,
-			r.blocking_session_id,
-			s.login_name,
-			s.host_name,
-			s.program_name,
-			DB_NAME(r.database_id) as database_name,
-			COALESCE(st.text, '') as query_text,
-			r.status,
-			r.wait_type,
-			r.wait_time as wait_time_ms,
-			r.cpu_time as cpu_time_ms,
-			r.total_elapsed_time as total_elapsed_time_ms,
-			r.row_count
-		FROM sys.dm_exec_requests r WITH (NOLOCK)
-		JOIN sys.dm_exec_sessions s WITH (NOLOCK) ON r.session_id = s.session_id
+		/* SQL_OPTIMA */
+		WITH waiting_agg AS (
+			SELECT session_id, blocking_session_id, wait_type, wait_duration_ms
+			FROM (
+				SELECT 
+					session_id, blocking_session_id, wait_type, wait_duration_ms,
+					ROW_NUMBER() OVER(PARTITION BY session_id ORDER BY wait_duration_ms DESC) as rn
+				FROM (
+					SELECT session_id, blocking_session_id, wait_type, wait_duration_ms FROM sys.dm_os_waiting_tasks WHERE blocking_session_id > 0
+					UNION ALL
+					SELECT session_id, blocking_session_id, wait_type, wait_time FROM sys.dm_exec_requests WHERE blocking_session_id > 0
+				) t
+			) t2 WHERE rn = 1
+		)
+		SELECT
+			s.session_id,
+			ISNULL(w.blocking_session_id, 0) AS blocking_session_id,
+			ISNULL(s.login_name, '') AS login_name,
+			ISNULL(s.host_name, '') AS host_name,
+			ISNULL(s.program_name, '') AS program_name,
+			ISNULL(DB_NAME(r.database_id), '') AS database_name,
+			COALESCE(st.text, cst.text, '') AS query_text,
+			ISNULL(r.status, s.status) AS status,
+			ISNULL(r.command, '') AS command,
+			ISNULL(w.wait_type, ISNULL(r.last_wait_type, '')) AS wait_type,
+			ISNULL(w.wait_duration_ms, ISNULL(r.wait_time, 0)) AS wait_time_ms,
+			ISNULL(r.cpu_time, 0) AS cpu_time_ms,
+			ISNULL(r.total_elapsed_time, 0) AS total_elapsed_time_ms,
+			ISNULL(r.row_count, 0) AS row_count,
+			ISNULL(CONVERT(VARCHAR(64), r.sql_handle, 1), CONVERT(VARCHAR(64), c.most_recent_sql_handle, 1)) AS sql_hash,
+			CONVERT(VARCHAR(64), r.plan_handle, 1) AS plan_hash
+		FROM sys.dm_exec_sessions s WITH (NOLOCK)
+		LEFT JOIN sys.dm_exec_requests r WITH (NOLOCK) ON s.session_id = r.session_id
+		LEFT JOIN sys.dm_exec_connections c WITH (NOLOCK) ON s.session_id = c.session_id
+		LEFT JOIN waiting_agg w ON s.session_id = w.session_id
 		OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) st
-		WHERE r.blocking_session_id <> 0
+		OUTER APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) cst
+		WHERE (w.blocking_session_id > 0 OR s.session_id IN (SELECT blocking_session_id FROM waiting_agg))
+		  AND s.is_user_process = 1
 	`
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
@@ -166,7 +189,8 @@ func CollectBlockingLocks(ctx context.Context, db *sql.DB) ([]models.BlockingNod
 		var n models.BlockingNode
 		err := rows.Scan(
 			&n.SessionID, &n.BlockingSessionID, &n.LoginName, &n.HostName, &n.ProgramName, &n.DatabaseName,
-			&n.QueryText, &n.Status, &n.WaitType, &n.WaitTimeMs, &n.CPUTimeMs, &n.TotalElapsedTimeMs, &n.RowCount,
+			&n.QueryText, &n.Status, &n.Command, &n.WaitType, &n.WaitTimeMs, &n.CPUTimeMs, &n.TotalElapsedTimeMs, &n.RowCount,
+			&n.SqlHash, &n.PlanHash,
 		)
 		if err != nil {
 			continue
@@ -175,7 +199,6 @@ func CollectBlockingLocks(ctx context.Context, db *sql.DB) ([]models.BlockingNod
 	}
 	return results, nil
 }
-
 func (c *SqlServerRepository) CollectSessionSnapshotStaging(ctx context.Context, instanceName string) ([]models.SQLServerSessionSnapshot, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {

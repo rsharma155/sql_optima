@@ -253,7 +253,7 @@ func (tl *TimescaleLogger) GetLatestPgLockSnapshot(ctx context.Context, serverID
 }
 
 type PgBlockingTimelinePoint struct {
-	Bucket             time.Time `json:"bucket"`
+	Timestamp          time.Time `json:"timestamp"`
 	BlockedSessionsCnt int       `json:"blocked_sessions"`
 }
 
@@ -291,7 +291,7 @@ func (tl *TimescaleLogger) GetPgBlockingTimelineRange(ctx context.Context, serve
 	var out []PgBlockingTimelinePoint
 	for rows.Next() {
 		var p PgBlockingTimelinePoint
-		if err := rows.Scan(&p.Bucket, &p.BlockedSessionsCnt); err != nil {
+		if err := rows.Scan(&p.Timestamp, &p.BlockedSessionsCnt); err != nil {
 			continue
 		}
 		out = append(out, p)

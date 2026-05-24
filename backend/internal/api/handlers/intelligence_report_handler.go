@@ -29,6 +29,12 @@ func NewIntelligenceReportHandlers(svc *service.IntelligenceReportService, cfg *
 
 // Analyze triggers health analysis for a given server.
 func (h *IntelligenceReportHandlers) Analyze(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "intelligence report engine is not available (check TimescaleDB connection)"})
+		return
+	}
 	serverID, ok := ParseServerID(r, h.cfg)
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
@@ -49,6 +55,11 @@ func (h *IntelligenceReportHandlers) Analyze(w http.ResponseWriter, r *http.Requ
 
 // Status returns whether the intelligence engine service is active and reachable.
 func (h *IntelligenceReportHandlers) Status(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"active": false})
+		return
+	}
 	active := h.svc.CheckStatus(r.Context())
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"active": active})
@@ -56,14 +67,21 @@ func (h *IntelligenceReportHandlers) Status(w http.ResponseWriter, r *http.Reque
 
 // GetReport fetches the generated report (HTML, JSON, PDF).
 func (h *IntelligenceReportHandlers) GetReport(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "intelligence report engine is not available"})
+		return
+	}
 	vars := mux.Vars(r)
 	runID := vars["run_id"]
 	format := r.URL.Query().Get("format")
 	if format == "" {
 		format = "html"
 	}
+	instanceName := r.URL.Query().Get("instance_name")
 
-	content, err := h.svc.GetReport(r.Context(), runID, format)
+	content, err := h.svc.GetReport(r.Context(), runID, format, instanceName)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

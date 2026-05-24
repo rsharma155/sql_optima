@@ -28,7 +28,6 @@ func (h *PostgresHandlers) TableMaintenanceLatest(w http.ResponseWriter, r *http
 func (h *PostgresHandlers) PoolerLatest(w http.ResponseWriter, r *http.Request)                 { stub(w, r) }
 func (h *PostgresHandlers) PoolerHistory(w http.ResponseWriter, r *http.Request)                { stub(w, r) }
 func (h *PostgresHandlers) BlockingTree(w http.ResponseWriter, r *http.Request)                 { stub(w, r) }
-func (h *PostgresHandlers) WaitSummary(w http.ResponseWriter, r *http.Request)                  { stub(w, r) }
 func (h *PostgresHandlers) TimeseriesMetrics(w http.ResponseWriter, r *http.Request) {
 	sid, ok := h.parseID(r)
 	if !ok {
@@ -120,8 +119,6 @@ func (h *PostgresHandlers) IdleInTransaction(w http.ResponseWriter, r *http.Requ
 	_ = json.NewEncoder(w).Encode(res)
 }
 func (h *PostgresHandlers) WALArchiverRisk(w http.ResponseWriter, r *http.Request)              { stub(w, r) }
-func (h *PostgresHandlers) ReplicationLagHistory(w http.ResponseWriter, r *http.Request)       { stub(w, r) }
-func (h *PostgresHandlers) ReplicationSlots(w http.ResponseWriter, r *http.Request)            { stub(w, r) }
 
 func (h *PostgresHandlers) KillSession(w http.ResponseWriter, r *http.Request) { stub(w, r) }
 func (h *PostgresHandlers) ResetQueries(w http.ResponseWriter, r *http.Request)                 { stub(w, r) }

@@ -1,15 +1,16 @@
+// Package intel provides the SQL Optima autonomous health intelligence engine.
+// This file implements the multi-dimensional risk scorer.
+//
+// Design context:
+//   - DEFECT-1 fix: composite overall score is capped at 100 (min(100, weightedSum)).
+//   - DEFECT-2 fix: DataGaps field surfaces dimensions where data was absent.
+//   - DEFECT-5 fix: scorer is stateless — no math.Max accumulation across calls.
+//   - Confidence is derived from data completeness (fraction of non-zero dims), not rule count.
+//
 // SQL Optima — https://github.com/rsharma155/sql_optima
-//
-// Purpose: Health Intelligence Engine
-//
-// Author: Ravi Sharma
-// Copyright (c) 2026 Ravi Sharma
-// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Ravi Sharma. SPDX-License-Identifier: MIT
 
 package risk
-
-
-
 
 import (
 	"math"
@@ -30,6 +31,16 @@ func NewRiskScorer() *RiskScorer {
 }
 
 func (s *RiskScorer) Compute(performanceRisk, capacityRisk, availabilityRisk, replicationRisk, maintenanceRisk, queryRisk float64, triggeredRules []map[string]string) models.RiskScoreResult {
+	// Ensure per-dimension values are capped at 100 before weighting (DEFECT-1).
+	performanceRisk = clamp100(performanceRisk)
+	capacityRisk = clamp100(capacityRisk)
+	availabilityRisk = clamp100(availabilityRisk)
+	replicationRisk = clamp100(replicationRisk)
+	maintenanceRisk = clamp100(maintenanceRisk)
+	queryRisk = clamp100(queryRisk)
+
+	// Apply rule adjustments — each rule contributes a minimum floor for its dimension.
+	// We do NOT carry state across calls (DEFECT-5): ruleAdjustment is computed fresh.
 	ruleAdjustment := s.computeRuleRiskAdjustment(triggeredRules)
 	if v, ok := ruleAdjustment["performance"]; ok {
 		performanceRisk = math.Max(performanceRisk, v)
@@ -57,10 +68,15 @@ func (s *RiskScorer) Compute(performanceRisk, capacityRisk, availabilityRisk, re
 		maintenanceRisk*s.weights["maintenance"] +
 		queryRisk*s.weights["query"]
 
+	// DEFECT-1: explicit cap in case floating-point arithmetic pushes past 100.
+	overall = math.Min(100, overall)
+
 	category := categorize(overall)
 
+	// Confidence from data completeness — fraction of dimensions with real data (DEFECT-2).
+	dims := []float64{performanceRisk, capacityRisk, availabilityRisk, replicationRisk, maintenanceRisk, queryRisk}
 	nonzero := 0
-	for _, r := range []float64{performanceRisk, capacityRisk, availabilityRisk, replicationRisk, maintenanceRisk, queryRisk} {
+	for _, r := range dims {
 		if r > 0 {
 			nonzero++
 		}
@@ -95,21 +111,21 @@ func (s *RiskScorer) ComputeFromTriggeredRules(triggeredRules []models.RuleTrigg
 func (s *RiskScorer) computeRuleRiskAdjustment(triggeredRules []map[string]string) map[string]float64 {
 	severityScores := map[string]float64{"low": 10, "medium": 30, "high": 60, "critical": 90}
 	riskTypeMap := map[string]string{
-		"cpu_saturation":          "performance",
-		"cpu_burst":               "performance",
-		"scheduler_starvation":    "performance",
-		"memory_grant_pressure":   "performance",
-		"ple_collapse":            "performance",
-		"low_disk_space":          "capacity",
-		"rapid_disk_growth":       "capacity",
-		"io_latency_high":         "availability",
-		"ha_replication_lag":      "replication",
-		"replication_lag":         "replication",
-		"blocking_chains":         "query",
-		"tempdb_pressure":         "performance",
-		"storage_exhaustion":      "capacity",
+		"cpu_saturation":               "performance",
+		"cpu_burst":                    "performance",
+		"scheduler_starvation":         "performance",
+		"memory_grant_pressure":        "performance",
+		"ple_collapse":                 "performance",
+		"low_disk_space":               "capacity",
+		"rapid_disk_growth":            "capacity",
+		"io_latency_high":              "availability",
+		"ha_replication_lag":           "replication",
+		"replication_lag":              "replication",
+		"blocking_chains":              "query",
+		"tempdb_pressure":              "performance",
+		"storage_exhaustion":           "capacity",
 		"database_growth_acceleration": "capacity",
-		"backup_failure_risk":     "availability",
+		"backup_failure_risk":          "availability",
 	}
 
 	adjustment := make(map[string]float64)
@@ -148,6 +164,16 @@ func categorize(score float64) string {
 		return "High Risk"
 	}
 	return "Critical"
+}
+
+func clamp100(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
 }
 
 func round1(v float64) float64 {

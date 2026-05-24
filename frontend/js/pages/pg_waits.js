@@ -18,7 +18,6 @@
                     </div>
                     <div class="flex-center dashboard-page-title-actions" style="gap: 0.75rem;">
                         <div id="time-picker-insertion-point"></div>
-                        <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgWaitsView"><i class="fa-solid fa-refresh"></i> Refresh</button>
                     </div>
                 </div>
 

@@ -178,10 +178,18 @@ func (tl *TimescaleLogger) GetIOLatencyTrendV2(ctx context.Context, serverID uui
 }
 
 func (tl *TimescaleLogger) GetThroughputTrendV2(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]models.ThroughputPoint, error) {
-	q := `
+	dur := to.Sub(from)
+	bucket := "1 minute"
+	if dur > 12*time.Hour {
+		bucket = "15 minutes"
+	} else if dur > 3*time.Hour {
+		bucket = "5 minutes"
+	}
+
+	q := fmt.Sprintf(`
 		WITH br AS (
 			SELECT 
-				time_bucket('1 minute', capture_timestamp) AS bucket,
+				time_bucket('%s', capture_timestamp) AS bucket,
 				AVG(value_per_sec) as batch_requests
 			FROM sqlserver_perf_counters
 			WHERE server_id = $1
@@ -191,7 +199,7 @@ func (tl *TimescaleLogger) GetThroughputTrendV2(ctx context.Context, serverID uu
 		),
 		conns AS (
 			SELECT 
-				time_bucket('1 minute', capture_timestamp) AS bucket,
+				time_bucket('%s', capture_timestamp) AS bucket,
 				MAX(active_users) as connections
 			FROM sqlserver_metrics
 			WHERE server_id = $1
@@ -200,7 +208,7 @@ func (tl *TimescaleLogger) GetThroughputTrendV2(ctx context.Context, serverID uu
 		),
 		logins AS (
 			SELECT 
-				time_bucket('1 minute', capture_timestamp) AS bucket,
+				time_bucket('%s', capture_timestamp) AS bucket,
 				AVG(logins_per_sec) as logins_per_sec
 			FROM sqlserver_health_kpis_v2
 			WHERE server_id = $1
@@ -216,7 +224,7 @@ func (tl *TimescaleLogger) GetThroughputTrendV2(ctx context.Context, serverID uu
 		FULL OUTER JOIN conns ON br.bucket = conns.bucket
 		FULL OUTER JOIN logins ON COALESCE(br.bucket, conns.bucket) = logins.bucket
 		ORDER BY bucket ASC
-	`
+	`, bucket, bucket, bucket)
 	rows, err := tl.pool.Query(ctx, q, serverID, from, to)
 	if err != nil {
 		return nil, err

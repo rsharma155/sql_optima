@@ -165,8 +165,26 @@
 
         function renderCapturedSnapshots(id, snapshots) {
             const body = document.getElementById('wqPlansBody');
+
+            // Deduplicate by plan content — for each distinct plan keep only the most recent capture.
+            // Snapshots arrive oldest-first; reversing makes the first occurrence the most-recent.
+            const seenPlans = new Set();
+            const distinct = snapshots.slice().reverse().filter(s => {
+                const key = s.query_plan || '';
+                if (seenPlans.has(key)) return false;
+                seenPlans.add(key);
+                return true;
+            });
+
+            const countLabel = distinct.length === snapshots.length
+                ? `${distinct.length}`
+                : `${distinct.length} distinct of ${snapshots.length}`;
+
             const html = `
-                <h4 class="mt-4 mb-2" style="font-size:0.9rem; border-left:3px solid var(--accent); padding-left:0.5rem;">Captured Plan History (Snapshots)</h4>
+                <h4 class="mt-4 mb-2" style="font-size:0.9rem; border-left:3px solid var(--accent); padding-left:0.5rem;">
+                    Captured Plan History (Snapshots)
+                    <span style="font-size:0.75rem; color:var(--text-muted); font-weight:400; margin-left:0.4rem;">${countLabel}</span>
+                </h4>
                 <div class="table-responsive"><table class="qa-table">
                     <thead><tr>
                         <th>Capture Time</th>
@@ -174,7 +192,7 @@
                         <th class="text-right">Executions</th>
                         <th class="text-center">Actions</th>
                     </tr></thead>
-                    <tbody>${snapshots.slice().reverse().map((s, i) => `<tr>
+                    <tbody>${distinct.map((s) => `<tr>
                         <td>${new Date(s.snapshot_time).toLocaleString()}</td>
                         <td class="text-right font-mono">${fmtMs(s.avg_duration_ms)}</td>
                         <td class="text-right">${fmtNum(s.executions)}</td>
@@ -320,11 +338,11 @@
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 12, usePointStyle: true, font: { size: 11 }, color: 'rgba(255,255,255,0.7)' } } },
+                    plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 10, usePointStyle: true, font: { size: 10 }, color: 'rgba(255,255,255,0.7)' } } },
                     scales: {
-                        x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 10, font: { size: 10 }, color: 'rgba(255,255,255,0.5)' }, grid: { display: false } },
-                        y: { beginAtZero: true, ticks: { font: { size: 10 }, color: 'rgba(255,255,255,0.5)' }, grid: { color: 'rgba(255,255,255,0.05)' } },
-                        y1: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { font: { size: 10 }, color: 'rgba(255,255,255,0.5)' } }
+                        x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8, font: { size: 9 }, color: 'rgba(255,255,255,0.5)' }, grid: { display: false } },
+                        y: { beginAtZero: true, title: { display: true, text: 'ms', font: { size: 9 }, color: 'rgba(255,255,255,0.4)' }, ticks: { font: { size: 9 }, color: 'rgba(255,255,255,0.5)', maxTicksLimit: 4 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y1: { position: 'right', beginAtZero: true, title: { display: true, text: 'Reads', font: { size: 9 }, color: 'rgba(255,255,255,0.4)' }, grid: { display: false }, ticks: { font: { size: 9 }, color: 'rgba(255,255,255,0.5)', maxTicksLimit: 4 } }
                     }
                 }
             });
@@ -340,24 +358,89 @@
                 if (!rows.length) { body.innerHTML = '<div class="text-muted p-2">No active plans in Query Store.</div>'; return; }
                 window._wqCurrentPlans = rows;
                 body.innerHTML = `<div class="table-responsive"><table class="qa-table">
-                    <thead><tr><th>Plan ID</th><th>State</th><th>Created</th><th class="text-right">Avg Duration</th><th class="text-right">Executions</th><th class="text-center">XML</th></tr></thead>
+                    <thead><tr><th>Plan ID</th><th>State</th><th>Created</th><th class="text-right">Avg Duration</th><th class="text-right">Executions</th><th class="text-center">Actions</th></tr></thead>
                     <tbody>${rows.map((r, i) => `<tr>
                         <td class="font-bold">${r.plan_id}</td>
                         <td>${r.is_forced_plan ? '<span class="text-warning"><i class="fa-solid fa-lock"></i> Forced</span>' : '<span class="text-muted">Standard</span>'}</td>
                         <td>${r.created_at ? new Date(r.created_at).toLocaleString() : '--'}</td>
                         <td class="text-right font-mono">${fmtMs(r.avg_duration_ms)}</td>
                         <td class="text-right">${fmtNum(r.executions)}</td>
-                        <td class="text-center"><button class="btn btn-xs btn-outline" data-action="show-plan-xml" data-idx="${i}"><i class="fa-solid fa-file-code"></i> View</button></td>
+                        <td class="text-center">
+                            <button class="btn btn-xs btn-outline" data-action="show-plan-xml" data-idx="${i}" title="View XML"><i class="fa-solid fa-file-code"></i></button>
+                            <button class="btn btn-xs btn-outline ml-1" data-action="analyze-plan" data-idx="${i}" title="Quick Analysis"><i class="fa-solid fa-magnifying-glass"></i></button>
+                            <button class="btn btn-xs btn-accent ml-1" data-action="advanced-plan" data-idx="${i}" title="Advanced Plan Analyzer"><i class="fa-solid fa-diagram-project"></i> Advanced</button>
+                        </td>
                     </tr>`).join('')}</tbody></table></div>`;
                 if (!body.dataset.planXmlBound) {
                     body.dataset.planXmlBound = '1';
                     body.addEventListener('click', (e) => {
                         const btn = e.target?.closest?.('[data-action="show-plan-xml"]');
                         if (btn) window._showPlanXml(Number(btn.dataset.idx));
+
+                        const analyzeBtn = e.target?.closest?.('[data-action="analyze-plan"]');
+                        if (analyzeBtn) window._analyzeQueryStorePlan(Number(analyzeBtn.dataset.idx));
+
+                        const advancedBtn = e.target?.closest?.('[data-action="advanced-plan"]');
+                        if (advancedBtn) window._advancedQueryStorePlan(Number(advancedBtn.dataset.idx));
                     });
                 }
             } catch (err) { body.innerHTML = '<div class="text-danger p-2">Failed to load plan history.</div>'; }
         }
+
+        window._analyzeQueryStorePlan = async (idx) => {
+            const plan = window._wqCurrentPlans[idx];
+            if (!plan || !plan.query_plan) return;
+
+            const tabBtn = document.querySelector('[data-wq-tab="plan-analysis"]');
+            if (tabBtn) tabBtn.click();
+
+            const body = document.getElementById('wqPlanAnalysisBody');
+            body.innerHTML = '<div class="text-center p-5"><i class="fa-solid fa-circle-notch fa-spin fa-2x text-accent mb-3"></i><div>Generating comprehensive analysis report...</div></div>';
+
+            try {
+                const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/plan/analyze`, {
+                    method: 'POST',
+                    body: plan.query_plan
+                });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+                
+                if (data.html_report) {
+                    body.innerHTML = '<div id="wq-report-host" style="background:#fff; border:1px solid var(--border-color); border-radius:8px; overflow:hidden;"></div>';
+                    const host = document.getElementById('wq-report-host');
+                    const iframe = document.createElement('iframe');
+                    iframe.style.width = '100%';
+                    iframe.style.height = '1000px';
+                    iframe.style.border = 'none';
+                    host.appendChild(iframe);
+                    
+                    const doc = iframe.contentWindow.document;
+                    doc.open();
+                    doc.write(data.html_report);
+                    doc.close();
+                    
+                    iframe.onload = () => {
+                        setTimeout(() => {
+                            try {
+                                const h = iframe.contentWindow.document.documentElement.scrollHeight;
+                                iframe.style.height = Math.max(h, 600) + 100 + 'px';
+                            } catch(e) {}
+                        }, 500);
+                    };
+                }
+            } catch (err) {
+                body.innerHTML = `<div class="alert alert-danger">Analysis failed: ${err.message}</div>`;
+            }
+        };
+
+        window._advancedQueryStorePlan = (idx) => {
+            const plan = window._wqCurrentPlans[idx];
+            if (!plan || !plan.query_plan) return;
+            window._pendingPlanXml = plan.query_plan;
+            if (window.appNavigate) {
+                window.appNavigate('sqlserver-plan-analyzer');
+            }
+        };
 
         window._showPlanXml = (idx) => {
             const plan = window._wqCurrentPlans[idx];

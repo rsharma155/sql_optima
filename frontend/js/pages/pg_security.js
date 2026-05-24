@@ -21,10 +21,7 @@
                     </div>
                     <div class="flex-center dashboard-page-title-actions" style="gap: 0.5rem;">
                         <div id="time-picker-insertion-point"></div>
-                        <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.5rem; border: 1px solid var(--border-color);">
-                            <button id="refresh-security-btn" class="btn btn-xs btn-accent" title="Refresh data"><i class="fa-solid fa-sync"></i> Refresh</button>
-                            <button id="export-security-btn" class="btn btn-xs btn-outline" title="Export Security Report as CSV"><i class="fa-solid fa-file-csv"></i> CSV</button>
-                        </div>
+                        <button id="export-security-btn" class="btn btn-xs btn-outline" title="Export Security Report as CSV"><i class="fa-solid fa-file-csv"></i> CSV</button>
                     </div>
                 </div>
 
@@ -157,7 +154,6 @@
 
         window.initPageTimePicker();
         
-        document.getElementById('refresh-security-btn')?.addEventListener('click', () => fetchData(instance));
         document.getElementById('export-security-btn')?.addEventListener('click', () => {
             exportToCSV(instance);
         });

@@ -39,8 +39,11 @@ func (h *PostgresHandlers) CPUTopQueries(w http.ResponseWriter, r *http.Request)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"queries": []interface{}{}})
 		return
 	}
+
+	includeSystem := r.URL.Query().Get("include_system") == "true"
+
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	queries, err := queryTopQueriesByCPU(r.Context(), pool, sid, from, to, 20)
+	queries, err := queryTopQueriesByCPU(r.Context(), pool, sid, from, to, 20, includeSystem)
 	if err != nil {
 		queries = []map[string]interface{}{}
 	}
@@ -141,8 +144,19 @@ func (h *PostgresHandlers) SettingsDrift(w http.ResponseWriter, r *http.Request)
 
 // queryTopQueriesByCPU returns user queries ranked by total execution time.
 // Excludes monitoring/infrastructure usernames and internal SQL_OPTIMA queries.
-func queryTopQueriesByCPU(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID, from, to time.Time, limit int) ([]map[string]interface{}, error) {
-	const q = `
+func queryTopQueriesByCPU(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID, from, to time.Time, limit int, includeSystem bool) ([]map[string]interface{}, error) {
+	where := "d.server_id = $1 AND d.capture_timestamp BETWEEN $2 AND $3"
+	args := []interface{}{serverID, from, to}
+
+	if !includeSystem {
+		args = append(args, pgssExcludedUsers)
+		where += fmt.Sprintf(" AND d.username != ALL($%d::text[])", len(args))
+		where += " AND COALESCE(q.query_text, '') NOT LIKE '%/* SQL_OPTIMA */%'"
+		where += " AND COALESCE(q.query_text, '') NOT LIKE '%pg_stat_statements%'"
+	}
+
+	args = append(args, limit)
+	q := fmt.Sprintf(`
 		SELECT
 			max(d.capture_timestamp)   AS captured_at,
 			COALESCE(d.username, '')   AS user_name,
@@ -152,16 +166,12 @@ func queryTopQueriesByCPU(ctx context.Context, pool *pgxpool.Pool, serverID uuid
 		FROM pgss_delta_1m d
 		LEFT JOIN pgss_query_dim q
 			ON q.server_id = d.server_id AND q.query_id = d.query_id
-		WHERE d.server_id = $1
-		  AND d.capture_timestamp BETWEEN $2 AND $3
-		  AND d.username != ALL($4::text[])
-		  AND COALESCE(q.query_text, '') NOT LIKE '%/* SQL_OPTIMA */%'
-		  AND COALESCE(q.query_text, '') NOT LIKE '%pg_stat_statements%'
+		WHERE %s
 		GROUP BY d.query_id, d.username, q.query_text
 		ORDER BY total_exec_time DESC
-		LIMIT $5`
+		LIMIT $%d`, where, len(args))
 
-	rows, err := pool.Query(ctx, q, serverID, from, to, pgssExcludedUsers, limit)
+	rows, err := pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +293,7 @@ func queryPgExecTimeSeries(ctx context.Context, pool *pgxpool.Pool, serverID uui
 			cacheHitPct = float64(cacheHits) / float64(total) * 100
 		}
 		results = append(results, map[string]interface{}{
-			"bucket":            bucket,
+			"timestamp":         bucket,
 			"total_exec_time_ms": totalExec,
 			"calls":             calls,
 			"avg_exec_time_ms":  avgExec,

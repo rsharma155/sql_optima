@@ -161,14 +161,14 @@ func (r *PostgresBackupRepository) GetWALTrend(ctx context.Context, serverID uui
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"collected_at": t,
+			"timestamp":       t,
 			"wal_bytes_delta": delta.Int64,
 		})
 	}
 	return results, nil
-}
+	}
 
-func (r *PostgresBackupRepository) GetReplicationLagTrend(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {
+	func (r *PostgresBackupRepository) GetReplicationLagTrend(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {
 	query := `
 		SELECT capture_timestamp, replica_name, replay_lag_sec
 		FROM postgres_replication_lag_detail
@@ -190,15 +190,15 @@ func (r *PostgresBackupRepository) GetReplicationLagTrend(ctx context.Context, s
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"capture_timestamp": t,
-			"application_name":  replicaName,
-			"lag_seconds":       lag,
+			"timestamp":        t,
+			"application_name": replicaName,
+			"lag_seconds":      lag,
 		})
 	}
 	return results, nil
-}
+	}
 
-func (r *PostgresBackupRepository) GetArchiveHealth(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {
+	func (r *PostgresBackupRepository) GetArchiveHealth(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {
 	query := `
 		SELECT capture_timestamp,
 		       archived_count,
@@ -221,15 +221,15 @@ func (r *PostgresBackupRepository) GetArchiveHealth(ctx context.Context, serverI
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"collected_at": t,
-			"archived_count": archived,
+			"timestamp":            t,
+			"archived_count":       archived,
 			"archive_failed_count": failed,
 		})
 	}
 	return results, nil
-}
+	}
 
-func (r *PostgresBackupRepository) GetCheckpointTrend(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {
+	func (r *PostgresBackupRepository) GetCheckpointTrend(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {
 	query := `
 		SELECT capture_timestamp,
 		       checkpoint_write_time_ms,
@@ -252,13 +252,13 @@ func (r *PostgresBackupRepository) GetCheckpointTrend(ctx context.Context, serve
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"collected_at":             t,
+			"timestamp":                t,
 			"checkpoint_write_time_ms": write,
 			"checkpoint_sync_time_ms":  sync,
 		})
 	}
 	return results, nil
-}
+	}
 
 func (r *PostgresBackupRepository) GetReplicationDetails(ctx context.Context, serverID uuid.UUID) ([]map[string]interface{}, error) {
 	query := `

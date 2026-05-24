@@ -13,23 +13,29 @@ import (
 	"database/sql"
 )
 
-// CollectTempDBUsage fetches TempDB usage statistics
+// CollectTempDBUsage fetches TempDB usage statistics. 
+// Uses tempdb context to ensure FILEPROPERTY returns accurate space usage.
 func (c *SqlServerRepository) CollectTempDBUsage(ctx context.Context, db *sql.DB) ([]map[string]interface{}, error) {
 	query := `
-		/* SQL_OPTIMA */ SELECT   
-			ISNULL(DB_NAME(database_id), 'tempdb') AS database_name,
+		/* SQL_OPTIMA */ 
+		USE [tempdb];
+		SELECT   
+			DB_NAME() AS database_name,
 			file_id,
 			type_desc,
 			size * 8 / 1024 AS size_mb,
 			CAST(size * 8.0 / 1024 AS FLOAT) - CAST(FILEPROPERTY(name, 'SpaceUsed') * 8.0 / 1024 AS FLOAT) AS free_space_mb
-		FROM sys.master_files
-		WHERE database_id = 2
+		FROM sys.database_files
 		ORDER BY file_id
 	`
 
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
 	rows, err := db.QueryContext(ctx, query)
+	if err != nil && IsMSSQLConnError(err) {
+		// Retry once on connection error. database/sql might pick a healthy connection.
+		rows, err = db.QueryContext(ctx, query)
+	}
 	if err != nil {
 		slog.Error("[SQLSERVER] TempDB Usage Query Error", "err", err)
 		return nil, err
@@ -47,7 +53,12 @@ func (c *SqlServerRepository) CollectTempDBUsage(ctx context.Context, db *sql.DB
 		}
 		if err := rows.Scan(valuePtrs...); err == nil {
 			for i, col := range columns {
-				resultsMap[col] = values[i]
+				val := values[i]
+				// Convert byte slices to strings
+				if b, ok := val.([]byte); ok {
+					val = string(b)
+				}
+				resultsMap[col] = val
 			}
 			results = append(results, resultsMap)
 		}
@@ -75,6 +86,9 @@ func (c *SqlServerRepository) CollectTempDBStats(ctx context.Context, db *sql.DB
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
 	fileRows, err := db.QueryContext(ctx, fileQuery)
+	if err != nil && IsMSSQLConnError(err) {
+		fileRows, err = db.QueryContext(ctx, fileQuery)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +131,9 @@ func (c *SqlServerRepository) CollectTempDBStats(ctx context.Context, db *sql.DB
 		ctx, cancel = WithQueryTimeout(ctx, 0)
 		defer cancel()
 		requestRows, err := db.QueryContext(ctx, requestQuery)
+		if err != nil && IsMSSQLConnError(err) {
+			requestRows, err = db.QueryContext(ctx, requestQuery)
+		}
 		if err != nil {
 			return nil, err
 		}

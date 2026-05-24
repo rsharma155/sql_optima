@@ -60,20 +60,20 @@ type SqlServerWatchedQueryRow struct {
 }
 
 type SqlServerWatchedSnapshotRow struct {
-	CaptureTimestamp  time.Time
-	WatchedID         int
-	ServerID          uuid.UUID
-	Executions        int64
-	AvgDurationMs     float64
-	AvgCpuMs          float64
-	AvgReads          float64
-	TotalDurationMs   float64
-	TotalCpuMs        float64
-	PlanCount         int
-	LastExecutionTime time.Time
-	QueryPlan         string
-	QueryText         string
-	WaitStats         interface{} // Map or Slice for JSONB
+	CaptureTimestamp  time.Time   `json:"timestamp"`
+	WatchedID         int         `json:"watched_id"`
+	ServerID          uuid.UUID   `json:"server_id"`
+	Executions        int64       `json:"executions"`
+	AvgDurationMs     float64     `json:"avg_duration_ms"`
+	AvgCpuMs          float64     `json:"avg_cpu_ms"`
+	AvgReads          float64     `json:"avg_reads"`
+	TotalDurationMs   float64     `json:"total_duration_ms"`
+	TotalCpuMs        float64     `json:"total_cpu_ms"`
+	PlanCount         int         `json:"plan_count"`
+	LastExecutionTime time.Time   `json:"last_execution_time"`
+	QueryPlan         string      `json:"query_plan"`
+	QueryText         string      `json:"query_text"`
+	WaitStats         interface{} `json:"wait_stats"`
 }
 
 type SqlServerWatchedEventRow struct {
@@ -323,6 +323,35 @@ func (tl *TimescaleLogger) CountSqlServerWatchedQueries(ctx context.Context, ser
 	return count, err
 }
 
+// GetLastWatchedQueryPlans returns the most recent query_plan for each watched ID.
+// Used by the collector to skip inserting a snapshot when the plan is unchanged.
+func (tl *TimescaleLogger) GetLastWatchedQueryPlans(ctx context.Context, watchedIDs []int) (map[int]string, error) {
+	if len(watchedIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := tl.pool.Query(ctx,
+		`SELECT DISTINCT ON (watched_id) watched_id, COALESCE(query_plan, '')
+		 FROM sqlserver_watched_query_snapshots
+		 WHERE watched_id = ANY($1)
+		 ORDER BY watched_id, capture_timestamp DESC`,
+		watchedIDs)
+	if err != nil {
+		return nil, fmt.Errorf("GetLastWatchedQueryPlans: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]string, len(watchedIDs))
+	for rows.Next() {
+		var id int
+		var plan string
+		if err := rows.Scan(&id, &plan); err != nil {
+			continue
+		}
+		result[id] = plan
+	}
+	return result, rows.Err()
+}
+
 func (tl *TimescaleLogger) LogSqlServerWatchedQuerySnapshot(ctx context.Context, rows []SqlServerWatchedSnapshotRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -429,10 +458,10 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		  AND UPPER(COALESCE(qm.statement_text, '')) NOT LIKE 'DECLARE %'
 		  AND UPPER(COALESCE(qm.statement_text, '')) NOT LIKE 'CHECKPOINT%'
 		  AND UPPER(COALESCE(qm.statement_text, '')) NOT LIKE 'DBCC %'
-		  AND qm.query_text_raw NOT LIKE '%/* SQL_OPTIMA%'
-		  AND qm.query_text_raw NOT LIKE '%sys.all_objects%'
-		  AND qm.query_text_raw NOT LIKE '(@_msparam_0%'
-		  AND (qm.total_cpu_ms > 1 OR qm.total_elapsed_ms > 1)
+		  AND COALESCE(qm.query_text_raw, '') NOT LIKE '%/* SQL_OPTIMA%'
+		  AND COALESCE(qm.query_text_raw, '') NOT LIKE '%sys.all_objects%'
+		  AND COALESCE(qm.query_text_raw, '') NOT LIKE '(@_msparam_0%'
+		  AND (qm.total_cpu_ms IS NULL OR qm.total_cpu_ms > 1 OR qm.total_elapsed_ms > 1)
 		  AND (qm.application_name IS NULL OR (
 		       UPPER(qm.application_name) NOT LIKE 'SQL SERVER PROFILER%' AND
 		       UPPER(qm.application_name) NOT LIKE 'MICROSOFT SQL SERVER MANAGEMENT STUDIO%' AND
@@ -442,9 +471,11 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		`
 	}
 
-	// Core KPIs from history
+	// Core KPIs from history.
+	// Use LATERAL to pick one metrics_v2 row per query_hash (most recent), avoiding a
+	// Cartesian product between the hypertable and the unconstrained LEFT JOIN.
 	q1 := fmt.Sprintf(`
-		SELECT 
+		SELECT
 			COALESCE(SUM(qh.exec_delta), 0),
 			COALESCE(SUM(qh.cpu_delta_ms) / NULLIF(SUM(qh.exec_delta), 0), 0),
 			COALESCE(SUM(qh.cpu_delta_ms) / NULLIF(SUM(qh.exec_delta), 0), 0),
@@ -454,9 +485,14 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		LEFT JOIN sqlserver_query_classification_dim class
 		  ON class.server_id = qh.server_id
 		 AND class.query_hash = qh.query_hash
-		LEFT JOIN sqlserver_query_metrics_v2 qm
-		  ON qm.server_id = qh.server_id
-		 AND qm.query_hash = qh.query_hash
+		LEFT JOIN LATERAL (
+			SELECT query_text_raw, statement_text, application_name,
+			       total_cpu_ms, total_elapsed_ms, is_user_workload
+			FROM sqlserver_query_metrics_v2
+			WHERE server_id = qh.server_id AND query_hash = qh.query_hash
+			ORDER BY capture_timestamp DESC
+			LIMIT 1
+		) qm ON true
 		WHERE qh.server_id = $1
 		  AND qh.capture_timestamp >= NOW() - ($2 * INTERVAL '1 hour')
 		  AND COALESCE(qm.is_user_workload, 1) = 1
@@ -472,9 +508,11 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		WITH total AS (
 			SELECT SUM(qh.cpu_delta_ms) as total_cpu
 			FROM sqlserver_query_stats_history qh
-			LEFT JOIN sqlserver_query_metrics_v2 qm
-			  ON qm.server_id = qh.server_id
-			 AND qm.query_hash = qh.query_hash
+			LEFT JOIN LATERAL (
+				SELECT is_user_workload FROM sqlserver_query_metrics_v2
+				WHERE server_id = qh.server_id AND query_hash = qh.query_hash
+				ORDER BY capture_timestamp DESC LIMIT 1
+			) qm ON true
 			WHERE qh.server_id = $1 AND qh.capture_timestamp >= NOW() - ($2 * INTERVAL '1 hour')
 			  AND COALESCE(qm.is_user_workload, 1) = 1
 		),
@@ -483,9 +521,11 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 			FROM (
 				SELECT SUM(qh.cpu_delta_ms) as query_cpu
 				FROM sqlserver_query_stats_history qh
-				LEFT JOIN sqlserver_query_metrics_v2 qm
-				  ON qm.server_id = qh.server_id
-				 AND qm.query_hash = qh.query_hash
+				LEFT JOIN LATERAL (
+					SELECT is_user_workload FROM sqlserver_query_metrics_v2
+					WHERE server_id = qh.server_id AND query_hash = qh.query_hash
+					ORDER BY capture_timestamp DESC LIMIT 1
+				) qm ON true
 				WHERE qh.server_id = $1 AND qh.capture_timestamp >= NOW() - ($2 * INTERVAL '1 hour')
 				  AND COALESCE(qm.is_user_workload, 1) = 1
 				GROUP BY qh.query_hash
@@ -506,9 +546,13 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		FROM sqlserver_query_stats_snapshot_v2 s
 		LEFT JOIN sqlserver_query_classification_dim class
 		  ON class.server_id = s.server_id AND class.query_hash = s.query_hash
-		LEFT JOIN sqlserver_query_metrics_v2 qm
-		  ON qm.server_id = s.server_id
-		 AND qm.query_hash = s.query_hash
+		LEFT JOIN LATERAL (
+			SELECT query_text_raw, statement_text, application_name,
+			       total_cpu_ms, total_elapsed_ms, is_user_workload
+			FROM sqlserver_query_metrics_v2
+			WHERE server_id = s.server_id AND query_hash = s.query_hash
+			ORDER BY capture_timestamp DESC LIMIT 1
+		) qm ON true
 		WHERE s.server_id = $1
 		  AND COALESCE(qm.is_user_workload, 1) = 1
 		  %s`, filterClause)
@@ -519,9 +563,11 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		SELECT COUNT(*) FROM (
 			SELECT qh.query_hash
 			FROM sqlserver_query_stats_history qh
-			LEFT JOIN sqlserver_query_metrics_v2 qm
-			  ON qm.server_id = qh.server_id
-			 AND qm.query_hash = qh.query_hash
+			LEFT JOIN LATERAL (
+				SELECT is_user_workload FROM sqlserver_query_metrics_v2
+				WHERE server_id = qh.server_id AND query_hash = qh.query_hash
+				ORDER BY capture_timestamp DESC LIMIT 1
+			) qm ON true
 			WHERE qh.server_id = $1 AND qh.capture_timestamp >= NOW() - ($2 * INTERVAL '1 hour')
 			  AND COALESCE(qm.is_user_workload, 1) = 1
 			GROUP BY qh.query_hash
@@ -538,6 +584,18 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 	s.PlanChanges24h, _ = tl.CountSqlServerPlanInstabilityInWindow(ctx, serverID, since24h)
 	s.QueriesWithMultiPlans = int64(s.PlanChanges24h)
 
+	// Query Store status check for message (Phase 2 request)
+	// If no user queries are in QS, check if it's because it's disabled globally.
+	if s.TotalQueriesInQS == 0 {
+		var qsEnabledCount int
+		err := tl.pool.QueryRow(ctx, 
+			"SELECT COUNT(*) FROM sqlserver_database_catalog WHERE server_id = $1 AND is_query_store_on = true AND database_id > 4",
+			serverID).Scan(&qsEnabledCount)
+		if err == nil && qsEnabledCount == 0 {
+			s.Message = "No Query Store data detected: Ensure Query Store is enabled on your target databases"
+		}
+	}
+
 	return &s, nil
 }
 
@@ -553,6 +611,7 @@ type SqlServerQueryAnalysisSummaryRow struct {
 	QueriesExecutedInRange int64   `json:"queries_executed_in_range"`
 	QueriesWithMultiPlans  int64   `json:"queries_with_multi_plans"`
 	QueriesSingleExecution int64   `json:"queries_single_execution"`
+	Message                string  `json:"message,omitempty"`
 }
 
 func (tl *TimescaleLogger) GetSqlServerTopQueriesFromInterval(ctx context.Context, serverID uuid.UUID, sortBy string, limit, hours int, excludeSystem bool) ([]SqlServerTopQueryIntervalRow, error) {
@@ -676,12 +735,23 @@ func (tl *TimescaleLogger) GetSQLServerQueryTrend(ctx context.Context, serverID 
 		qh = int64(h)
 	}
 
-	q := `
-		SELECT capture_timestamp, exec_delta, cpu_delta_ms, duration_delta_ms, reads_delta
+	// Dynamic bucket size for zoom support
+	dur := to.Sub(from)
+	bucket := "1 minute"
+	if dur > 24*time.Hour {
+		bucket = "15 minutes"
+	} else if dur > 6*time.Hour {
+		bucket = "5 minutes"
+	}
+
+	q := fmt.Sprintf(`
+		SELECT time_bucket('%s', capture_timestamp) AS bucket, 
+		       SUM(exec_delta), SUM(cpu_delta_ms), SUM(duration_delta_ms), SUM(reads_delta)
 		FROM sqlserver_query_stats_history
 		WHERE server_id = $1 AND query_hash = $2 AND capture_timestamp BETWEEN $3 AND $4
-		ORDER BY capture_timestamp ASC
-	`
+		GROUP BY bucket
+		ORDER BY bucket ASC
+	`, bucket)
 	rows, err := tl.pool.Query(ctx, q, serverID, qh, from, to)
 	if err != nil {
 		return nil, err
@@ -696,7 +766,7 @@ func (tl *TimescaleLogger) GetSQLServerQueryTrend(ctx context.Context, serverID 
 			continue
 		}
 		points = append(points, map[string]interface{}{
-			"ts":          ts,
+			"timestamp":   ts,
 			"executions":  exec,
 			"cpu_ms":      cpu,
 			"duration_ms": dur,

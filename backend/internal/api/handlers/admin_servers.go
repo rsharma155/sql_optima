@@ -92,6 +92,10 @@ func (h *AdminServerHandlers) AddServer(w http.ResponseWriter, r *http.Request) 
 		actor = claims.Username
 	}
 
+	if req.SSLMode == "" {
+		req.SSLMode = "disable"
+	}
+
 	// Encrypt credentials before storage.
 	cred := servers.CredentialPayload{
 		Password:               req.Password,
@@ -185,6 +189,10 @@ func (h *AdminServerHandlers) UpdateServer(w http.ResponseWriter, r *http.Reques
 	actor := ""
 	if claims != nil {
 		actor = claims.Username
+	}
+
+	if req.SSLMode == "" {
+		req.SSLMode = "disable"
 	}
 
 	err = store.UpdateMetadata(r.Context(), id, req.Name, req.Host, req.Port, req.Username, req.SSLMode)
@@ -285,9 +293,122 @@ func (h *AdminServerHandlers) ToggleServerActive(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *AdminServerHandlers) CheckPermissionsDraft(w http.ResponseWriter, r *http.Request) { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(map[string]interface{}{}) }
-func (h *AdminServerHandlers) TestServer(w http.ResponseWriter, r *http.Request)            { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(map[string]interface{}{}) }
-func (h *AdminServerHandlers) CheckPermissions(w http.ResponseWriter, r *http.Request)      { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(map[string]interface{}{}) }
+func (h *AdminServerHandlers) CheckPermissionsDraft(w http.ResponseWriter, r *http.Request) {
+	h.TestServerDraft(w, r)
+}
+
+func (h *AdminServerHandlers) TestServer(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	store, kms, box, _ := h.reg()
+	if store == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+
+	s, encSecret, encDEK, err := store.GetEncrypted(r.Context(), id)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	var cred servers.CredentialPayload
+	if kms != nil && box != nil && string(encDEK) != "no-kms" {
+		plaintextDEK, kerr := kms.DecryptDataKey(r.Context(), encDEK)
+		if kerr != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "DEK decryption failed"})
+			return
+		}
+		plaintext, berr := box.Decrypt(encSecret, plaintextDEK)
+		if berr != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "credential decryption failed"})
+			return
+		}
+		if err := json.Unmarshal(plaintext, &cred); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if err := json.Unmarshal(encSecret, &cred); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), draftConnectTimeout)
+	defer cancel()
+
+	var probeErr error
+	switch s.DBType {
+	case "sqlserver":
+		probeErr = probeSQLServer(ctx, s.Host, s.Port, s.Username, cred.Password, cred.Database, cred.TrustServerCertificate)
+	case "postgres":
+		probeErr = probePostgres(ctx, s.Host, s.Port, s.Username, cred.Password, cred.Database, string(s.SSLMode))
+	default:
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unsupported db_type"})
+		return
+	}
+
+	if probeErr != nil {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": probeErr.Error()})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func (h *AdminServerHandlers) CheckPermissions(w http.ResponseWriter, r *http.Request) {
+	h.TestServer(w, r)
+}
 func (h *AdminServerHandlers) RotateServer(w http.ResponseWriter, r *http.Request)          { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(map[string]interface{}{}) }
 func (h *AdminServerHandlers) GetServer(w http.ResponseWriter, r *http.Request)             { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(map[string]interface{}{}) }
-func (h *AdminServerHandlers) PatchServer(w http.ResponseWriter, r *http.Request)           { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(map[string]interface{}{}) }
+func (h *AdminServerHandlers) PatchServer(w http.ResponseWriter, r *http.Request) {
+	idStr := mux.Vars(r)["id"]
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	store, _, _, audit := h.reg()
+	if store == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		IsActive *bool `json:"is_active"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if req.IsActive != nil {
+		if err := store.SetActive(r.Context(), id, *req.IsActive); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		claims := middleware.GetAuthClaims(r)
+		actor := ""
+		if claims != nil {
+			actor = claims.Username
+		}
+		action := "pause_collection"
+		if *req.IsActive {
+			action = "resume_collection"
+		}
+		if audit != nil {
+			_ = audit.Log(r.Context(), action, id, actor, r.RemoteAddr, nil)
+		}
+		if h.metrics != nil && h.metrics.RegistryReload != nil {
+			go h.metrics.RegistryReload()
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

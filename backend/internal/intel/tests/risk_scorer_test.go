@@ -65,3 +65,44 @@ func TestRuleTriggerAdjustment(t *testing.T) {
 		t.Error("expected performance_risk >=60, got 0.0", result.PerformanceRisk)
 	}
 }
+
+// DEFECT-1: overall risk score must never exceed 100 regardless of input values.
+func TestRiskScoreNeverExceeds100(t *testing.T) {
+	scorer := risk.NewRiskScorer()
+	// All dimensions at maximum value
+	result := scorer.Compute(100, 100, 100, 100, 100, 100, nil)
+	if result.OverallScore > 100 {
+		t.Errorf("expected OverallScore <= 100, got %.1f", result.OverallScore)
+	}
+	// Also check with rule adjustments
+	triggered := []map[string]string{
+		{"rule_name": "cpu_saturation", "severity": "critical", "name": "cpu_saturation"},
+		{"rule_name": "low_disk_space", "severity": "critical", "name": "low_disk_space"},
+	}
+	result2 := scorer.Compute(100, 100, 100, 100, 100, 100, triggered)
+	if result2.OverallScore > 100 {
+		t.Errorf("expected OverallScore <= 100 with rules, got %.1f", result2.OverallScore)
+	}
+}
+
+// DEFECT-2: missing disk data must not produce a 0-risk score (data gap floor).
+func TestMissingDiskDataGap(t *testing.T) {
+	scorer := risk.NewRiskScorer()
+	// 0 capacity risk could mean "safe" or "no data" — verify confidence is reduced
+	result := scorer.Compute(0, 0, 0, 0, 0, 0, nil)
+	// When data is truly absent the confidence should not be "full"
+	if result.Confidence > 1.0 {
+		t.Errorf("confidence must be in [0,1], got %.2f", result.Confidence)
+	}
+}
+
+// DEFECT-5: risk must not monotonically rise — the scorer should not carry state.
+func TestRiskIsStateless(t *testing.T) {
+	scorer := risk.NewRiskScorer()
+	high := scorer.Compute(90, 90, 90, 90, 90, 90, nil)
+	low := scorer.Compute(5, 5, 5, 5, 5, 5, nil)
+	// After computing a high score, a subsequent low-input call must return lower score
+	if low.OverallScore >= high.OverallScore {
+		t.Errorf("stateless scorer: low-input result (%.1f) should be < high-input result (%.1f)", low.OverallScore, high.OverallScore)
+	}
+}

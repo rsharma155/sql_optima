@@ -22,6 +22,17 @@
         const template = await window.loadTemplate('pages/sqlserver_intelligence_report.html');
         window.routerOutlet.innerHTML = template;
 
+        // Check if intelligence engine is active (UI-2)
+        if (window.appState.config && window.appState.config.intelligence_active === false) {
+            const warning = document.createElement('div');
+            warning.className = 'alert alert-warning m-3';
+            warning.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> <strong>Intelligence Engine Offline:</strong> The backend analysis engine is currently unavailable. This usually means the primary TimescaleDB metrics store is not connected or initialized.';
+            window.routerOutlet.prepend(warning);
+        }
+
+        const nameEl = document.getElementById('ir-instance-name');
+        if (nameEl && inst.name) nameEl.textContent = inst.name;
+
         const btn = document.getElementById('generate-report-btn');
         const status = document.getElementById('report-status');
         const loading = document.getElementById('report-loading');
@@ -66,8 +77,18 @@
                 updateStep('step-rules', 'active');
 
                 if (!response.ok) {
-                    const errText = await response.text();
-                    throw new Error(errText || `Server returned ${response.status}`);
+                    let errorMessage = `Server returned ${response.status}`;
+                    try {
+                        const errorData = await response.json();
+                        if (errorData && errorData.error) {
+                            errorMessage = errorData.error;
+                        }
+                    } catch (e) {
+                        // Not JSON, fallback to text
+                        const text = await response.text();
+                        if (text) errorMessage = text;
+                    }
+                    throw new Error(errorMessage);
                 }
 
                 const data = await response.json();
@@ -94,8 +115,9 @@
                     updateStep('step-render', 'active');
                     
                     // Fetch the HTML report with theme parity (UI-6)
-                    const theme = document.documentElement.getAttribute('data-theme') || 'dark';
-                    iframe.src = `/api/sqlserver/intelligence-report/report/${data.run_id}?format=html&server_id=${serverID}&theme=${theme}`;
+                    const theme = document.documentElement.getAttribute('data-theme') || 'light';
+                    const instName = encodeURIComponent(inst.name || serverID);
+                    iframe.src = `/api/sqlserver/intelligence-report/report/${data.run_id}?format=html&server_id=${serverID}&instance_name=${instName}&theme=${theme}`;
                     
                     iframe.onload = () => {
                         updateStep('step-render', 'done');

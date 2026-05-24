@@ -376,7 +376,7 @@ async function updateIncidentFeed(instName) {
 
 async function updateReplicaDetail(instName) {
     try {
-        const resp = await window.apiClient.authenticatedFetch(`/api/postgres/replication-lag/history?instance=${encodeURIComponent(instName)}&limit=1`);
+        const resp = await window.apiClient.authenticatedFetch(`/api/postgres/replication?instance=${encodeURIComponent(instName)}&limit=1`);
         const container = document.getElementById('pg-replication-grid-container');
         if (resp.ok) {
             const payload = await resp.json();

@@ -12,6 +12,7 @@ package sqlserver
 import (
 	"context"
 	"github.com/rsharma155/sql_optima/internal/collectors/domain"
+	ms "github.com/rsharma155/sql_optima/internal/sqlserver"
 )
 
 const sessionEnrichmentSQL = `
@@ -40,6 +41,9 @@ WHERE r.plan_handle IS NOT NULL;
 
 func (r *SQLServerSnapshotRepository) FetchSessionEnrichment(ctx context.Context) ([]domain.MSSQLSessionEnrichment, error) {
 	rows, err := r.db.QueryContext(ctx, sessionEnrichmentSQL)
+	if err != nil && ms.IsMSSQLConnError(err) {
+		rows, err = r.db.QueryContext(ctx, sessionEnrichmentSQL)
+	}
 	if err != nil {
 		return nil, err
 	}

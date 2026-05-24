@@ -38,23 +38,24 @@ type PgssLatencyPoint struct {
 
 // PgssTopQuery represents a single row in the top queries table.
 type PgssTopQuery struct {
-	QueryID      int64    `json:"query_id"`
-	Query        string   `json:"query"`
-	DbName       string   `json:"db_name"`
-	UserName     string   `json:"username"`
-	AppName      string   `json:"app_name"`
-	QueryType    string   `json:"query_type"`
-	TotalTime    float64  `json:"total_time_ms"`
-	PctDBTime    float64  `json:"pct_db_time"`
-	Calls        int64    `json:"calls"`
-	AvgMs        float64  `json:"avg_ms"`
-	RowsPerCall  float64  `json:"rows_per_call"`
-	HitPct       float64  `json:"hit_pct"`
-	TempMB       float64  `json:"temp_mb"`
-	WalMB        float64  `json:"wal_mb"`
-	ReadsPerCall float64  `json:"reads_per_call"`
-	PlanRatio    float64  `json:"plan_ratio"`
-	Flags        []string `json:"flags"`
+	QueryID      int64     `json:"query_id"`
+	Query        string    `json:"query"`
+	DbName       string    `json:"db_name"`
+	UserName     string    `json:"username"`
+	AppName      string    `json:"app_name"`
+	QueryType    string    `json:"query_type"`
+	TotalTime    float64   `json:"total_time_ms"`
+	PctDBTime    float64   `json:"pct_db_time"`
+	Calls        int64     `json:"calls"`
+	AvgMs        float64   `json:"avg_ms"`
+	RowsPerCall  float64   `json:"rows_per_call"`
+	HitPct       float64   `json:"hit_pct"`
+	TempMB       float64   `json:"temp_mb"`
+	WalMB        float64   `json:"wal_mb"`
+	ReadsPerCall float64   `json:"reads_per_call"`
+	PlanRatio    float64   `json:"plan_ratio"`
+	Flags        []string  `json:"flags"`
+	CapturedAt   time.Time `json:"captured_at"`
 }
 
 // PgssFilterOptions holds distinct dimension values for filter dropdowns.

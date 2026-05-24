@@ -158,7 +158,7 @@ func (a *CollectorApp) collectMSSQLSessionEnrichment(ctx context.Context, server
 
 	enrichments, err := a.mssqlRepo.FetchSessionEnrichment(ctx)
 	if err != nil {
-		slog.Error("MSSQL FetchSessionEnrichment error", "err", err)
+		slog.Error("MSSQL FetchSessionEnrichment error", "target", serverID, "err", err)
 		return
 	}
 
@@ -182,7 +182,7 @@ func (a *CollectorApp) collectPG(ctx context.Context, serverID uuid.UUID) {
 
 	snapshots, err := a.pgRepo.FetchSnapshot(ctx)
 	if err != nil {
-		slog.Error("PG FetchSnapshot error", "err", err)
+		slog.Error("PG FetchSnapshot error", "server_id", sid, "err", err)
 		telemetry.CollectorCycles.WithLabelValues(sid, "postgres", "error").Inc()
 		return
 	}

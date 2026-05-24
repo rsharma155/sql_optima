@@ -77,11 +77,22 @@ func (c *DynamicThresholdCalculator) computeMemoryThresholds(t *models.DynamicTh
 	}
 	memUsedData := hist["memory_usage"]
 
+	// RAM-based PLE floor: Microsoft's guidance is PLE ≥ (buffer_pool_GB / 4) × 300.
+	// We approximate buffer pool as 85% of total RAM (typical max_server_memory allocation).
+	// Minimum absolute floor is 300s per MSDN; for large servers this formula is far more accurate.
+	ramGBF := math.Max(float64(config.TotalRAMGB), 8)
+	bufferPoolGB := ramGBF * 0.85
+	ramBasedFloor := math.Max(300.0, (bufferPoolGB/4.0)*300.0)
+
 	if len(pleData) > 0 {
 		pleBaseline := utils.Percentile(pleData, 50)
-		t.MemoryPLEMinSeconds = math.Max(300, pleBaseline*0.2)
+		// Alert when PLE drops below 50% of the healthy baseline OR the RAM-based floor,
+		// whichever is higher. The old 0.2 multiplier allowed PLE to fall 80% before alerting,
+		// which masks genuine memory pressure until it is severe.
+		historicalFloor := math.Max(300.0, pleBaseline*0.5)
+		t.MemoryPLEMinSeconds = math.Max(ramBasedFloor, historicalFloor)
 	} else {
-		t.MemoryPLEMinSeconds = 300.0
+		t.MemoryPLEMinSeconds = ramBasedFloor
 	}
 
 	if len(grantsData) > 0 {
@@ -138,10 +149,19 @@ func (c *DynamicThresholdCalculator) computeIOThresholds(t *models.DynamicThresh
 
 	if len(allLatency) > 0 {
 		p95 := utils.Percentile(allLatency, 95)
-		t.IOLatencyMaxMS = math.Max(10, p95*1.5)
-	} else {
+		// Floor of 5ms for virtual (cloud NVMe), 10ms for physical (may be HDD/SAN).
+		// p95×1.5 gives a workload-adaptive ceiling so a historically slow SAN doesn't
+		// mask real latency degradation.
+		floor := 10.0
 		if config.IsVirtual {
-			t.IOLatencyMaxMS = 15.0
+			floor = 5.0
+		}
+		t.IOLatencyMaxMS = math.Max(floor, p95*1.5)
+	} else {
+		// Default when no history: virtual cloud instances should be on NVMe-backed
+		// storage (alert at 10ms); physical servers may have spinning disk (alert at 20ms).
+		if config.IsVirtual {
+			t.IOLatencyMaxMS = 10.0
 		} else {
 			t.IOLatencyMaxMS = 20.0
 		}

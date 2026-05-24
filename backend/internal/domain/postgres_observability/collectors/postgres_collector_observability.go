@@ -10,6 +10,7 @@ package collectors
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/rsharma155/sql_optima/internal/domain/postgres_observability/domain/entities"
@@ -173,17 +174,37 @@ func (c *PostgresObservabilityCollector) CollectDBLoad(ctx context.Context, serv
 }
 
 func (c *PostgresObservabilityCollector) CollectQueryWaitProfile(ctx context.Context, serverID uuid.UUID, db *sql.DB) error {
-	// Only if pg_stat_statements exists
-	rows, err := db.QueryContext(ctx, `
-		SELECT queryid, calls, total_exec_time, mean_exec_time, rows, 
-		       shared_blks_hit, shared_blks_read, temp_blks_written, query, usename
-		FROM pg_stat_statements
-		JOIN pg_authid ON pg_stat_statements.userid = pg_authid.oid
-		ORDER BY total_exec_time DESC
-		LIMIT 50`)
+	// 1. Detect PG version for column names
+	var version int
+	if err := db.QueryRowContext(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&version); err != nil {
+		version = 130000 // default
+	}
+
+	execTimeCol := "total_exec_time"
+	meanTimeCol := "mean_exec_time"
+	if version < 130000 {
+		execTimeCol = "total_time"
+		meanTimeCol = "total_time / NULLIF(calls, 0)"
+	}
+
+	// 2. Query pg_stat_statements with robust user join
+	query := `
+		SELECT s.queryid, s.calls, s.` + execTimeCol + `, ` + meanTimeCol + `, s.rows, 
+		       s.shared_blks_hit, s.shared_blks_read, s.temp_blks_written, s.query, COALESCE(r.rolname, '')
+		FROM pg_stat_statements s
+		LEFT JOIN pg_roles r ON s.userid = r.oid
+		ORDER BY s.` + execTimeCol + ` DESC
+		LIMIT 50`
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		// Might not be installed, skip silently or log once
-		return nil
+		// Extension might not be installed; skip silently. 
+		// We check for "relation ... does not exist" (42P01)
+		if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "42P01" {
+			return nil
+		}
+		// Log other errors as they might indicate permission issues or schema mismatches
+		return fmt.Errorf("failed to query pg_stat_statements: %w", err)
 	}
 	defer rows.Close()
 

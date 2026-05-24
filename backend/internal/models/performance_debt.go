@@ -14,3 +14,16 @@ type PerformanceDebtFinding struct {
 	ImpactScore      float64   `json:"impact_score"`
 	Details          string    `json:"details"`
 }
+
+type PerformanceDebtSummary struct {
+	TotalFindings    int               `json:"total_findings"`
+	CriticalFindings int               `json:"critical_findings"`
+	WarningFindings  int               `json:"warning_findings"`
+	InfoFindings     int               `json:"info_findings"`
+	Tooltips         map[string]string `json:"tooltips"`
+}
+
+type PerformanceDebtResponse struct {
+	Findings []map[string]interface{} `json:"findings"`
+	Summary  PerformanceDebtSummary   `json:"summary"`
+}

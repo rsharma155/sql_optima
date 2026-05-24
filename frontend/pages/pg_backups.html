@@ -11,7 +11,7 @@
     <!-- Header -->
     <div class="page-title flex-between dashboard-page-title-compact">
         <div class="dashboard-title-line" style="flex:1; min-width:0;">
-            <h1><i class="fa-solid fa-shield-heart text-accent"></i> Backup & DR Operational Cockpit</h1>
+            <h1><i class="fa-solid fa-shield-heart text-accent"></i> Backup & DR Operational Cockpit <i class="fa-solid fa-circle-info text-accent info-icon-clickable cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Backup & DR" title="Learn more about this dashboard"></i></h1>
             <p class="subtitle">Instance: ${inst.name} | Database: <span class="text-accent">${dbName}</span></p>
         </div>
         
@@ -31,33 +31,33 @@
 
     <!-- ROW 1: KPI STRIP (CRITICAL HEALTH) -->
     <div class="dashboard-grid-12 mt-2">
-        <div class="glass-panel kpi-card col-span-2" title="WAL Generation Rate (MB/min)">
-            <div class="kpi-label">WAL Gen Rate</div>
+        <div class="glass-panel kpi-card col-span-2">
+            <div class="kpi-label">WAL Gen Rate <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="WAL Gen Rate"></i></div>
             <div class="kpi-value text-accent" id="stat-wal-rate">--</div>
             <div class="kpi-unit">MB/min</div>
         </div>
-        <div class="glass-panel kpi-card col-span-2" title="Archive Success %">
-            <div class="kpi-label">Archive Success</div>
+        <div class="glass-panel kpi-card col-span-2">
+            <div class="kpi-label">Archive Success <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="Archive Success"></i></div>
             <div class="kpi-value" id="stat-archive-success">--</div>
             <div class="kpi-unit">%</div>
         </div>
-        <div class="glass-panel kpi-card col-span-2" title="Maximum Replica Lag">
-            <div class="kpi-label">Max Repl Lag</div>
+        <div class="glass-panel kpi-card col-span-2">
+            <div class="kpi-label">Max Repl Lag <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="Max Repl Lag"></i></div>
             <div class="kpi-value" id="stat-max-lag">--</div>
             <div class="kpi-unit">sec</div>
         </div>
-        <div class="glass-panel kpi-card col-span-2" title="Replication Slots Risk (GB)">
-            <div class="kpi-label">Slots Risk</div>
+        <div class="glass-panel kpi-card col-span-2">
+            <div class="kpi-label">Slots Risk <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="Replication Slots Risk"></i></div>
             <div class="kpi-value" id="stat-slots-risk">--</div>
             <div class="kpi-unit">GB</div>
         </div>
-        <div class="glass-panel kpi-card col-span-2" title="Time since last successful archive">
-            <div class="kpi-label">Last Archive Age</div>
+        <div class="glass-panel kpi-card col-span-2">
+            <div class="kpi-label">Last Archive Age <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="Last Archive Age"></i></div>
             <div class="kpi-value" id="stat-archive-age">--</div>
             <div class="kpi-unit">age</div>
         </div>
-        <div class="glass-panel kpi-card col-span-2" title="Average Checkpoint Write Time">
-            <div class="kpi-label">Avg Checkpoint</div>
+        <div class="glass-panel kpi-card col-span-2">
+            <div class="kpi-label">Avg Checkpoint <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="Avg Checkpoint"></i></div>
             <div class="kpi-value" id="stat-avg-checkpoint">--</div>
             <div class="kpi-unit">ms</div>
         </div>
@@ -66,11 +66,11 @@
     <!-- ROW 2: WAL & REPLICATION -->
     <div class="dashboard-grid-12 mt-2">
         <div class="glass-panel col-span-6 chart-container-sm">
-            <div class="panel-header"><h4><i class="fa-solid fa-chart-line text-accent"></i> WAL Generation Trend</h4></div>
+            <div class="panel-header"><h4><i class="fa-solid fa-chart-line text-accent"></i> WAL Generation Trend <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="WAL Generation Trend"></i></h4></div>
             <canvas id="walTrendChart"></canvas>
         </div>
         <div class="glass-panel col-span-6 chart-container-sm">
-            <div class="panel-header"><h4><i class="fa-solid fa-tower-broadcast text-accent"></i> Replica Lag per Standby</h4></div>
+            <div class="panel-header"><h4><i class="fa-solid fa-tower-broadcast text-accent"></i> Replica Lag per Standby <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="Replica Lag Chart"></i></h4></div>
             <canvas id="replicaLagChart"></canvas>
         </div>
     </div>
@@ -78,11 +78,11 @@
     <!-- ROW 3: ARCHIVING & CHECKPOINT -->
     <div class="dashboard-grid-12 mt-2">
         <div class="glass-panel col-span-6 chart-container-sm">
-            <div class="panel-header"><h4><i class="fa-solid fa-box-archive text-accent"></i> Archive Success vs Failure</h4></div>
+            <div class="panel-header"><h4><i class="fa-solid fa-box-archive text-accent"></i> Archive Success vs Failure <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="Archive Health"></i></h4></div>
             <canvas id="archiveHealthChart"></canvas>
         </div>
         <div class="glass-panel col-span-6 chart-container-sm">
-            <div class="panel-header"><h4><i class="fa-solid fa-stopwatch text-accent"></i> Checkpoint Write & Sync Time</h4></div>
+            <div class="panel-header"><h4><i class="fa-solid fa-stopwatch text-accent"></i> Checkpoint Write & Sync Time <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="Avg Checkpoint"></i></h4></div>
             <canvas id="checkpointTrendChart"></canvas>
         </div>
     </div>
@@ -90,7 +90,7 @@
     <!-- ROW 4: OPERATIONS TABLES -->
     <div class="dashboard-grid-12 mt-2">
         <div class="glass-panel col-span-7 table-card-compact">
-            <div class="panel-header"><h4><i class="fa-solid fa-list-check text-accent"></i> Replication Node Detail</h4></div>
+            <div class="panel-header"><h4><i class="fa-solid fa-list-check text-accent"></i> Replication Node Detail <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="Replication Node"></i></h4></div>
             <div class="table-responsive">
                 <table class="data-table-compact" id="replicationTable">
                     <thead>
@@ -109,7 +109,7 @@
             </div>
         </div>
         <div class="glass-panel col-span-5 table-card-compact">
-            <div class="panel-header"><h4><i class="fa-solid fa-circle-exclamation text-error"></i> Archiver Failure Audit</h4></div>
+            <div class="panel-header"><h4><i class="fa-solid fa-circle-exclamation text-error"></i> Archiver Failure Audit <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="Archive Health"></i></h4></div>
             <div class="table-responsive">
                 <table class="data-table-compact" id="archiverFailureTable">
                     <thead>

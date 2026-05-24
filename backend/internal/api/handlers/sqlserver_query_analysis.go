@@ -72,9 +72,18 @@ func (h *SqlServerQueryAnalysisHandlers) GetSummary(w http.ResponseWriter, r *ht
 		if val, err := strconv.Atoi(hStr); err == nil {
 			hours = val
 		}
+	} else if fromStr, toStr := r.URL.Query().Get("from"), r.URL.Query().Get("to"); fromStr != "" {
+		from, to, _ := parseTimeRange(fromStr, toStr)
+		if h := int(to.Sub(from).Hours()); h > 0 {
+			hours = h
+		}
+	}
+	excludeSystem := true
+	if es := r.URL.Query().Get("exclude_system"); es == "false" {
+		excludeSystem = false
 	}
 
-	res, err := h.metricsSvc.GetSqlServerQueryAnalysisSummary(r.Context(), id, hours, true)
+	res, err := h.metricsSvc.GetSqlServerQueryAnalysisSummary(r.Context(), id, hours, excludeSystem)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -133,9 +142,18 @@ func (h *SqlServerQueryAnalysisHandlers) GetTopQueries(w http.ResponseWriter, r 
 		if val, err := strconv.Atoi(hStr); err == nil {
 			hours = val
 		}
+	} else if fromStr, toStr := r.URL.Query().Get("from"), r.URL.Query().Get("to"); fromStr != "" {
+		from, to, _ := parseTimeRange(fromStr, toStr)
+		if h := int(to.Sub(from).Hours()); h > 0 {
+			hours = h
+		}
+	}
+	excludeSystem := true
+	if es := r.URL.Query().Get("exclude_system"); es == "false" {
+		excludeSystem = false
 	}
 
-	res, err := h.metricsSvc.GetSqlServerTopQueriesAnalysis(r.Context(), id, sortBy, 50, hours, true)
+	res, err := h.metricsSvc.GetSqlServerTopQueriesAnalysis(r.Context(), id, sortBy, 50, hours, excludeSystem)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)

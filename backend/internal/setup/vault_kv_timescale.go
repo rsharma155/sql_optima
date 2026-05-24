@@ -69,7 +69,7 @@ func TimescaleFromVault(ctx context.Context, logicalPath string) (host string, p
 	password = get("password", "pass", "db_password")
 	sslMode = get("ssl_mode", "sslmode")
 	if sslMode == "" {
-		sslMode = "require"
+		sslMode = "disable"
 	}
 	portStr := get("port", "db_port")
 	if portStr != "" {

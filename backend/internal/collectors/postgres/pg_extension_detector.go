@@ -91,25 +91,24 @@ func (d *ExtensionDetector) detectSource(ctx context.Context, db *sql.DB) PgQuer
 	for _, ext := range installed {
 		if ext == "pg_stat_monitor" {
 			// Verify if pg_stat_monitor is actually LOADED and functional.
-			// The extension might be created but not in shared_preload_libraries.
-			var dummy int
-			err := db.QueryRowContext(ctx, "SELECT 1 FROM pg_stat_monitor LIMIT 1").Scan(&dummy)
+			var schema string
+			err := db.QueryRowContext(ctx, "SELECT schemaname FROM pg_views WHERE viewname = 'pg_stat_monitor' LIMIT 1").Scan(&schema)
 			if err == nil {
-				slog.Info("[PgExtensionDetector] Detected functional pg_stat_monitor.")
+				slog.Info("[PgExtensionDetector] Detected functional pg_stat_monitor.", "schema", schema)
 				return PgStatMonitor
 			}
-			slog.Error("[PgExtensionDetector] WARN: pg_stat_monitor is installed but NOT functional (likely missing from shared_preload_libraries)", "err", err)
+			slog.Error("[PgExtensionDetector] WARN: pg_stat_monitor is installed but NOT functional (likely missing from shared_preload_libraries or not in search_path)", "err", err)
 			// Continue to check if pg_stat_statements is available
 		}
 		if ext == "pg_stat_statements" {
 			// Verify pg_stat_statements
-			var dummy int
-			err := db.QueryRowContext(ctx, "SELECT 1 FROM pg_stat_statements LIMIT 1").Scan(&dummy)
+			var schema string
+			err := db.QueryRowContext(ctx, "SELECT schemaname FROM pg_views WHERE viewname = 'pg_stat_statements' LIMIT 1").Scan(&schema)
 			if err == nil {
-				slog.Info("[PgExtensionDetector] Detected functional pg_stat_statements.")
+				slog.Info("[PgExtensionDetector] Detected functional pg_stat_statements.", "schema", schema)
 				return PgStatStatements
 			}
-			slog.Warn("[PgExtensionDetector] WARN: pg_stat_statements is installed but NOT functional", "err", err)
+			slog.Warn("[PgExtensionDetector] WARN: pg_stat_statements is installed but NOT functional or not in search_path", "err", err)
 		}
 	}
 

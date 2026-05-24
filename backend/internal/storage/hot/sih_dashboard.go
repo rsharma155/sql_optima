@@ -602,7 +602,9 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		}
 
 		q := fmt.Sprintf(`
-			SELECT db_name, schema_name, table_name, (MAX(table_size_mb) - MIN(table_size_mb)) as growth_mb
+			SELECT db_name, schema_name, table_name, 
+			       (MAX(table_size_mb) - MIN(table_size_mb)) as growth_mb,
+			       MIN(table_size_mb) as base_mb
 			FROM monitor.table_usage_stats
 			WHERE %s
 			GROUP BY db_name, schema_name, table_name
@@ -615,7 +617,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 			defer rows.Close()
 			for rows.Next() {
 				var r StorageIndexHealthTopRow
-				if err := rows.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.Value); err == nil {
+				if err := rows.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.Value, &r.Value2); err == nil {
 					topGrowth = append(topGrowth, r)
 				}
 			}

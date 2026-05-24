@@ -67,3 +67,30 @@ func TestTrendAnomalyNotDetected(t *testing.T) {
 		t.Error("expected no trend anomaly")
 	}
 }
+
+// DEFECT-8: a constant-zero series must NOT trigger a false anomaly on floating-point noise.
+func TestConstantZeroSeriesNoAnomaly(t *testing.T) {
+	detector := anomaly.NewAnomalyDetector(2.5)
+	// Simulates memory_grants_pending=0 for days — common stable state
+	series := make([]float64, 20)
+	isAnomaly, _ := detector.DetectPointAnomaly(0.0, series)
+	if isAnomaly {
+		t.Error("constant-zero series with 0.0 value should NOT be an anomaly")
+	}
+	// Tiny floating-point noise should also not trigger
+	isAnomaly2, _ := detector.DetectPointAnomaly(0.000001, series)
+	if isAnomaly2 {
+		t.Error("constant-zero series with epsilon noise should NOT be an anomaly")
+	}
+}
+
+// DEFECT-8: a meaningful spike into a zero-baseline should be flagged.
+func TestMeaningfulSpikeIntoZeroBaselineIsAnomaly(t *testing.T) {
+	detector := anomaly.NewAnomalyDetector(2.5)
+	series := make([]float64, 20)
+	// 5 pending grants when baseline is always 0 — that's meaningful
+	isAnomaly, _ := detector.DetectPointAnomaly(5.0, series)
+	if !isAnomaly {
+		t.Error("5 grants pending against zero baseline should be flagged as anomaly")
+	}
+}

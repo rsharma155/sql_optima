@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.plot.ly; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';">
-<title>IntelligenceReportSqloptima Report — {{.OverallRisk.Category}}</title>
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" integrity="sha384-cCVCZkAjYNxaYKbM8lsArLznDF/SvMFr1jcZrvOpSTCa0W40ZAdLzHCEulnUa5i7" crossorigin="anonymous"></script>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';">
+<title>Intelligence Report Sqloptima — {{.OverallRisk.Category}}</title>
+<script src="/js/vendor/plotly-2.35.2.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root[data-theme="dark"] {
@@ -43,17 +43,17 @@ body { font-family:Inter,sans-serif; background:var(--bg); color:var(--text); fo
   .header-right button { min-width:32px; text-align:center; }
   .header-right .action-label { display:none; }
 }
-.cards { display:grid; grid-template-columns:repeat(5,1fr); gap:14px; padding:16px 0; }
-.card { background:var(--surface); border-radius:12px; padding:14px; border:1px solid var(--border); transition:background .3s; }
-.card .label { font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-bottom:6px; }
-.gauge-wrap { position:relative; width:90px; height:90px; margin:0 auto; }
-.gauge-value { position:absolute; top:43%; left:50%; transform:translate(-50%,-50%); font-size:22px; font-weight:700; }
+.cards { display:grid; grid-template-columns:repeat(5,1fr); gap:14px; padding:12px 0; }
+.card { background:var(--surface); border-radius:12px; padding:8px 10px; border:1px solid var(--border); transition:background .3s; }
+.card .label { font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-bottom:4px; }
+.gauge-wrap { position:relative; width:80px; height:80px; margin:0 auto; }
+.gauge-value { position:absolute; top:43%; left:50%; transform:translate(-50%,-50%); font-size:20px; font-weight:700; }
 .gauge-cat { position:absolute; bottom:2px; left:50%; transform:translateX(-50%); font-size:8px; text-transform:uppercase; letter-spacing:.5px; white-space:nowrap; }
-.countdown { font-size:28px; font-weight:700; text-align:center; }
-.countdown-sub { font-size:11px; color:var(--text2); text-align:center; margin-top:2px; }
-.confidence-bar { height:6px; background:var(--border); border-radius:3px; overflow:hidden; margin-top:6px; }
+.countdown { font-size:20px; font-weight:700; text-align:center; }
+.countdown-sub { font-size:10px; color:var(--text2); text-align:center; margin-top:2px; }
+.confidence-bar { height:5px; background:var(--border); border-radius:3px; overflow:hidden; margin-top:4px; }
 .confidence-fill { height:100%; border-radius:3px; background:linear-gradient(90deg,var(--blue),var(--green)); }
-.confidence-pct { font-size:22px; font-weight:700; }
+.confidence-pct { font-size:17px; font-weight:700; }
 @media (max-width:1024px) { .cards { grid-template-columns:repeat(3,1fr); } }
 @media (max-width:640px) { .cards { grid-template-columns:repeat(2,1fr); gap:8px; } }
 @media (max-width:400px) { .cards { grid-template-columns:1fr; } }
@@ -93,7 +93,7 @@ tr:hover td { background:var(--surface2); }
 .issue-list { display:flex; flex-direction:column; gap:6px; }
 .issue-row { display:flex; align-items:center; gap:10px; padding:10px; border-radius:6px; background:var(--surface2); cursor:pointer; transition:.2s; }
 .issue-row:hover { background:var(--border); }
-.issue-row .sev { padding:2px 8px; border-radius:3px; font-size:10px; font-weight:600; text-transform:uppercase; min-width:50px; text-align:center; }
+.issue-row .sev { padding:2px 5px; border-radius:3px; font-size:9px; font-weight:600; text-transform:uppercase; min-width:30px; text-align:center; flex-shrink:0; }
 .sev.critical { background:var(--red); color:#fff; }
 .sev.high { background:var(--orange); color:#fff; }
 .sev.medium { background:var(--yellow); color:#000; }
@@ -171,13 +171,13 @@ tr:hover td { background:var(--surface2); }
 <div class="header">
   <div class="header-left">
     <div>
-      <div class="brand">IntelligenceReportSqloptima</div>
+      <div class="brand">Intelligence Report Sqloptima</div>
       <div class="sub">Autonomous Monitoring Intelligence</div>
     </div>
   </div>
   <div class="header-center">
-    <div class="target">SQLPROD-01</div>
-    <div class="window">Production OLTP &middot; Last 24h &middot; {{.GeneratedAtShort}} &middot; <span style="padding:2px 6px; border-radius:4px; font-weight:600; font-size:10px; {{if eq .DataStatus "Full"}}background:var(--success); color:var(--green){{else if eq .DataStatus "Partial"}}background:var(--warning-bg); color:var(--orange){{else}}background:var(--danger-bg); color:var(--red){{end}}">DATA: {{.DataStatus}}</span></div>
+    <div class="target" title="Server ID: {{.RunID}}">{{.ServerLabel}}…</div>
+    <div class="window">Last 24h &middot; {{.GeneratedAtShort}} &middot; <span title="{{.DataNote}}" style="padding:2px 6px; border-radius:4px; font-weight:600; font-size:10px; cursor:help; {{if eq .DataStatus "Full"}}background:var(--success); color:var(--green){{else if eq .DataStatus "Partial"}}background:var(--warning-bg); color:var(--orange){{else}}background:var(--danger-bg); color:var(--red){{end}}">Coverage: {{if .DataStatus}}{{.DataStatus}}{{else}}Unknown{{end}}</span></div>
   </div>
   <div class="header-right">
     <span style="display:flex;gap:6px;flex-wrap:wrap">
@@ -195,12 +195,12 @@ tr:hover td { background:var(--surface2); }
 <div class="cards">
   <div class="card" onclick="openDrawer()" style="cursor:pointer" data-tip="Click to see risk breakdown">
     <div class="label">Overall Health</div>
-    <div id="healthGauge" style="width:90px;height:90px;margin:0 auto"></div>
-    <div style="text-align:center;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-top:2px">{{.OverallRisk.Category}}</div>
+    <div id="healthGauge" style="width:100%;height:105px;"></div>
+    <div style="text-align:center;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-top:1px">{{.OverallRisk.Category}}</div>
   </div>
   <div class="card">
     <div class="label">Failure Forecast <span style="float:right;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:600;{{.FailureBadgeStyle}}">{{.FailureBadgeText}}</span></div>
-    {{if .EarliestFailureDays}}
+    {{if gt .EarliestFailureDays 0}}
     <div class="countdown" style="color:{{.EarliestFailureColor}}">{{.EarliestFailureDays}}<span style="font-size:13px;color:var(--text3)"> days</span></div>
     <div class="countdown-sub">{{.EarliestFailureComponent}} - {{.EarliestFailureRiskType}}</div>
     {{else}}
@@ -210,12 +210,12 @@ tr:hover td { background:var(--surface2); }
   </div>
   <div class="card">
     <div class="label">Critical Alerts <span style="float:right;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:600;{{if gt .CriticalCount 0}}background:var(--danger-bg);color:var(--red){{else}}background:var(--success);color:var(--green){{end}}">{{if gt .CriticalCount 0}}HIGH{{else}}OK{{end}}</span></div>
-    <div><span style="font-size:24px;font-weight:700;color:var(--red)">{{.CriticalCount}}</span> <span style="font-size:12px;color:var(--text2)">Critical</span></div>
-    <div><span style="font-size:16px;font-weight:700;color:var(--orange)">{{.HighCount}}</span> <span style="font-size:12px;color:var(--text2)">High</span></div>
+    <div><span style="font-size:20px;font-weight:700;color:var(--red)">{{.CriticalCount}}</span> <span style="font-size:11px;color:var(--text2)">Critical</span></div>
+    <div><span style="font-size:15px;font-weight:700;color:var(--orange)">{{.HighCount}}</span> <span style="font-size:11px;color:var(--text2)">High</span></div>
   </div>
   <div class="card">
-    <div class="label">Capacity Trend <span style="float:right;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:600;background:var(--warning-bg);color:var(--orange)">ELEVATED</span></div>
-    <div style="font-size:22px;font-weight:700;color:var(--orange)">+{{.WeeklyGrowthPct}}<span style="font-size:13px;color:var(--text3)">% weekly</span></div>
+    <div class="label">Capacity Trend <span style="float:right;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:600;{{.CapacityTrendStyle}}">{{.CapacityTrendBadge}}</span></div>
+    <div style="font-size:18px;font-weight:700;color:var(--orange)">+{{.WeeklyGrowthPct}}<span style="font-size:12px;color:var(--text3)">% weekly</span></div>
     <div class="countdown-sub">Storage growing {{.DailyStorageGrowthGB}}GB/day</div>
   </div>
   <div class="card">
@@ -232,32 +232,20 @@ tr:hover td { background:var(--surface2); }
 </div>
 
 <div class="ribbon" style="padding:10px 14px">
-  <h3>Today's Incident Timeline</h3>
-  <div style="display:flex;gap:2px;overflow-x:auto;padding:8px 0;scrollbar-width:thin">
-    <div style="flex-shrink:0;width:100px;padding:6px 8px;border-radius:4px;background:var(--red)22;border-left:3px solid var(--red);cursor:pointer" onclick="showIssueDetail(0)" data-tip="CPU surge">
-      <div style="font-size:10px;font-weight:600;color:var(--red)">10:15</div>
-      <div style="font-size:11px;color:var(--text)">CPU surge</div>
+  <h3>Active Incidents (derived from triggered rules)</h3>
+  <div style="display:flex;gap:4px;overflow-x:auto;padding:8px 0;scrollbar-width:thin">
+    {{range $i, $ev := .IncidentTimeline}}
+    <div style="flex-shrink:0;width:120px;padding:6px 8px;border-radius:4px;cursor:pointer;
+      {{if eq $ev.severity "critical"}}background:rgba(239,68,68,0.12);border-left:3px solid var(--red)
+      {{else if eq $ev.severity "high"}}background:rgba(249,115,22,0.12);border-left:3px solid var(--orange)
+      {{else}}background:rgba(234,179,8,0.12);border-left:3px solid var(--yellow){{end}}"
+      onclick="showIssueDetail({{$i}})" title="{{$ev.detail}}">
+      <div style="font-size:10px;font-weight:600;{{if eq $ev.severity "critical"}}color:var(--red){{else if eq $ev.severity "high"}}color:var(--orange){{else}}color:var(--yellow){{end}}">{{$ev.time}}</div>
+      <div style="font-size:11px;color:var(--text)">{{$ev.event}}</div>
     </div>
-    <div style="flex-shrink:0;width:100px;padding:6px 8px;border-radius:4px;background:var(--orange)22;border-left:3px solid var(--orange);cursor:pointer" onclick="showIssueDetail(0)" data-tip="Memory queue">
-      <div style="font-size:10px;font-weight:600;color:var(--orange)">10:18</div>
-      <div style="font-size:11px;color:var(--text)">Memory queue</div>
-    </div>
-    <div style="flex-shrink:0;width:100px;padding:6px 8px;border-radius:4px;background:var(--orange)22;border-left:3px solid var(--orange);cursor:pointer" onclick="showIssueDetail(0)" data-tip="TempDB spill">
-      <div style="font-size:10px;font-weight:600;color:var(--orange)">10:21</div>
-      <div style="font-size:11px;color:var(--text)">TempDB spill</div>
-    </div>
-    <div style="flex-shrink:0;width:100px;padding:6px 8px;border-radius:4px;background:var(--yellow)22;border-left:3px solid var(--yellow);cursor:pointer" onclick="showIssueDetail(0)" data-tip="Query timeout">
-      <div style="font-size:10px;font-weight:600;color:var(--yellow)">10:25</div>
-      <div style="font-size:11px;color:var(--text)">Query timeout</div>
-    </div>
-    <div style="flex-shrink:0;width:100px;padding:6px 8px;border-radius:4px;background:var(--yellow)22;border-left:3px solid var(--yellow);cursor:pointer" onclick="showIssueDetail(0)" data-tip="Blocking chain">
-      <div style="font-size:10px;font-weight:600;color:var(--yellow)">10:30</div>
-      <div style="font-size:11px;color:var(--text)">Blocking chain</div>
-    </div>
-    <div style="flex-shrink:0;width:100px;padding:6px 8px;border-radius:4px;background:var(--orange)22;border-left:3px solid var(--orange);cursor:pointer" onclick="showIssueDetail(0)" data-tip="Log growth">
-      <div style="font-size:10px;font-weight:600;color:var(--orange)">10:45</div>
-      <div style="font-size:11px;color:var(--text)">Log growth</div>
-    </div>
+    {{else}}
+    <div style="color:var(--text3);font-size:13px;padding:8px 0">No active incidents detected</div>
+    {{end}}
   </div>
 </div>
 
@@ -309,14 +297,20 @@ tr:hover td { background:var(--surface2); }
       </div>
       <div class="section">
         <table>
-          <thead><tr><th>Domain</th><th>Risk</th><th>Trend</th></tr></thead>
+          <thead><tr><th>Domain</th><th>Score</th><th>Level</th></tr></thead>
           <tbody>
-            <tr><td>Capacity</td><td style="color:var(--orange)">High ({{.OverallRisk.CapacityRisk | printf "%.0f"}})</td><td style="color:var(--red)">↑</td></tr>
-            <tr><td>Performance</td><td style="color:var(--yellow)">Medium ({{.OverallRisk.PerformanceRisk | printf "%.0f"}})</td><td style="color:var(--text2)">→</td></tr>
-            <tr><td>Availability</td><td style="color:var(--green)">Low ({{.OverallRisk.AvailabilityRisk | printf "%.0f"}})</td><td style="color:var(--green)">↓</td></tr>
-            <tr><td>Replication</td><td style="color:var(--green)">Low ({{.OverallRisk.ReplicationRisk | printf "%.0f"}})</td><td style="color:var(--green)">↓</td></tr>
-            <tr><td>Maintenance</td><td style="color:var(--yellow)">Medium ({{.OverallRisk.MaintenanceRisk | printf "%.0f"}})</td><td style="color:var(--text2)">→</td></tr>
-            <tr><td>Query</td><td style="color:var(--green)">Low ({{.OverallRisk.QueryRisk | printf "%.0f"}})</td><td style="color:var(--text2)">→</td></tr>
+            {{$cr := .OverallRisk.CapacityRisk}}
+            <tr><td>Capacity</td><td style="font-weight:600">{{$cr | printf "%.0f"}}</td><td style="color:{{if gt $cr 75.0}}var(--red){{else if gt $cr 50.0}}var(--orange){{else if gt $cr 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $cr 75.0}}Critical{{else if gt $cr 50.0}}High{{else if gt $cr 25.0}}Medium{{else}}Low{{end}}</td></tr>
+            {{$pr := .OverallRisk.PerformanceRisk}}
+            <tr><td>Performance</td><td style="font-weight:600">{{$pr | printf "%.0f"}}</td><td style="color:{{if gt $pr 75.0}}var(--red){{else if gt $pr 50.0}}var(--orange){{else if gt $pr 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $pr 75.0}}Critical{{else if gt $pr 50.0}}High{{else if gt $pr 25.0}}Medium{{else}}Low{{end}}</td></tr>
+            {{$ar := .OverallRisk.AvailabilityRisk}}
+            <tr><td>Availability</td><td style="font-weight:600">{{$ar | printf "%.0f"}}</td><td style="color:{{if gt $ar 75.0}}var(--red){{else if gt $ar 50.0}}var(--orange){{else if gt $ar 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $ar 75.0}}Critical{{else if gt $ar 50.0}}High{{else if gt $ar 25.0}}Medium{{else}}Low{{end}}</td></tr>
+            {{$rr := .OverallRisk.ReplicationRisk}}
+            <tr><td>Replication</td><td style="font-weight:600">{{$rr | printf "%.0f"}}</td><td style="color:{{if gt $rr 75.0}}var(--red){{else if gt $rr 50.0}}var(--orange){{else if gt $rr 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $rr 75.0}}Critical{{else if gt $rr 50.0}}High{{else if gt $rr 25.0}}Medium{{else}}Low{{end}}</td></tr>
+            {{$mr := .OverallRisk.MaintenanceRisk}}
+            <tr><td>Maintenance</td><td style="font-weight:600">{{$mr | printf "%.0f"}}</td><td style="color:{{if gt $mr 75.0}}var(--red){{else if gt $mr 50.0}}var(--orange){{else if gt $mr 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $mr 75.0}}Critical{{else if gt $mr 50.0}}High{{else if gt $mr 25.0}}Medium{{else}}Low{{end}}</td></tr>
+            {{$qr := .OverallRisk.QueryRisk}}
+            <tr><td>Query</td><td style="font-weight:600">{{$qr | printf "%.0f"}}</td><td style="color:{{if gt $qr 75.0}}var(--red){{else if gt $qr 50.0}}var(--orange){{else if gt $qr 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $qr 75.0}}Critical{{else if gt $qr 50.0}}High{{else if gt $qr 25.0}}Medium{{else}}Low{{end}}</td></tr>
           </tbody>
         </table>
       </div>
@@ -334,9 +328,8 @@ tr:hover td { background:var(--surface2); }
           {{range $i, $issue := .CurrentIssues}}
           <div class="issue-row" onclick="showIssueDetail('{{$i}}')">
             <span class="sev {{$issue.severity}}">{{$issue.severity}}</span>
-            <div style="flex:1;min-width:0"><strong style="font-size:13px">{{$issue.title | titleStr | replaceAll "_" " "}}</strong><br><span style="font-size:11px;color:var(--text2)">{{$i}}h ago</span></div>
+            <div style="flex:1;min-width:0"><strong style="font-size:13px">{{$issue.title | titleStr | replaceAll "_" " "}}</strong><br><span style="font-size:11px;color:var(--text2)">This analysis period</span></div>
             <span style="color:{{if eq $issue.severity "critical"}}var(--red){{else if eq $issue.severity "high"}}var(--orange){{else}}var(--yellow){{end}}">↑</span>
-            <span style="font-size:12px;font-weight:600;color:var(--text2)">{{if eq $issue.severity "critical"}}95{{else if eq $issue.severity "high"}}78{{else}}62{{end}}%</span>
           </div>
           {{end}}
         </div>
@@ -354,32 +347,35 @@ tr:hover td { background:var(--surface2); }
 <div class="tab-content" id="tab-rootcause">
   <div class="grid-2">
     <div class="section">
-      <h2>Root Cause Dependency Tree</h2>
+      <h2>Root Cause Dependency Chain</h2>
       <div class="tree">
-        <div class="tree-node"><strong>High CPU Utilization (87%)</strong> — avg_cpu_load sustained above threshold</div>
-        <div class="tree-arrow">↓ correlated with</div>
-        <div class="tree-node depth-1"><strong>Parallel Query Explosion</strong> — 6 queries with excessive parallelism (MAXDOP default)</div>
-        <div class="tree-arrow">↓ causes</div>
-        <div class="tree-node depth-2"><strong>Memory Grant Contention</strong> — RESOURCE_SEMAPHORE waits at 47%</div>
-        <div class="tree-arrow">↓ results in</div>
-        <div class="tree-node depth-3"><strong>TempDB Spill</strong> — 1.3GB spill, sort_warnings: 12/s</div>
+        {{if .RootCauseHypotheses}}
+          {{range $i, $h := .RootCauseHypotheses}}
+          <div class="tree-node{{if eq $i 1}} depth-1{{else if gt $i 1}} depth-2{{end}}"><span>{{$h}}</span></div>
+          {{if lt $i 3}}<div class="tree-arrow">↓ contributes to</div>{{end}}
+          {{end}}
+        {{else}}
+        <div style="color:var(--text3);padding:12px;font-size:13px">
+          <strong style="color:var(--green);display:block;margin-bottom:4px">No cascading root causes identified</strong>
+          System is stable or no high/critical rules have triggered. Root cause dependency chains are computed from correlated metric violations (CPU → memory pressure → PLE collapse, disk pressure → growth rate, blocking chains, etc.). Ensure collectors are running and historical data is accumulating to enable deeper causal analysis.
+        </div>
+        {{end}}
       </div>
-      {{if .RootCauseHypotheses}}
-      <h3 style="margin-top:16px">Hypotheses</h3>
-      {{range .RootCauseHypotheses}}
-      <div class="evidence-item"><span>{{.}}</span></div>
-      {{end}}
-      {{end}}
     </div>
     <div class="section">
       <h2>Root Cause Probability</h2>
       <table>
         <thead><tr><th>Candidate Cause</th><th>Probability</th><th>Evidence</th></tr></thead>
         <tbody>
-          <tr><td>Query regression</td><td><span style="color:var(--orange)">82%</span></td><td style="font-size:12px;color:var(--text2)">Plan changed 48h ago, duration +47%</td></tr>
-          <tr><td>Statistics drift</td><td><span style="color:var(--yellow)">64%</span></td><td style="font-size:12px;color:var(--text2)">Last update 14 days ago</td></tr>
-          <tr><td>Parameter sniffing</td><td><span style="color:var(--yellow)">41%</span></td><td style="font-size:12px;color:var(--text2)">Known pattern with ORM queries</td></tr>
-          <tr><td>Index fragmentation</td><td><span style="color:var(--green)">23%</span></td><td style="font-size:12px;color:var(--text2)">Fragmentation at 18%</td></tr>
+          {{range .RootCauseProbabilities}}
+          <tr>
+            <td>{{.candidate}}</td>
+            <td><span style="color:{{.prob_color}}">{{.probability | printf "%.0f"}}%</span></td>
+            <td style="font-size:12px;color:var(--text2)">{{.evidence}}</td>
+          </tr>
+          {{else}}
+          <tr><td colspan="3" style="color:var(--text3);text-align:center;padding:12px">No triggered rules to analyze</td></tr>
+          {{end}}
         </tbody>
       </table>
     </div>
@@ -388,14 +384,32 @@ tr:hover td { background:var(--surface2); }
 
 <div class="tab-content" id="tab-forecast">
   <div class="grid-3" style="margin-bottom:14px">
-    {{range .FailureForecast}}
-    {{if lt (len $.FailureForecast) 4}}
+    {{if .FailureForecast}}
+    {{range $i, $ff := .FailureForecast}}
+    {{if lt $i 6}}
     <div class="fc-card">
       <div class="fc-value" style="color:{{if eq .Confidence "High"}}var(--red){{else if eq .Confidence "Medium"}}var(--orange){{else}}var(--yellow){{end}}">{{.PredictedFailureWindow}}</div>
       <div class="fc-label">Days to {{.Component}}</div>
       <div class="fc-sub">Confidence: {{.Confidence}} &middot; {{.RiskType}}</div>
     </div>
     {{end}}
+    {{end}}
+    {{else}}
+    <div style="grid-column:1/-1;padding:20px;background:var(--surface);border-radius:10px;border:1px solid var(--border)">
+      <div style="text-align:center;margin-bottom:14px">
+        <div style="font-size:24px;margin-bottom:6px">✓</div>
+        <strong style="color:var(--green)">No failure predicted within the 30-day forecast window</strong>
+      </div>
+      <p style="font-size:12px;color:var(--text2);text-align:center;margin-bottom:12px">All monitored metrics are trending within dynamically computed thresholds. Failure forecasting activates once ≥3 historical snapshots are available per metric.</p>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px">
+        <div style="background:var(--surface2);border-radius:6px;padding:8px"><strong style="color:var(--text2);display:block;margin-bottom:3px">CPU Utilization</strong><span style="color:var(--text3)">Checked: avg_cpu_load series</span></div>
+        <div style="background:var(--surface2);border-radius:6px;padding:8px"><strong style="color:var(--text2);display:block;margin-bottom:3px">Free Disk Space</strong><span style="color:var(--text3)">Checked: free_disk_mb series</span></div>
+        <div style="background:var(--surface2);border-radius:6px;padding:8px"><strong style="color:var(--text2);display:block;margin-bottom:3px">Memory Usage</strong><span style="color:var(--text3)">Checked: memory_usage series</span></div>
+        <div style="background:var(--surface2);border-radius:6px;padding:8px"><strong style="color:var(--text2);display:block;margin-bottom:3px">TempDB Usage</strong><span style="color:var(--text3)">Checked: tempdb_used_percent series</span></div>
+        <div style="background:var(--surface2);border-radius:6px;padding:8px"><strong style="color:var(--text2);display:block;margin-bottom:3px">Workload (Batch Req/s)</strong><span style="color:var(--text3)">Checked: batch_requests_per_sec series</span></div>
+        <div style="background:var(--surface2);border-radius:6px;padding:8px"><strong style="color:var(--text2);display:block;margin-bottom:3px">Replication Lag</strong><span style="color:var(--text3)">Checked: secondary_lag_seconds series</span></div>
+      </div>
+    </div>
     {{end}}
   </div>
   <div class="section">
@@ -425,14 +439,11 @@ tr:hover td { background:var(--surface2); }
   <div class="nested-content" id="nested-perf-memory"><div class="section"><h3>Memory Pressure</h3><div id="memChart" class="chart-wrap"></div></div></div>
   <div class="nested-content" id="nested-perf-io"><div class="section"><h3>I/O Latency by Database</h3><div id="ioChart" class="chart-wrap"></div></div></div>
   <div class="nested-content" id="nested-perf-waits">
-    <div class="section"><h3>Wait Composition</h3><div id="waitsChart" class="chart-wrap-sm"></div></div>
-    <div class="section"><div class="table-wrap mobile-cards"><table><thead><tr><th>Wait Type</th><th>% Time</th><th>Trend</th><th>Root Cause</th></tr></thead><tbody>
-      <tr><td data-label="Wait Type">PAGEIOLATCH_SH</td><td data-label="% Time" style="color:var(--orange)">34%</td><td data-label="Trend" style="color:var(--red)">↑</td><td data-label="Root Cause" style="font-size:12px;color:var(--text2)">Storage bottleneck</td></tr>
-      <tr><td data-label="Wait Type">RESOURCE_SEMAPHORE</td><td data-label="% Time" style="color:var(--orange)">22%</td><td data-label="Trend" style="color:var(--text2)">→</td><td data-label="Root Cause" style="font-size:12px;color:var(--text2)">Memory grant pressure</td></tr>
-      <tr><td data-label="Wait Type">WRITELOG</td><td data-label="% Time" style="color:var(--orange)">15%</td><td data-label="Trend" style="color:var(--red)">↑</td><td data-label="Root Cause" style="font-size:12px;color:var(--text2)">Log disk latency</td></tr>
-      <tr><td data-label="Wait Type">SOS_SCHEDULER_YIELD</td><td data-label="% Time" style="color:var(--orange)">12%</td><td data-label="Trend" style="color:var(--green)">↓</td><td data-label="Root Cause" style="font-size:12px;color:var(--text2)">CPU pressure</td></tr>
-      <tr><td data-label="Wait Type">LCK_M_X</td><td data-label="% Time" style="color:var(--orange)">8%</td><td data-label="Trend" style="color:var(--text2)">→</td><td data-label="Root Cause" style="font-size:12px;color:var(--text2)">Blocking chains</td></tr>
-    </tbody></table></div></div>
+    <div class="section">
+      <h3>Wait Composition — ms/sec by Category</h3>
+      <div id="waitsChart" class="chart-wrap-sm"></div>
+      <p style="font-size:11px;color:var(--text3);margin-top:6px">Source: <code>sqlserver_wait_history</code> — aggregated at last collection cycle. Categories: Disk I/O waits, Lock/blocking waits, Parallelism (CXPACKET/CXCONSUMER), and all other waits.</p>
+    </div>
   </div>
   <div class="nested-content" id="nested-perf-blocking"><div class="section"><h3>Blocking Chain Analysis</h3><div id="blockingChart" class="chart-wrap"></div></div></div>
   <div class="nested-content" id="nested-perf-queries"><div class="section"><h3>Top Queries</h3><div id="queryChart" class="chart-wrap"></div></div></div>
@@ -445,12 +456,23 @@ tr:hover td { background:var(--surface2); }
   </div>
   <div class="section">
     <h3>Expansion Recommendations</h3>
-    <div class="table-wrap mobile-cards"><table><thead><tr><th>Resource</th><th>Current</th><th>30 Day</th><th>60 Day</th><th>90 Day</th><th>Action</th></tr></thead><tbody>
-      <tr><td data-label="Resource">Data Disk</td><td data-label="Current" style="color:var(--yellow)">78%</td><td data-label="30 Day" style="color:var(--orange)">84%</td><td data-label="60 Day" style="color:var(--orange)">90%</td><td data-label="90 Day" style="color:var(--red)">96%</td><td data-label="Action" style="color:var(--red)">Expand +500GB</td></tr>
-      <tr><td data-label="Resource">Log Disk</td><td data-label="Current" style="color:var(--green)">45%</td><td data-label="30 Day">52%</td><td data-label="60 Day">58%</td><td data-label="90 Day">65%</td><td data-label="Action">Monitor</td></tr>
-      <tr><td data-label="Resource">TempDB</td><td data-label="Current" style="color:var(--green)">35%</td><td data-label="30 Day">40%</td><td data-label="60 Day">48%</td><td data-label="90 Day">55%</td><td data-label="Action">Add files</td></tr>
-      <tr><td data-label="Resource">Memory</td><td data-label="Current" style="color:var(--yellow)">72%</td><td data-label="30 Day">76%</td><td data-label="60 Day" style="color:var(--orange)">82%</td><td data-label="90 Day" style="color:var(--orange)">88%</td><td data-label="Action">Plan +32GB</td></tr>
+    {{if .CapacityTableRows}}
+    <div class="table-wrap mobile-cards"><table><thead><tr><th>Resource</th><th>Used (GB)</th><th>Current %</th><th>+30 Days</th><th>+60 Days</th><th>+90 Days</th><th>Action</th></tr></thead><tbody>
+      {{range .CapacityTableRows}}
+      <tr>
+        <td data-label="Resource">{{.resource}}</td>
+        <td data-label="Used (GB)" style="font-weight:600">{{if gt (.current_gb | printf "%.1f") "0.0"}}{{.current_gb | printf "%.1f"}} GB{{else}}—{{end}}</td>
+        <td data-label="Current %" style="color:{{.pct_color}}">{{.current_pct}}</td>
+        <td data-label="+30 Days">{{.d30_pct}}</td>
+        <td data-label="+60 Days">{{.d60_pct}}</td>
+        <td data-label="+90 Days">{{.d90_pct}}</td>
+        <td data-label="Action">{{.action}}</td>
+      </tr>
+      {{end}}
     </tbody></table></div>
+    {{else}}
+    <div style="color:var(--text3);text-align:center;padding:20px;font-size:13px">No disk capacity data available from <code>sqlserver_disk_history</code>. Ensure the disk collector is running.</div>
+    {{end}}
   </div>
 </div>
 
@@ -459,14 +481,14 @@ tr:hover td { background:var(--surface2); }
     <div class="filter-bar"><input placeholder="Filter rules..."><select><option>All Severities</option><option>Critical</option><option>High</option><option>Medium</option></select></div>
     <div class="table-wrap mobile-cards"><table><thead><tr><th>Rule</th><th>Severity</th><th>Message</th></tr></thead><tbody>
       {{range .TriggeredRules}}
-      <tr onclick="this.nextElementSibling?.classList.toggle('active')" style="cursor:pointer">
+      <tr onclick="var r=this.nextElementSibling;if(r)r.style.display=r.style.display==='none'?'table-row':'none'" style="cursor:pointer">
         <td data-label="Rule">{{.RuleName | titleStr | replaceAll "_" " "}}</td>
         <td data-label="Sev"><span class="sev {{.Severity}}">{{.Severity}}</span></td>
         <td data-label="Message">{{.Message | truncate 100}}</td>
       </tr>
       <tr style="display:none"><td colspan="5" style="padding:12px;background:var(--surface2)">
         <strong>Trigger Logic:</strong> {{.Message}}<br>
-        <strong>Key Signals:</strong> {{range $k, $v := .MetricValues}}{{$k | replaceAll "_" " " | titleStr}}: {{$v | round0}}, {{end}}
+        <strong>Key Signals:</strong> {{range $k, $v := .MetricValues}}{{$k | replaceAll "_" " " | titleStr}}: {{$v | round0}} &nbsp;{{end}}
       </tr>
       {{end}}
     </tbody></table></div>
@@ -476,19 +498,25 @@ tr:hover td { background:var(--surface2); }
 <div class="tab-content" id="tab-recommendations">
   <div class="kanban">
     <div class="kanban-col"><h3 style="background:var(--danger-bg);color:var(--red)">Immediate &lt; 24h</h3>
-      {{range .RecommendedActions}}{{if eq .urgency "immediate"}}
-      <div class="kanban-card"><div class="title">{{.action}}</div><div class="meta">{{.reason | truncate 80}}</div><div class="tags"><span style="background:var(--danger-bg);color:var(--red)">Impact: High</span><span style="background:var(--success);color:var(--green)">+23-31%</span></div></div>
-      {{end}}{{end}}
+      {{range .ImmediateRecs}}
+      <div class="kanban-card"><div class="title">{{.action}}</div><div class="meta">{{.reason | truncate 80}}</div><div class="tags"><span style="background:var(--danger-bg);color:var(--red)">Impact: High</span></div></div>
+      {{else}}
+      <div style="color:var(--text3);font-size:13px;padding:10px;text-align:center">No immediate actions required</div>
+      {{end}}
     </div>
     <div class="kanban-col"><h3 style="background:var(--warning-bg);color:var(--orange)">Short-Term 1-7 days</h3>
-      {{range .RecommendedActions}}{{if eq .urgency "short-term"}}
-      <div class="kanban-card"><div class="title">{{.action}}</div><div class="meta">{{.reason | truncate 80}}</div><div class="tags"><span style="background:var(--warning-bg);color:var(--orange)">Effort: Med</span><span style="background:var(--danger-bg);color:var(--red)">Impact: High</span></div></div>
-      {{end}}{{end}}
+      {{range .ShortTermRecs}}
+      <div class="kanban-card"><div class="title">{{.action}}</div><div class="meta">{{.reason | truncate 80}}</div><div class="tags"><span style="background:var(--warning-bg);color:var(--orange)">Effort: Med</span></div></div>
+      {{else}}
+      <div style="color:var(--text3);font-size:13px;padding:10px;text-align:center">No short-term actions needed</div>
+      {{end}}
     </div>
     <div class="kanban-col"><h3 style="background:rgba(59,130,246,0.15);color:var(--blue)">Strategic</h3>
-      {{range .RecommendedActions}}{{if eq .urgency "strategic"}}
-      <div class="kanban-card"><div class="title">{{.action}}</div><div class="meta">{{.reason | truncate 80}}</div><div class="tags"><span style="background:rgba(59,130,246,0.15);color:var(--blue)">Effort: High</span><span style="background:var(--success);color:var(--green)">+15-20%</span></div></div>
-      {{end}}{{end}}
+      {{range .StrategicRecs}}
+      <div class="kanban-card"><div class="title">{{.action}}</div><div class="meta">{{.reason | truncate 80}}</div><div class="tags"><span style="background:rgba(59,130,246,0.15);color:var(--blue)">Effort: High</span></div></div>
+      {{else}}
+      <div style="color:var(--text3);font-size:13px;padding:10px;text-align:center">No strategic items identified</div>
+      {{end}}
     </div>
   </div>
 </div>
@@ -504,90 +532,78 @@ tr:hover td { background:var(--surface2); }
     <div id="compareChart" class="chart-wrap-sm"></div>
   </div>
   <div class="section">
-    <div class="table-wrap mobile-cards"><table><thead><tr><th>Metric</th><th>Previous</th><th>Current</th><th>Delta</th><th>Status</th></tr></thead><tbody>
-      <tr><td data-label="Metric">Avg CPU</td><td data-label="Previous">42%</td><td data-label="Current" style="color:var(--orange)">54%</td><td data-label="Delta" style="color:var(--red)">+12% ↑</td><td data-label="Status" style="color:var(--orange)">Worsened</td></tr>
-      <tr><td data-label="Metric">Memory Usage</td><td data-label="Previous">68%</td><td data-label="Current">72%</td><td data-label="Delta" style="color:var(--red)">+4% ↑</td><td data-label="Status">Stable</td></tr>
-      <tr><td data-label="Metric">Disk Free</td><td data-label="Previous">52GB</td><td data-label="Current" style="color:var(--orange)">38GB</td><td data-label="Delta" style="color:var(--red)">-14GB ↓</td><td data-label="Status" style="color:var(--orange)">Worsened</td></tr>
-      <tr><td data-label="Metric">Query P95</td><td data-label="Previous">320ms</td><td data-label="Current" style="color:var(--green)">280ms</td><td data-label="Delta" style="color:var(--green)">-40ms ↓</td><td data-label="Status" style="color:var(--green)">Improved</td></tr>
+    <div class="table-wrap mobile-cards"><table><thead><tr><th>Metric</th><th>Earliest in Window</th><th>Current</th><th>Delta</th><th>Status</th></tr></thead><tbody>
+      {{range .HistoricalComparisonRows}}
+      <tr>
+        <td data-label="Metric">{{.metric}}</td>
+        <td data-label="Earliest in Window">{{.previous}}</td>
+        <td data-label="Current" style="color:{{.current_color}}">{{.current}}</td>
+        <td data-label="Delta" style="color:{{.delta_color}}">{{.delta}}</td>
+        <td data-label="Status" style="color:{{.status_color}}">{{.status}}</td>
+      </tr>
+      {{else}}
+      <tr><td colspan="5" style="color:var(--text3);text-align:center;padding:20px">Insufficient historical data for comparison. Comparison becomes available once 7+ days of metrics are collected.</td></tr>
+      {{end}}
     </tbody></table></div>
   </div>
 </div>
 
 <div class="tab-content" id="tab-timeline">
   <div class="section">
-    <h2>Incident Timeline</h2>
+    <h2>Incident Timeline <span style="font-size:11px;font-weight:400;color:var(--text3)">(derived from current analysis — approximate event order by severity)</span></h2>
     <div class="timeline">
-      <div class="timeline-item t-critical">
-        <div class="t-time">10:15</div>
-        <div class="t-event">CPU surge</div>
-        <div class="t-detail">avg_cpu_load spiked to 87% from parallel query execution</div>
+      {{range .IncidentTimeline}}
+      <div class="timeline-item t-{{.severity}}">
+        <div class="t-time">{{.time}}</div>
+        <div class="t-event">{{.event}}</div>
+        <div class="t-detail">{{.detail}}</div>
       </div>
-      <div class="timeline-item t-high">
-        <div class="t-time">10:18</div>
-        <div class="t-event">Memory grant queue</div>
-        <div class="t-detail">RESOURCE_SEMAPHORE waits at 47% - 3 queries waiting</div>
-      </div>
-      <div class="timeline-item t-high">
-        <div class="t-time">10:21</div>
-        <div class="t-event">TempDB spill</div>
-        <div class="t-detail">Sort/hash warnings at 12/s, 1.3GB spill to tempdb</div>
-      </div>
-      <div class="timeline-item t-medium">
-        <div class="t-time">10:25</div>
-        <div class="t-event">Query timeout</div>
-        <div class="t-detail">Application reports query timeout on SalesDB dashboard</div>
-      </div>
-      <div class="timeline-item t-medium">
-        <div class="t-time">10:30</div>
-        <div class="t-event">Blocking chain</div>
-        <div class="t-detail">3 sessions blocked by head blocker on OrdersDB</div>
-      </div>
-      <div class="timeline-item t-high">
-        <div class="t-time">10:45</div>
-        <div class="t-event">Log growth acceleration</div>
-        <div class="t-detail">Transaction log growing at 800MB/h due to missed log backup</div>
-      </div>
+      {{else}}
+      <div style="color:var(--text3);padding:20px;text-align:center;font-size:13px">No incidents detected in current analysis window.</div>
+      {{end}}
     </div>
   </div>
 </div>
 
 <div class="tab-content" id="tab-confidence-diag">
   <div class="grid-2">
+    {{with .ConfidenceDiagnostics}}
     <div class="section">
-      <h2>Why {{.ConfidencePct}}%?</h2>
+      <h2>Why {{$.ConfidencePct}}% Confidence?</h2>
       <div class="risk-bar-wrap">
         <div class="risk-bar-item">
           <div class="risk-bar-label" style="font-size:11px">Data Completeness</div>
-          <div class="risk-bar-track"><div class="risk-bar-fill" style="width:92%;background:var(--green)">92%</div></div>
+          <div class="risk-bar-track"><div class="risk-bar-fill" style="width:{{.data_completeness | printf "%.0f"}}%;background:{{if ge .data_completeness 80.0}}var(--green){{else if ge .data_completeness 50.0}}var(--yellow){{else}}var(--red){{end}}">{{.data_completeness | printf "%.0f"}}%</div></div>
         </div>
         <div class="risk-bar-item">
           <div class="risk-bar-label" style="font-size:11px">Trend Stability</div>
-          <div class="risk-bar-track"><div class="risk-bar-fill" style="width:88%;background:var(--green)">88%</div></div>
+          <div class="risk-bar-track"><div class="risk-bar-fill" style="width:{{.trend_stability | printf "%.0f"}}%;background:{{if ge .trend_stability 80.0}}var(--green){{else if ge .trend_stability 60.0}}var(--yellow){{else}}var(--orange){{end}}">{{.trend_stability | printf "%.0f"}}%</div></div>
         </div>
         <div class="risk-bar-item">
-          <div class="risk-bar-label" style="font-size:11px">Historical Accuracy</div>
-          <div class="risk-bar-track"><div class="risk-bar-fill" style="width:81%;background:var(--blue)">81%</div></div>
+          <div class="risk-bar-label" style="font-size:11px">History Coverage</div>
+          <div class="risk-bar-track"><div class="risk-bar-fill" style="width:{{.historical_coverage | printf "%.0f"}}%;background:{{if ge .historical_coverage 75.0}}var(--blue){{else if ge .historical_coverage 50.0}}var(--yellow){{else}}var(--orange){{end}}">{{.historical_coverage | printf "%.0f"}}%</div></div>
         </div>
         <div class="risk-bar-item">
           <div class="risk-bar-label" style="font-size:11px">Rule Correlation</div>
-          <div class="risk-bar-track"><div class="risk-bar-fill" style="width:75%;background:var(--yellow)">75%</div></div>
+          <div class="risk-bar-track"><div class="risk-bar-fill" style="width:{{.rule_correlation | printf "%.0f"}}%;background:{{if ge .rule_correlation 75.0}}var(--green){{else if ge .rule_correlation 75.0}}var(--yellow){{end}}">{{.rule_correlation | printf "%.0f"}}%</div></div>
         </div>
         <div class="risk-bar-item">
-          <div class="risk-bar-label" style="font-size:11px">Metric Coverage</div>
-          <div class="risk-bar-track"><div class="risk-bar-fill" style="width:70%;background:var(--orange)">70%</div></div>
+          <div class="risk-bar-label" style="font-size:11px">Series Coverage</div>
+          <div class="risk-bar-track"><div class="risk-bar-fill" style="width:{{.metric_coverage | printf "%.0f"}}%;background:{{if ge .metric_coverage 80.0}}var(--green){{else if ge .metric_coverage 40.0}}var(--yellow){{else}}var(--orange){{end}}">{{.metric_coverage | printf "%.0f"}}%</div></div>
         </div>
       </div>
     </div>
     <div class="section">
       <h2>Confidence Factors</h2>
-      <table><thead><tr><th>Factor</th><th>Weight</th><th>Impact</th></tr></thead><tbody>
-        <tr><td>Data completeness</td><td style="color:var(--green)">92%</td><td>All 5 domain metrics present</td></tr>
-        <tr><td>Trend stability</td><td style="color:var(--green)">88%</td><td>Low variance in 7-day window</td></tr>
-        <tr><td>Historical accuracy</td><td style="color:var(--blue)">81%</td><td>Past predictions within ±12%</td></tr>
-        <tr><td>Rule correlation</td><td style="color:var(--yellow)">75%</td><td>Cross-rule consistency moderate</td></tr>
-        <tr><td>Metric coverage</td><td style="color:var(--orange)">70%</td><td>2 of 5 features with historical data</td></tr>
+      <table><thead><tr><th>Factor</th><th>Score</th><th>Meaning</th></tr></thead><tbody>
+        <tr><td>Data completeness</td><td style="color:{{if ge .data_completeness 80.0}}var(--green){{else if ge .data_completeness 50.0}}var(--yellow){{else}}var(--red){{end}}">{{.data_completeness | printf "%.0f"}}%</td><td style="font-size:12px;color:var(--text2)">{{.data_completeness | printf "%.0f"}} of 20 tracked metric keys populated</td></tr>
+        <tr><td>Trend stability</td><td style="color:{{if ge .trend_stability 80.0}}var(--green){{else if ge .trend_stability 60.0}}var(--yellow){{else}}var(--orange){{end}}">{{.trend_stability | printf "%.0f"}}%</td><td style="font-size:12px;color:var(--text2)">Based on CPU series standard deviation</td></tr>
+        <tr><td>History coverage</td><td style="color:{{if ge .historical_coverage 75.0}}var(--blue){{else if ge .historical_coverage 50.0}}var(--yellow){{else}}var(--orange){{end}}">{{.historical_coverage | printf "%.0f"}}%</td><td style="font-size:12px;color:var(--text2)">7-day risk history snapshot count</td></tr>
+        <tr><td>Rule correlation</td><td style="color:{{if ge .rule_correlation 75.0}}var(--green){{else if ge .rule_correlation 75.0}}var(--yellow){{end}}">{{.rule_correlation | printf "%.0f"}}%</td><td style="font-size:12px;color:var(--text2)">Distinct firing domains confirm each other</td></tr>
+        <tr><td>Series coverage</td><td style="color:{{if ge .metric_coverage 80.0}}var(--green){{else if ge .metric_coverage 40.0}}var(--yellow){{else}}var(--orange){{end}}">{{.metric_coverage | printf "%.0f"}}%</td><td style="font-size:12px;color:var(--text2)">Forecast-ready time series available</td></tr>
       </tbody></table>
     </div>
+    {{end}}
   </div>
 </div>
 </div>
@@ -620,7 +636,7 @@ tr:hover td { background:var(--surface2); }
   <div class="contrib-bar"><div class="contrib-fill" style="width:{{.OverallRisk.ReplicationRisk | printf "%.0f"}}%;background:var(--green)"></div></div>
   <div class="contrib-item">
     <span>Maintenance</span>
-    <span style="font-weight:600">{{.OverallRisk.MaintenanceRisk | printf "%.1f"}} × 10% = <span style="color:var(--purple)">{{mul .OverallRisk.MaintenanceRisk 0.10 | printf "%.1f"}}</span></span>
+    <span style="font-weight:600">{{.OverallRisk.MaintenanceRisk | printf "%.1f"}} × 10% = <span style="color:var(--blue)">{{mul .OverallRisk.MaintenanceRisk 0.10 | printf "%.1f"}}</span></span>
   </div>
   <div class="contrib-bar"><div class="contrib-fill" style="width:{{.OverallRisk.MaintenanceRisk | printf "%.0f"}}%;background:var(--blue)"></div></div>
   <div class="contrib-item">
@@ -636,13 +652,14 @@ tr:hover td { background:var(--surface2); }
   </div>
 </div>
 
-<div class="footer">IntelligenceReportSqloptima &middot; {{.GeneratedAt}} &middot; Confidence: {{.ConfidencePct}}%</div>
+<div class="footer">Intelligence Report | SQL Optima &middot; {{.GeneratedAt}} &middot; Confidence: {{.ConfidencePct}}%</div>
 
 <script>
+var _storage={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 (function(){
   const urlParams = new URLSearchParams(window.location.search);
   const themeParam = urlParams.get('theme');
-  const saved=localStorage.getItem('mm-theme');
+  const saved=_storage.get('mm-theme');
   const prefersDark=window.matchMedia('(prefers-color-scheme: dark)').matches;
   const theme=themeParam||saved||(prefersDark?'dark':'light');
   document.documentElement.setAttribute('data-theme',theme);
@@ -653,7 +670,7 @@ function toggleTheme(){
   const cur=r.getAttribute('data-theme');
   const next=cur==='dark'?'light':'dark';
   r.setAttribute('data-theme',next);
-  localStorage.setItem('mm-theme',next);
+  _storage.set('mm-theme',next);
   document.getElementById('themeBtn').textContent=next==='dark'?'🌙':'☀️';
 }
 document.querySelectorAll('#mainTabs .tab-btn').forEach(function(b){b.addEventListener('click',function(){
@@ -670,9 +687,11 @@ document.querySelectorAll('.nested-tabs').forEach(function(g){g.querySelectorAll
 var issueData = {{.CurrentIssuesJSON | safeJS}};
 if (typeof issueData === 'string') { try { issueData = JSON.parse(issueData); } catch(e) {} }
 var _activeTab = 'overview';
+var _activeIssueIdx = 0;
 function showIssueDetail(i){
+  _activeIssueIdx = parseInt(i) || 0;
   var d=document.getElementById('issueDetail');
-  var iss=issueData[i]||{title:'Unknown',description:'',severity:'medium'};
+  var iss=issueData[_activeIssueIdx]||{title:'Unknown',description:'',severity:'medium'};
   _activeTab = 'overview';
   d.innerHTML='<div class="section"><div class="issue-detail-inner">'+
     '<div class="banner '+iss.severity+'"><span class="sev '+iss.severity+'">'+iss.severity.toUpperCase()+'</span>'+
@@ -689,48 +708,59 @@ function switchIssueTab(tab){
   _activeTab=tab;
   var p=document.getElementById('issueDetail');
   p.querySelectorAll('.nested-tab').forEach(function(b){b.classList.toggle('active',b.textContent.toLowerCase().indexOf(tab)>=0)});
-  document.getElementById('issueTabContent').innerHTML=_renderIssueTab(tab,issueData[0]||{title:'',description:'',severity:'medium'});
+  document.getElementById('issueTabContent').innerHTML=_renderIssueTab(tab,issueData[_activeIssueIdx]||{title:'',description:'',severity:'medium'});
 }
 function _renderIssueTab(tab,iss){
   switch(tab){
     case 'overview':
-      return '<div style="font-size:13px;margin-bottom:12px"><p>'+(iss.description||'')+'</p></div>'+
-        '<div class="evidence-item"><strong>Metric Breach</strong><span>Current value exceeds dynamic threshold by 12%</span></div>'+
-        '<div class="evidence-item"><strong>Likely Cause</strong><span>Identified from dependency correlation</span></div>'+
-        '<div class="evidence-item"><strong>Expected Improvement</strong><span>28 days additional runway after remediation</span></div>';
+      var mvHtml='';
+      if(iss.metric_values&&typeof iss.metric_values==='object'){
+        Object.keys(iss.metric_values).forEach(function(k){
+          var label=k.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase()});
+          var val=typeof iss.metric_values[k]==='number'?iss.metric_values[k].toFixed(1):iss.metric_values[k];
+          mvHtml+='<div class="evidence-item"><strong>'+label+'</strong><span>'+val+'</span></div>';
+        });
+      }
+      return '<div style="font-size:13px;margin-bottom:12px"><p>'+(iss.description||'')+'</p></div>'+mvHtml;
     case 'metrics':
-      return '<table><thead><tr><th>Metric</th><th>Dynamic Threshold</th><th>Actual</th><th>Status</th></tr></thead><tbody>'+
-        '<tr><td>Primary metric</td><td class="mono">Dynamic</td><td class="mono" style="color:var(--orange)">Exceeded</td><td><span class="sev '+iss.severity+'">'+iss.severity.toUpperCase()+'</span></td></tr>'+
-        '<tr><td>Secondary metric</td><td class="mono">1.5 std dev</td><td class="mono" style="color:var(--yellow)">Elevated</td><td><span class="sev low">Watch</span></td></tr></tbody></table>';
+      if(!iss.metric_values||!Object.keys(iss.metric_values).length){
+        return '<p style="color:var(--text2);padding:12px;font-size:13px">No metric values recorded for this rule.</p>';
+      }
+      var rows=Object.keys(iss.metric_values).map(function(k){
+        var label=k.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase()});
+        var val=typeof iss.metric_values[k]==='number'?iss.metric_values[k].toFixed(2):iss.metric_values[k];
+        return '<tr><td>'+label+'</td><td class="mono" style="color:var(--text3)">Dynamic</td><td class="mono" style="color:var(--orange)">'+val+'</td><td><span class="sev '+iss.severity+'">'+iss.severity.toUpperCase()+'</span></td></tr>';
+      }).join('');
+      return '<table><thead><tr><th>Metric</th><th>Threshold Basis</th><th>Actual</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table>';
     case 'correlation':
-      return '<div class="evidence-item"><strong>CPU Utilization</strong><span>Correlated: +18% during event window (r=0.87)</span></div>'+
-        '<div class="evidence-item"><strong>Memory Grants</strong><span>Correlated: +42% during event window (r=0.73)</span></div>'+
-        '<div class="evidence-item"><strong>I/O Latency</strong><span>Correlated: +25% during event window (r=0.61)</span></div>'+
-        '<div style="margin-top:10px;font-size:12px;color:var(--text2)">Correlation coefficients computed from 24h sliding window</div>';
+      return '<p style="color:var(--text2);padding:12px;font-size:13px">Cross-metric correlation is computed at report level. See the <strong>Executive Summary</strong> tab for risk distribution, or <strong>Root Cause Analysis</strong> for dependency chains between triggered rules.</p>';
     case 'timeline':
-      return '<div style="position:relative;padding-left:12px;border-left:2px solid var(--border)">'+
-        '<div style="margin:8px 0"><strong style="font-size:12px;color:var(--red)">● </strong><span style="font-size:12px">10:15 - Event started (primary trigger)</span></div>'+
-        '<div style="margin:8px 0"><strong style="font-size:12px;color:var(--orange)">● </strong><span style="font-size:12px">10:22 - Secondary metrics elevated</span></div>'+
-        '<div style="margin:8px 0"><strong style="font-size:12px;color:var(--yellow)">● </strong><span style="font-size:12px">10:30 - Correlation signals confirmed</span></div>'+
-        '<div style="margin:8px 0"><strong style="font-size:12px;color:var(--green)">● </strong><span style="font-size:12px">11:45 - First observed recovery attempt</span></div></div>';
+      return '<p style="color:var(--text2);padding:12px;font-size:13px">Per-issue event timelines are not available. See the <strong>Incident Timeline</strong> tab for event ordering across all triggered rules in this analysis window.</p>';
     case 'recommendation':
-      return '<div style="padding:10px;background:var(--surface2);border-radius:6px;margin-bottom:8px">'+
-        '<strong style="font-size:13px;color:var(--red)">Immediate:</strong><br><span style="font-size:12px">Add 500GB to data disk</span></div>'+
-        '<div style="padding:10px;background:var(--surface2);border-radius:6px;margin-bottom:8px">'+
-        '<strong style="font-size:13px;color:var(--orange)">Short-term:</strong><br><span style="font-size:12px">Purge archives older than 90 days</span></div>'+
-        '<div style="padding:10px;background:var(--surface2);border-radius:6px">'+
-        '<strong style="font-size:13px;color:var(--blue)">Strategic:</strong><br><span style="font-size:12px">Implement table partitioning for sliding window</span></div>';
+      var recs=(iss.recommendation&&Array.isArray(iss.recommendation))?iss.recommendation:[];
+      if(!recs.length){
+        return '<p style="color:var(--text2);padding:12px;font-size:13px">No specific recommendations recorded for this rule.</p>';
+      }
+      var urgencyLabels=['Immediate','Short-term','Strategic'];
+      var urgencyColors=['var(--red)','var(--orange)','var(--blue)'];
+      return recs.map(function(rec,idx){
+        var ui=idx===0?0:(idx<Math.ceil(recs.length/2)?1:2);
+        return '<div style="padding:10px;background:var(--surface2);border-radius:6px;margin-bottom:8px">'+
+          '<strong style="font-size:13px;color:'+urgencyColors[ui]+'">'+urgencyLabels[ui]+':</strong><br>'+
+          '<span style="font-size:12px">'+rec+'</span></div>';
+      }).join('');
     default: return '';
   }
 }
 function filterIssues(q){ document.querySelectorAll('#issueList .issue-row').forEach(function(r){r.style.display=r.textContent.toLowerCase().indexOf(q.toLowerCase())>=0?'flex':'none'}); }
 Plotly.newPlot('healthGauge',[{type:'indicator',mode:'gauge+number',value:{{.OverallRisk.OverallScore}},
-  gauge:{axis:{range:[0,100],tickcolor:'var(--text3)',ticks:'outside',dtick:20},
-    bar:{color:'{{.OverallRiskBarColor}}'},
+  gauge:{axis:{range:[0,100],showticklabels:false,ticks:''},
+    bar:{color:'{{.OverallRiskBarColor}}',thickness:0.3},
+    bgcolor:'rgba(0,0,0,0)',
     steps:[{range:[0,25],color:'rgba(34,197,94,0.15)'},{range:[25,50],color:'rgba(234,179,8,0.15)'},{range:[50,75],color:'rgba(249,115,22,0.15)'},{range:[75,100],color:'rgba(239,68,68,0.15)'}],
-    threshold:{line:{color:'#ef4444',width:4},value:85}},
-  number:{font:{color:'var(--text)',size:20},suffix:'/100'}}],
-  {margin:{t:10,b:0,l:0,r:0},paper_bgcolor:'rgba(0,0,0,0)',font:{color:'var(--text)'},autosize:true},{responsive:true,displayModeBar:false});
+    threshold:{line:{color:'#ef4444',width:3},value:85}},
+  number:{font:{color:'{{.OverallRiskBarColor}}',size:24},suffix:'/100'}}],
+  {margin:{t:15,b:25,l:20,r:20},paper_bgcolor:'rgba(0,0,0,0)',font:{color:'var(--text)'},autosize:true},{responsive:true,displayModeBar:false});
 var riskTrend = {{.RiskTrendJSON | safeJS}};
 if (typeof riskTrend === 'string') { try { riskTrend = JSON.parse(riskTrend); } catch(e) {} }
 if (riskTrend && riskTrend.data) {
@@ -755,8 +785,117 @@ if (capForecast && capForecast.data) {
   cfLayout.shapes.push({type:'rect',x0:0,x1:30,y0:60,y1:80,fillcolor:'rgba(234,179,8,0.05)',line:{width:0},layer:'below'});
   cfLayout.shapes.push({type:'rect',x0:0,x1:30,y0:80,y1:100,fillcolor:'rgba(239,68,68,0.05)',line:{width:0},layer:'below'});
   Plotly.newPlot('capacityForecastChart', cfData, cfLayout, {responsive:true, displayModeBar:false,displaylogo:false});
+} else {
+  var cfEl = document.getElementById('capacityForecastChart');
+  if (cfEl) cfEl.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;color:var(--text3);font-size:13px;gap:8px"><div style="font-size:20px">📊</div><div>Capacity forecast requires ≥3 historical disk snapshots.</div><div style="font-size:11px">Ensure the disk collector is running and data is accumulating in <code>sqlserver_disk_history</code>.</div></div>';
 }
-function compareSnapshot(){ alert('Historical comparison: Select a snapshot to compare against.'); }
+function compareSnapshot(){
+  var el=document.getElementById('compareChart');
+  if(el){ el.innerHTML='<p style="padding:20px;font-size:13px;color:var(--text2);text-align:center">Historical snapshot comparison requires two saved report runs. Generate a second report after collecting more data and both will appear here for side-by-side comparison.</p>'; }
+}
+(function initPerfCharts(){
+  var noData='<div style="display:flex;align-items:center;justify-content:center;height:100%;min-height:120px;color:var(--text3);font-size:13px">Not collected — run the intelligence collector to populate this chart.</div>';
+  var bl={margin:{t:10,b:30,l:50,r:10},paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#94a3b8',size:11},hovermode:'x unified'};
+  var bx={gridcolor:'#2d3154',zeroline:false};
+  var by={gridcolor:'#2d3154',zeroline:false};
+  function lay(xtitle,ytitle,yrange){var l=JSON.parse(JSON.stringify(bl));l.xaxis=Object.assign({},bx,{title:xtitle});l.yaxis=Object.assign({},by,{title:ytitle});if(yrange)l.yaxis.range=yrange;return l;}
+  function noChart(id,msg){var e=document.getElementById(id);if(e)e.innerHTML=msg||noData;}
+  var opts={responsive:true,displayModeBar:false};
+
+  // CPU timeline
+  var cpuS={{.CPUSeriesJSON | safeJS}};
+  if(cpuS&&cpuS.length){
+    var cpuX=cpuS.map(function(_,i){return i+1;});
+    Plotly.newPlot('cpuTimelineChart',[{x:cpuX,y:cpuS,type:'scatter',mode:'lines',name:'CPU %',line:{color:'#f97316',width:2},fill:'tozeroy',fillcolor:'rgba(249,115,22,0.1)'}],lay('Sample','CPU %',[0,100]),opts);
+  } else { noChart('cpuTimelineChart'); }
+
+  // Runnable queue — total_runnable_tasks_count series from sqlserver_cpu_scheduler_stats
+  var rnS={{.RunnableSeriesJSON | safeJS}};
+  if(rnS&&rnS.length){
+    var rnX=rnS.map(function(_,i){return i+1;});
+    Plotly.newPlot('runnableChart',[{x:rnX,y:rnS,type:'scatter',mode:'lines',name:'Runnable Tasks',line:{color:'#a855f7',width:2},fill:'tozeroy',fillcolor:'rgba(168,85,247,0.1)'}],lay('Sample','Tasks'),opts);
+  } else { noChart('runnableChart'); }
+
+  // Memory — Page Life Expectancy
+  var pleS={{.PLESeriesJSON | safeJS}};
+  if(pleS&&pleS.length){
+    var pleX=pleS.map(function(_,i){return i+1;});
+    Plotly.newPlot('memChart',[{x:pleX,y:pleS,type:'scatter',mode:'lines',name:'PLE (s)',line:{color:'#3b82f6',width:2},fill:'tozeroy',fillcolor:'rgba(59,130,246,0.1)'}],lay('Sample','PLE (sec)'),opts);
+  } else { noChart('memChart'); }
+
+  // IO latency — AVG(read_latency_ms) and AVG(write_latency_ms) per timestamp
+  // Aggregated across all databases in sqlserver_database_throughput.
+  var rdS={{.ReadLatSeriesJSON | safeJS}};
+  var wrS={{.WriteLatSeriesJSON | safeJS}};
+  if(rdS&&rdS.length){
+    var ioX=rdS.map(function(_,i){return i+1;});
+    var ioTraces=[{x:ioX,y:rdS,type:'scatter',mode:'lines',name:'Read Latency (ms)',line:{color:'#ef4444',width:2}}];
+    if(wrS&&wrS.length){ioTraces.push({x:ioX,y:wrS,type:'scatter',mode:'lines',name:'Write Latency (ms)',line:{color:'#f97316',width:2}});}
+    Plotly.newPlot('ioChart',ioTraces,lay('Sample','Latency (ms)'),opts);
+  } else { noChart('ioChart'); }
+
+  // Blocking sessions
+  var blkS={{.BlockingSeriesJSON | safeJS}};
+  if(blkS&&blkS.length){
+    var blkX=blkS.map(function(_,i){return i+1;});
+    Plotly.newPlot('blockingChart',[{x:blkX,y:blkS,type:'bar',name:'Blocking Sessions',marker:{color:'rgba(239,68,68,0.7)'}}],lay('Sample','Sessions'),opts);
+  } else { noChart('blockingChart'); }
+
+  // Wait composition — horizontal bar chart from sqlserver_wait_history aggregate.
+  // WaitCategoriesJSON is an array of {category, value_ms_per_sec, color} objects.
+  (function(){
+    var wc={{.WaitCategoriesJSON | safeJS}};
+    if(!wc||!wc.length){noChart('waitsChart');return;}
+    var labels=wc.map(function(e){return e.category;});
+    var vals=wc.map(function(e){return e.value_ms_per_sec;});
+    var colors=wc.map(function(e){return e.color;});
+    Plotly.newPlot('waitsChart',[{
+      x:vals,y:labels,type:'bar',orientation:'h',
+      marker:{color:colors},
+      text:vals.map(function(v){return v.toFixed(1)+' ms/s';}),
+      textposition:'outside'
+    }],{
+      margin:{t:10,b:40,l:160,r:60},
+      paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',
+      font:{color:'#94a3b8',size:11},
+      xaxis:{gridcolor:'#2d3154',title:'ms per second',zeroline:false},
+      yaxis:{gridcolor:'#2d3154',zeroline:false}
+    },opts);
+  })();
+
+  // Top queries — requires sqlserver_long_running_queries / sqlserver_query_analysis
+  noChart('queryChart','<div style="display:flex;align-items:center;justify-content:center;height:100%;min-height:120px;color:var(--text3);font-size:13px">Top query data comes from <code>sqlserver_long_running_queries</code>. View it on the <strong>Query Analysis</strong> dashboard for this instance.</div>');
+
+  // Storage utilization gauge
+  var usedPct={{.StorageUsedPct | printf "%.2f"}};
+  if(usedPct>0){
+    var gc=usedPct>80?'#ef4444':usedPct>60?'#f97316':'#22c55e';
+    Plotly.newPlot('storageGauge',[{type:'indicator',mode:'gauge+number',value:usedPct,
+      gauge:{axis:{range:[0,100],showticklabels:false,ticks:''},bar:{color:gc,thickness:0.3},bgcolor:'rgba(0,0,0,0)',
+        steps:[{range:[0,60],color:'rgba(34,197,94,0.12)'},{range:[60,80],color:'rgba(249,115,22,0.12)'},{range:[80,100],color:'rgba(239,68,68,0.12)'}]},
+      number:{font:{color:gc,size:22},suffix:'%'}}],
+      {margin:{t:15,b:25,l:20,r:20},paper_bgcolor:'rgba(0,0,0,0)',font:{color:'var(--text)'},autosize:true},opts);
+  } else { noChart('storageGauge'); }
+
+  // Growth projection — free disk over time
+  var diskS={{.FreeDiskSeriesJSON | safeJS}};
+  if(diskS&&diskS.length){
+    var diskX=diskS.map(function(_,i){return i+1;});
+    Plotly.newPlot('growthProjectionChart',[{x:diskX,y:diskS,type:'scatter',mode:'lines',name:'Free (MB)',line:{color:'#22c55e',width:2},fill:'tozeroy',fillcolor:'rgba(34,197,94,0.1)'}],lay('Sample','Free Disk (MB)'),opts);
+  } else { noChart('growthProjectionChart'); }
+
+  // Performance forecast — use CPU forecast if present
+  var fa={{.FullAnalysisJSON | safeJS}};
+  if(typeof fa==='string'){try{fa=JSON.parse(fa);}catch(e){fa=null;}}
+  var cpuFc=fa&&fa.Forecasts?fa.Forecasts.find(function(f){return f.MetricName&&f.MetricName.toLowerCase().indexOf('cpu')>=0;}):null;
+  if(cpuFc&&cpuFc.PredictedValues&&cpuFc.PredictedValues.length){
+    var fcX=cpuFc.PredictedValues.map(function(_,i){return i+1;});
+    Plotly.newPlot('perfForecastChart',[{x:fcX,y:cpuFc.PredictedValues,type:'scatter',mode:'lines',name:cpuFc.MetricName,line:{color:'#f97316',width:2},fill:'tozeroy',fillcolor:'rgba(249,115,22,0.1)'}],lay('Days','Predicted Value',[0,100]),opts);
+  } else { noChart('perfForecastChart'); }
+
+  // Failure probability S-curve — requires 14+ days of data
+  noChart('failProbChart','<div style="display:flex;align-items:center;justify-content:center;height:100%;min-height:120px;color:var(--text3);font-size:13px">Failure probability S-curve requires at least 14 days of collected data.</div>');
+})();
 function downloadJSON(){
   var data = {{.FullAnalysisJSON | safeJS}};
   if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e) {} }

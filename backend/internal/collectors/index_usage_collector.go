@@ -12,6 +12,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,11 +40,12 @@ type SqlServerIndexUsageRow struct {
 	LastUserLookup sql.NullTime
 }
 
-func CollectSQLServerIndexUsage(ctx context.Context, dbq repository.Queryer) ([]SqlServerIndexUsageRow, error) {
+func CollectSQLServerIndexUsage(ctx context.Context, dbq repository.Queryer, dbName string) ([]SqlServerIndexUsageRow, error) {
 	// NOTE: counters are cumulative; deltas are computed against monitor.index_usage_state.
 	// Aggregate pages per (object_id, index_id) in a subquery so we do not need a GROUP BY
 	// that would make s.last_user_* invalid in the SELECT list (SQL Server rejects that).
-	query := `/* SQL_OPTIMA */ 
+	query := fmt.Sprintf(`/* SQL_OPTIMA */ 
+		USE [%s];
 		SELECT
 			DB_NAME() AS db_name,
 			OBJECT_SCHEMA_NAME(i.object_id) AS schema_name,
@@ -72,7 +74,7 @@ func CollectSQLServerIndexUsage(ctx context.Context, dbq repository.Queryer) ([]
 		WHERE i.name IS NOT NULL
 		  AND i.index_id > 0
 		  AND OBJECTPROPERTY(i.object_id, 'IsUserTable') = 1
-	`
+	`, strings.ReplaceAll(dbName, "]", "]]"))
 
 	rows, err := dbq.QueryContext(ctx, query)
 	if err != nil {
@@ -121,7 +123,7 @@ func PersistSQLServerIndexUsageDeltas(ctx context.Context, tl *hot.TimescaleLogg
 			du, ok4 := storageindex.Delta(r.UpdatesTotal, 0)
 			if ok1 && ok2 && ok3 && ok4 {
 				stat := models.IndexUsageStat{
-					Time:        capture.UTC(),
+					Timestamp:   capture.UTC(),
 					Engine:      engine,
 					ServerID:    serverID,
 					DBName:      r.DBName,
@@ -180,7 +182,7 @@ func PersistSQLServerIndexUsageDeltas(ctx context.Context, tl *hot.TimescaleLogg
 		}
 
 		stat := models.IndexUsageStat{
-			Time:        capture.UTC(),
+			Timestamp:   capture.UTC(),
 			Engine:      engine,
 			ServerID:    serverID,
 			DBName:      r.DBName,

@@ -157,6 +157,10 @@ window.refreshMsLocksDashboard = async function() {
         ]);
 
         if (kpiRes.ok) updateMsLocksKPIs(await kpiRes.json());
+        
+        const updateEl = document.getElementById('locks-last-update');
+        if (updateEl) updateEl.textContent = new Date().toLocaleTimeString();
+
         if (timelineRes.ok) {
             msDashboardState.timelineData = await timelineRes.json();
             updateMsLocksTimeline(msDashboardState.timelineData);
@@ -208,9 +212,14 @@ function updateMsLocksKPIs(kpis) {
     document.getElementById('msKpiDeadlocks').textContent = kpis.deadlocks_24h || 0;
     document.getElementById('msKpiIncidents24h').textContent = kpis.blocking_incidents_24h || 0;
 
-    // Live blocking badge in page header
+    // Live blocking badge: only show when snapshot is recent (< 120s) to avoid
+    // a stale snapshot from hours ago keeping the badge permanently visible.
     const liveBadge = document.getElementById('msLiveBlockingBadge');
-    if (liveBadge) liveBadge.style.display = activeBlocked > 0 ? 'inline-flex' : 'none';
+    if (liveBadge) {
+        const snapshotAge = kpis.snapshot_age_sec != null ? kpis.snapshot_age_sec : -1;
+        const isLive = activeBlocked > 0 && (snapshotAge < 0 || snapshotAge <= 120);
+        liveBadge.style.display = isLive ? 'inline-flex' : 'none';
+    }
 }
 
 let msBlockingChart = null;
@@ -219,7 +228,7 @@ function updateMsLocksTimeline(data) {
     const ctx = document.getElementById('msBlockingTimelineChart').getContext('2d');
     if (msBlockingChart) msBlockingChart.destroy();
     
-    const labels = data.map(d => new Date(d.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    const labels = data.map(d => new Date(d.capture_timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     let values, color, label;
     if (msDashboardState.timelineMetric === 'incidents') {
         values = data.map(d => d.blocked_sessions || 0);
@@ -262,13 +271,13 @@ function updateMsLocksDetails(data) {
     // 1. DEDUPLICATION: Take the latest state for each SPID within a 70s window of the most recent activity
     
     // Sort by TS descending
-    const sorted = [...data].sort((a, b) => new Date(b.ts) - new Date(a.ts));
-    const maxTs = new Date(sorted[0].ts).getTime();
+    const sorted = [...data].sort((a, b) => new Date(b.capture_timestamp) - new Date(a.capture_timestamp));
+    const maxTs = new Date(sorted[0].capture_timestamp).getTime();
     const windowMs = 70000; // 70s window to catch sessions not re-logged due to 60s delta interval
 
     const currentSnapsMap = new Map();
     sorted.forEach(s => {
-        const sTs = new Date(s.ts).getTime();
+        const sTs = new Date(s.capture_timestamp).getTime();
         // If we already have a later entry for this SPID, skip
         if (currentSnapsMap.has(s.session_id)) return;
         
@@ -332,7 +341,7 @@ function updateMsLocksDetails(data) {
         const isoClass = getIsoClass(r.transaction_isolation_level);
         return `
         <tr class="${sevClass}">
-            <td class="text-muted" style="white-space:nowrap;">${new Date(r.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</td>
+            <td class="text-muted" style="white-space:nowrap;">${new Date(r.capture_timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</td>
             <td><span class="badge ${isVictim ? 'badge-danger' : 'badge-warning'}">#${r.session_id}</span></td>
             <td>${isVictim ? `<strong style="color:var(--accent);">${r.blocking_session_id}</strong>` : '<span style="color:var(--text-muted);">—</span>'}</td>
             <td style="color:var(--accent); font-size:0.55rem; white-space:nowrap;">${r.wait_type || '—'}</td>
@@ -531,7 +540,7 @@ function updateMsDeadlockHistory(events, enabled, statusMsg) {
 
     tbody.innerHTML = (events || []).slice(0, 10).map(e => `
         <tr>
-            <td class="text-muted" style="white-space:nowrap;">${new Date(e.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
+            <td class="text-muted" style="white-space:nowrap;">${new Date(e.capture_timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
             <td title="${e.database_name}">${(e.database_name||'').substring(0,12)}</td>
             <td><span class="badge badge-danger">#${e.victim_session_id}</span></td>
             <td><span class="code-snippet js-view-query" data-query="${window.escapeHtml(e.victim_sql_text || e.victim_sql_hash || 'N/A')}" title="Click to view full SQL">${window.escapeHtml((e.victim_sql_text || e.victim_sql_hash || 'N/A').substring(0,24))}</span></td>
@@ -548,7 +557,7 @@ function updateMsDeadlockTimeline(data) {
     const ctx = canvasEl.getContext('2d');
     if (msDeadlockChart) msDeadlockChart.destroy();
     const minuteMap = {};
-    data.forEach(d => { const min = new Date(d.ts).setSeconds(0, 0); minuteMap[min] = (minuteMap[min] || 0) + 1; });
+    data.forEach(d => { const min = new Date(d.capture_timestamp).setSeconds(0, 0); minuteMap[min] = (minuteMap[min] || 0) + 1; });
     const sortedMins = Object.keys(minuteMap).sort();
     msDeadlockChart = new Chart(ctx, {
         type: 'scatter',

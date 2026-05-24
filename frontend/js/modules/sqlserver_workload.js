@@ -17,12 +17,7 @@ export const sqlserverWorkload = {
         const nameEl = document.getElementById('wlInstanceName');
         if (nameEl) nameEl.textContent = this.instance;
 
-        this.setDefaultRange();
-
-        document.getElementById('wlApplyRange')?.addEventListener('click', () => {
-            this.isManualRange = true;
-            this.refreshAll();
-        });
+        if (window.initPageTimePicker) window.initPageTimePicker();
 
         // Tab Switcher
         const tabs = document.querySelectorAll('.qa-tab-btn');
@@ -45,45 +40,35 @@ export const sqlserverWorkload = {
         const dynInterval = window.collectorConfig ? window.collectorConfig.getInterval("SQL Server Query Analysis", 30000) : 30000;
         if (this.refreshInterval) clearInterval(this.refreshInterval);
         this.refreshInterval = setInterval(() => {
-            if (!this.isManualRange) this.setDefaultRange();
             this.refreshAll();
         }, dynInterval);
         
         await this.refreshAll();
     },
 
-    setDefaultRange() {
-        const now = new Date();
-        const oneHourAgo = new Date(now.getTime() - (60 * 60 * 1000));
-        const fromInput = document.getElementById('wlFrom');
-        const toInput = document.getElementById('wlTo');
-        if (fromInput) fromInput.value = this.formatToLocalDatetime(oneHourAgo);
-        if (toInput) toInput.value = this.formatToLocalDatetime(now);
-    },
-
-    formatToLocalDatetime(d) {
-        const pad = n => String(n).padStart(2, '0');
-        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    },
-
     async refreshAll() {
         if (!this.instance) return;
-        const from = document.getElementById('wlFrom')?.value;
-        const to = document.getElementById('wlTo')?.value;
-        if (!from || !to) return;
+        const now = Date.now();
+        const fromLocal = window.appState.fromTs || (now - 60 * 60 * 1000);
+        const toLocal = window.appState.toTs || now;
 
         this.setLoading(true);
         try {
+            const from = new Date(fromLocal).toISOString();
+            const to = new Date(toLocal).toISOString();
+
             await Promise.all([
-                this.loadSummary(from, to),
-                this.loadTrends(from, to),
-                this.loadTopOffenders(from, to),
-                this.loadServerProperties(),
-                this.loadSchedulerStats(),
-                this.loadQaSummary(from, to),
+                this.loadSummary(from, to).catch(e => console.warn('[Workload] loadSummary failed:', e)),
+                this.loadTrends(from, to).catch(e => console.warn('[Workload] loadTrends failed:', e)),
+                this.loadTopOffenders(from, to).catch(e => console.warn('[Workload] loadTopOffenders failed:', e)),
+                this.loadServerProperties().catch(e => console.warn('[Workload] loadServerProperties failed:', e)),
+                this.loadSchedulerStats().catch(e => console.warn('[Workload] loadSchedulerStats failed:', e)),
+                this.loadQaSummary(from, to).catch(e => console.warn('[Workload] loadQaSummary failed:', e)),
                 this.loadAppAnalysis(from, to),
                 this.loadUserAnalysis(from, to)
             ]);
+            const updateEl = document.getElementById('wl-last-update');
+            if (updateEl) updateEl.textContent = new Date().toLocaleTimeString();
         } catch (err) {
             console.error('[Workload] Refresh failed:', err);
         } finally {
@@ -188,12 +173,12 @@ export const sqlserverWorkload = {
         if (!body) return;
         body.innerHTML = (resp.top_offenders || []).map(q => `
             <tr>
-                <td class="text-muted small">${q.last_seen ? new Date(q.last_seen).toLocaleString() : '--'}</td>
+                <td class="text-muted small" title="Server local time">${q.last_seen ? new Date(q.last_seen).toLocaleString() : '--'}</td>
                 <td class="query-column small" style="cursor:pointer;" data-action="call" data-fn="showQueryModal" data-arg="${window.escapeHtml(q.query_text.replace(/'/g, "\\'"))}">
                     <span class="query-text-truncated">${window.escapeHtml(q.query_text.substring(0, 100))}...</span>
                 </td>
-                <td class="text-end">${q.total_executions.toLocaleString()}</td>
-                <td class="text-end text-rose font-bold">${q.avg_cpu_ms.toFixed(1)}</td>
+                <td class="text-end">${formatters.compactNumber(q.total_executions || 0)}</td>
+                <td class="text-end text-rose font-bold">${(q.avg_cpu_ms || 0).toFixed(1)}</td>
                 <td class="text-end">${formatters.compactNumber(q.total_reads)}</td>
                 <td><span class="badge badge-outline">${q.database_name}</span></td>
                 <td class="small text-info">${this.escapeHtml(q.program_name || 'unknown')}</td>

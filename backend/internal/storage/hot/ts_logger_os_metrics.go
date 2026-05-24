@@ -126,7 +126,7 @@ func (tl *TimescaleLogger) GetPostgresCPUHistory(ctx context.Context, hostname s
 			continue
 		}
 		points = append(points, map[string]interface{}{
-			"ts":             ts,
+			"timestamp":      ts,
 			"cpu_user_pct":   user,
 			"cpu_system_pct": sys,
 			"cpu_idle_pct":   idle,

@@ -52,9 +52,15 @@
 <div class="page-view active">
     <div class="page-title flex-between">
         <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:8px;">
-            <i class="fa-solid fa-brain text-accent"></i> SQL Server Intelligence Report 
+            <i class="fa-solid fa-brain text-accent"></i> SQL Server Intelligence Report
+            <span id="ir-instance-name" style="font-size:0.75rem; color:var(--text-muted); font-weight:500; background:rgba(0,0,0,0.15); padding:2px 8px; border-radius:4px;"></span>
             <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" title="Autonomous analysis using expert rules and time-series forecasting"></i>
         </h1>
+    </div>
+
+    <div class="alert" style="background: rgba(234,179,8,0.12); border: 1px solid rgba(234,179,8,0.35); border-radius: 6px; padding: 0.6rem 1rem; display:flex; align-items:center; gap:0.6rem; font-size:0.82rem; color:var(--text-secondary); margin-bottom: 0.5rem;">
+        <i class="fa-solid fa-triangle-exclamation" style="color:#eab308;"></i>
+        <span><strong style="color:#eab308;">Work in Progress:</strong> This intelligence report is still being refined and may not fully reflect your environment's actual state. Accuracy improvements are planned for upcoming releases.</span>
     </div>
 
     <div class="intelligence-container">
@@ -78,7 +84,7 @@
                     <div id="step-render" class="text-muted"><i class="fa-regular fa-circle"></i> Rendering report...</div>
                 </div>
             </div>
-            <iframe id="report-iframe" class="report-frame" sandbox="allow-scripts allow-downloads" src="about:blank"></iframe>
+            <iframe id="report-iframe" class="report-frame" src="about:blank"></iframe>
         </div>
     </div>
 </div>

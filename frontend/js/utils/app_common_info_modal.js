@@ -81,4 +81,67 @@
             }
         });
     };
+
+    /**
+     * Shows a persistent hover tooltip.
+     * @param {HTMLElement} target - The element triggering the tooltip.
+     * @param {string} title - Tooltip title.
+     * @param {string} text - Tooltip content (HTML supported).
+     */
+    window.showAppTooltip = function(target, title, text) {
+        let container = document.getElementById('dba-tooltip-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'dba-tooltip-container';
+            container.className = 'dba-tooltip';
+            container.style.cssText = 'position:absolute; z-index:10000; background:var(--bg-surface); border:1px solid var(--accent); border-radius:8px; padding:12px; width:300px; font-size:0.75rem; box-shadow:0 10px 30px rgba(0,0,0,0.5); display:none; color:var(--text-primary); pointer-events:auto; backdrop-filter:blur(8px);';
+            document.body.appendChild(container);
+
+            // Hide when mouse leaves the container
+            container.addEventListener('mouseout', (e) => {
+                if (e.relatedTarget && (e.relatedTarget === container || container.contains(e.relatedTarget))) return;
+                // If moving back to a trigger icon, don't hide
+                if (e.relatedTarget && (e.relatedTarget.closest('.info-icon-sm') || e.relatedTarget.closest('.info-icon-clickable'))) return;
+                container.style.display = 'none';
+            });
+        }
+
+        container.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid var(--border-color); padding-bottom:5px;">
+                <h4 style="margin:0; border:none; padding:0; color:var(--accent); font-size:0.85rem; font-weight:700;">${title}</h4>
+                <span style="font-size:0.6rem; color:var(--text-muted); text-transform:uppercase;">Click for details</span>
+            </div>
+            <div style="line-height:1.5; color:var(--text-secondary);">${text.replace(/\n/g, '<br>')}</div>
+        `;
+
+        const rect = target.getBoundingClientRect();
+        container.style.display = 'block';
+
+        // Positioning
+        const tooltipWidth = 300;
+        const padding = 15;
+        let left = (rect.left + window.scrollX) + (rect.width / 2) - (tooltipWidth / 2);
+
+        // Viewport bounds
+        if (left + tooltipWidth > window.innerWidth - padding) {
+            left = window.innerWidth - tooltipWidth - padding;
+        }
+        if (left < padding) left = padding;
+
+        container.style.top = (rect.bottom + window.scrollY + 8) + 'px';
+        container.style.left = left + 'px';
+    };
+
+    /**
+     * Hides the app tooltip if the mouse is not moving into the tooltip itself.
+     */
+    window.hideAppTooltip = function(e) {
+        const container = document.getElementById('dba-tooltip-container');
+        if (!container) return;
+        // If moving TO the container, don't hide
+        if (e.relatedTarget && (e.relatedTarget === container || container.contains(e.relatedTarget))) {
+            return;
+        }
+        container.style.display = 'none';
+    };
 })();

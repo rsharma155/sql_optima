@@ -14,11 +14,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
 func (s *MetricsService) StartPostgresQueryStatsCollector(ctx context.Context) {
 	interval := s.GetCollectorInterval(ctx, "Postgres PGSS", 1*time.Minute)
+	if interval <= 0 {
+		interval = 1 * time.Minute
+	}
 	slog.Info("[PGSS] Starting background collector (interval: %v)", "val", interval)
 
 	ticker := time.NewTicker(interval)
@@ -38,11 +42,24 @@ func (s *MetricsService) StartPostgresQueryStatsCollector(ctx context.Context) {
 				}
 
 				if interval > 0 {
+					postgresCount := 0
 					for _, inst := range s.Config.Instances {
 						if inst.Type == "postgres" {
-							if err := s.CollectPostgresQueryStats(ctx, inst.ServerID); err != nil {
-								slog.Error("[PGSS] ERROR: Failed to collect PGSS", "target", inst.Name, "err", err)
+							postgresCount++
+						}
+					}
+					slog.Debug("[PGSS] collector tick", "postgres_instances", postgresCount)
+					for _, inst := range s.Config.Instances {
+						if inst.Type == "postgres" {
+							if !s.PgRepo.GetPgssSupported(inst.Name) {
+								continue
 							}
+							instance := inst
+							s.EnqueueCollection(instance.ServerID, func() {
+								if err := s.CollectPostgresQueryStats(ctx, instance.ServerID); err != nil {
+									slog.Error("[PGSS] ERROR: Failed to collect PGSS", "target", instance.Name, "err", err)
+								}
+							})
 						}
 					}
 				}
@@ -52,6 +69,10 @@ func (s *MetricsService) StartPostgresQueryStatsCollector(ctx context.Context) {
 }
 
 func (s *MetricsService) CollectPostgresQueryStats(ctx context.Context, serverID uuid.UUID) error {
+	if s.tsLogger == nil {
+		return fmt.Errorf("TimescaleDB logger not available")
+	}
+
 	instanceName := ""
 	for _, inst := range s.Config.Instances {
 		if inst.ServerID == serverID {
@@ -73,13 +94,24 @@ func (s *MetricsService) CollectPostgresQueryStats(ctx context.Context, serverID
 		return err
 	}
 
-	var hotRows []hot.PostgresQueryStatsSnapRow
+	slog.Debug("[PGSS] fetched query snapshot", "target", instanceName, "rows", len(stats))
+
+	var snapshots []hot.PostgresQueryStatsSnapRow
+	var deltas []hot.PostgresQueryStatsSnapRow
+	now := time.Now().UTC()
+
 	for _, st := range stats {
-		hotRows = append(hotRows, hot.PostgresQueryStatsSnapRow{
+		// Calculate deltas using in-memory state in PgRepository
+		// Keyed by (dbid, userid, queryid) to prevent collisions across DBs/users.
+		prev, ok := s.PgRepo.GetPreviousSnapshot(instanceName, st.DbID, st.UserID, st.QueryID)
+		s.PgRepo.UpdatePreviousSnapshot(instanceName, st)
+
+		curr := hot.PostgresQueryStatsSnapRow{
 			QueryID:           st.QueryID,
 			QueryText:         st.Query,
 			DbName:            st.DbName,
 			UserName:          st.UserName,
+			AppName:           st.AppName,
 			QueryType:         st.QueryType,
 			Calls:             st.Calls,
 			TotalTimeMs:       st.TotalTime,
@@ -99,20 +131,60 @@ func (s *MetricsService) CollectPostgresQueryStats(ctx context.Context, serverID
 			TotalPlanTime:     st.TotalPlanTime,
 			MeanPlanTime:      st.MeanPlanTime,
 			Plans:             st.Plans,
-		})
+		}
+
+		if ok {
+			d, changed := repository.ComputeDelta(st, prev)
+			if !changed {
+				continue // Skip if no meaningful change
+			}
+			// Map delta to hot row for pgss_delta_1m
+			deltas = append(deltas, hot.PostgresQueryStatsSnapRow{
+				QueryID:           d.QueryID,
+				DbName:            d.DbName,
+				UserName:          d.UserName,
+				QueryType:         d.QueryType,
+				Calls:             d.Calls,
+				TotalTimeMs:       d.TotalTime,
+				MeanTimeMs:        d.MeanTime,
+				Rows:              d.Rows,
+				TempBlksRead:      d.TempBlksRead,
+				TempBlksWritten:   d.TempBlksWritten,
+				BlkReadTimeMs:     d.BlkReadTime,
+				BlkWriteTimeMs:    d.BlkWriteTime,
+				SharedBlksHit:     d.SharedBlksHit,
+				SharedBlksRead:    d.SharedBlksRead,
+				SharedBlksDirtied: d.SharedBlksDirtied,
+				SharedBlksWritten: d.SharedBlksWritten,
+				WalBytes:          d.WalBytes,
+				WalRecords:        d.WalRecords,
+				WalFpi:            d.WalFpi,
+				TotalPlanTime:     d.TotalPlanTime,
+				MeanPlanTime:      d.MeanPlanTime,
+				Plans:             d.Plans,
+			})
+		}
+
+		// Store raw snapshot if it changed (or first time)
+		snapshots = append(snapshots, curr)
 	}
 
-	if err := s.tsLogger.LogPostgresQueryStats(ctx, serverID, hotRows); err != nil {
-		return err
+	if len(snapshots) > 0 {
+		if err := s.tsLogger.LogPostgresQueryStats(ctx, serverID, snapshots); err != nil {
+			return err
+		}
 	}
 
 	// Compute and store deltas for Query Analysis dashboard
-	if err := s.tsLogger.ComputeAndStorePgssDelta1m(ctx, serverID, time.Now().UTC()); err != nil {
-		slog.Error("[PGSS] ERROR: Failed to compute deltas", "target", instanceName, "err", err)
+	if len(deltas) > 0 {
+		if err := s.tsLogger.LogPgssDelta1m(ctx, serverID, now, deltas); err != nil {
+			slog.Error("[PGSS] ERROR: Failed to log deltas", "target", instanceName, "err", err)
+		}
 	}
 
-	return s.tsLogger.UpsertPgssQueryDim(ctx, serverID, hotRows)
+	return s.tsLogger.UpsertPgssQueryDim(ctx, serverID, snapshots)
 }
+
 
 func (s *MetricsService) GetPgssWorkloadTrend(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]hot.PgssWorkloadPoint, error) {
 	if s.tsLogger == nil {

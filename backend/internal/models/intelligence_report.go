@@ -1,10 +1,17 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
 // Purpose: Models for SQL Server Health Intelligence Report (Autonomous Analysis).
+// Extended in v2 to support utilization classification, peak window detection,
+// named wait type analysis, per-database capacity forecasting, and snapshot persistence.
 //
-// Author: Ravi Sharma
-// Copyright (c) 2026 Ravi Sharma
-// SPDX-License-Identifier: MIT
+// Design context:
+//   - All new fields are optional (omitempty) to preserve backward compatibility.
+//   - ForecastResult gains ReliabilityTier (DEFECT-10 fix).
+//   - IntelligenceReportResponse gains UtilizationProfile, PeakWindow, TopWaitTypes,
+//     DatabaseGrowth — populated by the v2 analysis pipeline.
+//
+// SQL Optima — https://github.com/rsharma155/sql_optima
+// Copyright (c) 2026 Ravi Sharma. SPDX-License-Identifier: MIT
 package models
 
 // IntelligenceReportRequest represents the payload to trigger analysis.
@@ -26,6 +33,9 @@ type RiskScoreResult struct {
 	OverallScore     float64 `json:"overall_score"`
 	Category         string  `json:"category"`
 	Confidence       float64 `json:"confidence"`
+	// DataGaps lists dimension names where data was absent at scoring time.
+	// DEFECT-2 fix: missing data is surfaced explicitly rather than silently zeroed.
+	DataGaps []string `json:"data_gaps,omitempty"`
 }
 
 // RuleTriggerResult represents a triggered expert rule.
@@ -111,6 +121,8 @@ func (t *DynamicThresholds) ToMap() map[string]interface{} {
 }
 
 // ForecastResult represents a time-series forecast for a metric.
+// ReliabilityTier is set based on R²: Reliable (>0.7), Indicative (0.3–0.7), Unreliable (<0.3).
+// DEFECT-10 fix: low-confidence forecasts are now explicitly labelled.
 type ForecastResult struct {
 	MetricName           string    `json:"metric_name"`
 	HorizonDays          int       `json:"horizon_days"`
@@ -118,6 +130,8 @@ type ForecastResult struct {
 	PredictedTimestamps  []string  `json:"predicted_timestamps"`
 	Confidence           float64   `json:"confidence"`
 	PredictedFailureDays *int      `json:"predicted_failure_days,omitempty"`
+	// ReliabilityTier: "Reliable" | "Indicative" | "Unreliable"
+	ReliabilityTier string `json:"reliability_tier,omitempty"`
 }
 
 // FailurePrediction represents an estimated failure event.
@@ -126,6 +140,110 @@ type FailurePrediction struct {
 	PredictedFailureWindow string `json:"predicted_failure_window"`
 	Confidence             string `json:"confidence"`
 	RiskType               string `json:"risk_type"`
+}
+
+// ---- V2 Types (new in redesign) ----
+
+// UtilizationProfile holds 14-day CPU/memory percentile bands and a utilization class.
+type UtilizationProfile struct {
+	// CPU percentiles
+	CPUP50 float64 `json:"cpu_p50"`
+	CPUP90 float64 `json:"cpu_p90"`
+	CPUP95 float64 `json:"cpu_p95"`
+	CPUP99 float64 `json:"cpu_p99"`
+	CPUAvg float64 `json:"cpu_avg"`
+	// Memory percentiles
+	MemP50 float64 `json:"mem_p50"`
+	MemP95 float64 `json:"mem_p95"`
+	MemAvg float64 `json:"mem_avg"`
+	// Classification
+	Class   string `json:"class"`   // "Under-utilized" | "Optimal" | "Elevated" | "Over-utilized"
+	Message string `json:"message"` // human-readable explanation
+	// Sample count used for computation
+	SampleCount int `json:"sample_count"`
+}
+
+// HourlySlot is one cell in the 7×24 CPU heatmap.
+type HourlySlot struct {
+	DayOfWeek  int     `json:"day_of_week"`  // 1=Monday, 7=Sunday (ISO)
+	HourOfDay  int     `json:"hour_of_day"`  // 0–23
+	AvgCPUPct  float64 `json:"avg_cpu_pct"`
+	PeakCPUPct float64 `json:"peak_cpu_pct"`
+	SampleCount int    `json:"sample_count"`
+}
+
+// PeakWindow describes the server's busiest time block.
+type PeakWindow struct {
+	// Top 3 busiest slots ranked by avg CPU
+	TopSlots     []HourlySlot `json:"top_slots"`
+	HeatmapSlots []HourlySlot `json:"heatmap_slots"` // full 7×24 matrix for Plotly heatmap
+	PeakDays     []string     `json:"peak_days"`     // e.g., ["Monday","Tuesday","Wednesday"]
+	PeakHours    string       `json:"peak_hours"`    // e.g., "09:00-11:00"
+	OffPeakDesc  string       `json:"off_peak_desc"` // e.g., "22:00-06:00 on weekdays"
+	PeakCPUAvg   float64      `json:"peak_cpu_avg"`
+	OffPeakAvg   float64      `json:"off_peak_avg"`
+}
+
+// WaitTypeEntry holds detail for one named SQL Server wait type.
+type WaitTypeEntry struct {
+	Rank             int     `json:"rank"`
+	WaitType         string  `json:"wait_type"`
+	WaitCategory     string  `json:"wait_category"`
+	TotalWaitMS      float64 `json:"total_wait_ms"`
+	PctOfTotal       float64 `json:"pct_of_total"`
+	WaitingTasks     float64 `json:"waiting_tasks"`
+	// Interpretation and DBA guidance
+	Category         string  `json:"category"`     // CPU | Lock | IO | Memory | Network | Other
+	Implication      string  `json:"implication"`  // plain-English DBA note
+	WaitScore        float64 `json:"wait_score"`   // 0–100, pctOfTotal × 2
+}
+
+// DatabaseGrowthEntry is per-database storage growth data.
+type DatabaseGrowthEntry struct {
+	DatabaseName      string  `json:"database_name"`
+	CurrentDataMB     float64 `json:"current_data_mb"`
+	CurrentLogMB      float64 `json:"current_log_mb"`
+	Daily7AvgGrowthMB float64 `json:"daily_7d_avg_growth_mb"` // true 24h daily average
+	Projected30dMB    float64 `json:"projected_30d_mb"`
+	Projected90dMB    float64 `json:"projected_90d_mb"`
+	GrowthPattern     string  `json:"growth_pattern"` // "Steady" | "Variable" | "Spikey"
+	ReliabilityTier   string  `json:"reliability_tier"`
+}
+
+// CapacityForecastV2 holds the redesigned capacity projection with breach date.
+type CapacityForecastV2 struct {
+	TotalDiskMB       float64 `json:"total_disk_mb"`
+	UsedDiskMB        float64 `json:"used_disk_mb"`
+	FreeDiskMB        float64 `json:"free_disk_mb"`
+	UsedPct           float64 `json:"used_pct"`
+	DailyGrowthMBAvg  float64 `json:"daily_growth_mb_avg"`  // true 24h aggregate
+	GrowthPattern     string  `json:"growth_pattern"`
+	ReliabilityTier   string  `json:"reliability_tier"`
+	Projected30dMB    float64 `json:"projected_30d_mb"`
+	Projected60dMB    float64 `json:"projected_60d_mb"`
+	Projected90dMB    float64 `json:"projected_90d_mb"`
+	DaysUntilBreach   int     `json:"days_until_breach"`   // -1 = never/unknown
+	BreachDateApprox  string  `json:"breach_date_approx"`  // "Sep 2026" or "No breach in 90 days"
+	RSquared          float64 `json:"r_squared"`
+	Databases         []DatabaseGrowthEntry `json:"databases,omitempty"`
+}
+
+// IntelSnapshotEntry is a historical point from intelreport.intel_snapshots.
+type IntelSnapshotEntry struct {
+	Timestamp        string  `json:"timestamp"`
+	OverallRisk      float64 `json:"overall_risk"`
+	PerformanceRisk  float64 `json:"performance_risk"`
+	CapacityRisk     float64 `json:"capacity_risk"`
+	AvailabilityRisk float64 `json:"availability_risk"`
+	ReplicationRisk  float64 `json:"replication_risk"`
+	MaintenanceRisk  float64 `json:"maintenance_risk"`
+	QueryRisk        float64 `json:"query_risk"`
+	UtilizationClass string  `json:"utilization_class"`
+	CPUP95           float64 `json:"cpu_p95"`
+	PLECurrent       float64 `json:"ple_current"`
+	DiskUsedPct      float64 `json:"disk_used_pct"`
+	CriticalCount    int     `json:"rule_count_critical"`
+	HighCount        int     `json:"rule_count_high"`
 }
 
 // IntelligenceReportResponse represents the full health analysis result.
@@ -146,6 +264,14 @@ type IntelligenceReportResponse struct {
 	ConfidenceScore     float64             `json:"confidence_score"`
 	NarrativeSummary    string              `json:"narrative_summary"`
 	GeneratedAt         string              `json:"generated_at"`
+
+	// V2 fields — populated by redesigned pipeline. Nil when insufficient data.
+	UtilizationProfile *UtilizationProfile  `json:"utilization_profile,omitempty"`
+	PeakWindow         *PeakWindow          `json:"peak_window,omitempty"`
+	TopWaitTypes       []WaitTypeEntry      `json:"top_wait_types,omitempty"`
+	WaitTrend          []WaitTrendPoint     `json:"wait_trend,omitempty"`
+	CapacityForecastV2 *CapacityForecastV2  `json:"capacity_forecast_v2,omitempty"`
+	HistoryTrend       []IntelSnapshotEntry `json:"history_trend,omitempty"`
 }
 
 // ReportRequest represents the request to generate a specific report format.

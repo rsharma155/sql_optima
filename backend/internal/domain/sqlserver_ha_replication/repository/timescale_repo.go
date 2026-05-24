@@ -15,6 +15,8 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -222,7 +224,7 @@ func (r *HAReplicationRepository) GetRPOTrend(ctx context.Context, serverID uuid
 			continue
 		}
 		result = append(result, map[string]interface{}{
-			"bucket":        bucket,
+			"timestamp":     bucket,
 			"rpo_seconds":   rpo,
 			"avg_rpo":       avgRPO,
 			"replica_count": replicaCount,
@@ -255,10 +257,10 @@ func (r *HAReplicationRepository) GetRTOTrend(ctx context.Context, serverID uuid
 			continue
 		}
 		result = append(result, map[string]interface{}{
-			"bucket":              bucket,
-			"avg_redo_rate_kbps": redo,
-			"estimated_rto":       estimatedRTO,
-			"max_redo_queue_kb":   maxRedo,
+			"timestamp":             bucket,
+			"avg_redo_rate_kbps":    redo,
+			"estimated_rto_seconds": estimatedRTO,
+			"max_redo_queue_kb":     maxRedo,
 		})
 	}
 	return result, rows.Err()
@@ -323,7 +325,7 @@ func (r *HAReplicationRepository) GetReplicationTopology(ctx context.Context, se
 				latency_seconds, delivery_rate_cmds_sec, status
 			FROM monitor.sqlserver_replication_latency
 			WHERE server_id = $1
-			  AND capture_timestamp > now() - INTERVAL '15 minutes'
+			  AND capture_timestamp > now() - INTERVAL '60 minutes'
 			ORDER BY publisher, subscriber, publication, capture_timestamp DESC
 		)
 		SELECT 
@@ -405,10 +407,11 @@ func (r *HAReplicationRepository) GetReplicationArticles(ctx context.Context, se
 	const q = `
 		SELECT DISTINCT ON (publication, database_name, schema_name, table_name, subscriber)
 			publication, database_name, schema_name, table_name, subscriber,
-			rows_per_sec, latency_seconds, conflicts_detected, status, capture_timestamp
+			COALESCE(rows_per_sec, 0), COALESCE(latency_seconds, 0), COALESCE(conflicts_detected, 0), 
+			status, capture_timestamp
 		FROM monitor.sqlserver_replication_articles
 		WHERE server_id = $1
-		  AND capture_timestamp > now() - INTERVAL '15 minutes'
+		  AND capture_timestamp > now() - INTERVAL '60 minutes'
 		ORDER BY publication, database_name, schema_name, table_name, subscriber, capture_timestamp DESC
 		LIMIT 500`
 
@@ -588,14 +591,67 @@ func (r *HAReplicationRepository) GetReplicationKPIs(ctx context.Context, server
 	return kpis, nil
 }
 
-// GetRPOWorst24h returns the worst (maximum) RPO value seen in the past 24 hours.
-func (r *HAReplicationRepository) GetRPOWorst24h(ctx context.Context, serverID uuid.UUID) int64 {
+// GetRPOWorstRange returns the worst (maximum) RPO value seen in the given time range.
+// If from/to are empty, defaults to the last 24 hours.
+func (r *HAReplicationRepository) GetRPOWorstRange(ctx context.Context, serverID uuid.UUID, from, to string) int64 {
 	var worst float64
-	_ = r.pool.QueryRow(ctx, `
+	
+	where := "server_id = $1"
+	args := []interface{}{serverID}
+	
+	if from != "" && to != "" {
+		where += " AND bucket >= $2 AND bucket <= $3"
+		args = append(args, from, to)
+	} else {
+		where += " AND bucket > now() - INTERVAL '24 hours'"
+	}
+
+	q := fmt.Sprintf(`
 		SELECT COALESCE(MAX(rpo_seconds), 0)
 		FROM monitor.sqlserver_rpo_1min
-		WHERE server_id = $1 AND bucket > now() - INTERVAL '24 hours'`,
-		serverID,
-	).Scan(&worst)
+		WHERE %s`, where)
+
+	_ = r.pool.QueryRow(ctx, q, args...).Scan(&worst)
 	return int64(worst)
+}
+
+// ---------------------------------------------------------------------------
+// AG Cluster Info
+// ---------------------------------------------------------------------------
+
+// AGClusterMember is one WSFC cluster member row.
+type AGClusterMember struct {
+	MemberName          string `json:"member_name"`
+	MemberType          string `json:"member_type"`
+	MemberState         string `json:"member_state"`
+	NumberOfQuorumVotes int    `json:"number_of_quorum_votes"`
+}
+
+// AGClusterInfo is the latest cluster-level snapshot for a server.
+type AGClusterInfo struct {
+	ClusterName string            `json:"cluster_name"`
+	QuorumType  string            `json:"quorum_type_desc"`
+	QuorumState string            `json:"quorum_state_desc"`
+	Members     []AGClusterMember `json:"members"`
+}
+
+// GetLatestAGClusterInfo returns the most-recently collected AG cluster info.
+func (r *HAReplicationRepository) GetLatestAGClusterInfo(ctx context.Context, serverID uuid.UUID) (*AGClusterInfo, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT cluster_name, quorum_type, quorum_state, members_json
+		FROM monitor.sqlserver_ag_cluster_info
+		WHERE server_id = $1
+		ORDER BY capture_timestamp DESC
+		LIMIT 1`,
+		serverID,
+	)
+	var info AGClusterInfo
+	var membersJSON []byte
+	if err := row.Scan(&info.ClusterName, &info.QuorumType, &info.QuorumState, &membersJSON); err != nil {
+		return nil, err
+	}
+	if len(membersJSON) > 0 {
+		_ = json.Unmarshal(membersJSON, &info.Members)
+	}
+	return &info, nil
 }

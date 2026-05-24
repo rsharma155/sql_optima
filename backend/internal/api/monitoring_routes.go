@@ -36,6 +36,7 @@ Timescale              *handlers.TimescaleHandlers
 	SqlServerLocks         *handlers.SqlServerLockHandlers
 	SqlServerWaitStats     *handlers.SqlServerWaitStatsHandlers
 	IntelligenceReport     *handlers.IntelligenceReportHandlers
+	ColdStorage            *handlers.ColdStorageHandlers
 
 	// New Postgres Domain Handlers
 	PgObservability *pg_obs_api.PostgresObservabilityHandler
@@ -77,6 +78,9 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/sqlserver/dashboard/timeseries", m.DashboardTimeSeries).Methods("GET")
 	sr.HandleFunc("/sqlserver/storage-index/table-drilldown", m.TableDrilldown).Methods("GET")
 	sr.HandleFunc("/sqlserver/performance-debt", m.PerformanceDebt).Methods("GET")
+	sr.HandleFunc("/sqlserver/performance-debt/refresh", m.TriggerPerformanceDebtScan).Methods("POST")
+	sr.HandleFunc("/sqlserver/server-vitals", m.GetServerVitals).Methods("GET")
+	sr.HandleFunc("/sqlserver/volume-stats/live", m.GetLiveVolumeStats).Methods("GET")
 	sr.HandleFunc("/sqlserver/workload/summary", wld.GetSummary).Methods("GET")
 	sr.HandleFunc("/sqlserver/workload/trends", wld.GetTrends).Methods("GET")
 	sr.HandleFunc("/sqlserver/workload/top-queries", wld.GetTopOffenders).Methods("GET")
@@ -92,6 +96,7 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/sqlserver/blocking/most-blocked-databases", lk.GetMostBlockedDatabases).Methods("GET")
 	sr.HandleFunc("/sqlserver/blocking/most-blocked-objects", lk.GetMostBlockedObjects).Methods("GET")
 	sr.HandleFunc("/sqlserver/blocking/top-queries", lk.GetTopBlockingQueries).Methods("GET")
+	sr.HandleFunc("/sqlserver/blocking/recurrence", lk.GetBlockingRecurrence).Methods("GET")
 	sr.HandleFunc("/postgres/dashboard", p.Dashboard).Methods("GET")
 	sr.HandleFunc("/pg/dashboard", p.DashboardV2).Methods("GET")
 	sr.HandleFunc("/postgres/db-observation", p.DBObservation).Methods("GET")
@@ -284,10 +289,14 @@ sr.HandleFunc("/health/score", he.Score).Methods("GET")
 	}
 
 	// SQL Server Intelligence Report
-	if ir != nil {
-		sr.HandleFunc("/sqlserver/intelligence-report/status", ir.Status).Methods("GET")
-		sr.HandleFunc("/sqlserver/intelligence-report/analyze", ir.Analyze).Methods("POST")
-		sr.HandleFunc("/sqlserver/intelligence-report/report/{run_id}", ir.GetReport).Methods("GET")
+	sr.HandleFunc("/sqlserver/intelligence-report/status", ir.Status).Methods("GET")
+	sr.HandleFunc("/sqlserver/intelligence-report/analyze", ir.Analyze).Methods("POST")
+	sr.HandleFunc("/sqlserver/intelligence-report/report/{run_id}", ir.GetReport).Methods("GET")
+
+	// Cold Storage
+	if h.ColdStorage != nil {
+		sr.HandleFunc("/cold-storage/status", h.ColdStorage.GetStatus).Methods("GET")
+		sr.HandleFunc("/cold-storage/runs", h.ColdStorage.GetRuns).Methods("GET")
 	}
 }
 

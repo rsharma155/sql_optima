@@ -255,13 +255,14 @@ async function showPgSihTableDrilldown(instance, db, schema, table) {
         document.getElementById('sihModalLoading').style.display = 'none';
         document.getElementById('sihModalContent').style.display = 'block';
         
+        const points = data.points || (Array.isArray(data) ? data : []);
         const idxBody = document.getElementById('sihModalIndexBody');
-        idxBody.innerHTML = (data || []).map(i => `
+        idxBody.innerHTML = points.map(i => `
             <tr>
                 <td><strong>${window.sihShared.escH(i.index_name)}</strong></td>
-                <td>${Number(i.value).toLocaleString()}</td>
+                <td>${Number(i.scans || 0).toLocaleString()}</td>
                 <td>${Number(i.updates || 0).toLocaleString()}</td>
-                <td>${window.sihShared.fmt(i.value2, 1)}</td>
+                <td>${window.sihShared.fmt(i.index_size_mb, 1)}</td>
                 <td>${i.last_user_seek ? new Date(i.last_user_seek).toLocaleDateString() : 'Never'}</td>
             </tr>
         `).join('') || '<tr><td colspan="5" class="text-center p-3">No index usage data found.</td></tr>';

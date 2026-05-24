@@ -31,6 +31,7 @@ type ServerStore interface {
 	UpdateMetadata(ctx context.Context, id uuid.UUID, name, host string, port int, username, sslMode string) error
 	UpdateCredentials(ctx context.Context, id uuid.UUID, encryptedSecret, encryptedDEK []byte) error
 	TouchLastTest(ctx context.Context, id uuid.UUID, at time.Time) error
+	SetEngineEdition(ctx context.Context, id uuid.UUID, edition int) error
 	CheckDuplicate(ctx context.Context, excludeID uuid.UUID, name, host string, port int) (string, error)
 }
 

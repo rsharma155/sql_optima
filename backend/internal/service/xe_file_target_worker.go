@@ -43,7 +43,7 @@ func (s *MetricsService) StartXEFileTargetWorker(ctx context.Context) {
 }
 
 func (s *MetricsService) processXEFiles(ctx context.Context) {
-	if s.xeDb == nil {
+	if s.tsLogger == nil {
 		return
 	}
 
@@ -53,7 +53,28 @@ func (s *MetricsService) processXEFiles(ctx context.Context) {
 		}
 
 		serverID := inst.ServerID
-		// Logic to poll XE files from target instance and persist to xeDb
-		_ = serverID
+		db, ok := s.MsRepo.GetConn(inst.Name)
+		if !ok {
+			continue
+		}
+
+		// Ensure the deadlock XE session exists and is running
+		_ = s.MsRepo.EnsureDeadlockXESession(ctx, db)
+
+		// Fetch deadlock events from the XE file target
+		events, err := s.MsRepo.FetchDeadlockEvents(ctx, db)
+		if err != nil {
+			slog.Error("[XEWorker] Failed to fetch deadlock events", "instance", inst.Name, "err", err)
+			continue
+		}
+
+		if len(events) > 0 {
+			err = s.tsLogger.LogSQLServerDeadlockEvents(ctx, serverID, events)
+			if err != nil {
+				slog.Error("[XEWorker] Failed to log deadlock events", "instance", inst.Name, "err", err)
+			} else {
+				slog.Info("[XEWorker] Successfully logged deadlock events", "instance", inst.Name, "count", len(events))
+			}
+		}
 	}
 }

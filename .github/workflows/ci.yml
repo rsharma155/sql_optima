@@ -58,6 +58,11 @@ jobs:
           args: -no-fail -fmt sarif -out gosec-results.sarif ./...
           working-directory: backend
 
+      - name: Check Version
+        run: |
+          VERSION=$(cat ../VERSION)
+          echo "Building Version: $VERSION"
+
       - name: Upload gosec SARIF
         uses: github/codeql-action/upload-sarif@v3
         if: always() && hashFiles('backend/gosec-results.sarif') != ''

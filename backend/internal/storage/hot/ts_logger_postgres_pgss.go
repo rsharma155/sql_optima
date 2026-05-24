@@ -13,6 +13,7 @@ package hot
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"sort"
 	"strings"
@@ -63,38 +64,6 @@ func (tl *TimescaleLogger) LogPostgresQueryStats(ctx context.Context, serverID u
 	return nil
 }
 
-// LogPostgresStatStatementsDelta logs differential query metrics.
-func (tl *TimescaleLogger) LogPostgresStatStatementsDelta(ctx context.Context, serverID uuid.UUID, deltas []PostgresStatStatementsDeltaRow) error {
-	if len(deltas) == 0 {
-		return nil
-	}
-	const q = `
-		INSERT INTO pgss_delta_1m (
-			capture_timestamp, server_id, query_id, db_name, username, query_type,
-			calls, total_exec_time, rows, shared_blks_hit, shared_blks_read,
-			shared_blks_dirtied, shared_blks_written, temp_blks_read, temp_blks_written,
-			blk_read_time, blk_write_time, wal_bytes, total_plan_time
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`
-
-	batch := &pgx.Batch{}
-	for _, d := range deltas {
-		batch.Queue(q,
-			d.CaptureTimestamp, serverID, d.QueryID, d.DatabaseName, d.UserName, "O",
-			d.CallsDelta, d.TotalTimeDeltaMs, d.RowsDelta, d.SharedBlksHitDelta, d.SharedBlksReadDelta,
-			d.SharedBlksDirtiedDelta, d.SharedBlksWrittenDelta, d.TempBlksReadDelta, d.TempBlksWrittenDelta,
-			d.BlkReadTimeDeltaMs, d.BlkWriteTimeDeltaMs, d.WalBytesDelta, d.TotalPlanTimeDelta,
-		)
-	}
-	br := tl.pool.SendBatch(ctx, batch)
-	defer br.Close()
-	for range deltas {
-		if _, err := br.Exec(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // LogPGTimescaleLock logs detailed lock events.
 func (tl *TimescaleLogger) LogPGTimescaleLock(ctx context.Context, serverID uuid.UUID, rows []PostgresLockRow) error {
 	if len(rows) == 0 {
@@ -129,16 +98,50 @@ func (tl *TimescaleLogger) UpsertPgssQueryDim(ctx context.Context, serverID uuid
 	}
 	const q = `
 		INSERT INTO pgss_query_dim
-		    (server_id, query_id, query_text, db_name, username, query_type, first_seen, last_seen)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+		    (server_id, query_id, query_text, db_name, username, app_name, query_type, first_seen, last_seen)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
 		ON CONFLICT (server_id, query_id) DO UPDATE SET
 		    last_seen  = NOW(),
 		    db_name    = COALESCE(EXCLUDED.db_name,    pgss_query_dim.db_name),
 		    username   = COALESCE(EXCLUDED.username,   pgss_query_dim.username),
+		    app_name   = CASE WHEN EXCLUDED.app_name != '' THEN EXCLUDED.app_name ELSE pgss_query_dim.app_name END,
 		    query_type = COALESCE(EXCLUDED.query_type, pgss_query_dim.query_type)`
 	batch := &pgx.Batch{}
 	for _, r := range rows {
-		batch.Queue(q, serverID, r.QueryID, r.QueryText, r.DbName, r.UserName, r.QueryType)
+		batch.Queue(q, serverID, r.QueryID, r.QueryText, r.DbName, r.UserName, r.AppName, r.QueryType)
+	}
+	br := tl.pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for range rows {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LogPgssDelta1m logs pre-computed query deltas directly to pgss_delta_1m.
+func (tl *TimescaleLogger) LogPgssDelta1m(ctx context.Context, serverID uuid.UUID, captureTS time.Time, rows []PostgresQueryStatsSnapRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	const q = `INSERT INTO pgss_delta_1m (
+		capture_timestamp, server_id, query_id,
+		db_name, username, app_name, query_type,
+		calls, total_exec_time, rows,
+		shared_blks_hit, shared_blks_read, temp_blks_written,
+		wal_bytes, total_plan_time, mean_exec_time
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`
+
+	batch := &pgx.Batch{}
+	for _, d := range rows {
+		batch.Queue(q,
+			captureTS, serverID, d.QueryID,
+			d.DbName, d.UserName, d.AppName, d.QueryType,
+			d.Calls, d.TotalTimeMs, d.Rows,
+			d.SharedBlksHit, d.SharedBlksRead, d.TempBlksWritten,
+			d.WalBytes, d.TotalPlanTime, d.MeanTimeMs,
+		)
 	}
 	br := tl.pool.SendBatch(ctx, batch)
 	defer br.Close()
@@ -173,6 +176,7 @@ func (tl *TimescaleLogger) ComputeAndStorePgssDelta1m(ctx context.Context, serve
 		timestamps = append(timestamps, ts)
 	}
 	if len(timestamps) < 2 {
+		slog.Debug("[PGSS] ComputeAndStorePgssDelta1m: fewer than 2 snapshots in postgres_query_stats", "server_id", serverID, "found", len(timestamps))
 		return nil
 	}
 	currTS, prevTS := timestamps[0], timestamps[1]
@@ -185,6 +189,7 @@ func (tl *TimescaleLogger) ComputeAndStorePgssDelta1m(ctx context.Context, serve
 	if err != nil {
 		return fmt.Errorf("loading current snapshot: %w", err)
 	}
+	slog.Debug("[PGSS] ComputeAndStorePgssDelta1m: loaded snapshots", "server_id", serverID, "prev_rows", len(prevMap), "curr_rows", len(currMap))
 
 	const q = `INSERT INTO pgss_delta_1m (
 		capture_timestamp, server_id, query_id,
@@ -207,7 +212,7 @@ func (tl *TimescaleLogger) ComputeAndStorePgssDelta1m(ctx context.Context, serve
 		}
 		batch.Queue(q,
 			currTS, serverID, curr.QueryID,
-			d.DbName, d.UserName, "", d.QueryType,
+			d.DbName, d.UserName, curr.AppName, d.QueryType,
 			d.Calls, d.TotalTimeMs, d.Rows,
 			d.SharedBlksHit, d.SharedBlksRead, d.TempBlksWritten,
 			d.WalBytes, d.TotalPlanTime, d.MeanTimeMs,
@@ -215,8 +220,10 @@ func (tl *TimescaleLogger) ComputeAndStorePgssDelta1m(ctx context.Context, serve
 		count++
 	}
 	if count == 0 {
+		slog.Debug("[PGSS] ComputeAndStorePgssDelta1m: no active deltas between snapshots", "server_id", serverID, "curr_ts", currTS, "prev_ts", prevTS)
 		return nil
 	}
+	slog.Debug("[PGSS] ComputeAndStorePgssDelta1m: writing deltas", "server_id", serverID, "count", count)
 	br := tl.pool.SendBatch(ctx, batch)
 	defer br.Close()
 	for i := 0; i < count; i++ {
@@ -228,18 +235,24 @@ func (tl *TimescaleLogger) ComputeAndStorePgssDelta1m(ctx context.Context, serve
 }
 
 func (tl *TimescaleLogger) loadPostgresQueryStatsSnapshot(ctx context.Context, serverID uuid.UUID, ts time.Time) (map[string]PostgresQueryStatsSnapRow, error) {
+	// Cast wal_bytes to BIGINT in SQL so pgx receives it as int8 OID (int64-compatible).
+	// The column is NUMERIC, and pgx v5 binary protocol cannot reliably scan NUMERIC→int64.
+	// Join pgss_query_dim to carry app_name forward (populated by UpsertPgssQueryDim which runs first).
 	rows, err := tl.pool.Query(ctx, `
-		SELECT query_id, COALESCE(db_name,''), COALESCE(username,''), COALESCE(query_type,''),
-		       calls, total_time_ms, rows, shared_blks_hit, shared_blks_read, temp_blks_written, 
-		       wal_bytes, total_plan_time, shared_blks_dirtied, shared_blks_written, 
-		       temp_blks_read, wal_records, wal_fpi, plans
-		FROM postgres_query_stats
-		WHERE server_id = $1 AND capture_timestamp = $2`, serverID, ts)
+		SELECT pqs.query_id, COALESCE(pqs.db_name,''), COALESCE(pqs.username,''), COALESCE(pqs.query_type,''),
+		       pqs.calls, pqs.total_time_ms, pqs.rows, pqs.shared_blks_hit, pqs.shared_blks_read, pqs.temp_blks_written,
+		       pqs.wal_bytes::bigint, pqs.total_plan_time, pqs.shared_blks_dirtied, pqs.shared_blks_written,
+		       pqs.temp_blks_read, pqs.wal_records, pqs.wal_fpi, pqs.plans,
+		       COALESCE(qd.app_name, '')
+		FROM postgres_query_stats pqs
+		LEFT JOIN pgss_query_dim qd ON qd.server_id = pqs.server_id AND qd.query_id = pqs.query_id
+		WHERE pqs.server_id = $1 AND pqs.capture_timestamp = $2`, serverID, ts)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := make(map[string]PostgresQueryStatsSnapRow)
+	scanErrors := 0
 	for rows.Next() {
 		var r PostgresQueryStatsSnapRow
 		if err := rows.Scan(
@@ -247,12 +260,18 @@ func (tl *TimescaleLogger) loadPostgresQueryStatsSnapshot(ctx context.Context, s
 			&r.Calls, &r.TotalTimeMs, &r.Rows, &r.SharedBlksHit, &r.SharedBlksRead, &r.TempBlksWritten,
 			&r.WalBytes, &r.TotalPlanTime, &r.SharedBlksDirtied, &r.SharedBlksWritten,
 			&r.TempBlksRead, &r.WalRecords, &r.WalFpi, &r.Plans,
+			&r.AppName,
 		); err != nil {
+			scanErrors++
+			slog.Warn("[PGSS] snapshot scan error", "server_id", serverID, "ts", ts, "err", err)
 			continue
 		}
 		// Use composite key because query_id is NOT unique per server (it's unique per db/user/query)
 		key := fmt.Sprintf("%d|%s|%s", r.QueryID, r.DbName, r.UserName)
 		out[key] = r
+	}
+	if scanErrors > 0 {
+		slog.Warn("[PGSS] snapshot loaded with scan errors", "server_id", serverID, "loaded", len(out), "scan_errors", scanErrors)
 	}
 	return out, nil
 }
@@ -356,7 +375,7 @@ func (tl *TimescaleLogger) GetPgssWorkloadTimeSeries(ctx context.Context, server
 			SUM(rows),
 			SUM(shared_blks_hit),
 			SUM(shared_blks_read),
-			SUM(wal_bytes),
+			COALESCE(SUM(wal_bytes), 0)::float8,
 			SUM(total_plan_time),
 			SUM(temp_blks_written)
 		FROM pgss_delta_1m
@@ -411,23 +430,24 @@ func (tl *TimescaleLogger) GetPgssWorkloadTimeSeries(ctx context.Context, server
 }
 
 type PgssTopQuery struct {
-	QueryID      int64    `json:"query_id"`
-	Query        string   `json:"query"`
-	DbName       string   `json:"db_name"`
-	UserName     string   `json:"username"`
-	AppName      string   `json:"app_name"`
-	QueryType    string   `json:"query_type"`
-	TotalTime    float64  `json:"total_time_ms"`
-	PctDBTime    float64  `json:"pct_db_time"`
-	Calls        int64    `json:"calls"`
-	AvgMs        float64  `json:"avg_ms"`
-	RowsPerCall  float64  `json:"rows_per_call"`
-	HitPct       float64  `json:"hit_pct"`
-	TempMB       float64  `json:"temp_mb"`
-	WalMB        float64  `json:"wal_mb"`
-	ReadsPerCall float64  `json:"reads_per_call"`
-	PlanRatio    float64  `json:"plan_ratio"`
-	Flags        []string `json:"flags"`
+	QueryID      int64     `json:"query_id"`
+	Query        string    `json:"query"`
+	DbName       string    `json:"db_name"`
+	UserName     string    `json:"username"`
+	AppName      string    `json:"app_name"`
+	QueryType    string    `json:"query_type"`
+	TotalTime    float64   `json:"total_time_ms"`
+	PctDBTime    float64   `json:"pct_db_time"`
+	Calls        int64     `json:"calls"`
+	AvgMs        float64   `json:"avg_ms"`
+	RowsPerCall  float64   `json:"rows_per_call"`
+	HitPct       float64   `json:"hit_pct"`
+	TempMB       float64   `json:"temp_mb"`
+	WalMB        float64   `json:"wal_mb"`
+	ReadsPerCall float64   `json:"reads_per_call"`
+	PlanRatio    float64   `json:"plan_ratio"`
+	Flags        []string  `json:"flags"`
+	CapturedAt   time.Time `json:"captured_at"`
 }
 
 type PgssFilterOptions struct {
@@ -498,7 +518,8 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 		argIdx++
 	}
 	if appName != "" {
-		filterClauses = append(filterClauses, fmt.Sprintf("d.app_name = $%d", argIdx))
+		// app_name filter uses the dim table (via outer WHERE) rather than the raw delta column
+		filterClauses = append(filterClauses, fmt.Sprintf("COALESCE(d.app_name,'') = $%d", argIdx))
 		args = append(args, appName)
 		argIdx++
 	}
@@ -533,10 +554,13 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 				SUM(d.shared_blks_read) AS total_blks_read,
 				SUM(d.temp_blks_written) AS total_temp,
 				SUM(d.wal_bytes) AS total_wal,
-				SUM(d.total_plan_time) AS total_plan
+				SUM(d.total_plan_time) AS total_plan,
+				MAX(d.capture_timestamp) AS last_seen
 			FROM pgss_delta_1m d
 			WHERE d.server_id = $1
 			  AND d.capture_timestamp >= $2 AND d.capture_timestamp <= $3
+			  AND d.username != 'postgres'
+			  AND COALESCE(d.db_name, '') != 'postgres'
 			  %s
 			GROUP BY d.query_id, d.db_name, d.username, d.app_name, d.query_type
 			HAVING SUM(d.calls) > 0
@@ -546,7 +570,7 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 		)
 		SELECT a.query_id,
 			COALESCE(q.query_text, ''),
-			a.db_name, a.username, a.app_name, a.query_type,
+			a.db_name, a.username, COALESCE(NULLIF(q.app_name,''), a.app_name, '') AS app_name, a.query_type,
 			a.total_exec_time,
 			CASE WHEN g.db_total > 0 THEN (a.total_exec_time / g.db_total) * 100.0 ELSE 0 END,
 			a.total_calls,
@@ -558,13 +582,14 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 			a.total_temp::float * 8.0 / 1024.0,
 			a.total_wal::float / (1024.0 * 1024.0),
 			a.total_blks_read::float / NULLIF(a.total_calls, 0),
-			a.total_plan / NULLIF(a.total_exec_time, 0)
+			a.total_plan / NULLIF(a.total_exec_time, 0),
+			a.last_seen
 		FROM agg a
 		CROSS JOIN grand g
 		LEFT JOIN pgss_query_dim q ON q.server_id = $1 AND q.query_id = a.query_id
-		WHERE (NOT $%d OR (
-			COALESCE(q.query_text, '') NOT LIKE '%%%%/* SQL_OPTIMA */%%%%'
-			AND COALESCE(q.query_text, '') NOT ILIKE '%%%%pg_catalog%%%%'
+		WHERE COALESCE(q.query_text, '') NOT LIKE '%%%%/* SQL_OPTIMA%%%%'
+		AND (NOT $%d OR (
+			COALESCE(q.query_text, '') NOT ILIKE '%%%%pg_catalog%%%%'
 			AND COALESCE(q.query_text, '') NOT ILIKE '%%%%information_schema%%%%'
 			AND COALESCE(q.query_text, '') NOT ILIKE '%%%%pg_stat_%%%%'
 			AND COALESCE(q.query_text, '') NOT ILIKE '%%%%pg_locks%%%%'
@@ -599,7 +624,7 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 			&r.DbName, &r.UserName, &r.AppName, &r.QueryType,
 			&r.TotalTime, &r.PctDBTime, &r.Calls,
 			&r.AvgMs, &r.RowsPerCall, &r.HitPct, &r.TempMB, &r.WalMB,
-			&r.ReadsPerCall, &r.PlanRatio); err != nil {
+			&r.ReadsPerCall, &r.PlanRatio, &r.CapturedAt); err != nil {
 			continue
 		}
 		var flags []string
@@ -625,17 +650,21 @@ func (tl *TimescaleLogger) GetPgssFilterOptions(ctx context.Context, serverID uu
 	if tl == nil || tl.pool == nil {
 		return &PgssFilterOptions{}, nil
 	}
+	// app_name is sourced from pgss_query_dim (enriched at collection time) because
+	// pgss_delta_1m.app_name may be empty for older rows.
 	const q = `
 		SELECT
-			ARRAY_AGG(DISTINCT db_name  ORDER BY db_name)  FILTER (WHERE db_name  IS NOT NULL AND db_name  <> ''),
-			ARRAY_AGG(DISTINCT username ORDER BY username) FILTER (WHERE username IS NOT NULL AND username <> ''),
-			ARRAY_AGG(DISTINCT app_name ORDER BY app_name) FILTER (WHERE app_name IS NOT NULL AND app_name <> '')
-		FROM pgss_delta_1m
-		WHERE server_id = $1
-		  AND capture_timestamp >= $2 AND capture_timestamp <= $3`
+			COALESCE(ARRAY_AGG(DISTINCT d.db_name  ORDER BY d.db_name)  FILTER (WHERE d.db_name  IS NOT NULL AND d.db_name  <> '' AND d.db_name  != 'postgres'), '{}'),
+			COALESCE(ARRAY_AGG(DISTINCT d.username ORDER BY d.username) FILTER (WHERE d.username IS NOT NULL AND d.username <> '' AND d.username != 'postgres'), '{}'),
+			COALESCE(ARRAY_AGG(DISTINCT COALESCE(NULLIF(qd.app_name,''), d.app_name) ORDER BY 1) FILTER (WHERE COALESCE(qd.app_name, d.app_name, '') <> ''), '{}')
+		FROM pgss_delta_1m d
+		LEFT JOIN pgss_query_dim qd ON qd.server_id = d.server_id AND qd.query_id = d.query_id
+		WHERE d.server_id = $1
+		  AND d.capture_timestamp >= $2 AND d.capture_timestamp <= $3`
 	var dbs, users, apps []string
 	err := tl.pool.QueryRow(ctx, q, serverID, from, to).Scan(&dbs, &users, &apps)
 	if err != nil {
+		slog.Error("[PGSS] GetPgssFilterOptions scan failed", "server_id", serverID, "err", err)
 		return &PgssFilterOptions{}, nil
 	}
 	return &PgssFilterOptions{
@@ -664,6 +693,23 @@ func (tl *TimescaleLogger) GetPgssHasData(ctx context.Context, serverID uuid.UUI
 		serverID,
 	).Scan(&n)
 	return err == nil
+}
+
+// GetPgssRawSnapshotCount returns the number of raw snapshot entries in postgres_query_stats
+// within the last 24 hours. Used to distinguish "collector not running" from "delta computation empty".
+func (tl *TimescaleLogger) GetPgssRawSnapshotCount(ctx context.Context, serverID uuid.UUID) int {
+	if tl == nil || tl.pool == nil {
+		return 0
+	}
+	var n int
+	err := tl.pool.QueryRow(ctx,
+		`SELECT COUNT(DISTINCT capture_timestamp) FROM postgres_query_stats WHERE server_id = $1 AND capture_timestamp >= NOW() - INTERVAL '24 hours'`,
+		serverID,
+	).Scan(&n)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func (tl *TimescaleLogger) GetPgssDbBreakdown(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]PgssDbBreakdown, error) {
@@ -934,7 +980,7 @@ func (tl *TimescaleLogger) GetPgssSummary(ctx context.Context, serverID uuid.UUI
 			COALESCE(SUM(shared_blks_hit), 0),
 			COALESCE(SUM(shared_blks_read), 0),
 			COALESCE(SUM(temp_blks_written), 0),
-			COALESCE(SUM(wal_bytes), 0),
+			COALESCE(SUM(wal_bytes), 0)::float8,
 			COUNT(DISTINCT query_id)
 		FROM pgss_delta_1m
 		WHERE server_id = $1 AND capture_timestamp >= $2 AND capture_timestamp <= $3`

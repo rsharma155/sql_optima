@@ -45,6 +45,10 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	if !sec.AuthRequired {
 		r.HandleFunc("/api/config", func(w http.ResponseWriter, req *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
+			// Lazy-reload: if startup failed to decrypt/load instances, recover on first request.
+			if len(cfg.Instances) == 0 && metricsSvc != nil && metricsSvc.RegistryReload != nil {
+				metricsSvc.RegistryReload()
+			}
 			statuses := map[string]string{}
 			if metricsSvc != nil {
 				statuses = metricsSvc.GetAllInstanceStatuses()
@@ -95,11 +99,16 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 	sqlserverLockH := handlers.NewSqlServerLockHandlers(metricsSvc, cfg)
 	sqlserverWaitStatsH := handlers.NewSqlServerWaitStatsHandlers(metricsSvc, cfg)
 
-	// SQL Server Intelligence Report — initialize once TimescaleDB pool is confirmed available.
+	var coldStorageH *handlers.ColdStorageHandlers
+	if pool := metricsSvc.GetTimescaleDBPool(); pool != nil {
+		coldStorageH = handlers.NewColdStorageHandlers(pool)
+	}
+
+	// SQL Server Intelligence Report — initialize with nil service if pool is missing to ensure routes are registered.
 	if pool := metricsSvc.GetTimescaleDBPool(); pool != nil {
 		irSvc = service.NewIntelligenceReportService(pool)
-		irH = handlers.NewIntelligenceReportHandlers(irSvc, cfg)
 	}
+	irH = handlers.NewIntelligenceReportHandlers(irSvc, cfg)
 
 	// New Postgres Domain Handlers
 	pgObsH := pg_obs_api.NewPostgresObservabilityHandler(metricsSvc)
@@ -117,6 +126,7 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 		SqlServerWorkload: sqlserverWLH, SqlServerPlanAnalyzer: sqlserverPAH,
 		SqlServerLocks: sqlserverLockH, SqlServerWaitStats: sqlserverWaitStatsH,
 		IntelligenceReport: irH,
+		ColdStorage: coldStorageH,
 		PgObservability: pgObsH, PgBackup: pgBackupH, PgSecurity: pgSecurityH,
 		SQLServerHA: sqlServerHAH,
 		}
@@ -221,6 +231,10 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 		configProtected.Use(middleware.RequireAnyRole("viewer", "dba", "admin"))
 		configProtected.HandleFunc("/config", func(w http.ResponseWriter, req *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
+			// Lazy-reload: if startup failed to decrypt/load instances, recover on first request.
+			if len(cfg.Instances) == 0 && metricsSvc != nil && metricsSvc.RegistryReload != nil {
+				metricsSvc.RegistryReload()
+			}
 			statuses := map[string]string{}
 			if metricsSvc != nil {
 				statuses = metricsSvc.GetAllInstanceStatuses()

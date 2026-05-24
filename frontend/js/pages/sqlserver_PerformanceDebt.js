@@ -359,6 +359,49 @@
         });
     }
 
+    function renderVolumeStatsTable(vols) {
+        if (!vols || vols.length === 0) return '<div class="text-muted">No volume data available.</div>';
+        const rows = vols.map(v => {
+            const freePct = v.volume_free_pct;
+            let statusClass = '';
+            if (freePct < 5) statusClass = 'text-danger font-bold';
+            else if (freePct < 15) statusClass = 'text-warning';
+
+            return `
+                <tr>
+                    <td><div class="perfdebt-cell-ellipsis" title="${window.escapeHtml(v.database_name)}">${window.escapeHtml(v.database_name)}</div></td>
+                    <td><div class="perfdebt-cell-ellipsis" title="${window.escapeHtml(v.logical_file_name)}">${window.escapeHtml(v.logical_file_name)}</div></td>
+                    <td>${v.file_type}</td>
+                    <td style="text-align:right;">${v.file_size_mb.toFixed(1)}</td>
+                    <td><div class="perfdebt-cell-ellipsis" title="${window.escapeHtml(v.volume_mount_point)}">${window.escapeHtml(v.volume_mount_point)}</div></td>
+                    <td style="text-align:right;">${v.volume_total_gb.toFixed(1)}</td>
+                    <td style="text-align:right;">${v.volume_available_gb.toFixed(1)}</td>
+                    <td style="text-align:right;" class="${statusClass}">${freePct.toFixed(1)}%</td>
+                </tr>
+            `;
+        }).join('');
+
+        return `
+            <div class="table-responsive">
+                <table class="data-table" style="font-size:0.75rem; width:100%;">
+                    <thead>
+                        <tr>
+                            <th>Database</th>
+                            <th>File Name</th>
+                            <th>Type</th>
+                            <th style="text-align:right;">Size MB</th>
+                            <th>Mount Point</th>
+                            <th style="text-align:right;">Vol GB</th>
+                            <th style="text-align:right;">Free GB</th>
+                            <th style="text-align:right;">Free %</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
+    }
+
     async function loadPerformanceDebt() {
         const outlet = window.routerOutlet;
         const instance = window.appState.config?.instances?.[window.appState.currentInstanceIdx];
@@ -387,20 +430,29 @@
                         font-weight: 600;
                         cursor: pointer;
                         text-align: left;
+                        display: block;
+                        width: 100%;
+                        white-space: normal;
+                        word-break: break-word;
+                        overflow-wrap: break-word;
                     }
                     .perfdebt-finding-link:hover { text-decoration: underline; }
                     .perfdebt-finding-link:focus { outline: none; border-color: var(--accent-blue); border-radius: 6px; padding: 0.1rem 0.25rem; }
+                    .perfdebt-table td { vertical-align: top; }
                     .perfdebt-table col.perfdebt-col-status { width: 48px; max-width: 48px; }
-                    .perfdebt-table col.perfdebt-col-finding { width: 11%; }
-                    .perfdebt-table col.perfdebt-col-object { width: 19%; min-width: 130px; }
-                    .perfdebt-table col.perfdebt-col-impact { width: 72px; max-width: 72px; }
+                    .perfdebt-table col.perfdebt-col-finding { width: 22%; }
+                    .perfdebt-table col.perfdebt-col-object { width: 18%; min-width: 120px; }
+                    .perfdebt-table col.perfdebt-col-impact { width: 68px; max-width: 68px; }
                     .perfdebt-table col.perfdebt-col-captured { width: 110px; }
-                    .perfdebt-table col.perfdebt-col-rec { width: 36%; min-width: 240px; }
-                    .perfdebt-table col.perfdebt-col-fix { width: 72px; max-width: 72px; }
+                    .perfdebt-table col.perfdebt-col-rec { width: 28%; min-width: 200px; }
+                    .perfdebt-table col.perfdebt-col-fix { width: 68px; max-width: 68px; }
                     .perfdebt-table .perfdebt-col-captured { white-space: nowrap; color: var(--text-secondary); font-size: 0.75rem; }
                     .perfdebt-table .perfdebt-col-status { text-align: center; width: 48px; }
                     .perfdebt-table .perfdebt-col-impact { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
                     .perfdebt-table .perfdebt-col-fix { text-align: right; }
+                    .vitals-card { transition: all 0.2s ease; border-left: 3px solid transparent; }
+                    .vitals-card.warning { border-left-color: var(--warning); background: rgba(245,158,11,0.03); }
+                    .vitals-card.critical { border-left-color: var(--danger); background: rgba(239,68,68,0.03); }
                 </style>
                 <div class="page-title flex-between">
                     <div>
@@ -421,6 +473,25 @@
                             <button id="perfDebtExpandAll" class="btn btn-sm btn-outline text-accent"><i class="fa-solid fa-up-right-and-down-left-from-center"></i> Expand all</button>
                             <button id="perfDebtCollapseAll" class="btn btn-sm btn-outline text-accent"><i class="fa-solid fa-down-left-and-up-right-to-center"></i> Collapse all</button>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Server Vitals Ribbon -->
+                <div id="perfDebtVitalsRibbon" style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:0.75rem; margin-top:0.75rem;">
+                    <div id="vitalsMemCard" class="metric-card glass-panel vitals-card" style="padding:0.5rem 0.75rem;">
+                        <div class="metric-header"><span class="metric-title" style="font-size:0.7rem;">SQL Memory</span><i class="fa-solid fa-memory card-icon text-accent"></i></div>
+                        <div id="vitalsMem" class="metric-value" style="font-size:1.1rem; font-weight:bold;">--</div>
+                        <div id="vitalsMemTrend" class="metric-trend" style="font-size:0.65rem;">--</div>
+                    </div>
+                    <div id="vitalsStorageCard" class="metric-card glass-panel vitals-card" style="padding:0.5rem 0.75rem;">
+                        <div class="metric-header"><span class="metric-title" style="font-size:0.7rem;">Storage Capacity</span><i class="fa-solid fa-hard-drive card-icon text-accent"></i></div>
+                        <div id="vitalsStorage" class="metric-value" style="font-size:1.1rem; font-weight:bold;">--</div>
+                        <div id="vitalsStorageTrend" class="metric-trend" style="font-size:0.65rem;">--</div>
+                    </div>
+                    <div id="vitalsIOCard" class="metric-card glass-panel vitals-card" style="padding:0.5rem 0.75rem;">
+                        <div class="metric-header"><span class="metric-title" style="font-size:0.7rem;">Resource Warnings</span><i class="fa-solid fa-triangle-exclamation card-icon text-accent"></i></div>
+                        <div id="vitalsAlerts" class="metric-value" style="font-size:1.1rem; font-weight:bold;">--</div>
+                        <div id="vitalsAlertsTrend" class="metric-trend" style="font-size:0.65rem;">--</div>
                     </div>
                 </div>
 
@@ -481,12 +552,56 @@
         document.getElementById('perfDebtExpandAll').addEventListener('click', () => setAllSectionsCollapsed(false));
         document.getElementById('perfDebtCollapseAll').addEventListener('click', () => setAllSectionsCollapsed(true));
 
+        async function fetchAndRenderVitals() {
+            const url = `/api/sqlserver/server-vitals?instance=${encodeURIComponent(instance.name)}`;
+            try {
+                const resp = await window.apiClient.authenticatedFetch(url);
+                if (!resp.ok) return null;
+                const data = await resp.json();
+                const mem = data.memory;
+                const vols = data.volumes || [];
+
+                // Memory Card
+                if (mem) {
+                    const used = mem.sql_physical_memory_in_use_mb || 0;
+                    const util = mem.sql_memory_utilization_pct || 0;
+                    const ple = mem.ple_seconds || 0;
+                    document.getElementById('vitalsMem').textContent = (used / 1024).toFixed(1) + ' GB';
+                    document.getElementById('vitalsMemTrend').textContent = `${util}% utilization • ${ple}s PLE`;
+                    const card = document.getElementById('vitalsMemCard');
+                    card.classList.remove('warning', 'critical');
+                    if (util > 95 || mem.process_physical_low) card.classList.add('critical');
+                    else if (util > 90) card.classList.add('warning');
+                }
+
+                // Storage Card
+                if (vols.length > 0) {
+                    const minFree = Math.min(...vols.map(v => v.volume_free_pct));
+                    document.getElementById('vitalsStorage').textContent = minFree.toFixed(1) + '% Min Free';
+                    document.getElementById('vitalsStorageTrend').textContent = `${vols.length} volumes tracked`;
+                    const card = document.getElementById('vitalsStorageCard');
+                    card.classList.remove('warning', 'critical');
+                    if (minFree < 5) card.classList.add('critical');
+                    else if (minFree < 15) card.classList.add('warning');
+                }
+
+                return data;
+            } catch (e) {
+                appDebug('vitals fetch failed', e);
+                return null;
+            }
+        }
+
         async function fetchAndRender() {
             const lookback = Number(document.getElementById('perfDebtLookback')?.value || 2);
             const db = (window.appState.currentDatabase && window.appState.currentDatabase !== 'all') ? window.appState.currentDatabase : '';
             const dbQS = db ? `&database=${encodeURIComponent(db)}` : '';
             const url = `/api/sqlserver/performance-debt?instance=${encodeURIComponent(instance.name)}&lookback_hours=${encodeURIComponent(String(lookback))}${dbQS}`;
             const t0 = Date.now();
+
+            // Fetch vitals in parallel
+            const vitalsPromise = fetchAndRenderVitals();
+
             const resp = await window.apiClient.authenticatedFetch(url, { cache: 'no-store' });
             window.updateSourceBadge('perfDebtSourceBadge', resp.headers.get('X-Data-Source'));
             let data;
@@ -500,13 +615,24 @@
                 const msg = (data && (data.error || data.message)) ? (data.error || data.message) : `HTTP ${resp.status}`;
                 throw new Error(msg);
             }
+
+            const vitalsData = await vitalsPromise;
             const findings = data?.findings || [];
+
+            // Update Resource Warnings Card
+            const crit = findings.filter(f => String(f.severity || '').toUpperCase() === 'CRITICAL').length;
+            const warn = findings.filter(f => String(f.severity || '').toUpperCase() === 'WARNING').length;
+            document.getElementById('vitalsAlerts').textContent = crit + warn;
+            document.getElementById('vitalsAlertsTrend').textContent = `${crit} Critical • ${warn} Warning`;
+            const alertCard = document.getElementById('vitalsIOCard');
+            alertCard.classList.remove('warning', 'critical');
+            if (crit > 0) alertCard.classList.add('critical');
+            else if (warn > 0) alertCard.classList.add('warning');
+
             const grouped = groupBySection(findings);
             window._perfDebtGrouped = grouped;
 
             const total = findings.length;
-            const crit = findings.filter(f => String(f.severity || '').toUpperCase() === 'CRITICAL').length;
-            const warn = findings.filter(f => String(f.severity || '').toUpperCase() === 'WARNING').length;
             const info = total - crit - warn;
 
             const lastRefreshEl = document.getElementById('perfDebtLastRefresh');
@@ -530,6 +656,7 @@
             if (metaEl) metaEl.textContent = `Latest snapshot: ${newestTxt} • ${(Date.now() - t0)}ms`;
 
             const sections = [
+                'Storage & File Locations', // Custom dynamic section
                 'Index Health',
                 'Statistics Health',
                 'Storage & Growth',
@@ -539,13 +666,27 @@
             ];
 
             const html = sections.map((sec, idx) => {
-                const items = grouped[sec] || [];
-                const catCritical = items.filter(x => sevKey(x.severity) === 'CRITICAL').length;
-                const catWarning = items.filter(x => sevKey(x.severity) === 'WARNING').length;
+                let items = grouped[sec] || [];
+                let customContent = '';
+
+                if (sec === 'Storage & File Locations') {
+                    const vols = vitalsData?.volumes || [];
+                    customContent = renderVolumeStatsTable(vols);
+                    items = vols; // for badge count
+                }
+
+                const catCritical = (sec === 'Storage & File Locations') 
+                    ? (vitalsData?.volumes || []).filter(v => v.volume_free_pct < 5).length
+                    : items.filter(x => sevKey(x.severity) === 'CRITICAL').length;
+                
+                const catWarning = (sec === 'Storage & File Locations')
+                    ? (vitalsData?.volumes || []).filter(v => v.volume_free_pct >= 5 && v.volume_free_pct < 15).length
+                    : items.filter(x => sevKey(x.severity) === 'WARNING').length;
+
                 const catSeverity = catCritical > 0 ? 'CRITICAL' : (catWarning > 0 ? 'WARNING' : 'OK');
                 const badgeClass = catSeverity === 'CRITICAL' ? 'badge-danger' : (catSeverity === 'WARNING' ? 'badge-warning' : 'badge-success');
                 const sectionId = 'perfdebt-sec-' + idx + '-' + Math.random().toString(36).slice(2, 11);
-                const collapsed = (sec !== 'Index Health'); // keep Index Health open by default
+                const collapsed = (sec !== 'Index Health' && sec !== 'Storage & File Locations'); 
 
                 const observationBanner = (sec === 'Index Health') ? `
                     <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.35);border-radius:8px;padding:0.55rem 0.9rem;margin-bottom:0.6rem;display:flex;align-items:flex-start;gap:0.55rem;font-size:0.78rem;">
@@ -568,7 +709,7 @@
                         </div>
                         <div id="${sectionId}" data-perfdebt-content="1" class="table-responsive ${collapsed ? 'hidden' : ''}" style="margin-top:0.5rem;">
                             ${observationBanner}
-                            ${renderTable(items, sec)}
+                            ${customContent || renderTable(items, sec)}
                         </div>
                     </div>
                 `;

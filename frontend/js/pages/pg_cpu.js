@@ -14,6 +14,20 @@ window.PgCpuView = async function() {
 
         window.routerOutlet.innerHTML = await window.loadTemplate('/pages/pg_cpu.html', { inst, dbName });
 
+        // Attach listener for system query toggle
+        const showSystemToggle = document.getElementById('pg-cpu-show-system');
+        if (showSystemToggle) {
+            showSystemToggle.onchange = () => {
+                const subtitle = document.getElementById('pg-cpu-queries-subtitle');
+                if (subtitle) {
+                    subtitle.textContent = showSystemToggle.checked 
+                        ? 'Ranked by total execution time · including system/internal queries'
+                        : 'Ranked by total execution time · monitoring users excluded';
+                }
+                initPgCpu();
+            };
+        }
+
         window.initPageTimePicker();
         initPgCpu();
     };
@@ -58,6 +72,23 @@ window.PgCpuView = async function() {
         } catch (e) { console.error('PG CPU header fetch:', e); }
     }
 
+    async function checkPgCpuStatus(instName) {
+        try {
+            const resp = await window.apiClient.authenticatedFetch(`/api/postgres/pgss/status?instance=${encodeURIComponent(instName)}`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const banner = document.getElementById('pgss-status-banner');
+            const msg    = document.getElementById('pgss-status-msg');
+            if (!banner || !msg) return;
+            if (!data.ready) {
+                banner.style.display = '';
+                msg.textContent = data.message || 'pg_stat_statements is not available — chart data will appear once the collector has 2+ snapshots.';
+            } else {
+                banner.style.display = 'none';
+            }
+        } catch (_) { /* non-fatal */ }
+    }
+
     async function initPgCpu() {
         window.currentCharts = window.currentCharts || {};
         const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || { name: '' };
@@ -69,8 +100,12 @@ window.PgCpuView = async function() {
         if (to   && to.includes('T')   && !to.endsWith('Z'))   to   = new Date(to).toISOString();
 
         const timeParams = (from && to) ? `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}` : '&limit=60';
+        
+        const showSystem = document.getElementById('pg-cpu-show-system')?.checked === true;
+        const systemParam = showSystem ? '&include_system=true' : '';
 
         updateHeader(inst.name);
+        checkPgCpuStatus(inst.name);
 
         let pgTs = []; let dbRows = []; let topQueries = []; let qtypes = []; let cc = {};
 
@@ -78,7 +113,7 @@ window.PgCpuView = async function() {
             const [tsRes, dbRes, qRes, qtRes, ccRes] = await Promise.all([
                 window.apiClient.authenticatedFetch(`/api/cpu/pg-timeseries?instance=${q}${timeParams}`),
                 window.apiClient.authenticatedFetch(`/api/cpu/database?instance=${q}${timeParams}`),
-                window.apiClient.authenticatedFetch(`/api/cpu/top-queries?instance=${q}${timeParams}&limit=20`),
+                window.apiClient.authenticatedFetch(`/api/cpu/top-queries?instance=${q}${timeParams}&limit=20${systemParam}`),
                 window.apiClient.authenticatedFetch(`/api/cpu/query-types?instance=${q}${timeParams}`),
                 window.apiClient.authenticatedFetch(`/api/postgres/control-center?instance=${q}`),
             ]);

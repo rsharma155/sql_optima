@@ -88,6 +88,9 @@ type ServerPropertiesRow struct {
 	NUMANodes          int       `json:"numa_nodes"`
 	MaxWorkersCount    int       `json:"max_workers_count"`
 	PropertiesHash     string    `json:"properties_hash"`
+	SchedulerCount     int       `json:"scheduler_count,omitempty"`
+	MsTicks            int64     `json:"ms_ticks,omitempty"`
+	SQLServerStartTime string    `json:"sqlserver_start_time,omitempty"`
 }
 
 func (tl *TimescaleLogger) GetLatestSQLServerWaitHistory(ctx context.Context, serverID uuid.UUID, limit int) ([]WaitSnapshotRow, error) {
@@ -546,10 +549,19 @@ func (tl *TimescaleLogger) LogServerProperties(ctx context.Context, serverID uui
 		capture_timestamp, server_id,
 		cpu_count, hyperthread_ratio, socket_count, cores_per_socket,
 		physical_memory_gb, virtual_memory_gb, cpu_type,
-		hyperthread_enabled, numa_nodes, max_workers_count, properties_hash
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+		hyperthread_enabled, numa_nodes, max_workers_count, properties_hash,
+		scheduler_count, ms_ticks, sqlserver_start_time
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+	ON CONFLICT DO NOTHING`
 
 	now := time.Now().UTC()
+	startTime := getStr(propsMap, "sqlserver_start_time")
+	var startTimeVal interface{}
+	if startTime == "" {
+		startTimeVal = nil
+	} else {
+		startTimeVal = startTime
+	}
 	_, err := tl.pool.Exec(ctx, query, now, serverID,
 		getInt(propsMap, "cpu_count"),
 		getFloat64(propsMap, "hyperthread_ratio"),
@@ -562,6 +574,9 @@ func (tl *TimescaleLogger) LogServerProperties(ctx context.Context, serverID uui
 		getInt(propsMap, "numa_nodes"),
 		getInt(propsMap, "max_workers_count"),
 		getStr(propsMap, "properties_hash"),
+		getInt(propsMap, "scheduler_count"),
+		getInt64FromMap(propsMap, "ms_ticks"),
+		startTimeVal,
 	)
 	return err
 }
@@ -571,7 +586,9 @@ func (tl *TimescaleLogger) GetServerProperties(ctx context.Context, serverID uui
 		SELECT capture_timestamp, server_id,
 		       cpu_count, hyperthread_ratio, socket_count, cores_per_socket,
 		       physical_memory_gb, virtual_memory_gb, cpu_type,
-		       hyperthread_enabled, numa_nodes, max_workers_count, properties_hash
+		       hyperthread_enabled, numa_nodes, max_workers_count, properties_hash,
+		       COALESCE(scheduler_count, 0), COALESCE(ms_ticks, 0),
+		       COALESCE(sqlserver_start_time::text, '')
 		FROM sqlserver_server_properties
 		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
@@ -584,6 +601,7 @@ func (tl *TimescaleLogger) GetServerProperties(ctx context.Context, serverID uui
 		&r.CPUCount, &r.HyperthreadRatio, &r.SocketCount, &r.CoresPerSocket,
 		&r.PhysicalMemoryGB, &r.VirtualMemoryGB, &r.CPUType,
 		&r.HyperthreadEnabled, &r.NUMANodes, &r.MaxWorkersCount, &r.PropertiesHash,
+		&r.SchedulerCount, &r.MsTicks, &r.SQLServerStartTime,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -600,18 +618,28 @@ func (tl *TimescaleLogger) GetSQLServerCPUHistory(ctx context.Context, serverID 
 	if err != nil {
 		return nil, err
 	}
-	if limit <= 0 || limit > 10000 {
-		limit = 2000
+
+	// Dynamic bucket size based on range duration
+	dur := end.Sub(start)
+	bucket := "1 minute"
+	if dur > 24*time.Hour {
+		bucket = "15 minutes"
+	} else if dur > 6*time.Hour {
+		bucket = "5 minutes"
 	}
 
-	q := `
-		SELECT capture_timestamp, sql_process, system_idle, other_process
+	q := fmt.Sprintf(`
+		SELECT time_bucket('%s', capture_timestamp) AS bucket,
+		       AVG(sql_process) as sql_process,
+		       AVG(system_idle) as system_idle,
+		       AVG(other_process) as other_process
 		FROM sqlserver_cpu_history
 		WHERE server_id = $1
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
-		ORDER BY capture_timestamp ASC
-		LIMIT $4`
+		GROUP BY bucket
+		ORDER BY bucket ASC
+		LIMIT $4`, bucket)
 
 	rows, err := tl.pool.Query(ctx, q, serverID, start, end, limit)
 	if err != nil {
@@ -639,11 +667,10 @@ func (tl *TimescaleLogger) GetSQLServerCPUHistory(ctx context.Context, serverID 
 			ot = other.Float64
 		}
 		out = append(out, map[string]interface{}{
-			"capture_timestamp": ts,
-			"event_time":        ts.Format(time.RFC3339),
-			"sql_process":       sp,
-			"system_idle":       si,
-			"other_process":     ot,
+			"timestamp":     ts,
+			"sql_process":   sp,
+			"system_idle":   si,
+			"other_process": ot,
 		})
 	}
 	return out, rows.Err()

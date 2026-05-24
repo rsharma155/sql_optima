@@ -78,6 +78,71 @@ window.refreshDashboardData = function() {
     window.DashboardView(); 
 };
 
+/**
+ * Common zoom/pan options for Chart.js
+ */
+function getChartZoomOptions() {
+    return {
+        zoom: {
+            wheel: { enabled: true },
+            pinch: { enabled: true },
+            drag: { 
+                enabled: true, 
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                borderColor: 'rgba(59, 130, 246, 0.4)',
+                borderWidth: 1
+            },
+            mode: 'x',
+            onZoomComplete: ({chart}) => {
+                const {min, max} = chart.scales.x;
+                if (min && max && isFinite(min) && isFinite(max)) {
+                    window.applyTimeRangeFromChart(min, max);
+                }
+            }
+        },
+        pan: {
+            enabled: true,
+            mode: 'x'
+        }
+    };
+}
+
+/**
+ * Synchronize global time picker and refresh dashboard when zooming on a chart
+ */
+window.applyTimeRangeFromChart = function(min, max) {
+    if (!min || !max || !isFinite(min) || !isFinite(max)) return;
+    
+    const fromDate = new Date(min);
+    const toDate = new Date(max);
+    
+    // Check if the range is significant enough (e.g. > 5 seconds)
+    if (toDate.getTime() - fromDate.getTime() < 5000) return;
+
+    const pad = (n) => n.toString().padStart(2, '0');
+    const formatForInput = (date) => {
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    };
+    
+    window.appState.fromTs = formatForInput(fromDate);
+    window.appState.toTs = formatForInput(toDate);
+    
+    // Update the actual input fields if they exist in the DOM
+    const fromInput = document.getElementById('from-ts');
+    const toInput = document.getElementById('to-ts');
+    if (fromInput) fromInput.value = window.appState.fromTs;
+    if (toInput) toInput.value = window.appState.toTs;
+
+    console.log(`[Dashboard] Zoomed to: ${window.appState.fromTs} - ${window.appState.toTs}. Refreshing dashboard data...`);
+
+    // Use refreshDashboardData if it's the newer V2 dashboard (DashboardView redirects to V2)
+    if (typeof window.refreshDashboardData === 'function') {
+        window.refreshDashboardData();
+    } else if (window.appNavigate && window.appState.activeViewId) {
+        window.appNavigate(window.appState.activeViewId);
+    }
+};
+
 function dashboardDatabaseQueryParam() {
     const db = window.appState.currentDatabase;
     if (!db || db === 'all') return '';
@@ -475,39 +540,49 @@ function updateCpuChart() {
         return ta - tb;
     }).slice(-60);
 
-    const labels = sorted.map(t => {
+    const sqlData = sorted.map(t => {
         let tsStr = String(t.event_time || t.capture_timestamp || '').replace(' ', 'T');
         if (tsStr && !tsStr.includes('Z') && !tsStr.includes('+')) tsStr += 'Z';
-        const d = new Date(tsStr);
-        return isNaN(d.getTime()) ? '-' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+        return { x: new Date(tsStr), y: typeof t.sql_process === 'number' ? t.sql_process : (t.avg_cpu_load || 0) };
     });
-    const sqlData = sorted.map(t => typeof t.sql_process === 'number' ? t.sql_process : (t.avg_cpu_load || 0));
-    const systemData = sorted.map(t => t.system_idle != null ? (100 - t.system_idle - (typeof t.sql_process === 'number' ? t.sql_process : (t.avg_cpu_load || 0))) : 0);
+    const systemData = sorted.map(t => {
+        let tsStr = String(t.event_time || t.capture_timestamp || '').replace(' ', 'T');
+        if (tsStr && !tsStr.includes('Z') && !tsStr.includes('+')) tsStr += 'Z';
+        const val = t.system_idle != null ? (100 - t.system_idle - (typeof t.sql_process === 'number' ? t.sql_process : (t.avg_cpu_load || 0))) : 0;
+        return { x: new Date(tsStr), y: val };
+    });
+
     if (window.currentCharts.dashRes) {
-        window.currentCharts.dashRes.data.labels = labels;
-        window.currentCharts.dashRes.data.datasets[0].data = sqlData;
-        window.currentCharts.dashRes.data.datasets[1].data = systemData;
-        window.currentCharts.dashRes.update('none');
-    } else {
-        const ctx = document.getElementById(canvasId)?.getContext('2d');
-        if (!ctx) return;
-        window.currentCharts.dashRes = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels,
-                datasets: [
-                    { label: 'SQL Server', data: sqlData, borderColor: window.getCSSVar('--accent-blue'), backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.3, pointRadius: 0 },
-                    { label: 'Other/System', data: systemData, borderColor: 'rgba(255,255,255,0.2)', fill: false, tension: 0.3, pointRadius: 0 }
-                ]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
-                plugins: { legend: { display: false } },
-                scales: { y: { beginAtZero: true, max: 100 }, x: { ticks: { maxTicksLimit: 8 } } }
-            }
-        });
+        window.currentCharts.dashRes.destroy();
     }
+    
+    const ctx = document.getElementById(canvasId)?.getContext('2d');
+    if (!ctx) return;
+    window.currentCharts.dashRes = new Chart(ctx, {
+        type: 'line',
+        data: {
+            datasets: [
+                { label: 'SQL Server', data: sqlData, borderColor: window.getCSSVar('--accent-blue'), backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.3, pointRadius: 0 },
+                { label: 'Other/System', data: systemData, borderColor: 'rgba(255,255,255,0.2)', fill: false, tension: 0.3, pointRadius: 0 }
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { 
+                legend: { display: false },
+                zoom: getChartZoomOptions()
+            },
+            scales: { 
+                y: { beginAtZero: true, max: 100 }, 
+                x: { 
+                    type: 'time',
+                    time: { displayFormats: { minute: 'HH:mm', second: 'HH:mm:ss' } },
+                    ticks: { maxTicksLimit: 8 } 
+                } 
+            }
+        }
+    });
     setChartMessage(canvasId, null);
 }
 

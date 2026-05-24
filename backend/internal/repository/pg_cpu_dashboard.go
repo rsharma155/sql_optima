@@ -50,14 +50,16 @@ func (c *PgRepository) GetCpuTimeByDatabase(ctx context.Context, instanceName st
 		timeCol = "total_time"
 	}
 
+	tableName := c.GetPgssTableName(instanceName)
+
 	q := fmt.Sprintf(`SELECT /* SQL_OPTIMA */   d.datname::text AS datname,
 			SUM(s.%s)::float8 AS total_exec_time_ms
-		FROM pg_stat_statements s
+		FROM %s s
 		JOIN pg_database d ON d.oid = s.dbid
 		LEFT JOIN pg_roles r ON r.oid = s.userid
 		WHERE %s
 		GROUP BY d.datname
-		ORDER BY total_exec_time_ms DESC`, timeCol, buildPgStatStatementsFilters())
+		ORDER BY total_exec_time_ms DESC`, timeCol, tableName, buildPgStatStatementsFilters())
 
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
@@ -104,6 +106,8 @@ func (c *PgRepository) GetTopCpuQueries(ctx context.Context, instanceName string
 		timeCol = "total_time"
 	}
 
+	tableName := c.GetPgssTableName(instanceName)
+
 	q := fmt.Sprintf(`/* SQL_OPTIMA */ SELECT   s.queryid,
 			now()::timestamptz AS captured_at,
 			COALESCE(r.rolname, '') AS user_name,
@@ -111,11 +115,11 @@ func (c *PgRepository) GetTopCpuQueries(ctx context.Context, instanceName string
 			s.%s::float8,
 			s.calls::bigint,
 			CASE WHEN s.calls > 0 THEN (s.%s / s.calls)::float8 ELSE 0 END AS avg_ms
-		FROM pg_stat_statements s
+		FROM %s s
 		LEFT JOIN pg_roles r ON r.oid = s.userid
 		WHERE %s
 		ORDER BY s.%s DESC
-		LIMIT $1`, timeCol, timeCol, buildPgStatStatementsFilters(), timeCol)
+		LIMIT $1`, timeCol, timeCol, tableName, buildPgStatStatementsFilters(), timeCol)
 
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()

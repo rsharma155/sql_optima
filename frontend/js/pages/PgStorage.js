@@ -41,6 +41,10 @@ window.PgStorageView = async function() {
         if (s < 3600) return `${(s/60).toFixed(1)}m`;
         return `${(s/3600).toFixed(2)}h`;
     };
+    const num = (v) => {
+        const x = Number(v);
+        return Number.isFinite(x) ? x : 0;
+    };
     const riskBadge = (level) => {
         const map = { low: 'text-success', medium: 'text-warning', high: 'text-danger', critical: 'text-danger' };
         const cls = map[level] || 'text-muted';
@@ -160,10 +164,32 @@ window.PgStorageView = async function() {
             <!-- RISKS TAB -->
             <div id="pgStorageTab-risks" class="tab-panel" style="display:none;">
                 <div class="grid-container mt-3">
+                    <!-- High Level Risk Summary Row -->
+                    <div class="col-12 mb-3">
+                        <div class="glass-panel" style="padding:1rem; display:flex; gap:1.5rem; align-items:center;">
+                            <div style="flex:1;">
+                                <h3 style="font-size:0.9rem; margin:0 0 0.25rem 0; color:var(--text-secondary);"><i class="fa-solid fa-triangle-exclamation text-warning"></i> Operational Risk Assessment</h3>
+                                <p class="text-muted" style="font-size:0.7rem; margin:0;">These items represent immediate or systemic risks to database stability and vacuum efficiency.</p>
+                            </div>
+                            <div class="flex-center" style="gap:1rem;">
+                                <div class="text-center" style="min-width:80px;">
+                                    <div class="text-muted small" style="font-size:0.6rem; text-transform:uppercase;">Active Risks</div>
+                                    <div class="metric-value" style="font-size:1.2rem;" id="risk-summary-count">0</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="col-6 col-laptop-12">
                         <div class="card glass-panel h-table-md">
-                            <div class="card-header"><h3 style="font-size:0.8rem;margin:0;">Idle In Transaction Sessions</h3></div>
-                            <div class="table-container-compact">
+                            <div class="card-header flex-between">
+                                <h3 style="font-size:0.8rem;margin:0;"><i class="fa-solid fa-hourglass-half text-warning"></i> Idle In Transaction Sessions</h3>
+                                <span class="badge badge-outline" style="font-size:0.6rem;">Snapshot</span>
+                            </div>
+                            <div class="p-2 text-muted" style="font-size:0.65rem; border-bottom:1px solid var(--border-color);">
+                                Sessions holding transaction IDs without active work. Prevents vacuum from cleaning up old rows (bloat risk).
+                            </div>
+                            <div class="table-container-compact" style="flex:1; overflow-y:auto;">
                                 <table class="modern-table modern-table-compact">
                                     <thead><tr><th>PID</th><th>User</th><th>Idle Dur</th><th>Query</th></tr></thead>
                                     <tbody id="pgIdleTbody"></tbody>
@@ -173,8 +199,14 @@ window.PgStorageView = async function() {
                     </div>
                     <div class="col-6 col-laptop-12">
                         <div class="card glass-panel h-table-md">
-                            <div class="card-header"><h3 style="font-size:0.8rem;margin:0;">Long-Running Active Transactions</h3></div>
-                            <div class="table-container-compact">
+                            <div class="card-header flex-between">
+                                <h3 style="font-size:0.8rem;margin:0;"><i class="fa-solid fa-clock text-danger"></i> Long-Running Transactions</h3>
+                                <span class="badge badge-outline" style="font-size:0.6rem;">Snapshot</span>
+                            </div>
+                            <div class="p-2 text-muted" style="font-size:0.65rem; border-bottom:1px solid var(--border-color);">
+                                Transactions open for an extended period. Can cause heavy bloat and lock contention.
+                            </div>
+                            <div class="table-container-compact" style="flex:1; overflow-y:auto;">
                                 <table class="modern-table modern-table-compact">
                                     <thead><tr><th>PID</th><th>User</th><th>Txn Dur</th><th>Query</th></tr></thead>
                                     <tbody id="pgLongTxnTbody"></tbody>
@@ -182,10 +214,31 @@ window.PgStorageView = async function() {
                             </div>
                         </div>
                     </div>
-                    <div class="col-12">
+                    <div class="col-12 mt-3">
                         <div class="card glass-panel">
-                            <div class="card-header"><h3 style="font-size:0.8rem;margin:0;">XID Wraparound Risk</h3></div>
-                            <div id="pgXIDBody" style="padding:1rem;"></div>
+                            <div class="card-header flex-between">
+                                <h3 style="font-size:0.8rem;margin:0;"><i class="fa-solid fa-rotate text-accent"></i> Transaction ID (XID) Wraparound Risk</h3>
+                                <span class="text-muted small">Max capacity: 2.1 Billion XIDs</span>
+                            </div>
+                            <div class="p-2 text-muted" style="font-size:0.65rem; border-bottom:1px solid var(--border-color);">
+                                If any database reaches 100%, the server will stop accepting writes to prevent data corruption.
+                            </div>
+                            <div class="table-container-compact">
+                                <table class="modern-table modern-table-compact">
+                                    <thead>
+                                        <tr>
+                                            <th>Database</th>
+                                            <th class="text-right">Age (XIDs)</th>
+                                            <th class="text-right">Limit</th>
+                                            <th>Usage</th>
+                                            <th>Risk Level</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="pgXIDTbody">
+                                        <tr><td colspan="5" class="text-center py-4"><div class="spinner"></div></td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -326,7 +379,7 @@ window.PgStorageView = async function() {
             const points = data.points || [];
             const timeMap = {};
             points.forEach(p => {
-                const t = new Date(p.time).toISOString().slice(0, 16);
+                if (!p.time) return; const dt = new Date(p.time); if (isNaN(dt.getTime())) return; const t = dt.toISOString().slice(0, 16);
                 if (!timeMap[t]) timeMap[t] = { scans: 0, updates: 0, size: 0, count: 0 };
                 timeMap[t].scans += (p.scans || 0);
                 timeMap[t].updates += (p.updates || 0);
@@ -537,9 +590,14 @@ window.PgStorageView = async function() {
         }
         
         const risksBadge = document.getElementById('tabBadge-risks');
+        const summaryCount = document.getElementById('risk-summary-count');
         if (risksBadge) {
             risksBadge.textContent = riskCount;
             risksBadge.style.display = riskCount > 0 ? '' : 'none';
+        }
+        if (summaryCount) {
+            summaryCount.textContent = riskCount;
+            summaryCount.className = 'metric-value ' + (riskCount > 0 ? 'text-danger' : 'text-success');
         }
 
         if (xidResp.status === 'fulfilled' && xidResp.value.ok) {
@@ -549,15 +607,25 @@ window.PgStorageView = async function() {
             if (selectedDb && selectedDb !== 'all') {
                 dbs = dbs.filter(d => d.database_name === selectedDb);
             }
-            setH('pgXIDBody', dbs.map(d => `
-                <div class="mb-2">
-                    <div class="flex-between small mb-1">
-                        <strong>${esc(d.database_name)}</strong>
-                        <span>${riskBadge(d.risk_level)} — ${d.used_pct.toFixed(1)}% of 2.1B XIDs</span>
-                    </div>
-                    <div class="progress-bar-container" style="height:8px;"><div class="progress-bar" style="width:${d.used_pct}%; background:${d.risk_level==='critical'?'var(--danger)':'var(--warning)'}"></div></div>
-                </div>
-            `).join(''));
+            setH('pgXIDTbody', dbs.map(d => {
+                const usedPct = num(d.used_pct);
+                const barColor = d.risk_level === 'critical' ? 'var(--danger)' : (d.risk_level === 'high' ? 'var(--warning)' : 'var(--accent)');
+                return `
+                <tr>
+                    <td><strong>${esc(d.database_name)}</strong></td>
+                    <td class="text-right">${Number(d.freeze_age || 0).toLocaleString()}</td>
+                    <td class="text-right text-muted small">${Number(d.wraparound_limit || 0).toLocaleString()}</td>
+                    <td style="width:250px;">
+                        <div class="flex-between small mb-1">
+                            <span>${usedPct.toFixed(1)}%</span>
+                        </div>
+                        <div class="progress-bar-container" style="height:6px; background:rgba(255,255,255,0.05);">
+                            <div class="progress-bar" style="width:${usedPct}%; background:${barColor}"></div>
+                        </div>
+                    </td>
+                    <td>${riskBadge(d.risk_level)}</td>
+                </tr>
+            `}).join('') || '<tr><td colspan="5" class="text-center text-muted">No database XID data found.</td></tr>');
         }
 
         // --- 6. INDICES ---

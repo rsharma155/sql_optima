@@ -866,6 +866,65 @@ func (h *PostgresHandlers) Replication(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+
+	// Fetch LIVE replication stats for the standby table
+	stats, _ := h.metricsSvc.GetPostgresReplicationStatus(r.Context(), sid)
+
+	// Satisfy frontend sidebar detection (router.js) and Replication page (replication.js)
+	// which both expect a { stats: { is_primary: bool, standbys: [] } } structure.
+	resp := map[string]interface{}{
+		"series": data,
+		"stats":  stats,
+	}
+	if stats == nil {
+		resp["stats"] = map[string]interface{}{
+			"is_primary": len(data) > 0,
+			"standbys":   []interface{}{},
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *PostgresHandlers) ReplicationLagHistory(w http.ResponseWriter, r *http.Request) {
+	sid, ok := h.parseID(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	limit := 100
+	if lStr := r.URL.Query().Get("limit"); lStr != "" {
+		if val, err := strconv.Atoi(lStr); err == nil {
+			limit = val
+		}
+	}
+
+	data, err := h.metricsSvc.GetPostgresReplicationLagHistory(r.Context(), sid, from, to, limit)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"series": data,
+	})
+}
+
+func (h *PostgresHandlers) ReplicationSlots(w http.ResponseWriter, r *http.Request) {
+	sid, ok := h.parseID(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	data, err := h.metricsSvc.GetTimescalePostgresReplicationSlots(sid, 100)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(data)
 }
@@ -893,6 +952,17 @@ func (h *PostgresHandlers) Queries(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 	w.Header().Set("Content-Type", "application/json")
+
+	instName := r.URL.Query().Get("instance")
+	if h.metricsSvc.PgRepo != nil && !h.metricsSvc.PgRepo.GetPgssSupported(instName) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"queries":                    []interface{}{},
+			"pg_stat_statements_enabled": false,
+			"stats_source":               "timescale_delta",
+		})
+		return
+	}
+
 	pool := h.metricsSvc.GetTimescaleDBPool()
 	if pool == nil {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -906,11 +976,12 @@ func (h *PostgresHandlers) Queries(w http.ResponseWriter, r *http.Request) {
 		queries = []map[string]interface{}{}
 	}
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"queries":      queries,
-		"stats_source": "timescale_delta",
-		"stats_note":   "Aggregated from pg_stat_statements deltas (pgss_delta_1m).",
-		"window_from":  from.Format(time.RFC3339),
-		"window_to":    to.Format(time.RFC3339),
+		"queries":                    queries,
+		"pg_stat_statements_enabled": true,
+		"stats_source":               "timescale_delta",
+		"stats_note":                 "Aggregated from pg_stat_statements deltas (pgss_delta_1m).",
+		"window_from":                from.Format(time.RFC3339),
+		"window_to":                  to.Format(time.RFC3339),
 	})
 }
 
@@ -1089,7 +1160,7 @@ func (h *PostgresHandlers) PgssTop(w http.ResponseWriter, r *http.Request) {
 			PctDBTime: q.PctDBTime, Calls: q.Calls, AvgMs: q.AvgMs,
 			RowsPerCall: q.RowsPerCall, HitPct: q.HitPct, TempMB: q.TempMB,
 			WalMB: q.WalMB, ReadsPerCall: q.ReadsPerCall, PlanRatio: q.PlanRatio,
-			Flags: q.Flags,
+			Flags: q.Flags, CapturedAt: q.CapturedAt,
 		})
 	}
 	_ = json.NewEncoder(w).Encode(resp)
@@ -1212,4 +1283,50 @@ func (h *PostgresHandlers) PgssUserBreakdown(w http.ResponseWriter, r *http.Requ
 		})
 	}
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *PostgresHandlers) WaitSummary(w http.ResponseWriter, r *http.Request) {
+	sid, ok := h.parseID(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+	limit := 100
+	rows, err := h.metricsSvc.GetTimescaleDBLogger().GetPostgresWaitEventsHistory(r.Context(), sid, from, to, limit)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []interface{}{}})
+		return
+	}
+
+	type summaryRow struct {
+		WaitEventType string  `json:"wait_event_type"`
+		WaitEvent     string  `json:"wait_event"`
+		AvgSessions   float64 `json:"avg_sessions"`
+	}
+
+	detailed := make(map[string]float64)
+	distinctTimestamps := make(map[time.Time]bool)
+	for _, r := range rows {
+		key := r.WaitEventType + ":" + r.WaitEvent
+		detailed[key] += float64(r.SessionsCount)
+		distinctTimestamps[r.Timestamp] = true
+	}
+
+	count := len(distinctTimestamps)
+	var data []summaryRow
+	if count > 0 {
+		for k, v := range detailed {
+			parts := strings.Split(k, ":")
+			data = append(data, summaryRow{
+				WaitEventType: parts[0],
+				WaitEvent:     parts[1],
+				AvgSessions:   v / float64(count),
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": data})
 }

@@ -156,14 +156,15 @@ func (tl *TimescaleLogger) LogSQLServerJobMetrics(ctx context.Context, serverID 
 	timestamp := time.Now().UTC()
 
 	_, err := tl.pool.Exec(ctx, `
-		INSERT INTO sqlserver_job_metrics (capture_timestamp, server_id, total_jobs, enabled_jobs, disabled_jobs, running_jobs, failed_jobs_24h, error_message)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		INSERT INTO sqlserver_job_metrics (capture_timestamp, server_id, total_jobs, enabled_jobs, disabled_jobs, running_jobs, failed_jobs_24h, critical_jobs_disabled, error_message)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		timestamp, serverID,
 		getInt(jobMetrics, "total_jobs"),
 		getInt(jobMetrics, "enabled_jobs"),
 		getInt(jobMetrics, "disabled_jobs"),
 		getInt(jobMetrics, "running_jobs"),
 		getInt(jobMetrics, "failed_jobs_24h"),
+		getInt(jobMetrics, "critical_jobs_disabled"),
 		getStr(jobMetrics, "error_message"))
 	return err
 }

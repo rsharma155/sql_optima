@@ -10,7 +10,6 @@ package service
 import (
 	"log/slog"
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"sync"
@@ -58,7 +57,6 @@ type MetricsService struct {
 	tsLogger            *hot.TimescaleLogger
 	tsHotStorage        *hot.HotStorage
 	FetchInterval       time.Duration
-	xeDb                *sql.DB
 	PgSnapshotCollector      *collectors.PgSnapshotCollector
 	PgComprehensiveCollector *collectors.PgComprehensiveCollector
 	waitDMVCollector         *sqlserver.WaitStatsDMVCollector
@@ -213,14 +211,23 @@ func (s *MetricsService) GetPgDashboardV2(ctx context.Context, serverID uuid.UUI
 	}
 
 	var slowQueries []models.PgSession
-	return map[string]interface{}{
+	res := map[string]interface{}{
 		"snapshot": snapshot,
 		"incidents": map[string]interface{}{
 			"blocking_sessions": blocking,
 			"slow_queries":      slowQueries,
 		},
 		"timestamp": time.Now().UTC(),
-	}, nil
+	}
+
+	if s.PgObservabilityRepo != nil {
+		from := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+		to := time.Now().Format(time.RFC3339)
+		res["load_trend"], _ = s.PgObservabilityRepo.GetLoadTrend(ctx, serverID, from, to)
+		res["wait_trend"], _ = s.PgObservabilityRepo.GetWaitCategoryTrend(ctx, serverID, from, to)
+	}
+
+	return res, nil
 }
 
 func (s *MetricsService) GetTimescalePostgresDatabases(ctx context.Context, serverID uuid.UUID) ([]string, error) {
@@ -670,12 +677,12 @@ func (s *MetricsService) getEngine(serverID uuid.UUID) string {
 	return "sqlserver"
 }
 
-func (s *MetricsService) TimescaleStorageIndexHealthIndexUsage(ctx context.Context, serverID uuid.UUID, from, to string) (interface{}, error) {
+func (s *MetricsService) TimescaleStorageIndexHealthIndexUsage(ctx context.Context, serverID uuid.UUID, from, to, db, schema, table string) (interface{}, error) {
 	if s.tsLogger == nil {
 		return map[string]interface{}{"points": []models.IndexUsageStat{}}, nil
 	}
 	engine := s.getEngine(serverID)
-	stats, err := s.tsLogger.QueryStorageIndexHealthIndexUsage(ctx, engine, serverID.String(), from, to, 100)
+	stats, err := s.tsLogger.QueryStorageIndexHealthIndexUsage(ctx, engine, serverID.String(), from, to, db, schema, table, 100)
 	if stats == nil {
 		stats = []models.IndexUsageStat{}
 	}
@@ -740,6 +747,14 @@ func (s *MetricsService) GetPgssStatus(ctx context.Context, serverID uuid.UUID) 
 	}
 
 	enabled := s.PgRepo.GetPgssSupported(instanceName)
+	if !enabled {
+		// Cache may be stale (e.g. set before the extension was installed, or due to a
+		// startup race). Do a live probe so the status page always reflects reality.
+		s.PgRepo.RefreshPgssStatus(ctx, instanceName)
+		enabled = s.PgRepo.GetPgssSupported(instanceName)
+	}
+	preloadActive := s.PgRepo.GetPgssSharedPreload(instanceName)
+	extInstalled := s.PgRepo.GetPgssExtensionInstalled(instanceName)
 
 	sid := uuid.Nil
 	for _, inst := range s.Config.Instances {
@@ -749,18 +764,35 @@ func (s *MetricsService) GetPgssStatus(ctx context.Context, serverID uuid.UUID) 
 		}
 	}
 	hasData := enabled && s.tsLogger != nil && s.tsLogger.GetPgssHasData(ctx, sid)
+	rawSnapshots := 0
+	if enabled && s.tsLogger != nil {
+		rawSnapshots = s.tsLogger.GetPgssRawSnapshotCount(ctx, sid)
+	}
 
 	msg := ""
-	if enabled && !hasData {
-		msg = "pg_stat_statements is enabled. Query data collection is in progress — charts will appear within 2–3 minutes."
+	if !enabled {
+		if preloadActive && !extInstalled {
+			msg = "pg_stat_statements is loaded in shared_preload_libraries, but the extension is not created in this database. Run 'CREATE EXTENSION pg_stat_statements;' to enable collection."
+		} else {
+			msg = "pg_stat_statements is not enabled — add it to shared_preload_libraries and restart PostgreSQL."
+		}
+	} else if !hasData {
+		if rawSnapshots == 0 {
+			msg = "pg_stat_statements is enabled. Query data collection is in progress — charts will appear within 2–3 minutes."
+		} else {
+			msg = fmt.Sprintf("pg_stat_statements is enabled and %d raw snapshots collected. Delta computation is in progress — charts will appear shortly.", rawSnapshots)
+		}
 	}
 
 	return map[string]interface{}{
-		"ready":    enabled && hasData,
-		"enabled":  enabled,
-		"has_data": hasData,
-		"message":  msg,
-		"version":  s.PgRepo.GetPgVersion(ctx, instanceName),
+		"ready":                 enabled && hasData,
+		"enabled":               enabled,
+		"shared_preload_active": preloadActive,
+		"extension_installed":   extInstalled,
+		"has_data":              hasData,
+		"raw_snapshots":         rawSnapshots,
+		"message":               msg,
+		"version":               s.PgRepo.GetPgVersion(ctx, instanceName),
 	}, nil
 }
 
@@ -907,19 +939,44 @@ func (s *MetricsService) GetLatestSqlServerHealthKPIs(ctx context.Context, serve
 	return kpis, uptime, nil
 }
 
-func (s *MetricsService) GetSqlServerPerformanceDebt(ctx context.Context, serverID uuid.UUID, lookbackHours int, database string) ([]map[string]interface{}, error) {
+func (s *MetricsService) GetSqlServerPerformanceDebt(ctx context.Context, serverID uuid.UUID, lookbackHours int, database string) (models.PerformanceDebtResponse, error) {
 	if s.tsLogger == nil {
-		return []map[string]interface{}{}, nil
+		return models.PerformanceDebtResponse{Findings: []map[string]interface{}{}}, nil
 	}
 	lookback := time.Duration(lookbackHours) * time.Hour
 	results, err := s.tsLogger.GetPerformanceDebtFindings(ctx, serverID, lookback, database)
 	if err != nil {
-		return []map[string]interface{}{}, err
+		return models.PerformanceDebtResponse{Findings: []map[string]interface{}{}}, err
 	}
 	if results == nil {
 		results = []map[string]interface{}{}
 	}
-	return results, nil
+
+	var summary models.PerformanceDebtSummary
+	summary.TotalFindings = len(results)
+	for _, f := range results {
+		sev, _ := f["severity"].(string)
+		switch strings.ToUpper(sev) {
+		case "CRITICAL":
+			summary.CriticalFindings++
+		case "WARNING":
+			summary.WarningFindings++
+		case "INFO":
+			summary.InfoFindings++
+		}
+	}
+
+	summary.Tooltips = map[string]string{
+		"total_findings":    "Total number of performance debt findings identified for this instance.",
+		"critical_findings": "High-impact issues that should be addressed immediately (e.g., extremely fragmented indexes, disabled autogrowth).",
+		"warning_findings":  "Moderate issues that may degrade performance over time (e.g., missing indexes with high impact, stale statistics).",
+		"info_findings":     "Informational findings and best practices (e.g., unused indexes with low write volume).",
+	}
+
+	return models.PerformanceDebtResponse{
+		Findings: results,
+		Summary:  summary,
+	}, nil
 }
 
 func (s *MetricsService) GetSqlServerMemoryDrilldown(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {
@@ -1310,6 +1367,16 @@ func (s *MetricsService) GetSQLServerHealthV2(ctx context.Context, serverID uuid
 		res.Throughput = tp
 	}
 
+	res.Tooltips = map[string]string{
+		"sql_cpu_pct":            "The percentage of CPU resources currently utilized by the SQL Server process itself.",
+		"runnable_tasks":         "The number of tasks waiting for a CPU. High values indicate CPU pressure.",
+		"mem_grants_pending":     "Queries waiting for memory to execute. Non-zero values indicate severe memory bottlenecks.",
+		"data_cache_life_sec":    "Average time (in seconds) a data page stays in memory. Higher is better; low values indicate memory churning.",
+		"memory_utilization_pct": "How much of the 'Target Server Memory' SQL Server has actually committed.",
+		"storage_minimum_free_pct": "The percentage of free space on your most full disk volume.",
+		"volumes_tracked":        "Total number of unique disk volumes hosting database files for this instance.",
+	}
+
 	return res, nil
 }
 
@@ -1465,7 +1532,25 @@ func (s *MetricsService) GetPgBlockingIncidentsList(ctx context.Context, serverI
 	return s.tsLogger.GetPgBlockingIncidentsRange(ctx, serverID, from, to)
 }
 
-func (s *MetricsService) getServerName(serverID uuid.UUID) string {
+func (s *MetricsService) GetSqlServerVitals(ctx context.Context, serverID uuid.UUID) (map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return nil, fmt.Errorf("storage not available")
+	}
+	mem, err := s.tsLogger.GetLatestSQLServerMemoryMetrics(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	vols, err := s.tsLogger.GetLatestSQLServerVolumeStats(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"memory":  mem,
+		"volumes": vols,
+	}, nil
+}
+
+func (s *MetricsService) GetServerName(serverID uuid.UUID) string {
 	for _, inst := range s.Config.Instances {
 		if inst.ServerID == serverID {
 			return inst.Name
@@ -1541,6 +1626,55 @@ func (s *MetricsService) GetPostgresReplicationLagTrend(ctx context.Context, ser
 		return map[string]hot.PostgresReplicationLagSeries{}, nil
 	}
 	return s.tsLogger.GetPostgresReplicationLagDetail(ctx, serverID, from, to, limit)
+}
+
+func (s *MetricsService) GetPostgresReplicationLagHistory(ctx context.Context, serverID uuid.UUID, from, to string, limit int) ([]map[string]interface{}, error) {
+	if s.tsLogger == nil {
+		return []map[string]interface{}{}, nil
+	}
+	return s.tsLogger.GetPostgresReplicationLagHistory(ctx, serverID, from, to, limit)
+}
+
+func (s *MetricsService) GetPostgresReplicationStatus(ctx context.Context, serverID uuid.UUID) (*models.PgReplicationStats, error) {
+	instanceName := ""
+	for _, inst := range s.Config.Instances {
+		if inst.ServerID == serverID {
+			instanceName = inst.Name
+			break
+		}
+	}
+	if instanceName == "" {
+		return nil, fmt.Errorf("instance not found: %s", serverID)
+	}
+
+	stats, err := s.PgRepo.GetReplicationStats(ctx, instanceName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich with latest historical stats if available
+	if s.tsLogger != nil {
+		latest, err := s.tsLogger.GetLatestPostgresControlCenterStats(ctx, serverID)
+		if err == nil && latest != nil {
+			if stats.WalGenRateMBps == 0 {
+				stats.WalGenRateMBps = latest.WALMBPerMin / 60.0 // convert MB/min to MB/s
+			}
+		}
+		// If BgWriterEffPct is still 0, try to get it from bgwriter history
+		if stats.BgWriterEffPct == 0 {
+			bgHistory, err := s.tsLogger.GetPostgresBGWriterHistory(ctx, serverID, time.Now().Add(-1*time.Hour), time.Now(), 1)
+			if err == nil && len(bgHistory) > 0 {
+				h := bgHistory[0]
+				bb, _ := h["buffers_backend"].(int64)
+				mc, _ := h["maxwritten_clean"].(int64)
+				if (bb + mc) > 0 {
+					stats.BgWriterEffPct = float64(bb) / float64(bb+mc) * 100
+				}
+			}
+		}
+	}
+
+	return stats, nil
 }
 func (s *MetricsService) GetSqlServerOverview(serverID uuid.UUID) interface{} {
 	return nil

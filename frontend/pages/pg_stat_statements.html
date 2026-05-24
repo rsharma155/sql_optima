@@ -10,24 +10,30 @@
 <!-- pg_stat_statements Dashboard — Enhanced Query Performance Analytics -->
 <div class="page-view active dashboard-sky-theme">
   <div class="page-title flex-between dashboard-page-title-compact">
-    <div class="dashboard-title-line">
-      <h1><i class="fa-solid fa-chart-line"></i> Postgres Query Performance <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Query Performance" title="Learn more about this dashboard"></i></h1>
-      <span class="subtitle" id="pgss-instance-label"></span>
+    <div class="dashboard-title-line pgss-title-left">
+      <h1><i class="fa-solid fa-chart-line"></i> Postgres Query Performance <i class="fa-solid fa-circle-info text-accent info-icon-clickable cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Query Performance" title="Learn more about this dashboard"></i></h1>      <span class="subtitle" id="pgss-instance-label"></span>
+      <span id="pgss-status-banner" class="pgss-title-status" style="display:none;">
+        <i class="fa-solid fa-circle-info"></i>
+        <span id="pgss-status-msg"></span>
+      </span>
     </div>
-    <div class="flex-row gap-2">
+    <div class="flex-row gap-2" style="align-items:center;">
+      <div class="pgss-title-timerange">
+        <span class="pgss-tr-label">From</span>
+        <input type="datetime-local" id="pgss-from" class="form-control form-control-sm pgss-tr-input"/>
+        <span class="pgss-tr-label">To</span>
+        <input type="datetime-local" id="pgss-to" class="form-control form-control-sm pgss-tr-input"/>
+        <button class="btn btn-sm btn-primary pgss-tr-apply-btn" id="pgss-header-apply">
+          <i class="fa-solid fa-filter"></i> Apply
+        </button>
+        <button class="btn btn-sm btn-outline" data-action="call" data-fn="PgStatStatementsView" title="Refresh" style="padding:4px 8px;">
+          <i class="fa-solid fa-rotate"></i>
+        </button>
+      </div>
       <button class="btn btn-secondary btn-sm" data-action="navigate-back" title="Back to Control Center">
           <i class="fa-solid fa-arrow-left"></i> Back
       </button>
-      <button class="btn btn-sm btn-outline" data-action="call" data-fn="PgStatStatementsView">
-        <i class="fa-solid fa-arrows-rotate"></i> Refresh
-      </button>
     </div>
-  </div>
-
-  <!-- Status banner -->
-  <div id="pgss-status-banner" class="alert alert-warning mt-2" style="display:none;">
-    <i class="fa-solid fa-exclamation-triangle"></i>
-    <span id="pgss-status-msg"></span>
   </div>
 
   <!-- KPI Strip -->
@@ -45,11 +51,11 @@
       <div class="metric-value" id="pgss-kpi-cache-val">—</div>
     </div>
     <div class="glass-panel metric-card-compact h-kpi" id="pgss-kpi-load">
-      <div class="metric-label">Query Load <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Query Performance" data-metric="QPS"></i></div>
+      <div class="metric-label">Query Load <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Query Performance" data-metric="Query Load"></i></div>
       <div class="metric-value" id="pgss-kpi-load-val">—</div>
     </div>
     <div class="glass-panel metric-card-compact h-kpi" id="pgss-kpi-wal">
-      <div class="metric-label">WAL MB/s <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Replica Lag"></i></div>
+      <div class="metric-label">WAL MB/s <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Query Performance" data-metric="WAL Generation"></i></div>
       <div class="metric-value" id="pgss-kpi-wal-val">—</div>
     </div>
     <div class="glass-panel metric-card-compact h-kpi" id="pgss-kpi-temp">
@@ -62,16 +68,8 @@
     </div>
   </div>
 
-  <!-- Time range + Filter bar -->
+  <!-- Filter bar -->
   <div class="pgss-filter-bar">
-    <div class="filter-group">
-      <label>From</label>
-      <input type="datetime-local" id="pgss-from" class="form-control form-control-sm"/>
-    </div>
-    <div class="filter-group">
-      <label>To</label>
-      <input type="datetime-local" id="pgss-to" class="form-control form-control-sm"/>
-    </div>
     <div class="filter-group">
       <label>Database</label>
       <select id="pgss-filter-db"><option value="">All databases</option></select>
@@ -103,7 +101,7 @@
       </label>
     </div>
     <div class="pgss-filter-actions">
-      <button class="btn btn-sm btn-primary" id="pgss-filter-apply">
+      <button class="btn btn-primary pgss-filter-apply-compact" id="pgss-filter-apply">
         <i class="fa-solid fa-filter"></i> Apply
       </button>
       <button class="btn btn-sm btn-secondary" id="pgss-filter-reset">
@@ -115,15 +113,15 @@
   <!-- Row 1: Workload overview charts (3 panels) -->
   <div class="charts-grid mt-3" style="grid-template-columns:1fr 1fr 1fr;">
     <div class="chart-card glass-panel pgss-chart-card">
-      <h6>Query Load (ms/sec)</h6>
+      <h6>Query Load (ms/sec) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Query Performance" data-metric="Query Load"></i></h6>
       <div class="chart-container"><canvas id="pgss-chart-load"></canvas></div>
     </div>
     <div class="chart-card glass-panel">
-      <h6>Queries/sec &amp; Rows/sec</h6>
+      <h6>Queries/sec &amp; Rows/sec <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Query Performance" data-metric="QPS"></i></h6>
       <div class="chart-container"><canvas id="pgss-chart-qps"></canvas></div>
     </div>
     <div class="chart-card glass-panel">
-      <h6>Cache Hit Ratio %</h6>
+      <h6>Cache Hit Ratio % <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Control Center" data-metric="Cache Hit Ratio"></i></h6>
       <div class="chart-container"><canvas id="pgss-chart-cache"></canvas></div>
     </div>
   </div>
@@ -131,15 +129,15 @@
   <!-- Row 2: Latency + WAL + Planning/Exec split -->
   <div class="charts-grid mt-3" style="grid-template-columns:1fr 1fr 1fr;">
     <div class="chart-card glass-panel">
-      <h6>Latency Percentiles</h6>
+      <h6>Latency Percentiles <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Query Performance" data-metric="Latency Percentiles"></i></h6>
       <div class="chart-container"><canvas id="pgss-chart-latency"></canvas></div>
     </div>
     <div class="chart-card glass-panel">
-      <h6>WAL Bytes/sec</h6>
+      <h6>WAL Bytes/sec <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Query Performance" data-metric="WAL Generation"></i></h6>
       <div class="chart-container"><canvas id="pgss-chart-wal"></canvas></div>
     </div>
     <div class="chart-card glass-panel">
-      <h6>Exec vs Plan Time %</h6>
+      <h6>Exec vs Plan Time % <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Query Performance" data-metric="Latency Percentiles"></i></h6>
       <div class="chart-container"><canvas id="pgss-chart-execplan"></canvas></div>
     </div>
   </div>
@@ -150,7 +148,7 @@
     <div class="flex-between mb-0" style="padding-bottom:0.5rem; border-bottom: 2px solid var(--border, rgba(255,255,255,0.1));">
       <div class="pgss-tabs" style="border-bottom:none;">
         <button class="pgss-tab-btn active" data-pgss-tab="top-queries">
-          <i class="fa-solid fa-ranking-star"></i> Top Queries
+          <i class="fa-solid fa-ranking-star"></i> Top Queries <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Query Performance" data-metric="Top Queries Table"></i>
         </button>
         <button class="pgss-tab-btn" data-pgss-tab="by-database">
           <i class="fa-solid fa-database"></i> By Database
@@ -163,16 +161,16 @@
 
     <!-- Tab: Top Queries -->
     <div class="pgss-tab-panel active" id="pgss-panel-top-queries">
-      <div class="flex-between mt-2 mb-2">
+      <div class="pgss-tq-toolbar">
         <input type="text" id="pgss-inline-search" class="pgss-inline-search"
                placeholder="Filter query text..." autocomplete="off"/>
-        <span class="c-dim" id="pgss-row-count"></span>
+        <span class="pgss-row-count" id="pgss-row-count"></span>
       </div>
-      <div class="pgss-table-scroll">
+      <div class="pgss-table-scroll pgss-table-resizable">
         <table class="pgss-grid" id="pgss-top-table">
           <colgroup>
             <col style="width:32px">
-            <col style="width:58px">
+            <col style="width:130px">
             <col style="width:68px">
             <col style="width:300px">
             <col style="width:90px">
@@ -189,7 +187,7 @@
           <thead>
             <tr>
               <th class="c-rownum">#</th>
-              <th class="ctr">Flags</th>
+              <th class="ctr"><i class="fa-regular fa-clock" style="margin-right:3px;opacity:0.7;"></i>Captured</th>
               <th class="ctr">Type</th>
               <th>Query <span class="c-dim" style="font-size:0.62rem;font-weight:400;text-transform:none;letter-spacing:0;">(click row)</span></th>
               <th>Database</th>
@@ -207,7 +205,7 @@
           <tbody id="pgss-top-tbody"></tbody>
         </table>
       </div>
-      <div class="flex-row gap-2 mt-2" id="pgss-pagination" style="justify-content:center;"></div>
+      <div class="pgss-pagination-bar" id="pgss-pagination"></div>
     </div>
 
     <!-- Tab: By Database -->
@@ -273,7 +271,7 @@
 
   <!-- Regressions panel -->
   <div class="table-card glass-panel mt-3">
-    <h6><i class="fa-solid fa-arrow-trend-up text-danger"></i> Query Regressions (last 30 min vs previous 30 min)</h6>
+    <h6><i class="fa-solid fa-arrow-trend-up text-danger"></i> Query Regressions (last 30 min vs previous 30 min) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Query Performance" data-metric="Query Regressions"></i></h6>
     <div class="table-responsive">
       <table class="data-table pgss-regression-table" id="pgss-regression-table">
         <thead>

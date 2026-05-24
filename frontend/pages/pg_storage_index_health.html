@@ -14,23 +14,23 @@
         <div class="dashboard-title-line" style="flex:1; min-width:0; display: flex; align-items: center; gap: 1rem;">
             <div id="sihHealthScoreContainer" style="width: 50px; height: 50px;"></div>
             <div>
-                <h1><i class="fa-solid fa-boxes-stacked text-accent"></i> PostgreSQL Index & Table Health <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Storage & Maintenance" title="Learn more about this dashboard"></i></h1>
-                <p class="subtitle">Instance: ${inst.name} | PostgreSQL Advanced Storage Observability</p>
+                <h1><i class="fa-solid fa-boxes-stacked text-accent"></i> PostgreSQL Index & Table Health <i class="fa-solid fa-circle-info text-accent info-icon-clickable cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Storage & Maintenance" title="Learn more about this dashboard"></i></h1>                <p class="subtitle">Instance: ${inst.name} | PostgreSQL Advanced Storage Observability</p>
             </div>
         </div>
         <div class="flex-between dashboard-page-title-actions" style="align-items:center; gap:0.6rem; flex-wrap:wrap; justify-content:flex-end;">
-            <button class="btn btn-sm btn-outline text-accent" id="sihRefresh"><i class="fa-solid fa-refresh"></i> Refresh</button>
+            <div class="glass-panel" style="padding:0.2rem 0.5rem;display:flex;align-items:center;gap:0.4rem;font-size:0.7rem;border:1px solid var(--border-color);flex-wrap:nowrap;">
+                <label class="text-muted" style="margin:0;font-weight:600;text-transform:uppercase;font-size:0.6rem;">From</label>
+                <input type="datetime-local" id="sihFrom" style="background:transparent;border:none;color:inherit;font-size:0.7rem;width:9.5rem;padding:0;" />
+                <label class="text-muted" style="margin:0;font-weight:600;text-transform:uppercase;font-size:0.6rem;">To</label>
+                <input type="datetime-local" id="sihTo" style="background:transparent;border:none;color:inherit;font-size:0.7rem;width:9.5rem;padding:0;" />
+                <button id="sihApply" class="btn btn-xs btn-accent" style="padding:2px 8px;min-width:auto;" title="Apply Range">Apply</button>
+                <button class="btn btn-xs btn-outline" id="sihRefresh" style="padding:2px 6px;min-width:auto;" title="Refresh"><i class="fa-solid fa-rotate"></i></button>
+            </div>
         </div>
     </div>
 
     <!-- STICKY FILTER BAR -->
     <div id="sihFilterBar" class="glass-panel mb-3" style="position:sticky; top:0; z-index:100; padding: 0.4rem 0.75rem; display: flex; align-items: center; gap: 0.75rem; font-size: 0.75rem; border: 1px solid var(--border-color); flex-wrap: wrap;">
-        <div style="display: flex; align-items: center; gap: 0.4rem;">
-            <label class="text-muted" style="margin:0; font-weight:600; text-transform:uppercase; font-size:0.6rem;">From</label>
-            <input type="datetime-local" id="sihFrom" style="background:transparent; border:1px solid var(--border-color); border-radius:4px; color:var(--text); font-size:0.7rem; padding: 2px 4px;" />
-            <label class="text-muted" style="margin:0; font-weight:600; text-transform:uppercase; font-size:0.6rem;">To</label>
-            <input type="datetime-local" id="sihTo" style="background:transparent; border:1px solid var(--border-color); border-radius:4px; color:var(--text); font-size:0.7rem; padding: 2px 4px;" />
-        </div>
         <div style="display:flex; gap:0.25rem;">
             <button class="btn btn-xs btn-outline sih-preset" data-h="1">1h</button>
             <button class="btn btn-xs btn-outline sih-preset" data-h="6">6h</button>
@@ -46,47 +46,46 @@
             <label class="text-muted" style="margin:0;">Table:</label>
             <select id="sihTable" style="background:transparent; border:1px solid var(--border-color); border-radius:4px; color:var(--text); font-size:0.7rem; max-width:140px;"><option value="all">All</option></select>
         </div>
-        <button type="button" class="btn btn-xs btn-accent" id="sihApply" style="margin-left:auto;">Apply</button>
     </div>
 
     <!-- KPI Strip: all 8 metrics in a single scrollable row -->
     <div style="display:flex; flex-wrap:nowrap; gap:0.5rem; margin-bottom:0.75rem; overflow-x:auto; padding-bottom:4px;">
         <div class="metric-card glass-panel sih-kpi-card" id="cardTotalSize" style="flex:1 0 110px;">
-            <div class="text-muted sih-kpi-label">DB Size</div>
+            <div class="text-muted sih-kpi-label">DB Size <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="DB Size"></i></div>
             <div id="kpiTotalSize" class="sih-kpi-value">--</div>
             <div id="deltaTotalSize" class="sih-kpi-delta"></div>
             <div class="sih-sparkline-wrap"><canvas id="sparkTotalSize"></canvas></div>
         </div>
         <div class="metric-card glass-panel sih-kpi-card" id="cardGrowth7d" style="flex:1 0 110px;">
-            <div class="text-muted sih-kpi-label">7d Growth</div>
+            <div class="text-muted sih-kpi-label">7d Growth <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="7-Day Growth (%)"></i></div>
             <div id="kpiGrowth7d" class="sih-kpi-value">--</div>
             <div id="deltaGrowth7d" class="sih-kpi-delta"></div>
             <div class="sih-sparkline-wrap"><canvas id="sparkGrowth7d"></canvas></div>
         </div>
         <div class="metric-card glass-panel sih-kpi-card" id="cardForecast90d" style="flex:1 0 110px;">
-            <div class="text-muted sih-kpi-label">90d Forecast</div>
+            <div class="text-muted sih-kpi-label">90d Forecast <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="90d Forecast"></i></div>
             <div id="kpiForecast90d" class="sih-kpi-value">--</div>
             <div id="deltaForecast90d" class="sih-kpi-delta"></div>
         </div>
         <div class="metric-card glass-panel sih-kpi-card" id="cardWriteOverhead" style="flex:1 0 110px;">
-            <div class="text-muted sih-kpi-label">Write Overhead %</div>
+            <div class="text-muted sih-kpi-label">Write Overhead % <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="Write Overhead"></i></div>
             <div id="kpiWriteOverhead" class="sih-kpi-value">--</div>
             <div id="deltaWriteOverhead" class="sih-kpi-delta"></div>
         </div>
         <div class="metric-card glass-panel sih-kpi-card" id="cardUnusedCount" style="flex:1 0 110px;">
-            <div class="text-muted sih-kpi-label">Unused Indexes</div>
+            <div class="text-muted sih-kpi-label">Unused Indexes <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="Unused Indexes"></i></div>
             <div id="kpiUnusedCount" class="sih-kpi-value">--</div>
         </div>
         <div class="metric-card glass-panel sih-kpi-card" id="cardUnusedMB" style="flex:1 0 110px;">
-            <div class="text-muted sih-kpi-label">Reclaimable MB</div>
+            <div class="text-muted sih-kpi-label">Reclaimable MB <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="Unused Indexes"></i></div>
             <div id="kpiUnusedMB" class="sih-kpi-value">--</div>
         </div>
         <div class="metric-card glass-panel sih-kpi-card" id="cardHighScan" style="flex:1 0 110px;">
-            <div class="text-muted sih-kpi-label">High Scan Tables</div>
+            <div class="text-muted sih-kpi-label">High Scan Tables <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="Seq Scan Tables"></i></div>
             <div id="kpiHighScan" class="sih-kpi-value">--</div>
         </div>
         <div class="metric-card glass-panel sih-kpi-card" id="cardDailyGrowth" style="flex:1 0 110px;">
-            <div class="text-muted sih-kpi-label">Daily Growth MB</div>
+            <div class="text-muted sih-kpi-label">Daily Growth MB <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="7-Day Growth (%)"></i></div>
             <div id="kpiDailyGrowth" class="sih-kpi-value">--</div>
         </div>
     </div>
@@ -109,15 +108,15 @@
 
     <div id="sihDashboardBody">
         <div class="charts-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
-            <div class="chart-card glass-panel" style="height:320px; padding:0.75rem;"><div class="card-header"><h3>Storage Growth History</h3></div><div class="chart-container" style="height:270px;"><canvas id="chartGrowth"></canvas></div></div>
-            <div class="chart-card glass-panel" style="height:320px; padding:0.75rem;"><div class="card-header flex-between"><h3>Top Growing Tables (7d)</h3><div class="btn-group"><button class="btn btn-xs btn-accent" id="btnGrowthAbs">MB</button><button class="btn btn-xs btn-outline" id="btnGrowthPct">%</button></div></div><div class="chart-container" style="height:270px;"><canvas id="chartTopGrowth"></canvas></div></div>
+            <div class="chart-card glass-panel" style="height:320px; padding:0.75rem;"><div class="card-header"><h3>Storage Growth History <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="Storage Growth"></i></h3></div><div class="chart-container" style="height:270px;"><canvas id="chartGrowth"></canvas></div></div>
+            <div class="chart-card glass-panel" style="height:320px; padding:0.75rem;"><div class="card-header flex-between"><h3>Top Growing Tables (7d) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="7-Day Growth (%)"></i></h3><div class="btn-group"><button class="btn btn-xs btn-accent" id="btnGrowthAbs">MB</button><button class="btn btn-xs btn-outline" id="btnGrowthPct">%</button></div></div><div class="chart-container" style="height:270px;"><canvas id="chartTopGrowth"></canvas></div></div>
         </div>
 
         <div class="chart-card glass-panel mt-3" style="padding:0.75rem;">
             <div class="card-header flex-between">
                 <h3 style="font-size:0.85rem; margin:0;">
                     <i class="fa-solid fa-magnifying-glass-chart text-accent"></i>
-                    Access Pattern — Index vs Sequential Scans (Top 10)
+                    Access Pattern — Index vs Sequential Scans (Top 10) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="Access Pattern"></i>
                 </h3>
             </div>
             <div style="height:280px;"><canvas id="chartSeekScanLookup"></canvas></div>
@@ -127,7 +126,7 @@
             <!-- Largest Tables -->
             <div class="table-card glass-panel">
                 <div class="card-header flex-between">
-                    <h3 style="font-size:0.85rem; margin:0;">Largest Tables Diagnostic</h3>
+                    <h3 style="font-size:0.85rem; margin:0;">Largest Tables Diagnostic <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="Largest Tables"></i></h3>
                 </div>
                 <div class="table-responsive">
                     <table class="data-table" style="font-size:0.72rem;" id="largestTablesTable">
@@ -145,7 +144,7 @@
             </div>
             <!-- Largest Indexes -->
             <div class="table-card glass-panel">
-                <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Largest Indexes</h3></div>
+                <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">Largest Indexes <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="Largest Tables"></i></h3></div>
                 <div class="table-responsive">
                     <table class="data-table" style="font-size:0.72rem;">
                         <thead><tr><th>Index</th><th class="text-right">MB</th><th class="text-right">% Tbl</th></tr></thead>
@@ -159,7 +158,7 @@
             <!-- High Scan Tables -->
             <div class="table-card glass-panel">
                 <div class="card-header"><h3 style="font-size:0.85rem; margin:0;">
-                    <i class="fa-solid fa-bolt text-warning"></i> Seq Scan Dominant Tables
+                    <i class="fa-solid fa-bolt text-warning"></i> Seq Scan Dominant Tables <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="Seq Scan Tables"></i>
                 </h3></div>
                 <div class="table-responsive">
                     <table class="data-table" style="font-size:0.72rem;">
@@ -171,7 +170,7 @@
             <!-- Index Efficiency -->
             <div class="table-card glass-panel">
                 <div class="card-header flex-between">
-                    <h3 style="font-size:0.85rem; margin:0;">Index Efficiency</h3>
+                    <h3 style="font-size:0.85rem; margin:0;">Index Efficiency <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="Index Efficiency"></i></h3>
                     <button class="btn btn-xs btn-outline" id="btnCopyAllRecs">
                         <i class="fa-solid fa-copy"></i> Copy All
                     </button>
@@ -188,7 +187,7 @@
         <div class="glass-panel mt-3" style="border:1px solid var(--border-color);">
             <div class="card-header flex-between" style="cursor:pointer; padding: 0.75rem;" id="dupIdxToggle">
                 <h3 style="font-size:0.85rem; margin:0;">
-                    <i class="fa-solid fa-clone text-warning"></i> Duplicate Index Candidates
+                    <i class="fa-solid fa-clone text-warning"></i> Duplicate Index Candidates <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Storage & Maintenance" data-metric="Unused Indexes"></i>
                     <span id="dupIdxCount" class="badge badge-warning ml-2">0</span>
                 </h3>
                 <i class="fa-solid fa-chevron-down" id="dupIdxChevron"></i>

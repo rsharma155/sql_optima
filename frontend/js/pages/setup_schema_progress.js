@@ -84,7 +84,7 @@ var steps = [
             database: draft.database,
             username: draft.username,
             password: draft.password,
-            ssl_mode: draft.ssl_mode || 'require',
+            ssl_mode: draft.ssl_mode || 'disable',
             use_vault: !!draft.use_vault,
             vault_secret_path: draft.vault_secret_path || ''
         };

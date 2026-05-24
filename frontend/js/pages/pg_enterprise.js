@@ -467,44 +467,93 @@ function loadQueryInternals(instanceName, from, to) {
                 return;
             }
 
-            // Sort by total execution time (highest impact first)
-            const top = qs.sort((a, b) => (b.total_time || 0) - (a.total_time || 0)).slice(0, 15);
-            window.appState.pgInternalQueries = top.map(q => q.query);
+            // Save to state for sorting
+            window.appState.pgInternalQueriesRaw = qs;
+            window.appState.pgIntSortCol = window.appState.pgIntSortCol || 'total_time';
+            window.appState.pgIntSortDir = window.appState.pgIntSortDir || 'desc';
 
             section.innerHTML = `
-                <div class="table-container-compact" style="max-height:280px; overflow-y:auto;">
-                    <table class="modern-table modern-table-compact" style="font-size:0.7rem;">
+                <div class="table-container-compact" style="max-height:380px; overflow-y:auto;">
+                    <table class="modern-table modern-table-compact" style="font-size:0.7rem;" id="pgInternalQueriesTable">
                         <thead>
                             <tr>
-                                <th>User</th>
-                                <th title="Number of executions in window">Calls</th>
-                                <th title="Total execution time (ms)">Total ms</th>
-                                <th title="Average execution time per call">Avg ms</th>
-                                <th title="Temporary disk blocks written — high values indicate work_mem pressure">Temp Writes</th>
+                                <th class="sortable" data-col="username">User</th>
+                                <th class="sortable" data-col="calls" title="Number of executions in window">Calls</th>
+                                <th class="sortable" data-col="total_time" title="Total execution time (ms)">Total ms</th>
+                                <th class="sortable" data-col="mean_time" title="Average execution time per call">Avg ms</th>
+                                <th class="sortable" data-col="temp_blks_written" title="Temporary disk blocks written — high values indicate work_mem pressure">Temp Writes</th>
                                 <th>SQL</th>
                             </tr>
                         </thead>
-                        <tbody>${top.map((q, idx) => `
-                            <tr>
-                                <td>${window.escapeHtml(q.username || '-')}</td>
-                                <td>${fmtNum(q.calls)}</td>
-                                <td>${Number(q.total_time || 0).toFixed(0)}</td>
-                                <td>${Number(q.mean_time || 0).toFixed(1)}</td>
-                                <td class="${(q.temp_blks_written||0)>0?'text-warning':''}">${fmtNum(q.temp_blks_written)}</td>
-                                <td class="small text-muted" style="cursor:pointer; text-decoration:underline; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-                                    data-action="call" data-fn="showPgInternalQueryDetail" data-idx="${idx}"
-                                    title="${window.escapeHtml((q.query || '').substring(0, 200))}">
-                                    ${window.escapeHtml((q.query || '').substring(0, 70))}${(q.query||'').length > 70 ? '…' : ''}
-                                </td>
-                            </tr>`).join('')}
-                        </tbody>
+                        <tbody id="pgInternalQueriesTbody"></tbody>
                     </table>
                 </div>
             `;
+
+            renderInternalQueriesTable();
+
+            // Wire up sorting
+            section.querySelectorAll('th.sortable').forEach(th => {
+                th.style.cursor = 'pointer';
+                th.addEventListener('click', () => {
+                    const col = th.dataset.col;
+                    if (window.appState.pgIntSortCol === col) {
+                        window.appState.pgIntSortDir = window.appState.pgIntSortDir === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        window.appState.pgIntSortCol = col;
+                        window.appState.pgIntSortDir = 'desc';
+                    }
+                    renderInternalQueriesTable();
+                });
+            });
         })
         .catch(e => {
             if (section) section.innerHTML = `<div class="alert alert-warning">Query data unavailable: ${e.message}</div>`;
         });
+}
+
+function renderInternalQueriesTable() {
+    const tbody = document.getElementById('pgInternalQueriesTbody');
+    if (!tbody) return;
+
+    let qs = [...(window.appState.pgInternalQueriesRaw || [])];
+    const col = window.appState.pgIntSortCol;
+    const dir = window.appState.pgIntSortDir === 'asc' ? 1 : -1;
+
+    qs.sort((a, b) => {
+        const va = a[col] ?? 0;
+        const vb = b[col] ?? 0;
+        if (typeof va === 'string') return va.localeCompare(vb) * dir;
+        return (va - vb) * dir;
+    });
+
+    const top = qs.slice(0, 20);
+    window.appState.pgInternalQueries = top.map(q => q.query);
+
+    // Update header icons
+    const table = document.getElementById('pgInternalQueriesTable');
+    if (table) {
+        table.querySelectorAll('th.sortable').forEach(th => {
+            th.innerHTML = th.innerHTML.split(' <i')[0]; // strip old icon
+            if (th.dataset.col === col) {
+                th.innerHTML += ` <i class="fa-solid fa-sort-${window.appState.pgIntSortDir === 'asc' ? 'up' : 'down'} small ml-1"></i>`;
+            }
+        });
+    }
+
+    tbody.innerHTML = top.map((q, idx) => `
+        <tr>
+            <td>${window.escapeHtml(q.username || '-')}</td>
+            <td>${fmtNum(q.calls)}</td>
+            <td class="${col==='total_time'?'text-accent font-bold':''}">${Number(q.total_time || 0).toFixed(0)}</td>
+            <td>${Number(q.mean_time || 0).toFixed(1)}</td>
+            <td class="${(q.temp_blks_written||0)>0?'text-warning':''}">${fmtNum(q.temp_blks_written)}</td>
+            <td class="small text-muted" style="cursor:pointer; text-decoration:underline; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                data-action="call" data-fn="showPgInternalQueryDetail" data-idx="${idx}"
+                title="${window.escapeHtml((q.query || '').substring(0, 200))}">
+                ${window.escapeHtml((q.query || '').substring(0, 70))}${(q.query||'').length > 70 ? '…' : ''}
+            </td>
+        </tr>`).join('');
 }
 
 // --- Query Detail Modal ---

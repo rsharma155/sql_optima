@@ -104,7 +104,6 @@ var TableToOntology = map[string]string{
 	"sqlserver_database_throughput":      "IO",
 	"sqlserver_long_running_queries":     "QueryPerformance",
 	"sqlserver_procedure_stats":          "QueryPerformance",
-	"sqlserver_ag_health":                "HA",
 	"sqlserver_ha_replica_state":         "HA",
 	"sqlserver_ha_database_state":        "HA",
 	"sqlserver_ha_failover_events":       "HA",

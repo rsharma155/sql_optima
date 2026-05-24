@@ -1,20 +1,45 @@
 # SQL Optima
 
-A dual-engine (PostgreSQL & SQL Server) database monitoring platform with a single-page application UI. Built with Go and vanilla JavaScript, architected around Domain-Driven Design for cross-platform support (Windows, macOS, Linux).
+**The Open-Source SQL Tuning Assistant & Monitoring Platform for PostgreSQL and SQL Server.**
 
-Features include PostgreSQL EXPLAIN plan analysis with optimization and index advisor workflows, live SQL Server diagnostics, TimescaleDB-backed historical dashboards, an **enhanced rules engine** for context-aware best-practice checks, **Autonomous SQL Server Health Intelligence** with predictive forecasting and multi-dimensional risk scoring, **push-based OS metrics** for host-level telemetry, a **cross-engine alert engine** with fingerprint-based deduplication, maintenance windows, and audit history, a **Query V2 Pipeline** with hash-based delta tracking for per-query trend analysis, a **SQL Server Locks & Blocking Dashboard**, **Data Export (CSV)** capabilities for both engines, and a **PostgreSQL Incident Feed** for connectivity and incident tracking.
+SQL Optima is a self-hosted, performance-focused monitoring platform built with **Go** and **Vanilla JavaScript**. Designed for DBAs, SREs, and consultants who need more than just charts, it encodes expert database knowledge into automated diagnostics, helping you not just *see* problems, but *fix* them.
+
+---
+
+## Why SQL Optima?
+
+Most monitoring tools collect metrics and show dashboards. SQL Optima goes further by focusing on **optimization workflows**:
+
+*   **Actionable Insights:** Instead of just showing high CPU, it identifies the specific queries causing it and provides EXPLAIN plan analysis.
+*   **Expert Knowledge:** Built-in rules engine (15+ evaluators per engine) encodes years of DBA best practices.
+*   **Predictive Analysis:** Autonomous health reports forecast storage and capacity issues before they happen.
+*   **Long-Term Retention:** Tiered storage automatically archives historical metrics to S3-compatible object storage (MinIO, AWS S3) in Parquet format with optional Apache Iceberg catalog registration.
+*   **Privacy-First:** **No Telemetry.** 100% self-hosted. Your data and credentials never leave your infrastructure.
+*   **Dual-Engine Support:** Deep, vendor-aware support for both PostgreSQL and SQL Server from a single UI.
 
 ---
 
 ## UI Preview
 
 ![SQL Server dashboard](docs/screenshots/sqlserver-dashboard.png)
+*SQL Server Intelligence Report showing predictive forecasting and risk scoring.*
 
 ![PostgreSQL dashboard](docs/screenshots/postgres-dashboard.png)
+*PostgreSQL EXPLAIN plan analyzer with optimization recommendations.*
 
 ---
 
-## Quick Start — Docker Compose (recommended)
+## Target Audience
+
+*   **DBAs & Performance Engineers:** Automated playbooks for troubleshooting and tuning.
+*   **Consultants:** A portable toolkit to quickly analyze client environments.
+*   **SREs & DevOps:** High-density metrics with fingerprint-based deduplicated alerting.
+
+---
+
+## Quick Start — Docker Compose (Recommended)
+
+> **New to SQL Optima?** Check out the [**5-Minute Quickstart Guide**](docs/QUICKSTART.md) for a step-by-step walkthrough.
 
 This brings up **TimescaleDB + Vault (Transit KMS) + Go API + static UI** with automatic schema bootstrap. You can then add monitored SQL Server / PostgreSQL targets from the web UI — no `config.yaml` editing required.
 
@@ -36,7 +61,6 @@ Open **http://localhost:8080** — the Global Estate Overview loads immediately.
 | Service | Purpose |
 |---------|---------|
 | **api** | Go backend serving the API + SPA UI on port 8080 |
-| **intelligence-report** | Python-based engine for autonomous SQL Server health analysis |
 | **timescaledb** | TimescaleDB (pg16) for metric / time-series storage |
 | **vault** | HashiCorp Vault dev-mode (Transit KMS for credential encryption) |
 | **vault-setup** | One-shot: enables Transit engine and creates the encryption key |
@@ -134,28 +158,56 @@ The **Intelligence Report** is a dedicated module that performs deep-dive health
 - **Risk Scoring**: Generates a 0-100 score across 6 domains (Performance, Capacity, Availability, Replication, Maintenance, Query).
 - **Data Sufficiency Guard**: Smart logic that requires at least 3 hours of data for rules and 24 hours for forecasting to ensure accuracy.
 
-### Running the Intelligence Engine
-When using **Option 1 (Docker Compose)**, the service starts automatically.
+---
 
-If running the backend manually (**Option 2** or **3**), the Python engine must be started separately for the reports to work:
+## Cold Storage — Tiered Metric Archival
 
-1. **Navigate and Setup**:
-   ```bash
-   cd intelligence-report
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
-2. **Configure Local Auth**:
-   Set `INTELLIGENCE_REPORT_TOKEN` in your Go environment and `IntelligenceReportSqloptima_INTERNAL_API_TOKEN` in the Python environment to match.
-3. **Start**:
-   ```bash
-   uvicorn app.main:app --port 8765
-   ```
+SQL Optima includes an optional **cold storage pipeline** that automatically offloads historical TimescaleDB metrics to S3-compatible object storage in **Apache Parquet** format. This enables long-term retention beyond TimescaleDB's hot-tier window, and makes historical data queryable by tools like DuckDB, Apache Spark, or Trino.
 
-*Note: If the engine is offline, the SQL Monitoring UI will show a meaningful error message instead of failing.*
+### How it works
+
+1. A nightly archiver job reads aged-out rows from TimescaleDB (controlled by `COLD_STORAGE_LAG_DAYS`).
+2. Rows are serialised to Parquet files in a local staging directory, then uploaded to the configured S3 bucket.
+3. Optionally, each file is registered with an **Apache Iceberg REST catalog** (e.g. Project Nessie) so the full dataset remains queryable as a single logical table.
+4. Source rows older than `COLD_STORAGE_PURGE_RETENTION_DAYS` are purged from TimescaleDB after a successful upload, keeping the hot tier lean.
+
+### Enabling cold storage
+
+Set the following environment variables (see `docker/.env.example` for all defaults):
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `COLD_STORAGE_ENABLED` | Enable the archival pipeline | `false` |
+| `COLD_STORAGE_ENDPOINT` | S3-compatible endpoint URL | `http://minio:9000` |
+| `COLD_STORAGE_BUCKET` | Target bucket name | `sql-optima-cold` |
+| `COLD_STORAGE_REGION` | AWS region (or `us-east-1` for MinIO) | `us-east-1` |
+| `COLD_STORAGE_ACCESS_KEY_ID` | S3 access key | _(empty)_ |
+| `COLD_STORAGE_SECRET_ACCESS_KEY` | S3 secret key | _(empty)_ |
+| `COLD_STORAGE_PREFIX` | Key prefix inside the bucket | `metrics/` |
+| `COLD_STORAGE_BATCH_SIZE` | Rows per Parquet file | `50000` |
+| `COLD_STORAGE_LAG_DAYS` | Minimum age (days) of rows to export | `2` |
+| `COLD_STORAGE_PURGE_RETENTION_DAYS` | Delete hot-tier rows older than N days after export | `30` |
+| `COLD_STORAGE_STAGING_DIR` | Local staging directory for Parquet files | `/tmp/sql-optima-cold-staging` |
+| `COLD_STORAGE_CATALOG_URL` | Iceberg REST catalog URL (optional) | _(empty)_ |
+
+### Local MinIO quickstart
+
+```bash
+# Start MinIO alongside the rest of the stack
+docker compose -f docker-compose.platform.yml up -d minio
+
+# Or run MinIO standalone
+docker run -p 9000:9000 -p 9001:9001 \
+  -e MINIO_ROOT_USER=sqloptima \
+  -e MINIO_ROOT_PASSWORD=change_me_in_production \
+  minio/minio server /data --console-address ":9001"
+```
+
+Then set `COLD_STORAGE_ENABLED=true` and configure the `COLD_STORAGE_ACCESS_KEY_ID` / `COLD_STORAGE_SECRET_ACCESS_KEY` in your `.env`.
 
 ---
+
+## Build standalone binaries
 
 ```bash
 # Build API server
@@ -218,6 +270,29 @@ psql -U postgres -d <target_db> -c "SELECT grant_db_permissions();"
 
 ---
 
+## Architecture Overview
+
+SQL Optima is built for scale and security. It uses a Go-based backend for high-performance collection and a TimescaleDB core for efficient time-series storage.
+
+```mermaid
+flowchart LR
+  Browser[Browser SPA] -->|HTTPS JSON| Api[Go API]
+  Api -->|read metrics| TargetDBs[Monitored Databases]
+  Api -->|write/read history, alerts| Timescale[TimescaleDB]
+  Api -->|encrypt/decrypt credentials| Vault[Vault Transit]
+  Api -->|serve static assets| Browser
+  Api -->|enqueue tasks| Redis[Redis / Asynq]
+  Worker[Worker Process] -->|dequeue + collect| Redis
+  Worker -->|write metrics| Timescale
+  Timescale -->|nightly archival| Archiver[Cold Storage Archiver]
+  Archiver -->|Parquet files| S3[S3 / MinIO]
+  Archiver -->|register files| Iceberg[Apache Iceberg Catalog]
+```
+
+*For more details, see [ARCHITECTURE.md](ARCHITECTURE.md).*
+
+---
+
 ## Repository layout
 
 | Path | Purpose |
@@ -229,6 +304,10 @@ psql -U postgres -d <target_db> -c "SELECT grant_db_permissions();"
 | `infrastructure/docker/` | Standalone TimescaleDB compose for local dev (Option 2) |
 | `infrastructure/sql_scripts/` | Schema, seed data, rule engine, alert engine, and target DB setup scripts |
 | `backend/` | Go API, collector, service layer, repository, middleware |
+| `backend/internal/storage/hot/` | In-process hot storage layer (TimescaleDB write path) |
+| `backend/internal/storage/cold/` | Cold storage pipeline — Parquet export, S3 upload, Iceberg catalog registration |
+| `backend/internal/storage/archiver/` | Nightly archiver that moves aged-out metrics from hot → cold tier |
+| `backend/internal/intel/` | Autonomous intelligence engine — forecasting, risk scoring, anomaly detection, recommendations |
 | `os_collector/` | Lightweight agent for push-based host telemetry |
 | `frontend/` | Static SPA (HTML/CSS/JS) served by the Go backend |
 | `docs/` | API reference, threat model, architecture docs |

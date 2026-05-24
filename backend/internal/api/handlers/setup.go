@@ -128,7 +128,7 @@ func (h *SetupHandlers) PostTestTimescale(w http.ResponseWriter, r *http.Request
 		body.Port = 5432
 	}
 	if body.SSLMode == "" {
-		body.SSLMode = "require"
+		body.SSLMode = "disable"
 	}
 
 	dsn := fmt.Sprintf("host=%s port=%d dbname=%s user=%s password=%s sslmode=%s connect_timeout=10",
@@ -259,7 +259,7 @@ func (h *SetupHandlers) PostTimescale(w http.ResponseWriter, r *http.Request) {
 		body.Port = 5432
 	}
 	if body.SSLMode == "" {
-		body.SSLMode = "require"
+		body.SSLMode = "disable"
 	}
 
 	cfg := &hot.Config{
@@ -326,7 +326,7 @@ func (h *SetupHandlers) PostTimescaleMigrateStep(w http.ResponseWriter, r *http.
 		body.Port = 5432
 	}
 	if body.SSLMode == "" {
-		body.SSLMode = "require"
+		body.SSLMode = "disable"
 	}
 
 	dir, err := setup.ResolveMigrationsDir()

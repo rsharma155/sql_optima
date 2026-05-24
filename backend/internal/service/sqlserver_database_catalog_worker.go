@@ -56,6 +56,11 @@ func (s *MetricsService) collectSqlServerDatabaseCatalog(ctx context.Context) {
 			continue
 		}
 
+		// Skip if instance is not online in the repository
+		if s.MsRepo.GetInstanceStatus(inst.Name) != "online" {
+			continue
+		}
+
 		catalogRows, err := s.MsRepo.FetchDatabaseCatalog(ctx, inst.Name)
 		if err != nil {
 			slog.Error("[SQLServerDBCatalog]", "target", inst.Name, "err", err)
@@ -72,7 +77,7 @@ func (s *MetricsService) collectSqlServerDatabaseCatalog(ctx context.Context) {
 				CaptureTimestamp:              now,
 				ServerID:                      inst.ServerID,
 				DatabaseID:                    r.DatabaseID,
-				DatabaseName:                  r.Name,
+				DatabaseName:                  r.DatabaseName,
 				CreateDate:                    r.CreateDate,
 				CompatibilityLevel:            r.CompatibilityLevel,
 				CollationName:                 r.CollationName,
@@ -98,12 +103,13 @@ func (s *MetricsService) collectSqlServerDatabaseCatalog(ctx context.Context) {
 				OwnerName:                     r.OwnerName,
 				ContainmentDesc:               r.ContainmentDesc,
 				IsTrustworthyOn:               r.IsTrustworthyOn,
-				IsPublished:                   r.IsPublished,
-				IsSubscribed:                  r.IsSubscribed,
-				IsDistributor:                 r.IsDistributor,
-				GroupDatabaseID:               r.GroupDatabaseID,
-			})
-		}
+				IsPublished:                    r.IsPublished,
+				IsSubscribed:                   r.IsSubscribed,
+				IsDistributor:                  r.IsDistributor,
+				GroupDatabaseID:                r.GroupDatabaseID,
+				IsQueryStoreOn:                 r.IsQueryStoreOn,
+				})
+				}
 
 		if err := s.tsLogger.LogDatabaseCatalog(ctx, hotRows); err != nil {
 			slog.Error("[SQLServerDBCatalog]", "target", inst.Name, "err", err)

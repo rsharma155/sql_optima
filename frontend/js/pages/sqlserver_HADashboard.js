@@ -82,6 +82,10 @@ window.HADashboardView = async function () {
     // Apply section visibility and page title based on detected mode before data loads.
     _applyRenderMode(feature, instance.name);
 
+    if (typeof window.initPageTimePicker === 'function') {
+        window.initPageTimePicker();
+    }
+
     await _loadDashboard(instance, feature);
 
     // Only set up intervals if they don't exist (avoid duplicates on manual refresh)
@@ -113,9 +117,12 @@ function _buildPageSkeleton(instanceName) {
       </h1>
       <p class="subtitle" id="ha-page-subtitle">Instance: ${window.escapeHtml(instanceName)}</p>
     </div>
-    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="HADashboardView">
-      <i class="fa-solid fa-rotate"></i> Refresh
-    </button>
+    <div style="display:flex; gap:10px; align-items:center;">
+       <div id="time-picker-insertion-point"></div>
+       <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="HADashboardView">
+         <i class="fa-solid fa-rotate"></i> Refresh
+       </button>
+    </div>
   </div>
 
   <!-- ROW 1: KPI cards — fill full width -->
@@ -128,14 +135,14 @@ function _buildPageSkeleton(instanceName) {
     <div class="glass-panel ha-chart-card">
       <div class="ha-card-hdr">
         RPO Trend &mdash; Data Loss Risk
-        <span class="ha-badge-info">24 h &nbsp;|&nbsp; Y: seconds of data loss</span>
+        <span class="ha-badge-info">Trend &nbsp;|&nbsp; Y: seconds of data loss</span>
       </div>
       <div class="chart-container" style="height:140px;"><canvas id="rpoChart"></canvas></div>
     </div>
     <div class="glass-panel ha-chart-card">
       <div class="ha-card-hdr">
         RTO Trend &mdash; Est. Failover Time
-        <span class="ha-badge-info">24 h &nbsp;|&nbsp; Y: seconds to failover</span>
+        <span class="ha-badge-info">Trend &nbsp;|&nbsp; Y: seconds to failover</span>
       </div>
       <div class="chart-container" style="height:140px;"><canvas id="rtoChart"></canvas></div>
     </div>
@@ -171,14 +178,14 @@ function _buildPageSkeleton(instanceName) {
       <div class="glass-panel ha-chart-card">
         <div class="ha-card-hdr">
           Replication Latency Trend
-          <span class="ha-badge-info">24 h &nbsp;|&nbsp; Y: latency in seconds</span>
+          <span class="ha-badge-info">Trend &nbsp;|&nbsp; Y: latency in seconds</span>
         </div>
         <div class="chart-container" style="height:130px;"><canvas id="replLatencyChart"></canvas></div>
       </div>
       <div class="glass-panel ha-chart-card">
         <div class="ha-card-hdr">
           Undelivered Commands Backlog
-          <span class="ha-badge-info">24 h &nbsp;|&nbsp; Y: command count</span>
+          <span class="ha-badge-info">Trend &nbsp;|&nbsp; Y: command count</span>
         </div>
         <div class="chart-container" style="height:130px;"><canvas id="replBacklogChart"></canvas></div>
       </div>
@@ -204,7 +211,7 @@ function _buildPageSkeleton(instanceName) {
       <div id="ha-alerts-timeline" class="mt-2"></div>
     </div>
     <div class="glass-panel" id="ha-failover-panel">
-      <div class="ha-card-hdr">Failover History <span class="ha-badge-info">24 h</span></div>
+      <div class="ha-card-hdr">Failover History <span class="ha-badge-info">History</span></div>
       <div id="ha-failover-history" class="mt-2"></div>
     </div>
   </div>
@@ -317,8 +324,12 @@ async function _refreshKPISection(instance, feature) {
     }
 
     try {
+        const from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : new Date(Date.now() - 86400000).toISOString();
+        const to   = window.appState.toTs   ? new Date(window.appState.toTs).toISOString()   : new Date().toISOString();
+        const qs   = `instance=${encodeURIComponent(instance.name)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+
         const res = await window.apiClient.authenticatedFetch(
-            `/api/sqlserver/ha/dashboard-summary?instance=${encodeURIComponent(instance.name)}`
+            `/api/sqlserver/ha/dashboard-summary?${qs}`
         );
         const data = await res.json();
         if (data.error) return;
@@ -339,16 +350,19 @@ async function _refreshKPISection(instance, feature) {
 
 async function _refreshCharts(instance, feature) {
     const iname = instance.name;
-    const from = encodeURIComponent(new Date(Date.now() - 86400000).toISOString());
-    const to   = encodeURIComponent(new Date().toISOString());
-    const qs   = `instance=${encodeURIComponent(iname)}&from=${from}&to=${to}`;
+    
+    // Use selected time range if available
+    let from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : new Date(Date.now() - 86400000).toISOString();
+    let to   = window.appState.toTs   ? new Date(window.appState.toTs).toISOString()   : new Date().toISOString();
+    
+    const qs = `instance=${encodeURIComponent(iname)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
 
     if (feature.ha_enabled) {
         _fetchLineChart(`/api/sqlserver/ha/rpo/trend?${qs}`, 'rpoChart', 'RPO (seconds)', 'rpo_seconds', '#4ade80');
         _fetchLineChart(`/api/sqlserver/ha/rto/trend?${qs}`, 'rtoChart', 'Est. RTO (seconds)', 'estimated_rto', '#60a5fa');
     }
     if (feature.replication_enabled) {
-        _fetchReplCharts(iname, from, to);
+        _fetchReplCharts(iname, encodeURIComponent(from), encodeURIComponent(to));
     }
 }
 
@@ -700,7 +714,7 @@ async function _fetchLineChart(url, canvasId, label, dataKey, color) {
         const resp = await res.json();
         const pts  = resp.data || [];
         if (pts.length === 0) {
-            _setChartMessage(canvasId, "No trend data available for the last 24 hours.");
+            _setChartMessage(canvasId, "No trend data available for the selected range.");
             if (_haCharts[canvasId]) { _haCharts[canvasId].destroy(); delete _haCharts[canvasId]; }
             return;
         }
@@ -1092,10 +1106,10 @@ function _renderDataTable(containerId, tableId, cols, rows, options = {}) {
    ============================================================ */
 async function _loadAlertsTimeline(instanceName) {
     try {
-        const from = encodeURIComponent(new Date(Date.now() - 86400000).toISOString());
-        const to   = encodeURIComponent(new Date().toISOString());
+        const from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : new Date(Date.now() - 86400000).toISOString();
+        const to   = window.appState.toTs   ? new Date(window.appState.toTs).toISOString()   : new Date().toISOString();
         const res  = await window.apiClient.authenticatedFetch(
-            `/api/sqlserver/ha/alerts-timeline?instance=${encodeURIComponent(instanceName)}&from=${from}&to=${to}`
+            `/api/sqlserver/ha/alerts-timeline?instance=${encodeURIComponent(instanceName)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
         );
         const data = await res.json();
         _renderAlertsTimeline(data.data || []);
@@ -1107,7 +1121,7 @@ async function _loadAlertsTimeline(instanceName) {
 function _renderAlertsTimeline(alerts) {
     if (!alerts.length) {
         _setInner('ha-alerts-timeline',
-            '<p class="text-muted small p-2">No alerts in the last 24 hours &mdash; system healthy.</p>');
+            '<p class="text-muted small p-2">No alerts in the selected range &mdash; system healthy.</p>');
         return;
     }
     const rows = alerts.map(a => {
@@ -1132,10 +1146,10 @@ function _renderAlertsTimeline(alerts) {
    ============================================================ */
 async function _loadFailoverHistory(instanceName) {
     try {
-        const from = encodeURIComponent(new Date(Date.now() - 86400000).toISOString());
-        const to   = encodeURIComponent(new Date().toISOString());
+        const from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : new Date(Date.now() - 86400000).toISOString();
+        const to   = window.appState.toTs   ? new Date(window.appState.toTs).toISOString()   : new Date().toISOString();
         const res  = await window.apiClient.authenticatedFetch(
-            `/api/sqlserver/ha/failover-history?instance=${encodeURIComponent(instanceName)}&from=${from}&to=${to}`
+            `/api/sqlserver/ha/failover-history?instance=${encodeURIComponent(instanceName)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
         );
         const data = await res.json();
         _renderFailoverHistory(data.events || []);
@@ -1147,7 +1161,7 @@ async function _loadFailoverHistory(instanceName) {
 function _renderFailoverHistory(events) {
     if (!events.length) {
         _setInner('ha-failover-history',
-            '<p class="text-muted small p-2">No failover events in the last 24 hours &mdash; good stability.</p>');
+            '<p class="text-muted small p-2">No failover events in the selected range &mdash; good stability.</p>');
         return;
     }
     const rows = events.map(e => `
@@ -1226,7 +1240,14 @@ function _shortSyncMode(desc) {
 function _shortTime(ts) {
     if (!ts) return '';
     const d = new Date(ts);
-    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    const now = new Date();
+    const isToday = d.getDate() === now.getDate() &&
+                    d.getMonth() === now.getMonth() &&
+                    d.getFullYear() === now.getFullYear();
+    
+    const time = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    if (isToday) return time;
+    return `${d.getMonth() + 1}/${d.getDate()} ${time}`;
 }
 
 function _relTime(ts) {

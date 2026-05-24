@@ -40,6 +40,7 @@ func (s *MetricsService) StartSqlServerHAReplicationCollector(ctx context.Contex
 	lastPerf        := make(map[uuid.UUID]time.Time)
 	lastTopo        := make(map[uuid.UUID]time.Time)
 	lastLogShipping := make(map[uuid.UUID]time.Time)
+	lastClusterInfo := make(map[uuid.UUID]time.Time)
 
 	// Track if HA/Replication is enabled per server (cached from discovery)
 	haEnabledMap := make(map[uuid.UUID]bool)
@@ -99,6 +100,7 @@ func (s *MetricsService) StartSqlServerHAReplicationCollector(ctx context.Contex
 			perfFreq        := getFreq("sqlserver_replication_performance", 60)
 			topoFreq        := getFreq("sqlserver_replication_topology", 900)
 			logShippingFreq := getFreq("sqlserver_log_shipping", 300)
+			clusterInfoFreq := getFreq("sqlserver_ag_cluster_info", 300)
 
 			for _, inst := range s.Config.Instances {
 				if strings.ToLower(inst.Type) != "sqlserver" {
@@ -107,6 +109,11 @@ func (s *MetricsService) StartSqlServerHAReplicationCollector(ctx context.Contex
 
 				serverID := inst.ServerID
 				instanceName := inst.Name
+
+				// Skip if instance is not online in the repository
+				if s.MsRepo.GetInstanceStatus(instanceName) != "online" {
+					continue
+				}
 
 				// 1. Feature Detection (Discovery)
 				if time.Since(lastDiscovery[serverID]) >= discFreq {
@@ -126,6 +133,32 @@ func (s *MetricsService) StartSqlServerHAReplicationCollector(ctx context.Contex
 						lastHealth[serverID] = time.Now()
 					} else {
 						slog.Error("[HA-Collector] replica state collection failed", "target", instanceName, "err", err)
+					}
+				}
+
+				// 2a. AG Cluster Info (cluster name, quorum type/state, member list)
+				if haEnabledMap[serverID] && time.Since(lastClusterInfo[serverID]) >= clusterInfoFreq {
+					clusterStatus, err := activeRepo.FetchAGClusterStatus(ctx, instanceName)
+					if err == nil {
+						members, _ := activeRepo.FetchAGClusterMembers(ctx, instanceName)
+						info := hot.AGClusterInfoRow{
+							ClusterName: getMapString(clusterStatus, "cluster_name"),
+							QuorumType:  getMapString(clusterStatus, "quorum_type_desc"),
+							QuorumState: getMapString(clusterStatus, "quorum_state_desc"),
+						}
+						for _, m := range members {
+							info.Members = append(info.Members, hot.AGClusterMemberRow{
+								MemberName:          m.MemberName,
+								MemberType:          m.MemberType,
+								MemberState:         m.MemberState,
+								NumberOfQuorumVotes: m.NumberOfQuorumVotes,
+							})
+						}
+						if logErr := s.tsLogger.LogAGClusterInfo(ctx, serverID, info); logErr != nil {
+							slog.Error("[HA-Collector] ag_cluster_info persist failed", "target", instanceName, "err", logErr)
+						} else {
+							lastClusterInfo[serverID] = time.Now()
+						}
 					}
 				}
 
@@ -206,4 +239,13 @@ func (s *MetricsService) StartSqlServerHAReplicationCollector(ctx context.Contex
 			}
 		}
 	}
+}
+
+func getMapString(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }

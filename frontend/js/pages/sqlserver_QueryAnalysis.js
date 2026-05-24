@@ -36,6 +36,9 @@
     let _schedulerRows = [];
     let _watchedHashes = new Set();
     let _searchDebounce = null;
+    let _pageSize = 10;
+    let _currentPage = 1;
+
     window._qaSort = window._qaSort || {
         'top-queries': { col: 'total_cpu_ms', dir: 'desc' },
         'regressions': { col: 'percent_change', dir: 'desc' },
@@ -51,6 +54,7 @@
     async function loadQueryAnalysis() {
         destroyCharts();
         _topRows = []; _regRows = []; _instabRows = []; _schedulerRows = []; _watchedHashes = new Set();
+        _currentPage = 1;
         window.appState.queryCache = window.appState.queryCache || {};
         
         const outlet = window.routerOutlet;
@@ -91,6 +95,7 @@
                 btn.classList.add('active');
                 document.querySelectorAll('.qa-tab-panel').forEach(p => p.style.display = 'none');
                 document.getElementById(btn.dataset.tab).style.display = 'block';
+                _currentPage = 1;
                 fetchActiveTab();
             };
         });
@@ -100,6 +105,7 @@
             searchInput.addEventListener('input', (e) => {
                 clearTimeout(_searchDebounce);
                 _searchDebounce = setTimeout(() => {
+                    _currentPage = 1;
                     renderActiveTab();
                 }, 300);
             });
@@ -108,6 +114,7 @@
         const ignoreSystemCheck = document.getElementById('qaIgnoreSystem');
         if (ignoreSystemCheck) {
             ignoreSystemCheck.addEventListener('change', () => {
+                _currentPage = 1;
                 fetchActiveTab();
             });
         }
@@ -175,7 +182,7 @@
         }
 
         function updateKpis(data) {
-            const hasData = (data.total_executions || 0) > 0 || (data.total_queries_in_qs || 0) > 0;
+            const hasData = (data.total_executions || 0) > 0 || (data.total_queries_in_qs || 0) > 0 || (_topRows && _topRows.length > 0);
             if (!hasData) {
                 // Show a gentle warning that Query Store might be off or no user activity
                 const warning = document.getElementById('qaDataWarning');
@@ -228,6 +235,10 @@
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const data = await resp.json();
                 _topRows = Array.isArray(data) ? data : (data && data.queries) || [];
+                
+                // Hide warning if we have data
+                const warning = document.getElementById('qaDataWarning');
+                if (warning && _topRows.length > 0) warning.style.display = 'none';
             } catch (e) {
                 body.innerHTML = `<div class="text-danger p-3">Failed to load top queries: ${e.message}</div>`;
             }
@@ -327,6 +338,9 @@
                 } else if (action === 'watch-query') {
                     e.stopPropagation();
                     watchQuery(target);
+                } else if (action === 'change-page') {
+                    _currentPage = parseInt(target.dataset.page);
+                    renderActiveTab();
                 }
             });
             container._bound = true;
@@ -390,6 +404,27 @@
         /* ── Tables ── */
         function renderTopQueriesTable(rows) {
             const sorted = applySort(rows, 'top-queries');
+            
+            // Pagination logic
+            const total = sorted.length;
+            const totalPages = Math.ceil(total / _pageSize);
+            if (_currentPage > totalPages) _currentPage = Math.max(1, totalPages);
+            const start = (_currentPage - 1) * _pageSize;
+            const paged = sorted.slice(start, start + _pageSize);
+
+            let paginationHtml = '';
+            if (totalPages > 1) {
+                paginationHtml = `
+                    <div class="flex-between mt-3 px-2">
+                        <div class="small text-muted">Showing ${start + 1} to ${Math.min(start + _pageSize, total)} of ${total}</div>
+                        <div class="flex-center gap-2">
+                            <button class="btn btn-xs btn-outline" ${_currentPage === 1 ? 'disabled' : ''} data-action="change-page" data-page="${_currentPage - 1}">Prev</button>
+                            <span class="small">Page ${_currentPage} of ${totalPages}</span>
+                            <button class="btn btn-xs btn-outline" ${_currentPage === totalPages ? 'disabled' : ''} data-action="change-page" data-page="${_currentPage + 1}">Next</button>
+                        </div>
+                    </div>`;
+            }
+
             return `<div class="table-responsive"><table class="qa-table">
                 <thead><tr>
                     <th style="width:2.5rem; text-align:center;"></th>
@@ -402,7 +437,7 @@
                     ${sortTh('top-queries', 'last_execution_time', 'Last Execution', 'text-right')}
                     <th>Database</th>
                 </tr></thead>
-                <tbody>${sorted.map((r, i) => {
+                <tbody>${paged.map((r, i) => {
                     const cacheKey = 'qa_top_' + i;
                     window.appState.queryCache[cacheKey] = { text: r.query_text, query_hash: r.query_hash, database_name: r.database_name };
                     const isWatched = _watchedHashes.has(r.query_hash);
@@ -423,7 +458,7 @@
                     <td class="text-right font-mono" style="color:var(--accent); font-weight:700;">${fmtMs(r.total_cpu_ms)}</td>
                     <td class="text-right text-muted" style="font-size:0.65rem;">${lastExec}</td>
                     <td class="text-muted" style="font-size:0.7rem;">${esc(r.database_name)}</td>
-                </tr>`}).join('')}</tbody></table></div>`;
+                </tr>`}).join('')}</tbody></table></div>${paginationHtml}`;
         }
 
         function renderRegressionsTable(rows) {
@@ -489,7 +524,7 @@
             const ctx = document.getElementById('qaWorkloadChart')?.getContext('2d');
             if (!ctx) return;
             if (_charts.workload) _charts.workload.destroy();
-            const labels = series.map(p => new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+            const labels = series.map(p => new Date(p.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
             _charts.workload = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -516,7 +551,7 @@
             const ctx = document.getElementById('qaLatencyChart')?.getContext('2d');
             if (!ctx) return;
             if (_charts.latency) _charts.latency.destroy();
-            const labels = series.map(p => new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+            const labels = series.map(p => new Date(p.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
             _charts.latency = new Chart(ctx, {
                 type: 'line',
                 data: {

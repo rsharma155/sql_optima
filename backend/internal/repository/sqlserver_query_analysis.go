@@ -47,9 +47,9 @@ func (c *SqlServerRepository) FetchQueryRegressions(ctx context.Context, instanc
 }
 
 func fetchRegressionsForDB(ctx context.Context, db *sql.DB, dbName string) ([]models.SqlServerQueryRegression, error) {
-	_ = sqlServerQuoteBracket(dbName)
-	const query = `
-		/* SQL_OPTIMA */ 
+	qb := sqlServerQuoteBracket(dbName)
+	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */
 		;WITH recent AS (
 			SELECT 
 				CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
@@ -59,11 +59,11 @@ func fetchRegressionsForDB(ctx context.Context, db *sql.DB, dbName string) ([]mo
 				AVG(rs.avg_logical_io_reads) AS avg_reads,
 				MAX(CAST(rs.last_execution_time AS DATETIME)) AS last_execution_time,
 				MAX(CAST(p.is_forced_plan AS INT)) AS plan_changed
-			FROM sys.query_store_runtime_stats rs
-			JOIN sys.query_store_plan p ON rs.plan_id = p.plan_id
-			JOIN sys.query_store_query q ON p.query_id = q.query_id
-			JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-			JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
+			FROM %s.sys.query_store_runtime_stats rs
+			JOIN %s.sys.query_store_plan p ON rs.plan_id = p.plan_id
+			JOIN %s.sys.query_store_query q ON p.query_id = q.query_id
+			JOIN %s.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+			JOIN %s.sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
 			WHERE rsi.start_time >= DATEADD(hour, -24, GETUTCDATE())
 			  AND q.is_internal_query = 0
 			  AND qt.query_sql_text NOT LIKE '%%sys.query_store%%'
@@ -77,10 +77,10 @@ func fetchRegressionsForDB(ctx context.Context, db *sql.DB, dbName string) ([]mo
 				AVG(rs.avg_duration / 1000.0) AS avg_duration_ms,
 				AVG(rs.avg_cpu_time / 1000.0) AS avg_cpu_ms,
 				AVG(rs.avg_logical_io_reads) AS avg_reads
-			FROM sys.query_store_runtime_stats rs
-			JOIN sys.query_store_plan p ON rs.plan_id = p.plan_id
-			JOIN sys.query_store_query q ON p.query_id = q.query_id
-			JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
+			FROM %s.sys.query_store_runtime_stats rs
+			JOIN %s.sys.query_store_plan p ON rs.plan_id = p.plan_id
+			JOIN %s.sys.query_store_query q ON p.query_id = q.query_id
+			JOIN %s.sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
 			WHERE rsi.start_time >= DATEADD(hour, -48, GETUTCDATE())
 			  AND rsi.start_time < DATEADD(hour, -24, GETUTCDATE())
 			GROUP BY q.query_hash
@@ -104,7 +104,7 @@ func fetchRegressionsForDB(ctx context.Context, db *sql.DB, dbName string) ([]mo
 			OR (p.avg_cpu_ms > 0 AND ((r.avg_cpu_ms - p.avg_cpu_ms) / p.avg_cpu_ms) >= 0.5)
 			OR (p.avg_reads > 0 AND ((r.avg_reads - p.avg_reads) / p.avg_reads) >= 0.5)
 		)
-		ORDER BY percent_change DESC`
+		ORDER BY percent_change DESC`, qb, qb, qb, qb, qb, qb, qb, qb, qb)
 
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
@@ -166,23 +166,22 @@ func fetchPlanInstabilityForDB(ctx context.Context, db *sql.DB, dbName string) (
 	qb := sqlServerQuoteBracket(dbName)
 	query := fmt.Sprintf(`
 		/* SQL_OPTIMA */ 
-		USE %s;
 		SELECT  TOP 50
 			CONVERT(VARCHAR(40), q.query_hash, 1) AS query_hash,
 			qt.query_sql_text AS query_text,
 			COUNT(DISTINCT p.plan_id) AS plan_count,
 			MAX(rs.last_execution_time) AS last_execution_time
-		FROM sys.query_store_plan p
-		JOIN sys.query_store_query q ON p.query_id = q.query_id
-		JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-		JOIN sys.query_store_runtime_stats rs ON rs.plan_id = p.plan_id
+		FROM %s.sys.query_store_plan p
+		JOIN %s.sys.query_store_query q ON p.query_id = q.query_id
+		JOIN %s.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+		JOIN %s.sys.query_store_runtime_stats rs ON rs.plan_id = p.plan_id
 		WHERE q.is_internal_query = 0
 		  AND qt.query_sql_text NOT LIKE '%%sys.query_store%%'
 		  AND qt.query_sql_text NOT LIKE '%%/* SQL_OPTIMA */%%'
 		  AND q.last_bind_duration > 0
 		GROUP BY q.query_hash, qt.query_sql_text
 		HAVING COUNT(DISTINCT p.plan_id) > 3
-		ORDER BY plan_count DESC`, qb)
+		ORDER BY plan_count DESC`, qb, qb, qb, qb)
 
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
@@ -223,7 +222,6 @@ func (c *SqlServerRepository) FetchWatchedQueryStats(ctx context.Context, instan
 	qb := sqlServerQuoteBracket(dbName)
 	query := fmt.Sprintf(`
 		/* SQL_OPTIMA */ 
-		USE %s;
 		SELECT TOP 1
 			ISNULL(rs.count_executions, 0) AS executions,
 			ISNULL(rs.avg_duration / 1000.0, 0) AS avg_duration_ms,
@@ -231,17 +229,17 @@ func (c *SqlServerRepository) FetchWatchedQueryStats(ctx context.Context, instan
 			ISNULL(rs.avg_logical_io_reads, 0) AS avg_reads,
 			ISNULL(rs.avg_duration * rs.count_executions / 1000.0, 0) AS total_duration_ms,
 			ISNULL(rs.avg_cpu_time * rs.count_executions / 1000.0, 0) AS total_cpu_ms,
-			(SELECT  COUNT(DISTINCT p2.plan_id) FROM sys.query_store_plan p2 WHERE p2.query_id = q.query_id) AS plan_count,
+			(SELECT  COUNT(DISTINCT p2.plan_id) FROM %s.sys.query_store_plan p2 WHERE p2.query_id = q.query_id) AS plan_count,
 			rs.last_execution_time,
 			CAST(p.query_plan AS NVARCHAR(MAX)) AS query_plan,
 			qt.query_sql_text
-		FROM sys.query_store_runtime_stats rs
-		JOIN sys.query_store_plan p ON rs.plan_id = p.plan_id
-		JOIN sys.query_store_query q ON p.query_id = q.query_id
-		JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+		FROM %s.sys.query_store_runtime_stats rs
+		JOIN %s.sys.query_store_plan p ON rs.plan_id = p.plan_id
+		JOIN %s.sys.query_store_query q ON p.query_id = q.query_id
+		JOIN %s.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
 		WHERE CONVERT(VARCHAR(40), q.query_hash, 1) COLLATE DATABASE_DEFAULT = @p1 COLLATE DATABASE_DEFAULT
 		  AND q.is_internal_query = 0
-		ORDER BY rs.last_execution_time DESC`, qb)
+		ORDER BY rs.last_execution_time DESC`, qb, qb, qb, qb, qb)
 
 	var s models.SqlServerWatchedQuerySnapshot
 	var lastExec sql.NullTime
@@ -281,7 +279,6 @@ func (c *SqlServerRepository) FetchQueryPlans(ctx context.Context, instanceName,
 	qb := sqlServerQuoteBracket(dbName)
 	query := fmt.Sprintf(`
 		/* SQL_OPTIMA */ 
-		USE %s;
 		SELECT
 			p.plan_id,
 			ISNULL(AVG(rs.avg_duration / 1000.0), 0) AS avg_duration_ms,
@@ -292,12 +289,13 @@ func (c *SqlServerRepository) FetchQueryPlans(ctx context.Context, instanceName,
 			MAX(rs.last_execution_time) AS last_execution_time,
 			p.initial_compile_start_time AS created_at,
 			CAST(p.query_plan AS NVARCHAR(MAX)) AS query_plan
-		FROM sys.query_store_plan p
-		JOIN sys.query_store_query q ON p.query_id = q.query_id
-		JOIN sys.query_store_runtime_stats rs ON rs.plan_id = p.plan_id
+		FROM %s.sys.query_store_plan p
+		JOIN %s.sys.query_store_query q ON p.query_id = q.query_id
+		JOIN %s.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
 		WHERE CONVERT(VARCHAR(40), q.query_hash, 1) COLLATE DATABASE_DEFAULT = @p1 COLLATE DATABASE_DEFAULT
 		GROUP BY p.plan_id, p.is_forced_plan, p.initial_compile_start_time, CAST(p.query_plan AS NVARCHAR(MAX))
-		ORDER BY avg_duration_ms DESC`, qb)
+		ORDER BY avg_duration_ms DESC`, qb, qb, qb)
+
 
 
 	ctx, cancel := WithQueryTimeout(ctx, 0)
@@ -338,17 +336,16 @@ func (c *SqlServerRepository) FetchQueryWaitStats(ctx context.Context, instanceN
 	qb := sqlServerQuoteBracket(dbName)
 	query := fmt.Sprintf(`
 		/* SQL_OPTIMA */ 
-		USE %s;
 		SELECT 
 			ws.wait_category_desc,
 			AVG(ws.avg_query_wait_time_ms) AS avg_wait_ms,
 			SUM(ws.total_query_wait_time_ms) AS total_wait_ms
-		FROM sys.query_store_wait_stats ws
-		JOIN sys.query_store_plan p ON ws.plan_id = p.plan_id
-		JOIN sys.query_store_query q ON p.query_id = q.query_id
+		FROM %s.sys.query_store_wait_stats ws
+		JOIN %s.sys.query_store_plan p ON ws.plan_id = p.plan_id
+		JOIN %s.sys.query_store_query q ON p.query_id = q.query_id
 		WHERE CONVERT(VARCHAR(40), q.query_hash, 1) COLLATE DATABASE_DEFAULT = @p1 COLLATE DATABASE_DEFAULT
 		GROUP BY ws.wait_category_desc
-		ORDER BY total_wait_ms DESC`, qb)
+		ORDER BY total_wait_ms DESC`, qb, qb, qb)
 
 
 	ctx, cancel := WithQueryTimeout(ctx, 0)

@@ -128,7 +128,8 @@ func (c *PgRepository) FetchSlowQueriesCount(ctx context.Context, instanceName s
 	var cnt int
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
-	err := db.QueryRowContext(ctx, `/* SQL_OPTIMA */ SELECT   COUNT(*) FROM pg_stat_statements WHERE mean_exec_time > $1`, thresholdMs).Scan(&cnt)
+	tableName := c.GetPgssTableName(instanceName)
+	err := db.QueryRowContext(ctx, fmt.Sprintf(`/* SQL_OPTIMA */ SELECT   COUNT(*) FROM %s WHERE mean_exec_time > $1`, tableName), thresholdMs).Scan(&cnt)
 	return cnt, err
 }
 

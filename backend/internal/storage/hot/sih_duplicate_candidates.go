@@ -16,7 +16,7 @@ import (
 func (tl *TimescaleLogger) sihDuplicateIndexCandidates(ctx context.Context, engine, serverID, to string, f SIHFilters) ([]map[string]interface{}, error) {
 	// Pull latest definitions per index (day bucket) in scope and do pairwise comparisons in Go.
 	args := []interface{}{engine, serverID, to}
-	where := `engine=$1 AND server_id=$2 AND capture_timestamp <= $3::timestamptz`
+	where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp <= $3::timestamptz`
 	n := 4
 	if len(f.DBNames) > 0 {
 		where += fmt.Sprintf(" AND db_name = ANY($%d)", n)

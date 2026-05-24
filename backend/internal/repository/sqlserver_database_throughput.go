@@ -8,9 +8,11 @@
 package repository
 
 import (
-	"log/slog"
 	"context"
 	"fmt"
+	"log/slog"
+
+	"github.com/google/uuid"
 )
 
 type DatabaseThroughputStats struct {
@@ -32,7 +34,7 @@ type DatabaseThroughputStats struct {
 	WriteLatencyMs int64
 }
 
-func (c *SqlServerRepository) FetchDatabaseThroughput(ctx context.Context, instanceName string) ([]DatabaseThroughputStats, error) {
+func (c *SqlServerRepository) FetchDatabaseThroughput(ctx context.Context, serverID uuid.UUID, instanceName string) ([]DatabaseThroughputStats, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("no connection for instance: %s", instanceName)
@@ -88,35 +90,61 @@ func (c *SqlServerRepository) FetchDatabaseThroughput(ctx context.Context, insta
 		results = append(results, s)
 	}
 
-	// Secondary Query: Cumulative Transaction Count (for TPS rate calculation)
-	// We use sys.dm_os_performance_counters 'Transactions/sec' which is a cumulative bulk count.
-	tpsQuery := `
-		/* SQL_OPTIMA */
-		SELECT
-			RTRIM(instance_name) AS database_name,
-			cntr_value AS tps_count
-		FROM sys.dm_os_performance_counters
-		WHERE counter_name = 'Transactions/sec'
-		  AND object_name LIKE '%:Databases%'
-		  AND RTRIM(instance_name) NOT IN ('master', 'model', 'msdb', 'tempdb', 'mssqlsystemresource')
-	`
-	ctx, cancel = WithQueryTimeout(ctx, 0)
-	defer cancel()
-	tpsRows, tpsErr := db.QueryContext(ctx, tpsQuery)
-	if tpsErr == nil {
-		defer tpsRows.Close()
-		tpsMap := make(map[string]float64)
-		for tpsRows.Next() {
-			var dbName string
-			var tps float64
-			if err := tpsRows.Scan(&dbName, &tps); err == nil {
-				tpsMap[dbName] = tps
+	// Secondary Query: Transactions/sec per database.
+	// Cache-first: read from sqlserver_perf_counters (written by unified perf counter collector).
+	// Falls back to live DMV if cache is unavailable.
+	tpsMap := make(map[string]float64)
+	cacheHit := false
+	if c.LocalPool != nil {
+		const tsQ = `
+			SELECT instance_name, value_per_sec
+			FROM sqlserver_perf_counters
+			WHERE server_id = $1
+			  AND counter_name = 'Transactions/sec'
+			  AND instance_name NOT IN ('master', 'model', 'msdb', 'tempdb', 'mssqlsystemresource', '')
+			  AND capture_timestamp >= NOW() - INTERVAL '5 minutes'
+			ORDER BY capture_timestamp DESC`
+		if tsRows, tsErr := c.LocalPool.Query(ctx, tsQ, serverID); tsErr == nil {
+			seen := map[string]bool{}
+			for tsRows.Next() {
+				var dbName string
+				var rate float64
+				if tsRows.Scan(&dbName, &rate) == nil && !seen[dbName] {
+					tpsMap[dbName] = rate
+					seen[dbName] = true
+				}
+			}
+			tsRows.Close()
+			cacheHit = len(tpsMap) > 0
+		}
+	}
+	if !cacheHit {
+		tpsQuery := `
+			/* SQL_OPTIMA */
+			SELECT
+				RTRIM(instance_name) AS database_name,
+				cntr_value AS tps_count
+			FROM sys.dm_os_performance_counters
+			WHERE counter_name = 'Transactions/sec'
+			  AND object_name LIKE '%:Databases%'
+			  AND RTRIM(instance_name) NOT IN ('master', 'model', 'msdb', 'tempdb', 'mssqlsystemresource')
+		`
+		ctx, cancel = WithQueryTimeout(ctx, 0)
+		defer cancel()
+		if tpsRows, tpsErr := db.QueryContext(ctx, tpsQuery); tpsErr == nil {
+			defer tpsRows.Close()
+			for tpsRows.Next() {
+				var dbName string
+				var tps float64
+				if err := tpsRows.Scan(&dbName, &tps); err == nil {
+					tpsMap[dbName] = tps
+				}
 			}
 		}
-		for i := range results {
-			if tps, ok := tpsMap[results[i].DatabaseName]; ok {
-				results[i].TPS = tps
-			}
+	}
+	for i := range results {
+		if tps, ok := tpsMap[results[i].DatabaseName]; ok {
+			results[i].TPS = tps
 		}
 	}
 

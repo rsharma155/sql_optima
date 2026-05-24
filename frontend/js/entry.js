@@ -85,6 +85,15 @@ window.initPageTimePicker = function() {
             }
         });
     }
+
+    const reloadBtn = document.getElementById('global-reload-btn');
+    if (reloadBtn) {
+        reloadBtn.addEventListener('click', () => {
+            if (window.appNavigate && window.appState.activeViewId) {
+                window.appNavigate(window.appState.activeViewId);
+            }
+        });
+    }
 };
 
 // Wait for DOM and classic scripts (router.js, etc.) to be ready

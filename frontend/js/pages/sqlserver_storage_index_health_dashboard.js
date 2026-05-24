@@ -152,6 +152,9 @@ window.runSqlServerStorageIndexHealthDashboard = async function(opts) {
             if (rawVal >= rules.red) sev = 'danger';
             else if (rawVal >= rules.orange) sev = 'warning';
             card.style.borderLeft = `4px solid var(--${sev})`;
+            
+            const label = card.querySelector('.sih-kpi-label').textContent;
+            card.title = `${label}: ${val}${suffix || ''}\nStatus: ${sev.toUpperCase()}\nThresholds: Warning >= ${rules.orange}, Critical >= ${rules.red}`;
         };
 
         const totalGB = k.total_db_size_mb / 1024;
@@ -342,16 +345,23 @@ async function showSqlServerSihTableDrilldown(instance, db, schema, table) {
         document.getElementById('sihModalLoading').style.display = 'none';
         document.getElementById('sihModalContent').style.display = 'block';
         
+        const points = data.points || (Array.isArray(data) ? data : []);
         const idxBody = document.getElementById('sihModalIndexBody');
-        idxBody.innerHTML = (data || []).map(i => `
-            <tr>
-                <td><strong>${window.sihShared.escH(i.index_name)}</strong></td>
-                <td>${Number(i.value).toLocaleString()}</td>
-                <td>${Number(i.updates || 0).toLocaleString()}</td>
-                <td>${window.sihShared.fmt(i.value2, 1)}</td>
-                <td>${i.last_user_seek ? new Date(i.last_user_seek).toLocaleDateString() : 'Never'}</td>
-            </tr>
-        `).join('') || '<tr><td colspan="5" class="text-center p-3">No index usage data found.</td></tr>';
+        idxBody.innerHTML = points.map(i => {
+            const reads = (i.seeks || 0) + (i.scans || 0) + (i.lookups || 0);
+            const dates = [i.last_user_seek, i.last_user_scan, i.last_user_lookup].filter(d => d).map(d => new Date(d));
+            const lastUsed = dates.length > 0 ? new Date(Math.max(...dates)).toLocaleDateString() : 'Never';
+            
+            return `
+                <tr>
+                    <td><strong>${window.sihShared.escH(i.index_name)}</strong></td>
+                    <td>${reads.toLocaleString()}</td>
+                    <td>${Number(i.updates || 0).toLocaleString()}</td>
+                    <td>${window.sihShared.fmt(i.index_size_mb, 1)}</td>
+                    <td>${lastUsed}</td>
+                </tr>
+            `;
+        }).join('') || '<tr><td colspan="5" class="text-center p-3">No index usage data found.</td></tr>';
         
     } catch (e) {
         document.getElementById('sihModalLoading').innerHTML = `<div class="alert alert-danger">Drilldown failed: ${e.message}</div>`;

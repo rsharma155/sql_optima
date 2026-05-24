@@ -74,8 +74,8 @@ func TestHTMLGenerationExecutive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateHTML failed: %v", err)
 	}
-	if !strings.Contains(html, "IntelligenceReportSqloptima") {
-		t.Error("expected IntelligenceReportSqloptima in HTML")
+	if !strings.Contains(html, "Intelligence Report Sqloptima") {
+		t.Error("expected Intelligence Report Sqloptima in HTML")
 	}
 	if !strings.Contains(strings.ToLower(html), "score") {
 		t.Error("expected score in HTML")
@@ -89,8 +89,8 @@ func TestHTMLGenerationTechnical(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateHTML failed: %v", err)
 	}
-	if !strings.Contains(html, "IntelligenceReportSqloptima") {
-		t.Error("expected IntelligenceReportSqloptima in HTML")
+	if !strings.Contains(html, "Intelligence Report Sqloptima") {
+		t.Error("expected Intelligence Report Sqloptima in HTML")
 	}
 }
 
