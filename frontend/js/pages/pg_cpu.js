@@ -216,14 +216,15 @@ window.PgCpuView = async function() {
             return;
         }
 
-        const labels    = points.map(p => p.bucket ? new Date(p.bucket).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '');
+        const bucketTs = (p) => p.bucket || p.timestamp;
+        const labels    = points.map(p => bucketTs(p) ? new Date(bucketTs(p)).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '');
         const execSec   = points.map(p => +(num(p.total_exec_time_ms) / 1000).toFixed(2));
         const avgMs     = points.map(p => +num(p.avg_exec_time_ms).toFixed(2));
 
         // Update bucket-size badge
         const bucketBadge = document.getElementById('pg-ts-bucket-label');
         if (bucketBadge && points.length >= 2) {
-            const diffMs = new Date(points[1].bucket) - new Date(points[0].bucket);
+            const diffMs = new Date(bucketTs(points[1])) - new Date(bucketTs(points[0]));
             const mins   = Math.round(diffMs / 60000);
             bucketBadge.textContent = mins === 1 ? '1 min buckets' : `${mins} min buckets`;
         }
@@ -369,7 +370,8 @@ window.PgCpuView = async function() {
             return;
         }
 
-        const labels  = points.map(p => p.bucket ? new Date(p.bucket).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '');
+        const bucketTs = (p) => p.bucket || p.timestamp;
+        const labels  = points.map(p => bucketTs(p) ? new Date(bucketTs(p)).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '');
         const hitPcts = points.map(p => +num(p.cache_hit_pct).toFixed(2));
 
         // Color each point based on health threshold

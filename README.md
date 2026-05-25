@@ -139,7 +139,7 @@ Docs are grouped by role. Start with **Quickstart**, then drill into operations 
 |----------|-------------|
 | **[docs/operations.md](docs/operations.md)** | Restarts, collector warm-up, retention, day-2 operations |
 | **[docs/vault_production.md](docs/vault_production.md)** | Vault Transit in production (AppRole, backups, TLS) — not dev-mode root tokens |
-| **[docs/os_collector.md](docs/os_collector.md)** | PostgreSQL host agent (Linux shell) — RAM/CPU for Memory dashboard |
+| **[docs/os_collector.md](os_collector/README.md)** | PostgreSQL host agent (Linux shell) — RAM/CPU for Memory dashboard |
 | **[os_collector/README.md](os_collector/README.md)** | Install agent on DB hosts; **download zip** from Admin or PG Memory/CPU UI |
 | **[SECURITY.md](SECURITY.md)** | Disclosure policy and security expectations |
 | **[docs/threat_model.md](docs/threat_model.md)** | Threats, mitigations, and trust assumptions |
@@ -154,7 +154,6 @@ Docs are grouped by role. Start with **Quickstart**, then drill into operations 
 | **[docs/api_errors.md](docs/api_errors.md)** | API error format and client-facing messages |
 | **[docs/release_engineering.md](docs/release_engineering.md)** | Versioning, GHCR images, tagging releases |
 | **[infrastructure/sql_scripts/README.md](infrastructure/sql_scripts/README.md)** | Schema scripts, migrations, collector SQL layout |
-| **[CLAUDE.md](CLAUDE.md)** | Maintainer commands (`go test`, compose paths, conventions) |
 
 ### Deep dives and internals
 
