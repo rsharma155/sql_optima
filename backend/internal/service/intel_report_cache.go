@@ -60,9 +60,3 @@ func (c *intelReportCache) get(serverID uuid.UUID) *intelReportCacheEntry {
 	}
 	return &e
 }
-
-func (c *intelReportCache) clear(serverID uuid.UUID) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.items, serverID.String())
-}

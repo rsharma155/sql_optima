@@ -11,11 +11,6 @@ package hot
 
 const sqlServerOptimaBatchTag = `%/* SQL_OPTIMA%`
 
-// sqlServerQueryTextRawIsOptimaCollectorSQL is true when dm_exec_sql_text batch contains the collector tag.
-func sqlServerQueryTextRawIsOptimaCollectorSQL(col string) string {
-	return `COALESCE(` + col + `query_text_raw, '') ILIKE '` + sqlServerOptimaBatchTag + `'`
-}
-
 // sqlServerCollectorSQLExcludeSQL excludes SQL Optima collector DMV/monitoring batches.
 // All collector queries are tagged with /* SQL_OPTIMA */ in the monitored batch; the full
 // text is stored in query_text_raw (dm_exec_sql_text), not statement_text.
