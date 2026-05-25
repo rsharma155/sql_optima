@@ -1,0 +1,301 @@
+/*
+ * PostgreSQL dashboard layout — laptop and small screens (max-width 1399px).
+ * Desktop (≥1400px) is unchanged.
+ */
+
+/* ── Single-row KPI strips ── */
+@media (max-width: 1399px) {
+    .pg-enterprise-page .kpi-row,
+    .pg-cpu-page .kpi-row,
+    .pg-storage-page .kpi-row,
+    .pg-security-kpi-row {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .pg-enterprise-page .kpi-row > *,
+    .pg-cpu-page .kpi-row > *,
+    .pg-storage-page .kpi-row > *,
+    .pg-security-kpi-row > * {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    .pg-enterprise-page .kpi-row .h-kpi,
+    .pg-cpu-page .kpi-row .h-kpi,
+    .pg-storage-page .kpi-row .h-kpi {
+        height: 72px;
+    }
+
+    .pg-enterprise-page .kpi-row .metric-label,
+    .pg-cpu-page .kpi-row .metric-label,
+    .pg-storage-page .kpi-row .metric-label {
+        font-size: 0.52rem;
+    }
+
+    .pg-enterprise-page .kpi-row .metric-value,
+    .pg-cpu-page .kpi-row .metric-value,
+    .pg-storage-page .kpi-row .metric-value {
+        font-size: 0.88rem;
+    }
+
+    .pg-enterprise-page .kpi-row .metric-card-compact > span[style],
+    .pg-cpu-page .kpi-row .metric-card-compact > span[style] {
+        font-size: 0.52rem !important;
+        line-height: 1.2;
+    }
+
+    /* Security KPI row */
+    .pg-security-kpi-row .risk-card,
+    .pg-security-kpi-row .security-kpi-card {
+        height: 72px;
+        padding: 0.35rem 0.55rem;
+    }
+
+    .pg-security-kpi-row .risk-card .risk-level-value {
+        font-size: 1.05rem;
+    }
+
+    .pg-security-kpi-row .risk-card .risk-label,
+    .pg-security-kpi-row .security-kpi-card .kpi-label {
+        font-size: 0.52rem;
+    }
+
+    .pg-security-kpi-row .security-kpi-card .kpi-value {
+        font-size: 1rem;
+    }
+
+    .pg-security-kpi-row .risk-card .risk-indicators {
+        font-size: 0.52rem;
+        padding-left: 0.5rem;
+    }
+
+    .pg-security-kpi-row .security-kpi-card .kpi-trend {
+        font-size: 0.55rem;
+    }
+
+    .pg-security-kpi-row .pg-security-kpi-risk,
+    .pg-security-kpi-row .pg-security-kpi-item {
+        display: flex;
+        min-width: 0;
+    }
+
+    .pg-security-kpi-row .pg-security-kpi-risk .risk-card,
+    .pg-security-kpi-row .pg-security-kpi-item .security-kpi-card {
+        width: 100%;
+    }
+}
+
+/* Override global kpi-row 3/2-column splits from grid.css */
+@media (max-width: 1024px) {
+    .pg-enterprise-page .kpi-row,
+    .pg-cpu-page .kpi-row,
+    .pg-storage-page .kpi-row,
+    .pg-security-kpi-row {
+        display: flex;
+        flex-wrap: nowrap;
+    }
+}
+
+@media (max-width: 767px) {
+    .pg-enterprise-page .kpi-row,
+    .pg-cpu-page .kpi-row,
+    .pg-storage-page .kpi-row,
+    .pg-security-kpi-row {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+    }
+
+    .pg-enterprise-page .kpi-row > *,
+    .pg-cpu-page .kpi-row > *,
+    .pg-storage-page .kpi-row > *,
+    .pg-security-kpi-row > * {
+        flex: 0 0 auto;
+        min-width: 88px;
+    }
+}
+
+/* ── Enterprise Monitor: paired chart rows on 8-col laptop grid ── */
+@media (max-width: 1399px) {
+    .pg-enterprise-page .pg-ent-pair-wal-drift > .col-laptop-4 {
+        grid-column: span 4;
+    }
+
+    .pg-enterprise-page .pg-ent-pair-contention-io > .col-laptop-4 {
+        grid-column: span 4;
+    }
+
+    .pg-enterprise-page .card-header h3 {
+        font-size: 0.78rem !important;
+    }
+
+    .pg-enterprise-page .card-header span[style] {
+        font-size: 0.58rem !important;
+    }
+}
+
+@media (max-width: 1023px) {
+    .pg-enterprise-page .pg-ent-pair-wal-drift > .col-tablet-3,
+    .pg-enterprise-page .pg-ent-pair-contention-io > .col-tablet-3 {
+        grid-column: span 3;
+    }
+}
+
+/* ── CPU Health: merge chart rows so DB Share + Query Type share one row ── */
+@media (max-width: 1399px) {
+    .pg-cpu-page .pg-cpu-charts-laptop {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 1rem;
+    }
+
+    .pg-cpu-page .pg-cpu-charts-laptop .grid-container {
+        display: contents;
+        margin: 0;
+    }
+
+    .pg-cpu-page .pg-cpu-charts-laptop .pg-cpu-exec-col {
+        grid-column: span 8;
+    }
+
+    .pg-cpu-page .pg-cpu-charts-laptop .pg-cpu-db-share-col,
+    .pg-cpu-page .pg-cpu-charts-laptop .pg-cpu-query-type-col {
+        grid-column: span 4;
+    }
+
+    .pg-cpu-page .pg-cpu-charts-laptop .pg-cpu-cache-col {
+        grid-column: span 8;
+    }
+}
+
+@media (max-width: 1023px) {
+    .pg-cpu-page .pg-cpu-charts-laptop {
+        grid-template-columns: repeat(6, 1fr);
+    }
+
+    .pg-cpu-page .pg-cpu-charts-laptop .pg-cpu-exec-col,
+    .pg-cpu-page .pg-cpu-charts-laptop .pg-cpu-cache-col {
+        grid-column: span 6;
+    }
+
+    .pg-cpu-page .pg-cpu-charts-laptop .pg-cpu-db-share-col,
+    .pg-cpu-page .pg-cpu-charts-laptop .pg-cpu-query-type-col {
+        grid-column: span 3;
+    }
+}
+
+/* ── Storage: bloat + live vacuum on same row (laptop/small only) ── */
+@media (max-width: 1399px) {
+    .pg-storage-page .pg-storage-charts-laptop {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 1rem;
+    }
+
+    .pg-storage-page .pg-storage-charts-laptop .grid-container {
+        display: contents;
+        margin: 0;
+    }
+
+    .pg-storage-page .pg-storage-charts-laptop .pg-storage-bloat-col,
+    .pg-storage-page .pg-storage-charts-laptop .pg-storage-vac-col {
+        grid-column: span 4;
+    }
+
+    .pg-storage-page .pg-storage-charts-laptop .pg-storage-bloat-col {
+        grid-row: 1;
+    }
+
+    .pg-storage-page .pg-storage-charts-laptop .pg-storage-vac-col {
+        grid-row: 1;
+    }
+
+    .pg-storage-page .pg-storage-charts-laptop .pg-storage-autovac-col {
+        grid-column: span 8;
+        grid-row: 2;
+    }
+
+    .pg-storage-page .pg-storage-charts-laptop .pg-storage-growth-col {
+        grid-column: span 8;
+        grid-row: 3;
+    }
+}
+
+@media (max-width: 1023px) {
+    .pg-storage-page .pg-storage-charts-laptop {
+        grid-template-columns: repeat(6, 1fr);
+    }
+
+    .pg-storage-page .pg-storage-charts-laptop .pg-storage-bloat-col,
+    .pg-storage-page .pg-storage-charts-laptop .pg-storage-vac-col {
+        grid-column: span 3;
+    }
+
+    .pg-storage-page .pg-storage-charts-laptop .pg-storage-autovac-col,
+    .pg-storage-page .pg-storage-charts-laptop .pg-storage-growth-col {
+        grid-column: span 6;
+    }
+}
+
+/* ── Security Monitor: chart/table grid (KPIs use kpi-row above) ── */
+@media (max-width: 1399px) {
+    .pg-security-page .security-grid {
+        grid-template-columns: repeat(8, 1fr);
+    }
+
+    .pg-security-page .security-grid > .col-span-12 {
+        grid-column: span 8;
+    }
+
+    .pg-security-page .security-grid > .col-span-6 {
+        grid-column: span 4;
+    }
+
+    .pg-security-page .security-grid > .col-span-5 {
+        grid-column: span 3;
+    }
+
+    .pg-security-page .security-grid > .col-span-7 {
+        grid-column: span 5;
+    }
+
+    .pg-security-page .security-grid > .col-laptop-8 {
+        grid-column: span 8;
+    }
+}
+
+@media (max-width: 1023px) {
+    .pg-security-page .security-grid {
+        grid-template-columns: repeat(6, 1fr);
+    }
+
+    .pg-security-page .security-grid > .col-span-12,
+    .pg-security-page .security-grid > .col-tablet-6 {
+        grid-column: span 6;
+    }
+
+    .pg-security-page .security-grid > .col-span-6,
+    .pg-security-page .security-grid > .col-span-5,
+    .pg-security-page .security-grid > .col-span-7 {
+        grid-column: span 3;
+    }
+}
+
+@media (max-width: 767px) {
+    .pg-security-page .security-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .pg-security-page .security-grid > [class*="col-"] {
+        grid-column: span 1 !important;
+    }
+
+    .pg-security-page .pg-security-chart-card,
+    .pg-security-page .pg-security-role-chart-card,
+    .pg-security-page .pg-security-origins-card {
+        width: 100%;
+    }
+}

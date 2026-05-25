@@ -17,5 +17,6 @@ export const SqlServerWorkloadDashboardView = async () => {
     });
 };
 
-// Export to window for legacy router
+// Export to window for legacy router and global time-range refresh
 window.SqlServerWorkloadDashboardView = SqlServerWorkloadDashboardView;
+window.sqlserverWorkload = sqlserverWorkload;

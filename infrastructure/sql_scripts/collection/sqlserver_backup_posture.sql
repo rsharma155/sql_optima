@@ -1,0 +1,13 @@
+-- SQL Optima — https://github.com/rsharma155/sql_optima
+--
+-- Purpose: Reference DMV query for SQL Server backup posture collection.
+--          Executed from Go: repository.sqlserver_backup_live (sqlserverBackupPostureQuery).
+-- Metadata:
+--   - Version: 1.0
+--   - Scope: Instance (all user databases)
+--   - Frequency: 300s (sqlserver_backup_posture collector)
+--   - Source: sys.databases, msdb.dbo.backupset, sys.configurations
+--
+-- Author: Ravi Sharma
+-- Copyright (c) 2026 Ravi Sharma
+-- SPDX-License-Identifier: MIT

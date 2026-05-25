@@ -72,7 +72,8 @@ func NewCollectorApp(
 }
 
 func (a *CollectorApp) RunCycle(ctx context.Context, serverID uuid.UUID) {
-	jobs, err := a.scheduler.GetJobsToRun(ctx)
+	scope := serverID.String()
+	jobs, err := a.scheduler.GetJobsToRun(ctx, scope)
 	if err != nil {
 		slog.Error("Error getting jobs", "err", err)
 		return
@@ -86,7 +87,7 @@ func (a *CollectorApp) RunCycle(ctx context.Context, serverID uuid.UUID) {
 		} else if job.Name == "pg_queries_v2" && a.pgRepo != nil {
 			go a.collectPG(ctx, serverID)
 		}
-		a.scheduler.MarkAsRun(job.Name)
+		a.scheduler.MarkAsRun(job.Name, scope)
 	}
 }
 
@@ -132,6 +133,9 @@ func (a *CollectorApp) collectMSSQLQuerySnapshot(ctx context.Context, serverID u
 	}
 
 	if len(snapshots) == 0 {
+		if !watermark.IsZero() {
+			slog.Info("MSSQL FetchSnapshot returned no rows since watermark", "target", serverID, "watermark", watermark.UTC())
+		}
 		_ = a.writer.SaveMetrics(ctx, serverID, nil, time.Now().UTC(), currStartTime)
 		telemetry.CollectorCycles.WithLabelValues(sid, "sqlserver", "success").Inc()
 		return
@@ -158,7 +162,7 @@ func (a *CollectorApp) collectMSSQLSessionEnrichment(ctx context.Context, server
 
 	enrichments, err := a.mssqlRepo.FetchSessionEnrichment(ctx)
 	if err != nil {
-		slog.Error("MSSQL FetchSessionEnrichment error", "err", err)
+		slog.Error("MSSQL FetchSessionEnrichment error", "target", serverID, "err", err)
 		return
 	}
 
@@ -182,7 +186,7 @@ func (a *CollectorApp) collectPG(ctx context.Context, serverID uuid.UUID) {
 
 	snapshots, err := a.pgRepo.FetchSnapshot(ctx)
 	if err != nil {
-		slog.Error("PG FetchSnapshot error", "err", err)
+		slog.Error("PG FetchSnapshot error", "server_id", sid, "err", err)
 		telemetry.CollectorCycles.WithLabelValues(sid, "postgres", "error").Inc()
 		return
 	}

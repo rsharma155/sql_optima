@@ -46,6 +46,10 @@
 @import url('./pages/setup-wizard.css');
 @import url('./pages/pg-cpu.css');
 @import url('./pages/pg-replication.css');
+@import url('./pages/pg_backup_dr.css');
 @import url('./pages/pg-explain.css');
 @import url('./pages/pgss.css');
 @import url('./pages/pg-security.css');
+@import url('./pages/pg-dashboards.css');
+@import url('./pages/sqlserver-dashboard-headers.css');
+@import url('./pages/admin-diagnostics.css');

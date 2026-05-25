@@ -39,16 +39,16 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 		}
 
 		// Content Security Policy.
-		// 'unsafe-inline' is removed from script-src: all JS is loaded via <script src> or ES modules.
+		// 'unsafe-inline' is allowed for script-src to support dynamic reports and legacy inline handlers.
 		// style-src retains 'unsafe-inline' because page modules use inline style attributes.
-		// connect-src allows cdn.jsdelivr.net only for Chart.js CDN fetch (auto-upgrade check).
+		// connect-src allows cdn.jsdelivr.net and cdn.plot.ly.
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "+
+				"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://cdn.plot.ly; "+
 				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "+
 				"font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "+
 				"img-src 'self' data: https:; "+
-				"connect-src 'self' https://cdn.jsdelivr.net; "+
+				"connect-src 'self' https://cdn.jsdelivr.net https://cdn.plot.ly; "+
 				"frame-src 'self' blob: data:;")
 
 		next.ServeHTTP(w, r)

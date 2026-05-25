@@ -60,11 +60,11 @@ func ComputeRPO(replicas []ReplicaHealthRow) RPOResult {
 	}
 
 	return RPOResult{
-		Seconds:     maxLag,
-		AvgSeconds:  avgLag,
-		Threshold:   rpoThreshold(maxLag),
-		ReplicaName: worstReplica,
-		Bucket:      time.Now().UTC(),
+		Seconds:      maxLag,
+		AvgSeconds:   avgLag,
+		Threshold:    rpoThreshold(maxLag),
+		WorstReplica: worstReplica,
+		Timestamp:    time.Now().UTC(),
 	}
 }
 
@@ -98,7 +98,7 @@ func ComputeRTO(replicas []ReplicaHealthRow) RTOResult {
 		MaxRedoQueueKB:     maxRedoQueueKB,
 		ClusterOverheadSec: clusterFailoverOverheadSec,
 		Threshold:          rtoThreshold(estimatedSec),
-		Bucket:             time.Now().UTC(),
+		Timestamp:          time.Now().UTC(),
 	}
 }
 

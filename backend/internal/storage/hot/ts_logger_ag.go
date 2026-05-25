@@ -10,45 +10,13 @@ package hot
 import (
 	"log/slog"
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
-
-func (tl *TimescaleLogger) LogAGHealth(ctx context.Context, serverID uuid.UUID, agStats []AGHealthRow) error {
-	if len(agStats) == 0 {
-		return nil
-	}
-
-	batch := &pgx.Batch{}
-	query := `
-		INSERT INTO sqlserver_ag_health (
-			capture_timestamp, server_id, ag_name, replica_server_name, database_name,
-			replica_role, operational_state, connected_state, synchronization_state, synchronization_state_desc, is_primary_replica,
-			log_send_queue_kb, redo_queue_kb, log_send_rate_kb, redo_rate_kb,
-			last_sent_time, last_received_time, last_hardened_time, last_redone_time, secondary_lag_seconds
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`
-
-	for _, r := range agStats {
-		batch.Queue(query,
-			r.CaptureTimestamp, serverID, r.AGName, r.ReplicaServerName, r.DatabaseName,
-			r.ReplicaRole, r.OperationalState, r.ConnectedState, r.SynchronizationState, r.SyncStateDesc, r.IsPrimaryReplica,
-			r.LogSendQueueKB, r.RedoQueueKB, r.LogSendRateKB, r.RedoRateKB,
-			r.LastSentTime, r.LastReceivedTime, r.LastHardenedTime, r.LastRedoneTime, r.SecondaryLagSecs)
-	}
-
-	br := tl.pool.SendBatch(ctx, batch)
-	defer br.Close()
-
-	for i := 0; i < len(agStats); i++ {
-		if _, err := br.Exec(); err != nil {
-			return fmt.Errorf("AG health batch insert failed at row %d: %w", i, err)
-		}
-	}
-	return nil
-}
 
 func (tl *TimescaleLogger) GetAGHealthSummary(ctx context.Context, serverID uuid.UUID, from, to string, limit int) ([]map[string]interface{}, error) {
 	start, end, err := parseTimeRange(from, to)
@@ -278,4 +246,35 @@ func (tl *TimescaleLogger) LogAGHealthFromMap(ctx context.Context, serverID uuid
 	return nil
 }
 
+// ---------------------------------------------------------------------------
+// AG Cluster Info — cluster-scoped, low write frequency
+// ---------------------------------------------------------------------------
+
+type AGClusterMemberRow struct {
+	MemberName          string `json:"member_name"`
+	MemberType          string `json:"member_type"`
+	MemberState         string `json:"member_state"`
+	NumberOfQuorumVotes int    `json:"number_of_quorum_votes"`
+}
+
+type AGClusterInfoRow struct {
+	ClusterName string
+	QuorumType  string
+	QuorumState string
+	Members     []AGClusterMemberRow
+}
+
+func (tl *TimescaleLogger) LogAGClusterInfo(ctx context.Context, serverID uuid.UUID, info AGClusterInfoRow) error {
+	membersJSON, err := json.Marshal(info.Members)
+	if err != nil {
+		return fmt.Errorf("ag_cluster_info marshal members: %w", err)
+	}
+	_, err = tl.pool.Exec(ctx, `
+		INSERT INTO monitor.sqlserver_ag_cluster_info
+			(capture_timestamp, server_id, cluster_name, quorum_type, quorum_state, members_json)
+		VALUES (NOW(), $1, $2, $3, $4, $5)`,
+		serverID, info.ClusterName, info.QuorumType, info.QuorumState, membersJSON,
+	)
+	return err
+}
 

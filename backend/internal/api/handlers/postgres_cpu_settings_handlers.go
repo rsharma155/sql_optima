@@ -12,10 +12,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/rsharma155/sql_optima/internal/config"
 )
 
 // pgssExcludedUsers are usernames excluded from user-query dashboards.
@@ -23,6 +27,37 @@ import (
 var pgssExcludedUsers = []string{
 	"dbmonitor_user", "dbmonitor", "sql_optima", "sqloptima",
 	"pgbouncer", "repmgr", "barman", "patroni", "pg_monitor", "streaming_replica",
+	"postgres",
+}
+
+// pgssExcludeUsersForInstance returns role names to omit from Query Performance (optima_servers.username + defaults).
+func pgssExcludeUsersForInstance(cfg *config.Config, instanceName string) []string {
+	seen := make(map[string]struct{})
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		seen[strings.ToLower(name)] = struct{}{}
+	}
+	for _, u := range pgssExcludedUsers {
+		add(u)
+	}
+	if cfg != nil {
+		for _, inst := range cfg.Instances {
+			if strings.EqualFold(inst.Name, instanceName) {
+				add(inst.MonitoringUser)
+				add(inst.User)
+				break
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // CPUTopQueries returns the top user queries by total execution time for the selected time window,
@@ -39,8 +74,13 @@ func (h *PostgresHandlers) CPUTopQueries(w http.ResponseWriter, r *http.Request)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"queries": []interface{}{}})
 		return
 	}
+
+	includeSystem := r.URL.Query().Get("include_system") == "true"
+	instName := strings.TrimSpace(r.URL.Query().Get("instance"))
+	excludeUsers := pgssExcludeUsersForInstance(h.cfg, instName)
+
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	queries, err := queryTopQueriesByCPU(r.Context(), pool, sid, from, to, 20)
+	queries, err := queryTopQueriesByCPU(r.Context(), pool, sid, from, to, 20, includeSystem, excludeUsers)
 	if err != nil {
 		queries = []map[string]interface{}{}
 	}
@@ -63,7 +103,8 @@ func (h *PostgresHandlers) CPUDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	rows, err := queryDBLoadByCPU(r.Context(), pool, sid, from, to)
+	excludeUsers := pgssExcludeUsersForInstance(h.cfg, strings.TrimSpace(r.URL.Query().Get("instance")))
+	rows, err := queryDBLoadByCPU(r.Context(), pool, sid, from, to, excludeUsers)
 	if err != nil {
 		rows = []map[string]interface{}{}
 	}
@@ -86,7 +127,8 @@ func (h *PostgresHandlers) CPUPgTimeSeries(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	points, err := queryPgExecTimeSeries(r.Context(), pool, sid, from, to)
+	excludeUsers := pgssExcludeUsersForInstance(h.cfg, strings.TrimSpace(r.URL.Query().Get("instance")))
+	points, err := queryPgExecTimeSeries(r.Context(), pool, sid, from, to, excludeUsers)
 	if err != nil {
 		points = []map[string]interface{}{}
 	}
@@ -109,7 +151,8 @@ func (h *PostgresHandlers) CPUQueryTypes(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	types, err := queryQueryTypeBreakdown(r.Context(), pool, sid, from, to)
+	excludeUsers := pgssExcludeUsersForInstance(h.cfg, strings.TrimSpace(r.URL.Query().Get("instance")))
+	types, err := queryQueryTypeBreakdown(r.Context(), pool, sid, from, to, excludeUsers)
 	if err != nil {
 		types = []map[string]interface{}{}
 	}
@@ -141,8 +184,22 @@ func (h *PostgresHandlers) SettingsDrift(w http.ResponseWriter, r *http.Request)
 
 // queryTopQueriesByCPU returns user queries ranked by total execution time.
 // Excludes monitoring/infrastructure usernames and internal SQL_OPTIMA queries.
-func queryTopQueriesByCPU(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID, from, to time.Time, limit int) ([]map[string]interface{}, error) {
-	const q = `
+func queryTopQueriesByCPU(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID, from, to time.Time, limit int, includeSystem bool, excludeUsers []string) ([]map[string]interface{}, error) {
+	where := "d.server_id = $1 AND d.capture_timestamp BETWEEN $2 AND $3"
+	args := []interface{}{serverID, from, to}
+
+	if !includeSystem {
+		if len(excludeUsers) == 0 {
+			excludeUsers = pgssExcludedUsers
+		}
+		args = append(args, excludeUsers)
+		where += fmt.Sprintf(" AND NOT (d.username = ANY($%d::text[]))", len(args))
+		where += " AND COALESCE(q.query_text, '') NOT LIKE '%/* SQL_OPTIMA */%'"
+		where += " AND COALESCE(q.query_text, '') NOT LIKE '%pg_stat_statements%'"
+	}
+
+	args = append(args, limit)
+	q := fmt.Sprintf(`
 		SELECT
 			max(d.capture_timestamp)   AS captured_at,
 			COALESCE(d.username, '')   AS user_name,
@@ -152,16 +209,12 @@ func queryTopQueriesByCPU(ctx context.Context, pool *pgxpool.Pool, serverID uuid
 		FROM pgss_delta_1m d
 		LEFT JOIN pgss_query_dim q
 			ON q.server_id = d.server_id AND q.query_id = d.query_id
-		WHERE d.server_id = $1
-		  AND d.capture_timestamp BETWEEN $2 AND $3
-		  AND d.username != ALL($4::text[])
-		  AND COALESCE(q.query_text, '') NOT LIKE '%/* SQL_OPTIMA */%'
-		  AND COALESCE(q.query_text, '') NOT LIKE '%pg_stat_statements%'
+		WHERE %s
 		GROUP BY d.query_id, d.username, q.query_text
 		ORDER BY total_exec_time DESC
-		LIMIT $5`
+		LIMIT $%d`, where, len(args))
 
-	rows, err := pool.Query(ctx, q, serverID, from, to, pgssExcludedUsers, limit)
+	rows, err := pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -187,21 +240,28 @@ func queryTopQueriesByCPU(ctx context.Context, pool *pgxpool.Pool, serverID uuid
 	return results, nil
 }
 
+// pgssUserExcludeClause filters out monitoring/infrastructure roles while keeping NULL/empty usernames.
+func pgssUserExcludeClause(paramIdx int) string {
+	return fmt.Sprintf(" AND NOT (COALESCE(username, '') = ANY($%d::text[]))", paramIdx)
+}
+
 // queryDBLoadByCPU returns per-database total execution time, excluding monitoring users.
-func queryDBLoadByCPU(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID, from, to time.Time) ([]map[string]interface{}, error) {
-	const q = `
+func queryDBLoadByCPU(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID, from, to time.Time, excludeUsers []string) ([]map[string]interface{}, error) {
+	if len(excludeUsers) == 0 {
+		excludeUsers = pgssExcludedUsers
+	}
+	q := `
 		SELECT
 			COALESCE(db_name, 'unknown') AS datname,
 			sum(total_exec_time)         AS total_exec_time_ms
 		FROM pgss_delta_1m
 		WHERE server_id = $1
-		  AND capture_timestamp BETWEEN $2 AND $3
-		  AND username != ALL($4::text[])
+		  AND capture_timestamp BETWEEN $2 AND $3` + pgssUserExcludeClause(4) + `
 		GROUP BY db_name
 		ORDER BY total_exec_time_ms DESC
 		LIMIT 10`
 
-	rows, err := pool.Query(ctx, q, serverID, from, to, pgssExcludedUsers)
+	rows, err := pool.Query(ctx, q, serverID, from, to, excludeUsers)
 	if err != nil {
 		return nil, err
 	}
@@ -241,9 +301,12 @@ func computeBucketInterval(from, to time.Time) string {
 // queryPgExecTimeSeries returns time-bucketed PostgreSQL execution metrics from pgss_delta_1m.
 // total_exec_time_ms is the primary load proxy; avg_exec_time_ms tracks per-query latency;
 // cache_hit_pct shows buffer cache efficiency.
-func queryPgExecTimeSeries(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID, from, to time.Time) ([]map[string]interface{}, error) {
+func queryPgExecTimeSeries(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID, from, to time.Time, excludeUsers []string) ([]map[string]interface{}, error) {
+	if len(excludeUsers) == 0 {
+		excludeUsers = pgssExcludedUsers
+	}
 	bucket := computeBucketInterval(from, to)
-	// bucket is computed from hardcoded switch cases — no user input, no injection risk.
+	// bucket interval is computed from hardcoded switch cases — no user input, no injection risk.
 	q := fmt.Sprintf(`
 		SELECT
 			time_bucket('%s', capture_timestamp)              AS bucket,
@@ -257,13 +320,12 @@ func queryPgExecTimeSeries(ctx context.Context, pool *pgxpool.Pool, serverID uui
 			SUM(temp_blks_written)                            AS temp_writes
 		FROM pgss_delta_1m
 		WHERE server_id = $1
-		  AND capture_timestamp BETWEEN $2 AND $3
-		  AND username != ALL($4::text[])
+		  AND capture_timestamp BETWEEN $2 AND $3%s
 		GROUP BY bucket
 		ORDER BY bucket
-		LIMIT 200`, bucket)
+		LIMIT 200`, bucket, pgssUserExcludeClause(4))
 
-	rows, err := pool.Query(ctx, q, serverID, from, to, pgssExcludedUsers)
+	rows, err := pool.Query(ctx, q, serverID, from, to, excludeUsers)
 	if err != nil {
 		return nil, err
 	}
@@ -283,12 +345,12 @@ func queryPgExecTimeSeries(ctx context.Context, pool *pgxpool.Pool, serverID uui
 			cacheHitPct = float64(cacheHits) / float64(total) * 100
 		}
 		results = append(results, map[string]interface{}{
-			"bucket":            bucket,
+			"bucket":             bucket,
 			"total_exec_time_ms": totalExec,
-			"calls":             calls,
-			"avg_exec_time_ms":  avgExec,
-			"cache_hit_pct":     cacheHitPct,
-			"temp_writes":       tempWrites,
+			"calls":              calls,
+			"avg_exec_time_ms":   avgExec,
+			"cache_hit_pct":      cacheHitPct,
+			"temp_writes":        tempWrites,
 		})
 	}
 	return results, nil
@@ -296,20 +358,22 @@ func queryPgExecTimeSeries(ctx context.Context, pool *pgxpool.Pool, serverID uui
 
 // queryQueryTypeBreakdown returns total calls and execution time grouped by query type.
 // Types: S=SELECT, I=INSERT, U=UPDATE, D=DELETE, E=DDL, O=Other.
-func queryQueryTypeBreakdown(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID, from, to time.Time) ([]map[string]interface{}, error) {
-	const q = `
+func queryQueryTypeBreakdown(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID, from, to time.Time, excludeUsers []string) ([]map[string]interface{}, error) {
+	if len(excludeUsers) == 0 {
+		excludeUsers = pgssExcludedUsers
+	}
+	q := `
 		SELECT
 			COALESCE(d.query_type, 'O') AS query_type,
 			SUM(d.calls)                AS calls,
 			SUM(d.total_exec_time)      AS total_exec_time_ms
 		FROM pgss_delta_1m d
 		WHERE d.server_id = $1
-		  AND d.capture_timestamp BETWEEN $2 AND $3
-		  AND d.username != ALL($4::text[])
+		  AND d.capture_timestamp BETWEEN $2 AND $3` + pgssUserExcludeClause(4) + `
 		GROUP BY d.query_type
 		ORDER BY total_exec_time_ms DESC`
 
-	rows, err := pool.Query(ctx, q, serverID, from, to, pgssExcludedUsers)
+	rows, err := pool.Query(ctx, q, serverID, from, to, excludeUsers)
 	if err != nil {
 		return nil, err
 	}

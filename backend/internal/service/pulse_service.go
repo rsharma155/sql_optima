@@ -14,11 +14,35 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
+
+type msInstanceBlockingState struct {
+	incidentID int64
+	peak       int
+	mu         sync.Mutex
+}
+
+func newMsInstanceBlockingState() *msInstanceBlockingState {
+	return &msInstanceBlockingState{}
+}
+
+func (st *msInstanceBlockingState) incidentActive() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.incidentID > 0
+}
+
+func (st *msInstanceBlockingState) resetIncident() {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.incidentID = 0
+	st.peak = 0
+}
 
 type PulseService struct {
 	cfg        *config.Config
@@ -28,16 +52,20 @@ type PulseService struct {
 	stopChan   chan struct{}
 	wg         sync.WaitGroup
 	metricsSvc *MetricsService
+
+	msBlockingStates map[uuid.UUID]*msInstanceBlockingState
+	msStateMu        sync.Mutex
 }
 
 func NewPulseService(cfg *config.Config, ms *repository.SqlServerRepository, pg *repository.PgRepository, ts *hot.TimescaleLogger, metricsSvc *MetricsService) *PulseService {
 	return &PulseService{
-		cfg:        cfg,
-		msRepo:     ms,
-		pgRepo:     pg,
-		tsLogger:   ts,
-		stopChan:   make(chan struct{}),
-		metricsSvc: metricsSvc,
+		cfg:              cfg,
+		msRepo:           ms,
+		pgRepo:           pg,
+		tsLogger:         ts,
+		stopChan:         make(chan struct{}),
+		metricsSvc:       metricsSvc,
+		msBlockingStates: make(map[uuid.UUID]*msInstanceBlockingState),
 	}
 }
 
@@ -137,6 +165,68 @@ func (s *PulseService) runSQLServerPulse(ctx context.Context, inst config.Instan
 	// 2. Locks (Tier 1) — write to staging and to sqlserver_blocking_snapshots
 	locks, err := repository.CollectBlockingLocks(ctx, db)
 	if err == nil {
+		s.msStateMu.Lock()
+		state, ok := s.msBlockingStates[serverID]
+		if !ok {
+			state = newMsInstanceBlockingState()
+			s.msBlockingStates[serverID] = state
+		}
+		s.msStateMu.Unlock()
+
+		if len(locks) == 0 {
+			if state.incidentActive() {
+				_ = s.tsLogger.CloseMsBlockingIncident(ctx, state.incidentID, time.Now().UTC())
+				state.resetIncident()
+			}
+		} else {
+			// Find the root blocker: a blocking_session_id that does not appear as a session_id
+			// (i.e. not itself blocked). Pick the one with the most direct victims.
+			sessionIDs := make(map[int]struct{}, len(locks))
+			for _, n := range locks {
+				sessionIDs[n.SessionID] = struct{}{}
+			}
+			victimsByBlocker := make(map[int]int, len(locks))
+			for _, n := range locks {
+				if _, isBlocked := sessionIDs[n.BlockingSessionID]; !isBlocked {
+					victimsByBlocker[n.BlockingSessionID]++
+				}
+			}
+			var rootPID int
+			maxVictims := 0
+			for pid, cnt := range victimsByBlocker {
+				if cnt > maxVictims {
+					maxVictims = cnt
+					rootPID = pid
+				}
+			}
+			victimCount := len(locks)
+
+			if !state.incidentActive() {
+				id, err := s.tsLogger.OpenMsBlockingIncident(ctx, serverID, time.Now().UTC(), &rootPID, "")
+				if err == nil {
+					state.mu.Lock()
+					state.incidentID = id
+					state.peak = victimCount
+					state.mu.Unlock()
+				}
+			} else {
+				_ = s.tsLogger.UpdateMsBlockingIncident(ctx, state.incidentID, victimCount, &rootPID, "")
+			}
+
+			// Log raw blocked/blocker pairs for timeline analysis
+			now := time.Now().UTC()
+			pairs := make([]hot.PgBlockingPairRow, 0, len(locks))
+			for _, n := range locks {
+				pairs = append(pairs, hot.PgBlockingPairRow{
+					CollectedAt: now,
+					ServerID:    serverID,
+					BlockedPID:  n.SessionID,
+					BlockingPID: n.BlockingSessionID,
+				})
+			}
+			_ = s.tsLogger.LogMsBlockingPairs(ctx, pairs)
+		}
+
 		var lockRows []map[string]interface{}
 		var snapshots []models.SQLServerBlockingSnapshot
 		now := time.Now().UTC()
@@ -152,6 +242,8 @@ func (s *PulseService) runSQLServerPulse(ctx context.Context, inst config.Instan
 				ServerID:          serverID,
 				SessionID:         l.SessionID,
 				BlockingSessionID: l.BlockingSessionID,
+				SqlHash:           l.SqlHash,
+				PlanHash:          l.PlanHash,
 				WaitType:          l.WaitType,
 				WaitDurationMs:    l.WaitTimeMs,
 				DatabaseName:      l.DatabaseName,
@@ -187,7 +279,7 @@ func (s *PulseService) runSQLServerPulse(ctx context.Context, inst config.Instan
 	}
 
 	// 4. Wait Stats (Tier 2)
-	cumulativeWaits, err := msRepo.FetchWaitStatsCumulative(ctx, inst.Name)
+	cumulativeWaits, err := msRepo.FetchWaitStatsCumulative(ctx, serverID, inst.Name)
 	if err == nil && len(cumulativeWaits) > 0 {
 		_ = s.tsLogger.ComputeAndLogWaitDeltas(ctx, serverID, cumulativeWaits)
 	}

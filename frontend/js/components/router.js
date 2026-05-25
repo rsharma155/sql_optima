@@ -55,6 +55,59 @@ window.clearAllIntervals = function() {
 };
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Dashboard Guide Back Button ───────────────────────────────────────────────
+// A floating "Back to Dashboard Guide" button injected only when the user
+// navigated to a dashboard by clicking a link inside a Dashboard Guide page.
+// Automatically removed at the start of every subsequent navigation.
+window._pendingGuideReturn = null;
+
+function _removeGuideBackBtn() {
+    const el = document.getElementById('_sql-optima-guide-back');
+    if (el) el.remove();
+}
+
+function _injectGuideBackBtn(guideRoute) {
+    _removeGuideBackBtn();
+    const isPostgres = guideRoute === 'pg-dashboard-guide';
+    const label = isPostgres ? 'PostgreSQL Dashboard Guide' : 'SQL Server Dashboard Guide';
+    const accentColor = isPostgres ? '#2563eb' : '#0078d4';
+    const wrap = document.createElement('div');
+    wrap.id = '_sql-optima-guide-back';
+    wrap.innerHTML = `<style>@keyframes _gbIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}</style>`;
+    const btn = document.createElement('button');
+    btn.setAttribute('aria-label', 'Back to Dashboard Guide');
+    btn.style.cssText = [
+        'position:fixed', 'bottom:28px', 'right:28px', 'z-index:9998',
+        'background:var(--bg-surface)', 'border:1px solid var(--border-color)',
+        'border-radius:24px', 'padding:9px 20px', 'cursor:pointer',
+        'display:flex', 'align-items:center', 'gap:8px',
+        'box-shadow:0 4px 20px rgba(0,0,0,0.22)',
+        'font-size:0.8rem', 'font-weight:600', 'color:var(--text-primary)',
+        'font-family:inherit', 'animation:_gbIn 0.22s ease',
+        'transition:background 0.15s,color 0.15s,transform 0.15s,box-shadow 0.15s',
+    ].join(';');
+    btn.innerHTML = `<i class="fa-solid fa-arrow-left" style="font-size:0.72rem;opacity:0.8;"></i><span>Back to ${label}</span>`;
+    btn.addEventListener('mouseenter', () => {
+        btn.style.background = accentColor;
+        btn.style.color = '#fff';
+        btn.style.transform = 'translateY(-2px)';
+        btn.style.boxShadow = `0 8px 24px rgba(0,0,0,0.28)`;
+    });
+    btn.addEventListener('mouseleave', () => {
+        btn.style.background = '';
+        btn.style.color = '';
+        btn.style.transform = '';
+        btn.style.boxShadow = '0 4px 20px rgba(0,0,0,0.22)';
+    });
+    btn.addEventListener('click', () => {
+        _removeGuideBackBtn();
+        window.appNavigate(guideRoute);
+    });
+    wrap.appendChild(btn);
+    document.body.appendChild(wrap);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 window.getCSSVar = function(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); };
 window.escapeHtml = function(unsafe) {
     if (unsafe === null || unsafe === undefined) return '';
@@ -79,6 +132,9 @@ if (!window.__sidebarNavDelegateBound) {
 
 window.appNavigate = function(route, skipHistory = false) {
     appDebug('Navigating to:', route, 'instance idx:', window.appState.currentInstanceIdx);
+
+    // Remove any floating guide back button from the previous page
+    _removeGuideBackBtn();
 
     // Clear all registered polling intervals and abort pending fetches from the previous page
     window.clearAllIntervals();
@@ -270,9 +326,17 @@ window.appNavigate = function(route, skipHistory = false) {
         tryLoad();
     }
 
+    // If this navigation was initiated from a Dashboard Guide page, schedule a
+    // floating back button to appear once the target page has rendered.
+    if (window._pendingGuideReturn) {
+        const _gr = window._pendingGuideReturn;
+        window._pendingGuideReturn = null;
+        setTimeout(() => _injectGuideBackBtn(_gr), 180);
+    }
+
     switch(route) {
-        case 'global': 
-            if (window.GlobalEstateView) window.GlobalEstateView(); 
+        case 'global':
+            if (window.GlobalEstateView) window.GlobalEstateView();
             else window.routerOutlet.innerHTML = '<div class="page-view active"><h3>Loading Global...</h3></div>';
             break;
         case 'dashboard': 
@@ -320,7 +384,10 @@ window.appNavigate = function(route, skipHistory = false) {
         case 'drilldown-deadlock': if(window.sqlserver_DeadlockDashboard) window.sqlserver_DeadlockDashboard(); break;
         case 'drilldown-bottlenecks': window.HistoricalBottlenecksView(); break;
         case 'drilldown-ha':
-            loadLazyView('HADashboardView', 'drilldown-ha', 'HA & Replication');
+            loadLazyView('HADashboardView', 'drilldown-ha', 'HA & DR');
+            break;
+        case 'sqlserver-backups':
+            loadLazyView('SqlServerBackupsView', 'sqlserver-backups', 'Backup & Recovery');
             break;
         case 'drilldown-pg-enterprise': window.PgEnterpriseDashboardView(); break;
         case 'enterprise-metrics': 
@@ -403,11 +470,17 @@ window.appNavigate = function(route, skipHistory = false) {
         case 'pg-queries': if (typeof window.PgStatStatementsView === 'function') window.PgStatStatementsView(); break;
         case 'pg-explain': if (typeof window.PgExplainView === 'function') window.PgExplainView(); break;
         case 'pg-storage': if (typeof window.PgStorageView === 'function') window.PgStorageView(); break;
-        case 'pg-replication': if (typeof window.PgReplicationView === 'function') window.PgReplicationView(); break;
+        case 'pg-replication':
+            window.appState.activeViewId = 'pg-backups';
+            if (typeof window.PgBackupsView === 'function') window.PgBackupsView();
+            break;
         case 'pg-logs': if (typeof window.PgLogsView === 'function') window.PgLogsView(); break;
         case 'pg-backups': if (typeof window.PgBackupsView === 'function') window.PgBackupsView(); break;
         case 'pg-waits': if (window.PgWaitsView) window.PgWaitsView(); break;
-        case 'pg-backup-dr': if (window.PgBackupDRView) window.PgBackupDRView(); break;
+        case 'pg-backup-dr':
+            window.appState.activeViewId = 'pg-backups';
+            if (typeof window.PgBackupsView === 'function') window.PgBackupsView();
+            break;
         case 'pg-security': if (window.PgSecurityView) window.PgSecurityView(); break;
         case 'pg-alerts': window.PgAlertsView(); break;
         case 'pg-autovacuum': window.PgStorageView(); break;
@@ -419,6 +492,12 @@ window.appNavigate = function(route, skipHistory = false) {
         case 'pg-stat-statements': if (typeof window.PgStatStatementsView === 'function') window.PgStatStatementsView(); break;
         case 'pg-best-practices':
             loadLazyView('PgBestPracticesView', 'pg-best-practices', 'PostgreSQL Best Practices');
+            break;
+        case 'pg-dashboard-guide':
+            loadLazyView('PgDashboardGuideView', 'pg-dashboard-guide', 'PostgreSQL Dashboard Guide');
+            break;
+        case 'sqlserver-dashboard-guide':
+            loadLazyView('SqlServerDashboardGuideView', 'sqlserver-dashboard-guide', 'SQL Server Dashboard Guide');
             break;
         // Dynamic dashboard removed from sidebar; keep route for backward links.
         case 'dynamic-dashboard': window.DynamicDashboardView(); break;
@@ -574,11 +653,11 @@ window.router = {
                 <li data-route="pg-explain"><i class="fa-solid fa-diagram-project"></i> EXPLAIN Analyzer</li>
                 <li data-route="pg-storage"><i class="fa-solid fa-hard-drive"></i> Storage & Vacuum</li>
                 <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Index and Table</li>
-                <li data-route="pg-replication" id="nav-pg-replication" style="display:none;"><i class="fa-solid fa-clone"></i> Replication & HA</li>
                 <li data-route="pg-backups"><i class="fa-solid fa-shield-heart"></i> Backup & DR</li>
                 <li data-route="pg-security"><i class="fa-solid fa-user-lock"></i> Security Monitor</li>
                 <li data-route="pg-best-practices"><i class="fa-solid fa-shield-halved"></i> Best Practices</li>
                 <li data-route="pg-alerts"><i class="fa-solid fa-bell text-danger"></i> Alerts & Events</li>
+                <li data-route="pg-dashboard-guide" style="border-top:1px solid var(--border-color);margin-top:6px;padding-top:6px;"><i class="fa-solid fa-book-open text-accent"></i> Dashboard Info</li>
                 ${adminLi}
             `;
         } else { 
@@ -590,7 +669,8 @@ window.router = {
                 <li data-route="sqlserver-waits"><i class="fa-solid fa-clock-rotate-left"></i> Wait Statistics</li>
                 <li data-route="drilldown-memory"><i class="fa-solid fa-memory"></i> Memory Analyzer</li>
                 <li data-route="sqlserver-locks"><i class="fa-solid fa-link-slash"></i> Locks & Blocking</li>
-                <li data-route="drilldown-ha" style="display:none;"><i class="fa-solid fa-server"></i> HA & Replication</li>
+                <li data-route="drilldown-ha" style="display:none;"><i class="fa-solid fa-server"></i> HA & DR</li>
+                <li data-route="sqlserver-backups"><i class="fa-solid fa-shield-heart"></i> Backup & Recovery</li>
                 <li data-route="enterprise-metrics"><i class="fa-solid fa-chart-line"></i> Enterprise Metrics</li>
                 <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Index and Table</li>
                 <li data-route="performance-debt"><i class="fa-solid fa-screwdriver-wrench"></i> Performance Debt</li>
@@ -601,6 +681,7 @@ window.router = {
                 <li data-route="jobs" id="nav-agent-jobs"><i class="fa-solid fa-briefcase"></i> SQL Agent Jobs</li>
                 <li data-route="alerts"><i class="fa-solid fa-triangle-exclamation"></i> Alerts <span id="alerts-badge" class="badge badge-danger">0</span></li>
                 <li data-route="best-practices"><i class="fa-solid fa-shield-halved"></i> Best Practices</li>
+                <li data-route="sqlserver-dashboard-guide" style="border-top:1px solid var(--border-color);margin-top:6px;padding-top:6px;"><i class="fa-solid fa-book-open text-accent"></i> Dashboard Info</li>
                 ${adminLi}
             `;
         }
@@ -636,16 +717,7 @@ async function _refreshHALinkVisibility(inst, database) {
     try {
         const type = String(inst.type || '').toLowerCase();
         if (type === 'postgres') {
-            const r = await window.apiClient.authenticatedFetch(
-                `/api/postgres/replication?instance=${encodeURIComponent(inst.name)}`
-            );
-            if (r.ok) {
-                const d = await r.json();
-                const s = d.stats || {};
-                const hasRepl = s.is_primary === false || (Array.isArray(s.standbys) && s.standbys.length > 0);
-                const li = document.querySelector('li[data-route="pg-replication"]');
-                if (li) li.style.display = hasRepl ? 'block' : 'none';
-            }
+            return;
         } else if (type === 'sqlserver') {
             // Sidebar visibility is instance-wide. We don't pass the database param here
             // because the HA/Replication dashboard covers the entire instance. This
@@ -655,9 +727,14 @@ async function _refreshHALinkVisibility(inst, database) {
             );
             if (r.ok) {
                 const d = await r.json();
-                const hasHA = d.ha_enabled === true || d.replication_enabled === true;
+                // Show only when instance has AG, FCI, log shipping, mirroring, or replication (see FetchFeatureDetection).
+                const hasDR = d.ha_enabled === true || d.replication_enabled === true
+                    || d.log_shipping_enabled === true || d.ag_enabled === true;
                 const li = document.querySelector('li[data-route="drilldown-ha"]');
-                if (li) li.style.display = hasHA ? 'block' : 'none';
+                if (li) {
+                    if (hasDR) li.style.removeProperty('display');
+                    else li.style.display = 'none';
+                }
             }
         }
     } catch (e) {

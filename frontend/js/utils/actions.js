@@ -397,4 +397,66 @@
         }
     });
 
+    // Global Tooltip Hover Logic
+    document.addEventListener('mouseover', function (e) {
+        const el = e.target.closest('.info-icon-sm, .info-icon-clickable');
+        if (!el || !el.dataset.action) return;
+
+        const action = el.dataset.action;
+        let title, text;
+
+        if (action === 'show-sqlserver-info' && window.sqlserverDashboardInfo) {
+            const section = el.dataset.section;
+            const metric = el.dataset.metric;
+            const data = window.sqlserverDashboardInfo[section];
+            if (data) {
+                if (metric && data.metrics[metric]) {
+                    title = data.metrics[metric].title;
+                    text = data.metrics[metric].text;
+                } else {
+                    title = section + " Overview";
+                    text = data.description;
+                }
+            }
+        } else if (action === 'show-sqlserver-dashboard-detail' && window.sqlserverDashboardInfo) {
+            const dash = el.dataset.dashboard;
+            const data = window.sqlserverDashboardInfo[dash];
+            if (data) {
+                title = dash + " Overview";
+                text = data.description;
+            }
+        } else if (action === 'show-pg-info' && window.pgDashboardInfo) {
+            const section = el.dataset.section;
+            const metric = el.dataset.metric;
+            const data = window.pgDashboardInfo[section];
+            if (data) {
+                if (metric && data.metrics[metric]) {
+                    title = data.metrics[metric].title;
+                    text = data.metrics[metric].text;
+                } else {
+                    title = section + " Overview";
+                    text = data.description;
+                }
+            }
+        } else if (action === 'show-pg-dashboard-detail' && window.pgDashboardInfo) {
+            const dash = el.dataset.dashboard;
+            const data = window.pgDashboardInfo[dash];
+            if (data) {
+                title = dash + " Overview";
+                text = data.description;
+            }
+        }
+
+        if (title && text && window.showAppTooltip) {
+            window.showAppTooltip(el, title, text);
+        }
+    });
+
+    document.addEventListener('mouseout', function (e) {
+        const el = e.target.closest('.info-icon-sm, .info-icon-clickable');
+        if (el && window.hideAppTooltip) {
+            window.hideAppTooltip(e);
+        }
+    });
+
 })();

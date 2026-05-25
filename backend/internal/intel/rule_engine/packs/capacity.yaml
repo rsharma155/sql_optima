@@ -1,47 +1,5 @@
-name: storage_exhaustion
-description: Storage exhaustion forecast
-conditions:
-  - metric: delta_data_mb
-    operator: ">"
-    value: 100
-  - metric: free_disk_mb
-    operator: "<"
-    value: 50000
-logic: AND
-severity: critical
-message: "Data is growing at {delta_data_mb} MB per interval with {free_disk_mb} MB remaining."
-recommendation:
-  - "Purge old backup files immediately"
-  - "Archive historical data"
-  - "Add storage capacity"
-
----
-name: database_growth_acceleration
-description: Database growth acceleration
-conditions:
-  - metric: delta_data_mb
-    operator: ">"
-    value: 1000
-logic: AND
-severity: medium
-message: "Database growing rapidly at {delta_data_mb} MB per interval."
-recommendation:
-  - "Implement table partitioning"
-  - "Move historical data to archive"
-  - "Review index maintenance strategy"
-
----
-name: backup_failure_risk
-description: Failed jobs indicate backup risk
-conditions:
-  - metric: failed_jobs_24h
-    operator: ">"
-    value: 0
-logic: AND
-severity: critical
-message: "{failed_jobs_24h} SQL Agent jobs failed in last 24 hours."
-recommendation:
-  - "Check job failures for error details"
-  - "Verify backup jobs"
-  - "Test restore process"
-  - "Configure alerting on job failure"
+# Capacity threshold rules are evaluated dynamically in analysis/engine.go.
+#
+# Removed fixed rules:
+#   - storage_exhaustion, database_growth_acceleration (disk growth duplicates)
+#   - backup_failure_risk (failed_jobs_24h > 0 — now dynamic)

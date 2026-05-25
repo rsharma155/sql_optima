@@ -96,6 +96,7 @@ func (h *AdminNotificationHandlers) UpdateConfig(w http.ResponseWriter, r *http.
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	slog.Info("[AdminNotification] channel updated", "channel", input.Channel, "actor", actor, "enabled", input.IsEnabled)
 
 	// Apply change to the live notifier immediately.
 	if h.notifier != nil {

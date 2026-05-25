@@ -13,6 +13,7 @@ package config
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -57,6 +58,7 @@ func ConnectToInstance(inst Instance) (*sql.DB, error) {
 			db.SetMaxOpenConns(5)
 			db.SetMaxIdleConns(2)
 			db.SetConnMaxLifetime(10 * time.Minute)
+			db.SetConnMaxIdleTime(3 * time.Minute)
 		}
 		return db, err
 	} else if inst.Type == "postgres" {
@@ -87,6 +89,7 @@ func ConnectToInstance(inst Instance) (*sql.DB, error) {
 			db.SetMaxOpenConns(5)
 			db.SetMaxIdleConns(2)
 			db.SetConnMaxLifetime(10 * time.Minute)
+			db.SetConnMaxIdleTime(3 * time.Minute)
 		}
 		return db, err
 	}
@@ -106,6 +109,8 @@ type Instance struct {
 	Host      string    `yaml:"host" json:"host"`
 	Port      int       `yaml:"port,omitempty" json:"port,omitempty"`
 	User      string    `yaml:"user,omitempty" json:"-"`
+	// MonitoringUser is the DB role name from optima_servers.username (safe for API/UI).
+	MonitoringUser string `yaml:"-" json:"monitoring_user,omitempty"`
 	Password  string    `yaml:"password,omitempty" json:"-"`
 	Databases []string  `yaml:"databases,omitempty" json:"databases,omitempty"`
 	Available bool      `yaml:"available,omitempty" json:"available,omitempty"`
@@ -156,7 +161,7 @@ func LoadConfigWithSecurity(path string, sec Security) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Printf("[config] %s not found — starting with empty instance list (use Admin UI or API to register targets)\n", path)
+			slog.Info("[config] config file not found — starting with empty instance list", "path", path)
 			return &Config{Instances: []Instance{}}, nil
 		}
 		return nil, err
@@ -187,11 +192,15 @@ func LoadConfigWithSecurity(path string, sec Security) (*Config, error) {
 			inst.Password = os.Getenv(envPrefix + "_PASSWORD")
 		}
 
+		if inst.MonitoringUser == "" && inst.User != "" {
+			inst.MonitoringUser = inst.User
+		}
+
 		// Skip instances without credentials instead of failing entirely
 		if inst.User == "" || inst.Password == "" {
 			// Do not print environment variable names or other system details to stdout.
 			// Keep the signal, but avoid leaking local env naming conventions in logs.
-			fmt.Printf("[config] skipping instance %s: missing credentials\n", inst.Name)
+			slog.Warn("[config] skipping instance: missing credentials", "instance", inst.Name)
 			continue
 		}
 

@@ -99,6 +99,7 @@ func (tl *TimescaleLogger) LogSqlServerPerfCounters(ctx context.Context, serverI
 			INSERT INTO sqlserver_perf_counters (
 				capture_timestamp, server_id, counter_name, value_per_sec
 			) VALUES ($1, $2, $3, $4)
+			ON CONFLICT DO NOTHING
 		`, now, serverID, name, val)
 	}
 	br := tl.pool.SendBatch(ctx, batch)
@@ -117,20 +118,30 @@ func (tl *TimescaleLogger) GetSqlServerPerfCounters(ctx context.Context, serverI
 		return nil, err
 	}
 
-	q := `
-		SELECT capture_timestamp, counter_name, value_per_sec
+	// Dynamic bucket size for zoom support
+	dur := end.Sub(start)
+	bucket := "1 minute"
+	if dur > 24*time.Hour {
+		bucket = "15 minutes"
+	} else if dur > 6*time.Hour {
+		bucket = "5 minutes"
+	}
+
+	q := fmt.Sprintf(`
+		SELECT time_bucket('%s', capture_timestamp) AS bucket, counter_name, AVG(value_per_sec)
 		FROM sqlserver_perf_counters
 		WHERE server_id = $1
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
-	`
+	`, bucket)
+
 	var args []interface{}
 	args = append(args, serverID, start, end)
 	if len(counterNames) > 0 {
 		q += " AND counter_name = ANY($4)"
 		args = append(args, counterNames)
 	}
-	q += " ORDER BY capture_timestamp ASC"
+	q += " GROUP BY bucket, counter_name ORDER BY bucket ASC"
 
 	rows, err := tl.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -148,7 +159,6 @@ func (tl *TimescaleLogger) GetSqlServerPerfCounters(ctx context.Context, serverI
 		}
 		out = append(out, map[string]interface{}{
 			"timestamp":    ts,
-			"event_time":   ts.Format(time.RFC3339),
 			"counter_name": name,
 			"value":        val,
 		})
@@ -261,14 +271,24 @@ func (tl *TimescaleLogger) GetSqlServerPlanCache(ctx context.Context, serverID u
 	if err != nil {
 		return nil, err
 	}
-	q := `
-		SELECT capture_timestamp, cache_type, size_mb
+
+	dur := end.Sub(start)
+	bucket := "1 minute"
+	if dur > 24*time.Hour {
+		bucket = "15 minutes"
+	} else if dur > 6*time.Hour {
+		bucket = "5 minutes"
+	}
+
+	q := fmt.Sprintf(`
+		SELECT time_bucket('%s', capture_timestamp) AS bucket, cache_type, AVG(size_mb)
 		FROM sqlserver_plan_cache
 		WHERE server_id = $1
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
-		ORDER BY capture_timestamp ASC
-	`
+		GROUP BY bucket, cache_type
+		ORDER BY bucket ASC
+	`, bucket)
 	rows, err := tl.pool.Query(ctx, q, serverID, start, end)
 	if err != nil {
 		return nil, err
@@ -285,7 +305,6 @@ func (tl *TimescaleLogger) GetSqlServerPlanCache(ctx context.Context, serverID u
 		}
 		out = append(out, map[string]interface{}{
 			"timestamp":  ts,
-			"event_time": ts.Format(time.RFC3339),
 			"cache_type": ct,
 			"size_mb":    sm,
 		})
@@ -335,14 +354,24 @@ func (tl *TimescaleLogger) GetSqlServerMemoryClerksV2(ctx context.Context, serve
 	if err != nil {
 		return nil, err
 	}
-	q := `
-		SELECT capture_timestamp, clerk_name, pages_mb
+
+	dur := end.Sub(start)
+	bucket := "1 minute"
+	if dur > 24*time.Hour {
+		bucket = "15 minutes"
+	} else if dur > 6*time.Hour {
+		bucket = "5 minutes"
+	}
+
+	q := fmt.Sprintf(`
+		SELECT time_bucket('%s', capture_timestamp) AS bucket, clerk_name, AVG(pages_mb)
 		FROM sqlserver_memory_clerks
 		WHERE server_id = $1
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
-		ORDER BY capture_timestamp ASC
-	`
+		GROUP BY bucket, clerk_name
+		ORDER BY bucket ASC
+	`, bucket)
 	rows, err := tl.pool.Query(ctx, q, serverID, start, end)
 	if err != nil {
 		return nil, err
@@ -359,7 +388,6 @@ func (tl *TimescaleLogger) GetSqlServerMemoryClerksV2(ctx context.Context, serve
 		}
 		out = append(out, map[string]interface{}{
 			"timestamp":  ts,
-			"event_time": ts.Format(time.RFC3339),
 			"clerk_name": cn,
 			"pages_mb":   pm,
 		})
@@ -387,14 +415,25 @@ func (tl *TimescaleLogger) GetSqlServerMemoryGrantsV2(ctx context.Context, serve
 	if err != nil {
 		return nil, err
 	}
-	q := `
-		SELECT capture_timestamp, pending_grants, active_grants, granted_memory_mb
+
+	dur := end.Sub(start)
+	bucket := "1 minute"
+	if dur > 24*time.Hour {
+		bucket = "15 minutes"
+	} else if dur > 6*time.Hour {
+		bucket = "5 minutes"
+	}
+
+	q := fmt.Sprintf(`
+		SELECT time_bucket('%s', capture_timestamp) AS bucket,
+		       AVG(pending_grants), AVG(active_grants), AVG(granted_memory_mb)
 		FROM sqlserver_memory_grants
 		WHERE server_id = $1
 		  AND capture_timestamp >= $2
 		  AND capture_timestamp <= $3
-		ORDER BY capture_timestamp ASC
-	`
+		GROUP BY bucket
+		ORDER BY bucket ASC
+	`, bucket)
 	rows, err := tl.pool.Query(ctx, q, serverID, start, end)
 	if err != nil {
 		return nil, err
@@ -404,14 +443,12 @@ func (tl *TimescaleLogger) GetSqlServerMemoryGrantsV2(ctx context.Context, serve
 	var out []map[string]interface{}
 	for rows.Next() {
 		var ts time.Time
-		var pg, ag int
-		var gm float64
+		var pg, ag, gm float64
 		if err := rows.Scan(&ts, &pg, &ag, &gm); err != nil {
 			continue
 		}
 		out = append(out, map[string]interface{}{
 			"timestamp":         ts,
-			"event_time":        ts.Format(time.RFC3339),
 			"pending_grants":    pg,
 			"active_grants":     ag,
 			"granted_memory_mb": gm,

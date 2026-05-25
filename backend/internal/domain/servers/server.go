@@ -22,20 +22,38 @@ const (
 
 type SSLMode string
 
+// ServerFeatures exposes detected edition capabilities. Zero value = unknown.
+type ServerFeatures struct {
+	AGAvailable         bool `json:"ag_available"`
+	QueryStoreAvailable bool `json:"query_store_available"`
+}
+
 type Server struct {
-	ID         uuid.UUID  `json:"id"`
-	Name       string     `json:"name"`
-	DBType     DBType     `json:"db_type"`
-	Host       string     `json:"host"`
-	Port       int        `json:"port"`
-	Username   string     `json:"username"`
-	AuthType   AuthType   `json:"auth_type,omitempty"`
-	SSLMode    SSLMode    `json:"ssl_mode,omitempty"`
-	IsActive   bool       `json:"is_active"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	CreatedBy  string     `json:"created_by,omitempty"`
-	LastTestAt *time.Time `json:"last_test_at,omitempty"`
+	ID            uuid.UUID      `json:"id"`
+	Name          string         `json:"name"`
+	DBType        DBType         `json:"db_type"`
+	Host          string         `json:"host"`
+	Port          int            `json:"port"`
+	Username      string         `json:"username"`
+	AuthType      AuthType       `json:"auth_type,omitempty"`
+	SSLMode       SSLMode        `json:"ssl_mode,omitempty"`
+	IsActive      bool           `json:"is_active"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	CreatedBy     string         `json:"created_by,omitempty"`
+	LastTestAt    *time.Time     `json:"last_test_at,omitempty"`
+	EngineEdition int            `json:"engine_edition,omitempty"`
+	Features      ServerFeatures `json:"features"`
+}
+
+// ComputeFeatures sets Features from EngineEdition.
+// EngineEdition values: 1=Personal, 2=Standard, 3=Enterprise, 4=Express, 5=Azure, 8=Developer
+func (s *Server) ComputeFeatures() {
+	if s.DBType != DBSQLServer || s.EngineEdition == 0 {
+		return
+	}
+	s.Features.AGAvailable = s.EngineEdition == 3 || s.EngineEdition == 8
+	s.Features.QueryStoreAvailable = s.EngineEdition == 2 || s.EngineEdition == 3 || s.EngineEdition == 8
 }
 
 type CredentialPayload struct {

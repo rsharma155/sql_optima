@@ -8,14 +8,28 @@ window.runSqlServerStorageIndexHealthDashboard = async function(opts) {
     window.appState.msSih = window.appState.msSih || {};
     const state = window.appState.msSih;
     
-    // Time state - Default to 24h as per redesign spec
+    // Time state - Default to 24h; honor shared appState when set
     const now = new Date();
     const defaultRange = 24 * 60 * 60 * 1000;
     const pad = n => String(n).padStart(2, '0');
-    const fmtLocal = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const fmtLocal = d => {
+        if (window.formatDateTimeLocalInput) return window.formatDateTimeLocalInput(d).slice(0, 16);
+        const x = d instanceof Date ? d : new Date(d);
+        return `${x.getFullYear()}-${pad(x.getMonth()+1)}-${pad(x.getDate())}T${pad(x.getHours())}:${pad(x.getMinutes())}`;
+    };
 
-    state.fromLocal = state.fromLocal || fmtLocal(new Date(now.getTime() - defaultRange));
-    state.toLocal = state.toLocal || fmtLocal(now);
+    if (!skipLoadingShell) {
+        if (window.appState.fromTs && window.appState.toTs) {
+            state.fromLocal = fmtLocal(window.appState.fromTs);
+            state.toLocal = fmtLocal(window.appState.toTs);
+        } else {
+            state.fromLocal = state.fromLocal || fmtLocal(new Date(now.getTime() - defaultRange));
+            state.toLocal = state.toLocal || fmtLocal(now);
+        }
+    } else if (!state.fromLocal || !state.toLocal) {
+        state.fromLocal = state.fromLocal || fmtLocal(new Date(now.getTime() - defaultRange));
+        state.toLocal = state.toLocal || fmtLocal(now);
+    }
     
     let isInitialLoad = false;
     if (state.db === undefined || (window.appState.currentDatabase && state.db !== window.appState.currentDatabase)) {
@@ -121,7 +135,10 @@ window.runSqlServerStorageIndexHealthDashboard = async function(opts) {
         const syncSelect = (id, options, current) => {
             const el = $(id);
             if (!el) return;
-            el.innerHTML = '<option value="all">All</option>' + (options || []).map(o => `<option value="${o}" ${current===o?'selected':''}>${o}</option>`).join('');
+            el.innerHTML = '<option value="all">All</option>' + (options || []).map(o => {
+                const v = window.escapeHtml(String(o));
+                return `<option value="${v}" ${current===o?'selected':''}>${v}</option>`;
+            }).join('');
         };
         syncSelect('sihDb', filters.databases, state.db);
         syncSelect('sihSchema', filters.schemas, state.schema);
@@ -131,6 +148,8 @@ window.runSqlServerStorageIndexHealthDashboard = async function(opts) {
             if (e) e.preventDefault();
             if ($('sihFrom')) state.fromLocal = $('sihFrom').value;
             if ($('sihTo')) state.toLocal = $('sihTo').value;
+            window.appState.fromTs = state.fromLocal;
+            window.appState.toTs = state.toLocal;
             if ($('sihDb')) state.db = $('sihDb').value;
             if ($('sihSchema')) state.schema = $('sihSchema').value;
             if ($('sihTable')) state.table = $('sihTable').value;
@@ -152,6 +171,9 @@ window.runSqlServerStorageIndexHealthDashboard = async function(opts) {
             if (rawVal >= rules.red) sev = 'danger';
             else if (rawVal >= rules.orange) sev = 'warning';
             card.style.borderLeft = `4px solid var(--${sev})`;
+            
+            const label = card.querySelector('.sih-kpi-label').textContent;
+            card.title = `${label}: ${val}${suffix || ''}\nStatus: ${sev.toUpperCase()}\nThresholds: Warning >= ${rules.orange}, Critical >= ${rules.red}`;
         };
 
         const totalGB = k.total_db_size_mb / 1024;
@@ -312,7 +334,7 @@ async function showSqlServerSihTableDrilldown(instance, db, schema, table) {
     modal.innerHTML = `
         <div class="glass-panel" style="background:var(--bg-surface); width:95%; max-width:1000px; max-height:90vh; overflow-y:auto; border-radius:12px; border:1px solid var(--border-color); display:flex; flex-direction:column;">
             <div class="modal-header flex-between" style="padding:1rem; border-bottom:1px solid var(--border-color);">
-                <h3 style="margin:0;"><i class="fa-solid fa-magnifying-glass-chart text-accent"></i> ${schema}.${table} <span class="text-muted" style="font-size:0.8rem;">(Index Usage Analysis)</span></h3>
+                <h3 style="margin:0;"><i class="fa-solid fa-magnifying-glass-chart text-accent"></i> ${window.escapeHtml(schema)}.${window.escapeHtml(table)} <span class="text-muted" style="font-size:0.8rem;">(Index Usage Analysis)</span></h3>
                 <button class="btn btn-icon" id="closeSihModal" style="background:transparent; border:none; color:var(--text); font-size:1.5rem; cursor:pointer;">&times;</button>
             </div>
             <div class="modal-body" style="padding:1.5rem; flex:1;">
@@ -342,18 +364,25 @@ async function showSqlServerSihTableDrilldown(instance, db, schema, table) {
         document.getElementById('sihModalLoading').style.display = 'none';
         document.getElementById('sihModalContent').style.display = 'block';
         
+        const points = data.points || (Array.isArray(data) ? data : []);
         const idxBody = document.getElementById('sihModalIndexBody');
-        idxBody.innerHTML = (data || []).map(i => `
-            <tr>
-                <td><strong>${window.sihShared.escH(i.index_name)}</strong></td>
-                <td>${Number(i.value).toLocaleString()}</td>
-                <td>${Number(i.updates || 0).toLocaleString()}</td>
-                <td>${window.sihShared.fmt(i.value2, 1)}</td>
-                <td>${i.last_user_seek ? new Date(i.last_user_seek).toLocaleDateString() : 'Never'}</td>
-            </tr>
-        `).join('') || '<tr><td colspan="5" class="text-center p-3">No index usage data found.</td></tr>';
+        idxBody.innerHTML = points.map(i => {
+            const reads = (i.seeks || 0) + (i.scans || 0) + (i.lookups || 0);
+            const dates = [i.last_user_seek, i.last_user_scan, i.last_user_lookup].filter(d => d).map(d => new Date(d));
+            const lastUsed = dates.length > 0 ? new Date(Math.max(...dates)).toLocaleDateString() : 'Never';
+            
+            return `
+                <tr>
+                    <td><strong>${window.sihShared.escH(i.index_name)}</strong></td>
+                    <td>${reads.toLocaleString()}</td>
+                    <td>${Number(i.updates || 0).toLocaleString()}</td>
+                    <td>${window.sihShared.fmt(i.index_size_mb, 1)}</td>
+                    <td>${lastUsed}</td>
+                </tr>
+            `;
+        }).join('') || '<tr><td colspan="5" class="text-center p-3">No index usage data found.</td></tr>';
         
     } catch (e) {
-        document.getElementById('sihModalLoading').innerHTML = `<div class="alert alert-danger">Drilldown failed: ${e.message}</div>`;
+        document.getElementById('sihModalLoading').innerHTML = `<div class="alert alert-danger">Drilldown failed: ${window.escapeHtml(e.message)}</div>`;
     }
 }

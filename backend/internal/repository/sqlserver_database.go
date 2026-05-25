@@ -18,7 +18,7 @@ import (
 // DatabaseCatalogRow holds a single row from the sys.databases catalog snapshot.
 type DatabaseCatalogRow struct {
 	DatabaseID                     int
-	Name                           string
+	DatabaseName                   string
 	CreateDate                     time.Time
 	CompatibilityLevel             int
 	CollationName                  string
@@ -48,6 +48,7 @@ type DatabaseCatalogRow struct {
 	IsSubscribed                   bool
 	IsDistributor                  bool
 	GroupDatabaseID                *string
+	IsQueryStoreOn                 bool
 }
 
 func (c *SqlServerRepository) ListSQLServerUserDatabases(ctx context.Context, instanceName string) ([]string, error) {
@@ -133,7 +134,12 @@ SELECT
     d.is_published,
     d.is_subscribed,
     d.is_distributor,
-    CONVERT(NVARCHAR(36), d.group_database_id) AS group_database_id
+    CONVERT(NVARCHAR(36), d.group_database_id) AS group_database_id,
+    CASE WHEN CAST(SERVERPROPERTY('ProductMajorVersion') AS INT) >= 13
+         THEN (SELECT TOP 1 dc3.is_query_store_on
+               FROM sys.databases dc3 WHERE dc3.database_id = d.database_id)
+         ELSE CAST(0 AS BIT)
+    END AS is_query_store_on
 FROM sys.databases AS d
 WHERE d.database_id > 4
   AND d.state_desc   = N'ONLINE'
@@ -146,6 +152,15 @@ ORDER BY d.name;`
 	defer cancel()
 
 	rows, err := db.QueryContext(ctx, q)
+	if err != nil && IsMSSQLConnError(err) {
+		// Transport-level disconnect — try to reopen the pool and retry once.
+		if c.ReconnectInstance(ctx, instanceName) {
+			if db2, ok2 := c.GetConn(instanceName); ok2 {
+				db = db2
+				rows, err = db.QueryContext(ctx, q)
+			}
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("FetchDatabaseCatalog query failed: %w", err)
 	}
@@ -157,7 +172,7 @@ ORDER BY d.name;`
 		var ownerName, groupDBID sql.NullString
 		if err := rows.Scan(
 			&r.DatabaseID,
-			&r.Name,
+			&r.DatabaseName,
 			&r.CreateDate,
 			&r.CompatibilityLevel,
 			&r.CollationName,
@@ -187,6 +202,7 @@ ORDER BY d.name;`
 			&r.IsSubscribed,
 			&r.IsDistributor,
 			&groupDBID,
+			&r.IsQueryStoreOn,
 		); err != nil {
 			continue
 		}

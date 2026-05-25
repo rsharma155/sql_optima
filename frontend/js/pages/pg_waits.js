@@ -2,6 +2,10 @@
  * SQL Optima — Waits, Bottlenecks & Sessions
  */
 (function() {
+    function trendTimeMs(t) {
+        return window.tsMs ? window.tsMs(t) : null;
+    }
+
     window.PgWaitsView = function() {
         const instance = window.appState.config?.instances?.[window.appState.currentInstanceIdx]?.name;
         if (!instance) return;
@@ -18,7 +22,6 @@
                     </div>
                     <div class="flex-center dashboard-page-title-actions" style="gap: 0.75rem;">
                         <div id="time-picker-insertion-point"></div>
-                        <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgWaitsView"><i class="fa-solid fa-refresh"></i> Refresh</button>
                     </div>
                 </div>
 
@@ -150,6 +153,11 @@
         document.getElementById('pg-query-modal-close').addEventListener('click', () => {
             document.getElementById('pg-query-modal').style.display = 'none';
         });
+        window.showQueryModal = (q) => {
+            const sql = decodePgWaitsQuery(q);
+            document.getElementById('pg-query-modal-text').textContent = sql;
+            document.getElementById('pg-query-modal').style.display = 'flex';
+        };
         fetchData(instance);
     };
 
@@ -201,7 +209,7 @@
         window.pgWaitsCharts.load = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: trend.map(t => new Date(t.ts)),
+                labels: trend.map(t => window.parseChartTimestamp ? window.parseChartTimestamp(t) : new Date(t.timestamp || t.ts)),
                 datasets: [
                     { label: 'Active', data: trend.map(t => t.active_sessions), backgroundColor: 'rgba(16, 185, 129, 0.15)', borderColor: '#10b981', fill: true, pointRadius: 0, tension: 0.3 },
                     { label: 'Waiting', data: trend.map(t => t.waiting_sessions), backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: '#f59e0b', fill: true, pointRadius: 0, tension: 0.3 }
@@ -229,16 +237,19 @@
         window.pgWaitsCharts = window.pgWaitsCharts || {};
 
         const types = [...new Set(trend.map(t => t.wait_event_type))];
-        const labels = [...new Set(trend.map(t => t.bucket))].sort();
+        const labelMs = [...new Set(trend.map(trendTimeMs).filter(m => m != null))].sort((a, b) => a - b);
         const colors = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
         const datasets = types.map((type, i) => ({
             label: type,
-            data: labels.map(l => trend.find(t => t.bucket === l && t.wait_event_type === type)?.sessions || 0),
+            data: labelMs.map(ms => {
+                const row = trend.find(t => trendTimeMs(t) === ms && t.wait_event_type === type);
+                return row?.sessions || 0;
+            }),
             backgroundColor: colors[i % colors.length] + '44', borderColor: colors[i % colors.length], fill: true, pointRadius: 0, tension: 0.3
         }));
         window.pgWaitsCharts.waitTrend = new Chart(ctx, {
             type: 'line',
-            data: { labels: labels.map(l => new Date(l)), datasets },
+            data: { labels: labelMs.map(ms => new Date(ms)), datasets },
             options: { 
                 responsive: true, 
                 maintainAspectRatio: false, 
@@ -304,10 +315,13 @@
         const STATE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b'];
 
         const states = [...new Set(trend.map(t => t.state))];
-        const labels = [...new Set(trend.map(t => t.bucket))].sort();
+        const labelMs = [...new Set(trend.map(trendTimeMs).filter(m => m != null))].sort((a, b) => a - b);
         const datasets = states.map((state, i) => ({
             label: STATE_LABELS[state] || state || 'Unknown',
-            data: labels.map(l => trend.find(t => t.bucket === l && t.state === state)?.count || 0),
+            data: labelMs.map(ms => {
+                const row = trend.find(t => trendTimeMs(t) === ms && t.state === state);
+                return row?.count || 0;
+            }),
             borderColor: STATE_COLORS[i % STATE_COLORS.length],
             backgroundColor: STATE_COLORS[i % STATE_COLORS.length] + '22',
             fill: true,
@@ -316,7 +330,7 @@
         }));
         window.pgWaitsCharts.stateTrend = new Chart(ctx, {
             type: 'line',
-            data: { labels: labels.map(l => new Date(l)), datasets },
+            data: { labels: labelMs.map(ms => new Date(ms)), datasets },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
@@ -339,21 +353,11 @@
         const tbody = document.querySelector('#pg-long-sessions-table tbody');
         if (!tbody) return;
         if (!sessions || sessions.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No data</td></tr>'; return; }
-        window.showQueryModal = (q) => { 
-            let sql = decodeURIComponent(q);
-            try {
-                if (sql.includes('%20') || sql.includes('%0A')) {
-                    sql = decodeURIComponent(sql);
-                }
-            } catch(e) {}
-            document.getElementById('pg-query-modal-text').textContent = sql.replace(/\+/g, ' '); 
-            document.getElementById('pg-query-modal').style.display = 'flex'; 
-        };
         tbody.innerHTML = sessions.slice(0, 10).map(s => {
-            const decodedQuery = pgssSmartDecode(s.query || '');
-            const capturedAt = s.capture_timestamp
-                ? new Date(s.capture_timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                : (s.duration || '—');
+            const decodedQuery = decodePgWaitsQuery(s.query || '');
+            const capturedAt = window.fmtChartTick
+                ? (window.fmtChartTick(s, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) || '—')
+                : '—';
             return `
             <tr style="cursor:pointer;" data-action="call" data-fn="showQueryModal" data-arg="${encodeURIComponent(decodedQuery)}">
                 <td><span class="badge badge-outline">${s.pid}</span></td>
@@ -371,13 +375,17 @@
         if (!tbody) return;
         if (!queries || queries.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No data</td></tr>'; return; }
         const grouped = {};
-        queries.forEach(q => { if (!grouped[q.query] || new Date(q.ts) > new Date(grouped[q.query].ts)) grouped[q.query] = q; });
+        queries.forEach(q => {
+            const qMs = window.tsMs(q);
+            const prevMs = grouped[q.query] ? window.tsMs(grouped[q.query]) : null;
+            if (!grouped[q.query] || (qMs != null && (prevMs == null || qMs > prevMs))) grouped[q.query] = q;
+        });
         const top = Object.values(grouped).sort((a,b) => b.total_exec_time - a.total_exec_time).slice(0, 10);
         tbody.innerHTML = top.map(q => {
-            const decodedQuery = pgssSmartDecode(q.query || '');
+            const decodedQuery = decodePgWaitsQuery(q.query || '');
             return `
             <tr style="cursor:pointer;" data-action="call" data-fn="showQueryModal" data-arg="${encodeURIComponent(decodedQuery)}">
-                <td class="small text-muted">${q.ts ? new Date(q.ts).toLocaleTimeString() : ''}</td>
+                <td class="small text-muted">${window.fmtChartTick ? window.fmtChartTick(q) : ''}</td>
                 <td>${window.escapeHtml(q.usename || 'unknown')}</td>
                 <td class="text-center">${Number(q.calls || 0).toLocaleString()}</td>
                 <td class="text-right font-bold">${(q.total_exec_time || 0).toFixed(1)}</td>
@@ -387,12 +395,11 @@
         `; }).join('');
     }
 
-    function pgssSmartDecode(s) {
+    function decodePgWaitsQuery(s) {
+        if (window.decodeQueryText) return window.decodeQueryText(s);
         if (!s) return '';
         try {
-            if (s.indexOf('%20') !== -1 || s.indexOf('%0A') !== -1) {
-                return decodeURIComponent(s).replace(/\+/g, ' ');
-            }
+            if (/%[0-9A-Fa-f]{2}/.test(s)) return decodeURIComponent(s).replace(/\+/g, ' ');
         } catch (e) {}
         return s;
     }

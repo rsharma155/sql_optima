@@ -119,7 +119,7 @@ func PersistPostgresIndexUsageDeltas(ctx context.Context, tl *hot.TimescaleLogge
 			dLookups, ok3 := storageindex.Delta(r.IdxTupReadTotal, 0)
 			if ok1 && ok2 && ok3 {
 				stat := models.IndexUsageStat{
-					Time:        capture.UTC(),
+					Timestamp:   capture.UTC(),
 					Engine:      engine,
 					ServerID:    serverID,
 					DBName:      r.DBName,
@@ -162,7 +162,7 @@ func PersistPostgresIndexUsageDeltas(ctx context.Context, tl *hot.TimescaleLogge
 		}
 
 		stat := models.IndexUsageStat{
-			Time:        capture.UTC(),
+			Timestamp:   capture.UTC(),
 			Engine:      engine,
 			ServerID:    serverID,
 			DBName:      r.DBName,
@@ -217,7 +217,7 @@ func PersistPostgresTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogge
 		}
 
 		stat := models.TableUsageStat{
-			Time:         capture.UTC(),
+			Timestamp:    capture.UTC(),
 			Engine:       engine,
 			ServerID:     serverID,
 			DBName:       r.DBName,
@@ -246,7 +246,7 @@ func PersistPostgresTableSizeHistory(ctx context.Context, tl *hot.TimescaleLogge
 	engine := "postgres"
 	for _, r := range rows {
 		h := models.TableSizeHistory{
-			Time:        capture.UTC(),
+			Timestamp:   capture.UTC(),
 			Engine:      engine,
 			ServerID:    serverID,
 			DBName:      r.DBName,

@@ -92,6 +92,18 @@ func TestAnalyzeInProcess(t *testing.T) {
 	}
 }
 
+func TestInferIsVirtualHost(t *testing.T) {
+	if !inferIsVirtualHost("VMware Virtual Platform", 128, 64, false) {
+		t.Error("expected VM from cpu_type")
+	}
+	if inferIsVirtualHost("", 64, 64, true) {
+		t.Error("expected physical when HT on and VM RAM signature absent")
+	}
+	if !inferIsVirtualHost("", 200, 64, false) {
+		t.Error("expected VM when virtual_memory_gb >> physical_memory_gb")
+	}
+}
+
 func TestCountPopulated(t *testing.T) {
 	raw := map[string]interface{}{
 		"avg_cpu_load":    45.0,
@@ -148,7 +160,7 @@ func TestGetReportInProcess(t *testing.T) {
 	}
 	mock.ExpectQuery(`SELECT capture_timestamp, blocking_sessions`).WillReturnRows(pgxmock.NewRows([]string{"a"}).AddRow(time.Now()))
 
-	content, err := svc.GetReport(ctx, serverID.String(), "json")
+	content, err := svc.GetReport(ctx, serverID.String(), "json", "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

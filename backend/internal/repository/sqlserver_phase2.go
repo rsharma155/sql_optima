@@ -12,6 +12,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // FetchBlockingSessionsCount returns number of currently blocked requests.
@@ -144,20 +146,62 @@ func (c *SqlServerRepository) FetchPerfCounters(ctx context.Context, instanceNam
 	return out, rows.Err()
 }
 
-// FetchWaitStatsCumulative returns cumulative wait_time_ms per wait_type (filtered).
-func (c *SqlServerRepository) FetchWaitStatsCumulative(ctx context.Context, instanceName string) (map[string]float64, error) {
+// FetchWaitStatsCumulative returns cumulative wait_time_ms per wait_type.
+// It reads from sqlserver_wait_stats_cumulative (latest snapshot) when
+// LocalPool is available, avoiding a live DMV round-trip.  Falls back to the
+// monitored SQL Server only when the table has no data for this server.
+func (c *SqlServerRepository) FetchWaitStatsCumulative(ctx context.Context, serverID uuid.UUID, instanceName string) (map[string]float64, error) {
+	if c.LocalPool != nil {
+		out, err := c.fetchWaitCumulativeFromTS(ctx, serverID)
+		if err == nil && len(out) > 0 {
+			return out, nil
+		}
+		// fall through to direct DMV on empty result or transient error
+	}
+
 	db := c.conns[strings.ToUpper(instanceName)]
 	if db == nil {
 		return nil, fmt.Errorf("no connection for instance %s", instanceName)
 	}
-	ctx, cancel := WithQueryTimeout(ctx, 0)
+	qCtx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
 
-	rows, err := db.QueryContext(ctx, `
-		/* SQL_OPTIMA */ SELECT   wait_type, CAST(wait_time_ms AS FLOAT) AS wait_time_ms
+	rows, err := db.QueryContext(qCtx, `
+		/* SQL_OPTIMA */ SELECT wait_type, CAST(wait_time_ms AS FLOAT)
 		FROM sys.dm_os_wait_stats
 		WHERE wait_type NOT LIKE '%SLEEP%';
 	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]float64)
+	for rows.Next() {
+		var wt string
+		var ms float64
+		if err := rows.Scan(&wt, &ms); err != nil {
+			return nil, err
+		}
+		out[wt] = ms
+	}
+	return out, rows.Err()
+}
+
+// fetchWaitCumulativeFromTS reads the latest cumulative snapshot from
+// sqlserver_wait_stats_cumulative in TimescaleDB.
+func (c *SqlServerRepository) fetchWaitCumulativeFromTS(ctx context.Context, serverID uuid.UUID) (map[string]float64, error) {
+	const q = `
+		SELECT wait_type, CAST(wait_time_ms AS FLOAT)
+		FROM sqlserver_wait_stats_cumulative
+		WHERE server_id = $1
+		  AND capture_timestamp = (
+		      SELECT MAX(capture_timestamp)
+		      FROM sqlserver_wait_stats_cumulative
+		      WHERE server_id = $1
+		  )
+		  AND wait_type NOT LIKE '%SLEEP%'`
+	rows, err := c.LocalPool.Query(ctx, q, serverID)
 	if err != nil {
 		return nil, err
 	}

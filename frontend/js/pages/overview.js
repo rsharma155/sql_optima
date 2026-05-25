@@ -8,6 +8,10 @@
  * SPDX-License-Identifier: MIT
  */
 
+window.currentCharts = window.currentCharts || {};
+
+let _pgDashboardUpdateInFlight = false;
+
 window.PgDashboardView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || { name: 'Loading...', type: 'postgres' };
     const instName = inst.name;
@@ -86,6 +90,9 @@ window.PgDashboardView = async function() {
 
 async function updateDashboardV2(instName, dashboardData, from, to) {
     if (!dashboardData) return;
+    if (_pgDashboardUpdateInFlight) return;
+    _pgDashboardUpdateInFlight = true;
+    try {
     const s = dashboardData.stats || {};
     const h = dashboardData.history || {};
 
@@ -225,15 +232,38 @@ async function updateDashboardV2(instName, dashboardData, from, to) {
 
     // 10. Replica Detail Grid
     await updateReplicaDetail(instName);
+    } finally {
+        _pgDashboardUpdateInFlight = false;
+    }
+}
+
+function _destroyPgChart(canvasOrId) {
+    if (typeof window.destroyChartOnCanvas === 'function') {
+        window.destroyChartOnCanvas(canvasOrId);
+    } else {
+        const id = typeof canvasOrId === 'string' ? canvasOrId : canvasOrId?.id;
+        if (id && window.currentCharts?.[id]) {
+            try { window.currentCharts[id].destroy(); } catch (_) {}
+            window.currentCharts[id] = null;
+        }
+    }
 }
 
 async function renderAASLoadChart(id, mData, from, to) {
     const el = document.getElementById(id);
     if (!el) return;
+    _destroyPgChart(el);
 
-    const labels = (mData.cpu_load || []).map(d => new Date(d.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+    const aligned = window.alignSeriesByTime ? window.alignSeriesByTime([
+        { label: 'CPU Runnable', points: mData.cpu_load || [], getValue: (d) => d.value },
+        { label: 'I/O Wait', points: mData.io_wait_load || [], getValue: (d) => d.value },
+        { label: 'Lock Wait', points: mData.lock_wait_load || [], getValue: (d) => d.value },
+        { label: 'Idle in Txn', points: mData.idle_in_txn_load || [], getValue: (d) => d.value }
+    ]) : null;
+    const labels = aligned ? aligned.labels : (mData.cpu_load || []).map(d => window.fmtChartTick ? window.fmtChartTick(d) : '');
     if (labels.length === 0) {
         // Show a "no data" placeholder so the chart area isn't silently empty.
+        _destroyPgChart(el);
         const parent = el.parentElement;
         const w = parent ? parent.offsetWidth || 300 : 300;
         const h = parent ? parent.offsetHeight || 230 : 230;
@@ -247,11 +277,16 @@ async function renderAASLoadChart(id, mData, from, to) {
         return;
     }
 
-    const datasets = [
-        { label: 'CPU Runnable', data: mData.cpu_load.map(d=>d.value), color: '#3b82f6' },
-        { label: 'I/O Wait', data: mData.io_wait_load.map(d=>d.value), color: '#f59e0b' },
-        { label: 'Lock Wait', data: mData.lock_wait_load.map(d=>d.value), color: '#ef4444' },
-        { label: 'Idle in Txn', data: mData.idle_in_txn_load.map(d=>d.value), color: '#94a3b8' }
+    const colors = ['#3b82f6', '#f59e0b', '#ef4444', '#94a3b8'];
+    const datasets = aligned ? aligned.series.map((data, i) => ({
+        label: aligned.seriesMeta[i],
+        data: data.map(v => (v == null ? 0 : v)),
+        color: colors[i]
+    })) : [
+        { label: 'CPU Runnable', data: (mData.cpu_load || []).map(d => d.value), color: '#3b82f6' },
+        { label: 'I/O Wait', data: (mData.io_wait_load || []).map(d => d.value), color: '#f59e0b' },
+        { label: 'Lock Wait', data: (mData.lock_wait_load || []).map(d => d.value), color: '#ef4444' },
+        { label: 'Idle in Txn', data: (mData.idle_in_txn_load || []).map(d => d.value), color: '#94a3b8' }
     ];
 
     renderStackedAreaChart(id, labels, datasets, 'Avg Active Sessions');
@@ -301,6 +336,7 @@ async function updateCheckpointHealth(instName, from, to) {
                 // Show a soft placeholder so the chart is not silently blank.
                 const canvas = document.getElementById('pgCheckpointHealthChart');
                 if (canvas) {
+                    _destroyPgChart(canvas);
                     const parent = canvas.parentElement;
                     const w = parent ? parent.offsetWidth || 300 : 300;
                     const h = parent ? parent.offsetHeight || 160 : 160;
@@ -362,7 +398,7 @@ async function updateIncidentFeed(instName) {
                 return `
                     <tr>
                         <td><span class="badge ${sevClass}">${typeLabel}</span></td>
-                        <td>${new Date(inc.ts).toLocaleTimeString()}</td>
+                        <td>${window.fmtChartTick ? window.fmtChartTick(inc) : ''}</td>
                         <td>${inc.duration_ms > 0 ? (inc.duration_ms / 1000).toFixed(1) + 's' : '--'}</td>
                         <td>${inc.usename || '--'}</td>
                         <td>${inc.datname || '--'}</td>
@@ -376,7 +412,7 @@ async function updateIncidentFeed(instName) {
 
 async function updateReplicaDetail(instName) {
     try {
-        const resp = await window.apiClient.authenticatedFetch(`/api/postgres/replication-lag/history?instance=${encodeURIComponent(instName)}&limit=1`);
+        const resp = await window.apiClient.authenticatedFetch(`/api/postgres/replication?instance=${encodeURIComponent(instName)}&limit=1`);
         const container = document.getElementById('pg-replication-grid-container');
         if (resp.ok) {
             const payload = await resp.json();
@@ -426,7 +462,7 @@ async function updateReplicaDetail(instName) {
 function renderDoughnutWithTotal(id, labels, data, colors) {
     const el = document.getElementById(id);
     if (!el) return;
-    if (window.currentCharts[id]) window.currentCharts[id].destroy();
+    _destroyPgChart(el);
 
     const total = data.reduce((a, b) => a + b, 0);
 
@@ -467,7 +503,7 @@ function renderDoughnutWithTotal(id, labels, data, colors) {
 function renderMultiLineChart(id, labels, datasets, unit) {
     const el = document.getElementById(id);
     if (!el) return;
-    if (window.currentCharts[id]) window.currentCharts[id].destroy();
+    _destroyPgChart(el);
 
     window.currentCharts[id] = new Chart(el.getContext('2d'), {
         type: 'line',
@@ -521,7 +557,7 @@ async function fetchMetric(instance, metric, from, to, filterBg = false) {
 function renderStackedAreaChart(id, labels, datasets, yLabel) {
     const el = document.getElementById(id);
     if (!el) return;
-    if (window.currentCharts[id]) window.currentCharts[id].destroy();
+    _destroyPgChart(el);
 
     window.currentCharts[id] = new Chart(el.getContext('2d'), {
         type: 'line',
@@ -557,7 +593,7 @@ function renderStackedAreaChart(id, labels, datasets, yLabel) {
 function renderOverviewLineChart(id, labels, data, color, unit, showLegend, datasetLabel) {
     const el = document.getElementById(id);
     if (!el) return;
-    if (window.currentCharts[id]) window.currentCharts[id].destroy();
+    _destroyPgChart(el);
 
     window.currentCharts[id] = new Chart(el.getContext('2d'), {
         type: 'line',
@@ -589,7 +625,7 @@ function renderOverviewLineChart(id, labels, data, color, unit, showLegend, data
 function renderBarChart(id, labels, data, color) {
     const el = document.getElementById(id);
     if (!el) return;
-    if (window.currentCharts[id]) window.currentCharts[id].destroy();
+    _destroyPgChart(el);
 
     window.currentCharts[id] = new Chart(el.getContext('2d'), {
         type: 'bar',
@@ -620,9 +656,7 @@ function renderHostResourceChart(cpuRaw, memRaw, from, to) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
-    if (window.currentCharts && window.currentCharts[canvasId]) {
-        window.currentCharts[canvasId].destroy();
-    }
+    _destroyPgChart(canvas);
 
     // When the OS Collector is not deployed, both arrays will be empty.
     // Replace the chart area with an informative notice rather than
@@ -675,6 +709,12 @@ function renderHostResourceChart(cpuRaw, memRaw, from, to) {
         memEl.textContent = `Mem: ${curMem.toFixed(1)}%`;
         memEl.className = curMem > 90 ? 'text-critical' : curMem > 70 ? 'text-warning' : 'text-accent';
     }
+
+    canvas.style.display = '';
+    const header = canvas.closest('.card')?.querySelector('.card-header');
+    if (header) header.style.display = '';
+    const notice = canvas.closest('.card')?.querySelector('.host-res-notice');
+    if (notice) notice.remove();
 
     window.currentCharts[canvasId] = new Chart(canvas.getContext('2d'), {
         type: 'line',

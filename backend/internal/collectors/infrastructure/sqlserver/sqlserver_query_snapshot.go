@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/collectors/domain"
+	ms "github.com/rsharma155/sql_optima/internal/sqlserver"
 )
 
 type SQLServerSnapshotRepository struct {
@@ -31,7 +32,7 @@ SELECT TOP 500
  COALESCE(pa.dbid, st.dbid) AS db_id,
  ISNULL(DB_NAME(COALESCE(pa.dbid, st.dbid)), 'unknown') AS database_name,
  qs.execution_count AS total_executions,
- qs.last_execution_time,
+ DATEADD(MINUTE, DATEDIFF(MINUTE, GETDATE(), GETUTCDATE()), qs.last_execution_time) AS last_execution_time,
  qs.total_worker_time/1000 AS total_cpu_ms,
  qs.total_elapsed_time/1000 AS total_elapsed_ms,
  qs.total_logical_reads,
@@ -68,18 +69,25 @@ OUTER APPLY (
 ) pa
 WHERE ISNULL(pa.dbid, st.dbid) > 4
   AND qs.statement_sql_handle IS NOT NULL
-  AND qs.last_execution_time >= @last_watermark
-ORDER BY qs.total_worker_time DESC;
+  AND DATEADD(MINUTE, DATEDIFF(MINUTE, GETDATE(), GETUTCDATE()), qs.last_execution_time) >= @last_watermark
+ORDER BY DATEADD(MINUTE, DATEDIFF(MINUTE, GETDATE(), GETUTCDATE()), qs.last_execution_time) DESC,
+         qs.total_worker_time DESC;
 `
 
 func (r *SQLServerSnapshotRepository) GetSqlServerStartTime(ctx context.Context) (time.Time, error) {
 	var startTime time.Time
 	err := r.db.QueryRowContext(ctx, "SELECT sqlserver_start_time FROM sys.dm_os_sys_info").Scan(&startTime)
+	if err != nil && ms.IsMSSQLConnError(err) {
+		err = r.db.QueryRowContext(ctx, "SELECT sqlserver_start_time FROM sys.dm_os_sys_info").Scan(&startTime)
+	}
 	return startTime, err
 }
 
 func (r *SQLServerSnapshotRepository) FetchSnapshot(ctx context.Context, lastWatermark time.Time) ([]domain.MSSQLQuerySnapshot, error) {
 	rows, err := r.db.QueryContext(ctx, querySnapshotSQL, sql.Named("last_watermark", lastWatermark))
+	if err != nil && ms.IsMSSQLConnError(err) {
+		rows, err = r.db.QueryContext(ctx, querySnapshotSQL, sql.Named("last_watermark", lastWatermark))
+	}
 	if err != nil {
 		return nil, err
 	}

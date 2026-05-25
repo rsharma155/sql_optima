@@ -16,10 +16,9 @@
     <!-- Stylesheets -->
     <link rel="stylesheet" href="assets/css/main.css">
     <link rel="stylesheet" href="assets/css/sqlserver_health_v2.css">
-    <!-- Google Fonts: Inter & JetBrains Mono -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="assets/css/pages/sqlserver_backups.css">
+    <!-- Fonts & icons — vendored for air-gapped deployments -->
+    <link rel="stylesheet" href="/js/vendor/fonts/fonts.css">
     <style>
         :root {
             --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
@@ -28,10 +27,12 @@
         body { font-family: var(--font-sans); }
         code, pre { font-family: var(--font-mono); }
     </style>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" crossorigin="anonymous">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <link rel="stylesheet" href="/js/vendor/fontawesome/css/all.min.css">
+    <script src="/js/vendor/chart-4.5.1.min.js"></script>
+    <script src="/js/utils/chart-bootstrap.js"></script>
+    <script src="/js/vendor/chartjs-plugin-annotation-3.1.0.min.js"></script>
+    <script src="/js/vendor/chartjs-plugin-zoom.min.js"></script>
+    <script src="/js/vendor/chartjs-adapter-date-fns-3.0.0.bundle.min.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -66,7 +67,7 @@
                 <div class="theme-toggle-wrapper">
                     <i class="fa-solid fa-sun"></i>
                     <label class="switch">
-                        <input type="checkbox" id="theme-toggle" checked>
+                        <input type="checkbox" id="theme-toggle">
                         <span class="slider round"></span>
                     </label>
                     <i class="fa-solid fa-moon"></i>
@@ -87,12 +88,13 @@
 
     <!-- Hidden Time Picker Template for injection -->
     <template id="global-time-picker-template">
-        <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.7rem; border: 1px solid var(--border-color); flex-wrap: nowrap; overflow: hidden;">
+        <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.7rem; border: 1px solid var(--border-color); flex-wrap: nowrap; overflow: visible;">
             <label class="text-muted" style="margin:0; font-weight:600; text-transform:uppercase; font-size:0.6rem;">From</label>
-            <input type="datetime-local" id="from-ts" style="background:transparent; border:none; color:inherit; font-size:0.7rem; width:9.5rem; padding:0;" />
+            <input type="datetime-local" id="from-ts" step="1" style="background:transparent; border:none; color:inherit; font-size:0.7rem; width:11.5rem; padding:0;" />
             <label class="text-muted" style="margin:0; font-weight:600; text-transform:uppercase; font-size:0.6rem;">To</label>
-            <input type="datetime-local" id="to-ts" style="background:transparent; border:none; color:inherit; font-size:0.7rem; width:9.5rem; padding:0;" />
-            <button id="global-refresh-btn" class="btn btn-xs btn-accent" style="padding:1px 6px; min-width:auto;" title="Refresh Page"><i class="fa-solid fa-sync"></i></button>
+            <input type="datetime-local" id="to-ts" step="1" style="background:transparent; border:none; color:inherit; font-size:0.7rem; width:11.5rem; padding:0;" />
+            <button id="global-refresh-btn" class="btn btn-xs btn-accent" style="padding:2px 8px; min-width:auto;" title="Apply Range">Apply</button>
+            <button id="global-reload-btn" class="btn btn-xs btn-outline" style="padding:2px 6px; min-width:auto;" title="Refresh"><i class="fa-solid fa-rotate"></i></button>
         </div>
     </template>
 
@@ -105,6 +107,7 @@
     <script src="js/utils/app_common_info_modal.js"></script>
     <script src="js/utils/pg_dashboard_info.js"></script>
     <script src="js/utils/sqlserver_dashboard_info.js"></script>
+    <script src="js/utils/sqlserver_top_query_utils.js"></script>
     <script type="module" src="js/entry.js"></script>
     <script src="js/components/auth.js"></script>
     <script src="js/components/router.js"></script>
@@ -130,6 +133,7 @@
     <script src="js/pages/sqlserver_MetricDetailDrilldown.js"></script>
     <script src="js/pages/sqlserver_BottlenecksDrilldown.js"></script>
     <script src="js/pages/sqlserver_HADashboard.js"></script>
+    <script src="js/pages/sqlserver_backups.js"></script>
     <script src="js/pages/sqlserver_EnterpriseMetrics.js"></script>
     <script src="js/pages/sqlserver_PerformanceDebt.js"></script>
     <script src="js/pages/sqlserver_IntelligenceReport.js"></script>
@@ -151,15 +155,14 @@
     <script src="js/pages/queries.js"></script>
     <script src="js/pages/pg_explain.js"></script>
     <script src="js/pages/PgStorage.js"></script>
-    <script src="js/pages/replication.js"></script>
     <script src="js/pages/PgAlerts.js"></script>
     <script src="js/pages/PgConfig.js"></script>
+    <script src="js/utils/os_collector_setup.js"></script>
     <script src="js/pages/pg_cpu.js"></script>
     <script src="js/pages/pg_memory.js"></script>
     <script src="js/pages/pg_enterprise.js"></script>
     <script src="js/pages/pg_backups.js"></script>
     <script src="js/pages/pg_waits.js"></script>
-    <script src="js/pages/pg_backup_dr.js"></script>
     <script src="js/pages/pg_security.js"></script>
     <script src="js/pages/pg_logs.js"></script>
     <script src="js/pages/pg_stat_statements.js"></script>
@@ -173,6 +176,8 @@
     <script src="js/pages/sqlserver_best_practices.js"></script>
     <script src="js/pages/sqlserver_HealthDashboardV2.js"></script>
     <script src="js/pages/sqlserver_WaitStatsV2.js"></script>
+    <script src="js/pages/pg_dashboard_guide.js"></script>
+    <script src="js/pages/sqlserver_dashboard_guide.js"></script>
 
     <script src="js/components/dynamic-dashboard.js"></script>
   </body>

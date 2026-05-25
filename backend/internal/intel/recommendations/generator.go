@@ -157,13 +157,27 @@ func (g *RecommendationGenerator) recPLECollapse(rule models.RuleTriggerResult, 
 }
 
 func (g *RecommendationGenerator) recLowDiskSpace(rule models.RuleTriggerResult, raw map[string]interface{}, thresholds models.DynamicThresholds, config models.ServerConfig) []string {
+	freeMB := getFloatRaw(raw, "free_disk_mb")
+	if freeMB == 0 {
+		freeMB = getFloatRaw(raw, "total_free_mb")
+	}
 	growth := getFloatRaw(raw, "delta_data_mb")
+	neededMB := thresholds.DiskFreeMBMin - freeMB
+	if neededMB < 1024 {
+		neededMB = 1024 // Recommend at least 1GB if threshold is breached
+	}
+	
+	totalDisk := float64(config.TotalDiskGB)
+	if totalDisk == 0 {
+		totalDisk = (getFloatRaw(raw, "total_data_mb") + getFloatRaw(raw, "total_log_mb") + freeMB) / 1024
+	}
+
 	return []string{
-		fmt.Sprintf("Immediate: free up %dGB disk space", maxInt(1, int((thresholds.DiskFreeMBMin-getFloatRaw(raw, "free_disk_mb"))/1024))),
-		"Purge old backup files and archives",
-		fmt.Sprintf("Review disk history for growth trends — delta: %.0f MB/interval", growth),
+		fmt.Sprintf("Immediate: free up %.1fGB disk space (threshold: %.1fGB)", neededMB/1024, thresholds.DiskFreeMBMin/1024),
+		"Purge old backup files, logs, and temporary staging tables",
+		fmt.Sprintf("Review disk history for growth trends — current delta: %.1f MB/interval", growth),
 		"Implement data archiving or partitioning for large tables",
-		fmt.Sprintf("Add storage capacity — %dGB total configured", config.TotalDiskGB),
+		fmt.Sprintf("Add storage capacity — %.0fGB currently configured", totalDisk),
 	}
 }
 

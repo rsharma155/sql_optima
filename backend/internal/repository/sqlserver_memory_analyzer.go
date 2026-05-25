@@ -11,11 +11,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"github.com/google/uuid"
 )
 
 // FetchMemoryAnalyzerSnapshot collects the must-have memory troubleshooting metrics for Timescale ingestion.
 // All values are returned as best-effort (missing permissions/DMVs may result in zeros).
-func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, instanceName string) (map[string]interface{}, error) {
+// serverID is used to read pre-collected perf counters from TimescaleDB when LocalPool is available.
+func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, serverID uuid.UUID, instanceName string) (map[string]interface{}, error) {
 	db, ok := c.GetConn(instanceName)
 	if !ok || db == nil {
 		return nil, fmt.Errorf("connection not found")
@@ -23,12 +26,46 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 
 	out := map[string]interface{}{}
 
-	// SQL Memory vs Target (KB -> MB)
+	// SQL Memory vs Target (KB -> MB) — read from TimescaleDB cache when available.
+	if c.LocalPool != nil {
+		const q = `
+			SELECT counter_name, cntr_value
+			FROM sqlserver_perf_counters
+			WHERE server_id    = $1
+			  AND counter_name IN ('Total Server Memory (KB)', 'Target Server Memory (KB)')
+			  AND capture_timestamp >= NOW() - INTERVAL '5 minutes'
+			ORDER BY capture_timestamp DESC
+			LIMIT 2`
+		rows, err := c.LocalPool.Query(ctx, q, serverID)
+		if err == nil {
+			var totalMB, targetMB int64
+			found := 0
+			for rows.Next() {
+				var name string
+				var val int64
+				if rows.Scan(&name, &val) == nil {
+					if name == "Total Server Memory (KB)" {
+						totalMB = val / 1024
+						found++
+					} else if name == "Target Server Memory (KB)" {
+						targetMB = val / 1024
+						found++
+					}
+				}
+			}
+			rows.Close()
+			if found > 0 {
+				out["sql_memory_used_mb"] = totalMB
+				out["sql_memory_target_mb"] = targetMB
+				goto memoryDone
+			}
+		}
+	}
 	{
 		q := `
-			/* SQL_OPTIMA */ 
+			/* SQL_OPTIMA */
 			;WITH mem AS (
-				SELECT /* SQL_OPTIMA */   
+				SELECT /* SQL_OPTIMA */
 					MAX(CASE WHEN counter_name='Total Server Memory (KB)' THEN cntr_value END)/1024 AS total_mb,
 					MAX(CASE WHEN counter_name='Target Server Memory (KB)' THEN cntr_value END)/1024 AS target_mb
 				FROM sys.dm_os_performance_counters WITH (NOLOCK)
@@ -43,45 +80,74 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 		out["sql_memory_used_mb"] = totalMB
 		out["sql_memory_target_mb"] = targetMB
 	}
+memoryDone:
 
-	// OS memory total/available
+	// OS memory total/available + system memory state
 	{
 		q := `
-			/* SQL_OPTIMA */ SELECT   
+			/* SQL_OPTIMA */ SELECT
 				ISNULL(total_physical_memory_kb, 0)/1024 AS total_os_mb,
-				ISNULL(available_physical_memory_kb, 0)/1024 AS available_os_mb
+				ISNULL(available_physical_memory_kb, 0)/1024 AS available_os_mb,
+				ISNULL(system_memory_state_desc, '') AS memory_state
 			FROM sys.dm_os_sys_memory WITH (NOLOCK);
 		`
 		var totalOS, availOS int64
+		var memState string
 		qctx, cancel := WithQueryTimeout(ctx, 0)
-		_ = db.QueryRowContext(qctx, q).Scan(&totalOS, &availOS)
+		_ = db.QueryRowContext(qctx, q).Scan(&totalOS, &availOS, &memState)
 		cancel()
 		out["os_total_memory_mb"] = totalOS
 		out["os_available_memory_mb"] = availOS
+		out["os_system_memory_state"] = memState
 	}
 
 	// Process memory low flags
 	{
-		q := `/* SQL_OPTIMA */ SELECT   process_physical_memory_low, process_virtual_memory_low FROM sys.dm_os_process_memory WITH (NOLOCK);`
+		q := `
+			/* SQL_OPTIMA */
+			SELECT
+				process_physical_memory_low,
+				process_virtual_memory_low,
+				physical_memory_in_use_kb     / 1024  AS sql_physical_memory_in_use_mb,
+				memory_utilization_percentage          AS sql_memory_utilization_pct,
+				page_fault_count                       AS sql_page_fault_count,
+				locked_page_allocations_kb    / 1024  AS sql_locked_page_alloc_mb,
+				large_page_allocations_kb     / 1024  AS sql_large_page_alloc_mb
+			FROM sys.dm_os_process_memory WITH (NOLOCK);
+		`
 		var physLow, virtLow sql.NullBool
+		var inUseMB, utilPct, faultCount, lockedMB, largeMB sql.NullInt64
 		qctx, cancel := WithQueryTimeout(ctx, 0)
-		_ = db.QueryRowContext(qctx, q).Scan(&physLow, &virtLow)
+		_ = db.QueryRowContext(qctx, q).Scan(&physLow, &virtLow, &inUseMB, &utilPct, &faultCount, &lockedMB, &largeMB)
 		cancel()
 		out["process_physical_low"] = physLow.Valid && physLow.Bool
 		out["process_virtual_low"] = virtLow.Valid && virtLow.Bool
+		out["sql_physical_memory_in_use_mb"] = inUseMB.Int64
+		out["sql_memory_utilization_pct"] = utilPct.Int64
+		out["sql_page_fault_count"] = faultCount.Int64
+		out["sql_locked_page_alloc_mb"] = lockedMB.Int64
+		out["sql_large_page_alloc_mb"] = largeMB.Int64
 	}
 
-	// Memory grants pending
+	// Memory grants pending — read from TimescaleDB cache when available.
 	{
-		q := `
-			/* SQL_OPTIMA */ SELECT   ISNULL(cntr_value, 0)
-			FROM sys.dm_os_performance_counters WITH (NOLOCK)
-			WHERE counter_name='Memory Grants Pending';
-		`
 		var pending int64
-		qctx, cancel := WithQueryTimeout(ctx, 0)
-		_ = db.QueryRowContext(qctx, q).Scan(&pending)
-		cancel()
+		fetched := false
+		if c.LocalPool != nil {
+			const q = `SELECT cntr_value FROM sqlserver_perf_counters
+				WHERE server_id = $1 AND counter_name = 'Memory Grants Pending'
+				  AND capture_timestamp >= NOW() - INTERVAL '5 minutes'
+				ORDER BY capture_timestamp DESC LIMIT 1`
+			if c.LocalPool.QueryRow(ctx, q, serverID).Scan(&pending) == nil {
+				fetched = true
+			}
+		}
+		if !fetched {
+			q := `/* SQL_OPTIMA */ SELECT ISNULL(cntr_value, 0) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name='Memory Grants Pending';`
+			qctx, cancel := WithQueryTimeout(ctx, 0)
+			_ = db.QueryRowContext(qctx, q).Scan(&pending)
+			cancel()
+		}
 		out["memory_grants_pending"] = pending
 	}
 
@@ -117,17 +183,25 @@ func (c *SqlServerRepository) FetchMemoryAnalyzerSnapshot(ctx context.Context, i
 		out["waiting_memory_grants"] = waiting
 	}
 
-	// PLE
+	// PLE — read from TimescaleDB cache when available.
 	{
-		q := `
-			/* SQL_OPTIMA */ SELECT   ISNULL(cntr_value, 0)
-			FROM sys.dm_os_performance_counters WITH (NOLOCK)
-			WHERE counter_name='Page life expectancy' AND object_name LIKE '%Buffer Manager%';
-		`
 		var ple int64
-		qctx, cancel := WithQueryTimeout(ctx, 0)
-		_ = db.QueryRowContext(qctx, q).Scan(&ple)
-		cancel()
+		fetched := false
+		if c.LocalPool != nil {
+			const q = `SELECT cntr_value FROM sqlserver_perf_counters
+				WHERE server_id = $1 AND counter_name = 'Page life expectancy'
+				  AND capture_timestamp >= NOW() - INTERVAL '5 minutes'
+				ORDER BY capture_timestamp DESC LIMIT 1`
+			if c.LocalPool.QueryRow(ctx, q, serverID).Scan(&ple) == nil {
+				fetched = true
+			}
+		}
+		if !fetched {
+			q := `/* SQL_OPTIMA */ SELECT ISNULL(cntr_value, 0) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name='Page life expectancy' AND object_name LIKE '%Buffer Manager%';`
+			qctx, cancel := WithQueryTimeout(ctx, 0)
+			_ = db.QueryRowContext(qctx, q).Scan(&ple)
+			cancel()
+		}
 		out["ple_seconds"] = ple
 	}
 

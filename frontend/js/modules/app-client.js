@@ -12,6 +12,7 @@
 import { appState } from './app-state.js';
 import { AuthManager } from './auth-manager.js';
 import { loadTemplate } from './ui-manager.js';
+import { decodeQueryText } from '../utils/query-text.js';
 
 export const apiClient = {
     /** Read the csrf_token cookie (not HttpOnly). */
@@ -81,6 +82,58 @@ export const apiClient = {
         }
 
         return response;
+    },
+
+    /** Download a binary attachment (zip, etc.) with auth headers. */
+    async downloadAuthenticatedBlob(url, fallbackFilename = 'download.zip') {
+        const response = appState.authRequired
+            ? await this.authenticatedFetch(url, { method: 'GET', headers: {} })
+            : await fetch(url, { credentials: 'same-origin' });
+        if (!response.ok) {
+            const text = await response.text().catch(() => '');
+            throw new Error(text || `Download failed (${response.status})`);
+        }
+        const blob = await response.blob();
+        let filename = fallbackFilename;
+        const disp = response.headers.get('Content-Disposition');
+        if (disp) {
+            const m = /filename="?([^";\n]+)"?/.exec(disp);
+            if (m) filename = m[1];
+        }
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(objectUrl);
+    },
+
+    /** Download a CSV (or other attachment) with auth headers; avoids window.location bypassing Bearer token. */
+    async downloadAuthenticatedCSV(url, fallbackFilename = 'export.csv') {
+        const response = appState.authRequired
+            ? await this.authenticatedFetch(url, { method: 'GET', headers: {} })
+            : await fetch(url, { credentials: 'same-origin' });
+        if (!response.ok) {
+            const text = await response.text().catch(() => '');
+            throw new Error(text || `Export failed (${response.status})`);
+        }
+        const blob = await response.blob();
+        let filename = fallbackFilename;
+        const disp = response.headers.get('Content-Disposition');
+        if (disp) {
+            const m = /filename="?([^";\n]+)"?/.exec(disp);
+            if (m) filename = m[1];
+        }
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(objectUrl);
     },
 
     async fetchConfig() {
@@ -213,6 +266,8 @@ export function setJobsRefresh(val) {
 export function showQueryModal(queryText) {
     if (!queryText) {
         queryText = 'No query text available';
+    } else {
+        queryText = decodeQueryText(queryText);
     }
     
     const existingModal = document.getElementById('query-modal');
@@ -339,7 +394,14 @@ export async function boot() {
     console.log('[BOOT] Config loaded with', instanceCount, 'instances');
 
     appState.config.instances.forEach((inst) => {
-        if (!inst.user) inst.user = 'dbsqlmonitor';
+        const monitoringUser = (inst.monitoring_user || inst.user || '').trim();
+        if (monitoringUser) {
+            inst.monitoring_user = monitoringUser;
+            inst.user = monitoringUser;
+        } else {
+            inst.user = 'dbsqlmonitor';
+            inst.monitoring_user = inst.user;
+        }
         if (!inst.databases || inst.databases.length === 0) inst.databases = [];
     });
 

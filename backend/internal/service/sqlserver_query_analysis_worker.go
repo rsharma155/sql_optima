@@ -59,6 +59,11 @@ func (s *MetricsService) collectQueryAnalysisData(ctx context.Context) {
 			continue
 		}
 
+		// Skip if instance is not online in the repository
+		if s.MsRepo.GetInstanceStatus(inst.Name) != "online" {
+			continue
+		}
+
 		serverID := inst.ServerID
 
 		// Regressions
@@ -150,6 +155,17 @@ func (s *MetricsService) collectWatchedQuerySnapshots(ctx context.Context) {
 			continue
 		}
 
+		// Batch-fetch the last stored plan for each watched query so we can skip
+		// inserting a new snapshot when the plan XML hasn't changed.
+		watchedIDs := make([]int, len(watched))
+		for i, q := range watched {
+			watchedIDs[i] = q.ID
+		}
+		lastPlans, _ := s.tsLogger.GetLastWatchedQueryPlans(ctx, watchedIDs)
+		if lastPlans == nil {
+			lastPlans = map[int]string{}
+		}
+
 		var snapshots []hot.SqlServerWatchedSnapshotRow
 		now := time.Now().UTC()
 
@@ -160,6 +176,12 @@ func (s *MetricsService) collectWatchedQuerySnapshots(ctx context.Context) {
 				continue
 			}
 			if stats == nil {
+				continue
+			}
+
+			// Skip if the plan XML is identical to the last stored snapshot.
+			if prev, exists := lastPlans[q.ID]; exists && prev != "" && stats.QueryPlan == prev {
+				slog.Debug("[WatchedQueries] Plan unchanged, skipping snapshot", "watched_id", q.ID)
 				continue
 			}
 

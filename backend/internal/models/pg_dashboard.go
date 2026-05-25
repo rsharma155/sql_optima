@@ -78,6 +78,7 @@ type PgReplicationStat struct {
 	PodIP          string  `json:"pod_ip"`
 	State          string  `json:"state"`
 	SyncState      string  `json:"sync_state"`
+	SentLSN        string  `json:"sent_lsn"`
 	ReplayLagMB    float64 `json:"replay_lag_mb"`
 	WriteLagSec    float64 `json:"write_lag_sec"`
 	FlushLagSec    float64 `json:"flush_lag_sec"`

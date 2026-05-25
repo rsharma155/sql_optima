@@ -14,7 +14,7 @@ import (
 
 func (tl *TimescaleLogger) sihPgHighScanTableCount(ctx context.Context, engine, serverID, from, to string, f SIHFilters) int {
 	args := []interface{}{engine, serverID, from, to}
-	where := `engine=$1 AND server_id=$2 AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
+	where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 	argN := 5
 	if len(f.DBNames) > 0 {
 		where += fmt.Sprintf(" AND db_name = ANY($%d)", argN)
@@ -80,7 +80,7 @@ func (tl *TimescaleLogger) sihPgTopScans(ctx context.Context, engine, serverID, 
 
 func (tl *TimescaleLogger) sihPgSeekScanLookup(ctx context.Context, engine, serverID, from, to string, f SIHFilters) ([]StorageIndexHealthSeekScanLookupRow, error) {
 	args := []interface{}{engine, serverID, from, to}
-	where := `engine=$1 AND server_id=$2 AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
+	where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 	argN := 5
 	if len(f.DBNames) > 0 {
 		where += fmt.Sprintf(" AND db_name = ANY($%d)", argN)
@@ -128,7 +128,7 @@ func (tl *TimescaleLogger) sihPgSeekScanLookup(ctx context.Context, engine, serv
 
 func (tl *TimescaleLogger) sihPgHighScanTables(ctx context.Context, engine, serverID, from, to string, f SIHFilters) ([]StorageIndexHealthTopRow, error) {
 	args := []interface{}{engine, serverID, from, to}
-	where := `engine=$1 AND server_id=$2 AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
+	where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 	n := 5
 	if len(f.DBNames) > 0 {
 		where += fmt.Sprintf(" AND db_name = ANY($%d)", n)

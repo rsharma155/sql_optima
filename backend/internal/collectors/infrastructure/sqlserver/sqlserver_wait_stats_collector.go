@@ -101,7 +101,6 @@ func (c *WaitStatsDMVCollector) FetchActiveWaitSessions(
 ) ([]domain.ActiveWaitSession, error) {
 
 	const query = `/* SQL_OPTIMA */
-    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     SELECT TOP 100
         wt.session_id,
         wt.wait_type,

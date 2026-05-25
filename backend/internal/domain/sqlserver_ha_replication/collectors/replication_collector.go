@@ -36,13 +36,21 @@ func (c *ReplicationCollector) RunLatency(ctx context.Context, serverID uuid.UUI
 		return err
 	}
 
-	rows := make([]hot.ReplicationLatencyRow, len(points))
-	for i, p := range points {
+	var rows []hot.ReplicationLatencyRow
+	for _, p := range points {
 		status := p.Status
 		if status == "" {
 			status = "Unknown"
 		}
-		rows[i] = hot.ReplicationLatencyRow{
+
+		// Optimization: skip storing data if everything is zero (idle replication)
+		// BUT always store if there is an error/warning status
+		isHealthy := status == "Idle" || status == "Running" || status == "Unknown"
+		if isHealthy && p.MaxLatencySeconds == 0 && p.PeakBacklog == 0 && p.DeliveryRateCmdsSec == 0 {
+			continue
+		}
+
+		rows = append(rows, hot.ReplicationLatencyRow{
 			CaptureTimestamp:      now,
 			ServerID:              serverID,
 			Publisher:             p.Publisher,
@@ -52,9 +60,12 @@ func (c *ReplicationCollector) RunLatency(ctx context.Context, serverID uuid.UUI
 			UndistributedCommands: p.PeakBacklog,
 			DeliveryRateCmdsSec:   p.DeliveryRateCmdsSec,
 			Status:                status,
-		}
+		})
 	}
 
+	if len(rows) == 0 {
+		return nil
+	}
 	return c.tsLogger.WriteReplicationLatency(ctx, rows)
 }
 
@@ -99,9 +110,16 @@ func (c *ReplicationCollector) RunArticles(ctx context.Context, serverID uuid.UU
 		return err
 	}
 
-	rows := make([]hot.ReplicationArticleRow, len(articles))
-	for i, a := range articles {
-		rows[i] = hot.ReplicationArticleRow{
+	var rows []hot.ReplicationArticleRow
+	for _, a := range articles {
+		// Optimization: skip storing table-level data if idle
+		// BUT always store if there is an error/warning status
+		isHealthy := a.Status == "Idle" || a.Status == "Active" || a.Status == "Succeeded" || a.Status == "Starting" || a.Status == "Unknown"
+		if isHealthy && a.RowsPerSec == 0 && a.LatencySeconds == 0 && a.ConflictsDetected == 0 {
+			continue
+		}
+
+		rows = append(rows, hot.ReplicationArticleRow{
 			CaptureTimestamp:  now,
 			ServerID:          serverID,
 			Publication:       a.Publication,
@@ -113,8 +131,11 @@ func (c *ReplicationCollector) RunArticles(ctx context.Context, serverID uuid.UU
 			LatencySeconds:    a.LatencySeconds,
 			ConflictsDetected: a.ConflictsDetected,
 			Status:            a.Status,
-		}
+		})
 	}
 
+	if len(rows) == 0 {
+		return nil
+	}
 	return c.tsLogger.WriteReplicationArticles(ctx, rows)
 }

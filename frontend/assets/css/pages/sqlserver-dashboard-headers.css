@@ -1,0 +1,209 @@
+/*
+ * SQL Server dashboard page headers — laptop/small-screen layout.
+ * Large desktops (>1400px) keep title + time picker on one row.
+ */
+
+@media (max-width: 1400px) {
+    .dash-header-stack-laptop.page-title.flex-between {
+        flex-direction: column;
+        align-items: stretch !important;
+        height: auto !important;
+        min-height: 0;
+        gap: 0.5rem;
+    }
+
+    .dash-header-stack-laptop .dash-header-title-area {
+        width: 100%;
+        min-width: 0;
+        flex: none;
+    }
+
+    /* Title + subtitle / meta on a single horizontal row */
+    .dash-header-stack-laptop .dash-header-title-inline {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        flex-wrap: nowrap;
+        gap: 12px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .dash-header-stack-laptop .dash-header-title-inline::-webkit-scrollbar {
+        display: none;
+    }
+
+    .dash-header-stack-laptop .dash-header-title-inline h1 {
+        flex-shrink: 0;
+        margin: 0;
+    }
+
+    .dash-header-stack-laptop .dash-header-title-inline .subtitle {
+        margin: 0;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+
+    .dash-header-stack-laptop .dash-header-meta {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 12px;
+        align-items: center;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        flex-shrink: 0;
+    }
+
+    .dash-header-stack-laptop .dash-header-title-inline .dash-header-meta {
+        margin-top: 0;
+    }
+
+    .dash-header-stack-laptop .dashboard-title-line:not(.dash-header-title-inline) .dash-header-meta {
+        margin-top: 2px;
+    }
+
+    .dash-header-stack-laptop .dash-header-meta::-webkit-scrollbar {
+        display: none;
+    }
+
+    .dash-header-stack-laptop .dash-header-meta > * {
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+
+    .dash-header-stack-laptop .dash-header-actions {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .dash-header-stack-laptop .dash-header-actions.dashboard-page-title-actions {
+        justify-content: flex-end !important;
+    }
+
+    /* Shared v2 header — laptop: row1 title+badges, row2 instance+picker */
+    .dash-v2-page-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .dash-v2-page-header .dash-v2-header-body {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-rows: auto auto;
+        gap: 0.35rem 12px;
+        align-items: center;
+        width: 100%;
+    }
+
+    .dash-v2-page-header .dash-v2-header-row-top,
+    .dash-v2-page-header .dash-v2-header-row-bottom {
+        display: contents;
+    }
+
+    .dash-v2-page-header .dash-v2-h1 {
+        grid-column: 1;
+        grid-row: 1;
+        white-space: nowrap;
+    }
+
+    .dash-v2-page-header .dash-v2-header-badges {
+        grid-column: 2 / -1;
+        grid-row: 1;
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 12px;
+        align-items: center;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        min-width: 0;
+    }
+
+    .dash-v2-page-header .dash-v2-header-badges::-webkit-scrollbar {
+        display: none;
+    }
+
+    .dash-v2-page-header .dash-v2-instance-name {
+        grid-column: 1;
+        grid-row: 2;
+        white-space: nowrap;
+    }
+
+    .dash-v2-page-header .dash-v2-header-actions {
+        grid-column: 2 / -1;
+        grid-row: 2;
+        justify-self: end;
+        width: auto;
+        margin-left: 0;
+        justify-content: flex-end !important;
+        flex-wrap: nowrap;
+    }
+}
+
+@media (min-width: 1401px) {
+    .dash-header-stack-laptop.page-title.flex-between {
+        flex-wrap: nowrap;
+        align-items: center;
+    }
+
+    .dash-header-stack-laptop .dash-header-title-area {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .dash-header-stack-laptop .dash-header-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        margin-top: 2px;
+    }
+
+    /* Shared v2 header — desktop: h1 + actions top row, meta line below */
+    .dash-v2-page-header {
+        position: relative;
+        display: block;
+    }
+
+    .dash-v2-page-header .dash-v2-header-body {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding-right: 280px;
+    }
+
+    .dash-v2-page-header .dash-v2-header-row-top {
+        display: block;
+    }
+
+    .dash-v2-page-header .dash-v2-header-row-bottom {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+    }
+
+    .dash-v2-page-header .dash-v2-header-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+    }
+
+    .dash-v2-page-header .dash-v2-header-actions {
+        position: absolute;
+        top: 0;
+        right: 0;
+        flex-shrink: 0;
+        width: auto;
+        justify-content: flex-end;
+    }
+}

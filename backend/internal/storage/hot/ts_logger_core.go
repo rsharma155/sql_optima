@@ -53,8 +53,10 @@ type TimescaleLogger struct {
 	// Dedup state for disk_history, file_io, wait_stats_cumulative, and connection_history
 	prevDiskHashByKey map[string]uint64  // key: serverID+":"+dbName
 	prevCumulSnapHash map[uuid.UUID]uint64
-	prevFileIOHashKey map[string]uint64  // key: serverID+":"+dbName+":"+fileName
-	prevConnHashByKey map[string]uint64  // key: serverID+":"+dbName+":"+loginName
+	prevFileIOHashKey          map[string]uint64 // key: serverID+":"+dbName+":"+fileName
+	prevPerfCounterWriteHash   map[string]uint64 // key: serverID+":"+counterName+":"+instanceName
+	prevConnHashByKey          map[string]uint64 // key: serverID+":"+dbName+":"+loginName
+	prevVolumeHashByKey map[string]uint64 // key: serverID+":"+dbName+":"+logicalFileName
 }
 
 func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
@@ -91,7 +93,9 @@ func NewTimescaleLogger(pool *pgxpool.Pool) *TimescaleLogger {
 		prevDiskHashByKey:          make(map[string]uint64),
 		prevCumulSnapHash:          make(map[uuid.UUID]uint64),
 		prevFileIOHashKey:          make(map[string]uint64),
+		prevPerfCounterWriteHash:   make(map[string]uint64),
 		prevConnHashByKey:          make(map[string]uint64),
+		prevVolumeHashByKey:        make(map[string]uint64),
 	}
 }
 

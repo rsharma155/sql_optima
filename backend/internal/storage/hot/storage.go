@@ -167,7 +167,7 @@ func (s *HotStorage) GetMetricsForArchive(ctx context.Context, cutoff time.Time,
 	serverSet := make(map[string]bool)
 
 	tables := []string{
-		"sqlserver_ag_health",
+		"monitor.sqlserver_ha_replica_state",
 		"sqlserver_database_throughput",
 		"monitor.sqlserver_query_store_snapshot",
 		"monitor.sqlserver_query_store_interval",
@@ -175,7 +175,7 @@ func (s *HotStorage) GetMetricsForArchive(ctx context.Context, cutoff time.Time,
 
 	for _, table := range tables {
 		query := fmt.Sprintf(`
-			SELECT capture_timestamp, server_id, 
+			SELECT capture_timestamp, server_id,
 				   COALESCE($1::text, 'unknown_metric') as metric_name,
 				   COALESCE($2::float, 0) as metric_value,
 				   '{}'::jsonb as tags
@@ -209,7 +209,7 @@ func (s *HotStorage) GetMetricsForArchive(ctx context.Context, cutoff time.Time,
 
 func (s *HotStorage) DeleteChunksOlderThan(ctx context.Context, duration time.Duration) error {
 	tables := []string{
-		"sqlserver_ag_health",
+		"monitor.sqlserver_ha_replica_state",
 		"sqlserver_database_throughput",
 		"monitor.sqlserver_query_store_snapshot",
 		"monitor.sqlserver_query_store_interval",

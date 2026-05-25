@@ -16,7 +16,7 @@ import (
 
 // WatchedQueryStats represents stats for a user-watched query over a time range.
 type WatchedQueryStats struct {
-	CaptureTimestamp time.Time `json:"capture_timestamp"`
+	CaptureTimestamp time.Time `json:"timestamp"`
 	ServerID         uuid.UUID `json:"server_id"`
 	QueryHash        string    `json:"query_hash"`
 	DatabaseName     string    `json:"database_name"`
@@ -29,7 +29,7 @@ type WatchedQueryStats struct {
 
 // QueryWaitStats represents Query Store wait stats for a specific query.
 type QueryWaitStats struct {
-	CaptureTimestamp time.Time `json:"capture_timestamp"`
+	CaptureTimestamp time.Time `json:"timestamp"`
 	ServerID         uuid.UUID `json:"server_id"`
 	QueryHash        string    `json:"query_hash"`
 	WaitType         string    `json:"wait_type"`
@@ -39,7 +39,7 @@ type QueryWaitStats struct {
 
 // SqlServerQueryRegression represents a query that regressed in the last 24h vs previous 24h.
 type SqlServerQueryRegression struct {
-	CaptureTime    time.Time `json:"capture_time"`
+	CaptureTime    time.Time `json:"timestamp"`
 	ServerID       uuid.UUID `json:"server_id"`
 	DatabaseName   string    `json:"database_name"`
 	QueryHash      string    `json:"query_hash"`
@@ -53,7 +53,7 @@ type SqlServerQueryRegression struct {
 
 // SqlServerPlanInstability represents a query with multiple execution plans (>3).
 type SqlServerPlanInstability struct {
-	CaptureTime       time.Time `json:"capture_time"`
+	CaptureTime       time.Time `json:"timestamp"`
 	ServerID          uuid.UUID `json:"server_id"`
 	DatabaseName      string    `json:"database_name"`
 	QueryHash         string    `json:"query_hash"`
@@ -77,7 +77,7 @@ type SqlServerWatchedQuery struct {
 
 // SqlServerWatchedQuerySnapshot represents a point-in-time metric snapshot for a watched query.
 type SqlServerWatchedQuerySnapshot struct {
-	SnapshotTime      time.Time                `json:"snapshot_time"`
+	SnapshotTime      time.Time                `json:"timestamp"`
 	ServerID          uuid.UUID                `json:"server_id"`
 	WatchedID         int                      `json:"watched_id"`
 	Executions        int64                    `json:"executions"`
@@ -97,7 +97,7 @@ type SqlServerWatchedQuerySnapshot struct {
 type SqlServerWatchedQueryEvent struct {
 	ID        int       `json:"id"`
 	WatchedID int       `json:"watched_id"`
-	EventTime time.Time `json:"event_time"`
+	EventTime time.Time `json:"timestamp"`
 	EventType string    `json:"event_type"`
 	Notes     string    `json:"notes"`
 }
@@ -115,6 +115,7 @@ type SqlServerQueryAnalysisSummary struct {
 	QueriesExecutedInRange int64   `json:"queries_executed_in_range"`
 	QueriesWithMultiPlans  int64   `json:"queries_with_multi_plans"`
 	QueriesSingleExecution int64   `json:"queries_single_execution"`
+	Message                string  `json:"message,omitempty"`
 }
 
 // SqlServerQueryPlanInfo represents plan metadata from Query Store for a watched query.

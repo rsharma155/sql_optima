@@ -132,24 +132,38 @@ func (c *PgComprehensiveCollector) collectReplicationSlots(ctx context.Context, 
 
 func (c *PgComprehensiveCollector) collectReplicationLagDetail(ctx context.Context, name string, serverID uuid.UUID) {
 	stats, err := c.pgRepo.GetReplicationStats(ctx, name)
-	if err != nil || stats == nil || !stats.IsPrimary {
+	if err != nil || stats == nil {
 		return
 	}
 	var hotRows []hot.PostgresReplicationLagDetailRow
 	now := time.Now().UTC()
-	for _, standby := range stats.Standbys {
+	if stats.IsPrimary {
+		for _, standby := range stats.Standbys {
+			hotRows = append(hotRows, hot.PostgresReplicationLagDetailRow{
+				CaptureTimestamp: now,
+				ServerID:         serverID,
+				ReplicaName:      standby.ReplicaPodName,
+				LagMB:            standby.ReplayLagMB,
+				State:            standby.State,
+				SyncState:        standby.SyncState,
+				WriteLagSec:      standby.WriteLagSec,
+				FlushLagSec:      standby.FlushLagSec,
+				ReplayLagSec:     standby.ReplayLagSec,
+			})
+		}
+	} else {
+		// Log local lag for the standby itself
 		hotRows = append(hotRows, hot.PostgresReplicationLagDetailRow{
 			CaptureTimestamp: now,
 			ServerID:         serverID,
-			ReplicaName:      standby.ReplicaPodName,
-			LagMB:            standby.ReplayLagMB,
-			State:            standby.State,
-			SyncState:        standby.SyncState,
-			WriteLagSec:      standby.WriteLagSec,
-			FlushLagSec:      standby.FlushLagSec,
-			ReplayLagSec:     standby.ReplayLagSec,
+			ReplicaName:      "local",
+			LagMB:            stats.LocalLagMB,
+			State:            "streaming",
+			SyncState:        "unknown",
+			ReplayLagSec:     stats.MaxLagMB, // Using MaxLagMB which holds local lag for standbys
 		})
 	}
+
 	if len(hotRows) == 0 {
 		return
 	}
@@ -168,7 +182,7 @@ func (c *PgComprehensiveCollector) collectSettingsSnapshot(ctx context.Context, 
 	now := time.Now().UTC()
 	for _, s := range settings {
 		hotRows = append(hotRows, hot.PostgresSettingSnapshotRow{
-			CaptureTimestamp: now,
+			Timestamp:        now,
 			ServerID:         serverID,
 			Name:             s.Name,
 			Setting:          s.Setting,

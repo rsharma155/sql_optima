@@ -150,7 +150,7 @@ func GetModifiedTables(ctx context.Context, dbq repository.Queryer, since time.T
 func persistIndexDefinitions(ctx context.Context, tl *hot.TimescaleLogger, engine string, serverID uuid.UUID, rows []IndexDefinitionCatalogRow, capture time.Time) (inserted int, err error) {
 	for _, r := range rows {
 		def := models.IndexDefinition{
-			Time:             capture.UTC(),
+			Timestamp:        capture.UTC(),
 			Engine:           engine,
 			ServerID:         serverID,
 			DBName:           r.DBName,

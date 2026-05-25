@@ -13,6 +13,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// Test total DB size uses table_size_mb only (index_size_mb is a subset, not additive).
+func TestSihTotalRelationSizeMB(t *testing.T) {
+	assert.Equal(t, float64(0), sihTotalRelationSizeMB(-1))
+	assert.Equal(t, float64(1234.5), sihTotalRelationSizeMB(1234.5))
+	// Adding index breakdown would double-count PostgreSQL pg_total_relation_size.
+	assert.Equal(t, float64(800), sihTotalRelationSizeMB(800))
+}
+
 // Test that growth summary projection formula is correct
 func TestGrowthSummaryProjectionFormula(t *testing.T) {
 	// DailyGrowthMB=10, current=1000MB → 90d projection should be 1900MB

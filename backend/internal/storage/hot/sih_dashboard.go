@@ -378,14 +378,23 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 			args = append(args, f.TableLike)
 		}
 
-		// Prefer monitor.table_usage_stats for summary as it is more frequent
+		// Prefer monitor.table_usage_stats for summary as it is more frequent.
+		// Dedupe to latest snapshot per table per day before summing (avoids inflating totals).
 		q := fmt.Sprintf(`
-			SELECT time_bucket('1 day', capture_timestamp) AS bucket,
-			       SUM(COALESCE(table_size_mb,0))::float8 AS table_mb,
-			       SUM(COALESCE(index_size_mb,0))::float8 AS index_mb,
-			       SUM(COALESCE(row_count,0))::bigint AS rows
-			FROM monitor.table_usage_stats
-			WHERE %s
+			SELECT bucket,
+			       SUM(table_size_mb)::float8 AS table_mb,
+			       SUM(index_size_mb)::float8 AS index_mb,
+			       SUM(row_count)::bigint AS rows
+			FROM (
+				SELECT DISTINCT ON (time_bucket('1 day', capture_timestamp), db_name, schema_name, table_name)
+					time_bucket('1 day', capture_timestamp) AS bucket,
+					COALESCE(table_size_mb,0) AS table_size_mb,
+					COALESCE(index_size_mb,0) AS index_size_mb,
+					COALESCE(row_count,0) AS row_count
+				FROM monitor.table_usage_stats
+				WHERE %s
+				ORDER BY time_bucket('1 day', capture_timestamp), db_name, schema_name, table_name, capture_timestamp DESC
+			) t
 			GROUP BY bucket
 			ORDER BY bucket ASC
 		`, where)
@@ -414,12 +423,20 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		// Fallback to table_size_history if no usage stats
 		if len(pts) == 0 {
 			q2 := fmt.Sprintf(`
-				SELECT time_bucket('1 day', capture_timestamp) AS bucket,
-					SUM(COALESCE(table_size_mb,0))::float8 AS table_mb,
-					SUM(COALESCE(index_size_mb,0))::float8 AS index_mb,
-					SUM(COALESCE(row_count,0))::bigint AS rows
-				FROM monitor.table_size_history
-				WHERE %s
+				SELECT bucket,
+					SUM(table_size_mb)::float8 AS table_mb,
+					SUM(index_size_mb)::float8 AS index_mb,
+					SUM(row_count)::bigint AS rows
+				FROM (
+					SELECT DISTINCT ON (time_bucket('1 day', capture_timestamp), db_name, schema_name, table_name)
+						time_bucket('1 day', capture_timestamp) AS bucket,
+						COALESCE(table_size_mb,0) AS table_size_mb,
+						COALESCE(index_size_mb,0) AS index_size_mb,
+						COALESCE(row_count,0) AS row_count
+					FROM monitor.table_size_history
+					WHERE %s
+					ORDER BY time_bucket('1 day', capture_timestamp), db_name, schema_name, table_name, capture_timestamp DESC
+				) t
 				GROUP BY bucket
 				ORDER BY bucket ASC
 			`, where)
@@ -602,7 +619,9 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 		}
 
 		q := fmt.Sprintf(`
-			SELECT db_name, schema_name, table_name, (MAX(table_size_mb) - MIN(table_size_mb)) as growth_mb
+			SELECT db_name, schema_name, table_name, 
+			       (MAX(table_size_mb) - MIN(table_size_mb)) as growth_mb,
+			       MIN(table_size_mb) as base_mb
 			FROM monitor.table_usage_stats
 			WHERE %s
 			GROUP BY db_name, schema_name, table_name
@@ -615,15 +634,50 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthDashboard(ctx context.Context,
 			defer rows.Close()
 			for rows.Next() {
 				var r StorageIndexHealthTopRow
-				if err := rows.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.Value); err == nil {
+				if err := rows.Scan(&r.DBName, &r.SchemaName, &r.TableName, &r.Value, &r.Value2); err == nil {
 					topGrowth = append(topGrowth, r)
 				}
 			}
 		}
 	}
 
+	// Current footprint: latest snapshot per table (not daily bucket sums).
+	var currentTableMB float64
+	{
+		args := []interface{}{engine, serverID, to}
+		where := `engine=$1 AND server_id=$2::uuid AND capture_timestamp <= $3::timestamptz`
+		where, args, _ = sihAppendFilters(where, args, f, 4)
+		q := fmt.Sprintf(`
+			SELECT COALESCE(SUM(table_size_mb),0)::float8
+			FROM (
+				SELECT DISTINCT ON (db_name, schema_name, table_name)
+					COALESCE(table_size_mb,0) AS table_size_mb
+				FROM monitor.table_usage_stats
+				WHERE %s
+				ORDER BY db_name, schema_name, table_name, capture_timestamp DESC
+			) t
+		`, where)
+		_ = tl.pool.QueryRow(ctx, q, args...).Scan(&currentTableMB)
+		if currentTableMB <= 0 {
+			q2 := fmt.Sprintf(`
+				SELECT COALESCE(SUM(table_size_mb),0)::float8
+				FROM (
+					SELECT DISTINCT ON (db_name, schema_name, table_name)
+						COALESCE(table_size_mb,0) AS table_size_mb
+					FROM monitor.table_size_history
+					WHERE %s
+					ORDER BY db_name, schema_name, table_name, capture_timestamp DESC
+				) t
+			`, where)
+			_ = tl.pool.QueryRow(ctx, q2, args...).Scan(&currentTableMB)
+		}
+		if currentTableMB > 0 {
+			gSummary.CurrentTableMB = currentTableMB
+		}
+	}
+
 	// Final KPI adjustments from summaries
-	kpis.TotalDBSizeMB = gSummary.CurrentTableMB + gSummary.CurrentIndexMB
+	kpis.TotalDBSizeMB = sihTotalRelationSizeMB(gSummary.CurrentTableMB)
 	kpis.Growth7dPct = gSummary.Growth7dPct
 	kpis.ForecastTableMB90d = gSummary.ProjectedTableMB90d + gSummary.ProjectedIndexMB90d
 	for _, u := range unused {

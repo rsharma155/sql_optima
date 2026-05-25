@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
@@ -52,8 +53,21 @@ func (s *MetricsService) collectQueryStoreStats(ctx context.Context) {
 
 		serverID := inst.ServerID
 
+		// Skip if instance is not online in the repository
+		if s.MsRepo.GetInstanceStatus(inst.Name) != "online" {
+			continue
+		}
+
 		// Fetch stats (handles multiple DBs internally)
 		stats, err := s.MsRepo.FetchQueryStoreStats(ctx, inst.Name)
+
+		if err != nil && repository.IsMSSQLConnError(err) {
+			slog.Warn("[QueryStore] Transport error; attempting reconnect", "target", inst.Name)
+			if s.MsRepo.ReconnectInstance(ctx, inst.Name) {
+				stats, err = s.MsRepo.FetchQueryStoreStats(ctx, inst.Name)
+			}
+		}
+
 		if err == nil && len(stats) > 0 {
 			var hotRows []hot.QueryStoreStatsRow
 			for _, st := range stats {

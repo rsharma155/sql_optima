@@ -71,8 +71,8 @@ func TestComputeRPO_RedThreshold(t *testing.T) {
 	if result.Threshold != domain.RPORed {
 		t.Errorf("expected red threshold for 120s lag, got %s", result.Threshold)
 	}
-	if result.ReplicaName != "DR1" {
-		t.Errorf("expected worst replica DR1, got %s", result.ReplicaName)
+	if result.WorstReplica != "DR1" {
+		t.Errorf("expected worst replica DR1, got %s", result.WorstReplica)
 	}
 }
 
@@ -85,8 +85,8 @@ func TestComputeRPO_WorstReplicaSelected(t *testing.T) {
 	if result.Seconds != 90 {
 		t.Errorf("expected max lag 90s, got %d", result.Seconds)
 	}
-	if result.ReplicaName != "DR2" {
-		t.Errorf("expected worst replica DR2, got %s", result.ReplicaName)
+	if result.WorstReplica != "DR2" {
+		t.Errorf("expected worst replica DR2, got %s", result.WorstReplica)
 	}
 }
 

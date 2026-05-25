@@ -124,8 +124,8 @@ func (r *PostgresSecurityRepository) GetFailedLoginTrend(ctx context.Context, se
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"bucket": bucket,
-			"count":  count,
+			"timestamp": bucket,
+			"count":     count,
 		})
 	}
 	return results, nil
@@ -246,10 +246,10 @@ func (r *PostgresSecurityRepository) GetDMLActivityTrend(ctx context.Context, se
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"bucket": bucket,
-			"ins":    ins,
-			"upd":    upd,
-			"del":    del,
+			"timestamp": bucket,
+			"ins":       ins,
+			"upd":       upd,
+			"del":       del,
 		})
 	}
 	return results, nil
@@ -309,8 +309,8 @@ func (r *PostgresSecurityRepository) GetRoleModificationsTrend(ctx context.Conte
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"bucket": bucket,
-			"total":  total,
+			"timestamp": bucket,
+			"total":     total,
 		})
 	}
 	return results, nil

@@ -13,47 +13,24 @@ window.escapeHtml = function(unsafe) { return (!unsafe) ? '' : unsafe.toString()
 window.JobsView = function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...', type: 'sqlserver'};
     
-    // Helper for local ISO string (YYYY-MM-DDTHH:mm)
-    const toLocalISO = (date) => {
-        const offset = date.getTimezoneOffset() * 60000;
-        const local = new Date(date.getTime() - offset);
-        return local.toISOString().slice(0, 16);
-    };
-
-    const now = new Date();
-    const oneHourAgo = new Date(now.getTime() - (1 * 60 * 60 * 1000));
-    
-    // Always refresh 'To' to now and 'From' to 1h ago when entering, 
-    // unless we want to keep the user's last selection.
-    // For now, let's always default to the latest hour to avoid "stuck" times.
-    const defaultFrom = toLocalISO(oneHourAgo);
-    const defaultTo = toLocalISO(now);
-
-    if (!window.appState.jobsFrom) window.appState.jobsFrom = defaultFrom;
-    if (!window.appState.jobsTo) window.appState.jobsTo = defaultTo;
-
-    // If the 'To' time is more than 5 minutes old, refresh it to now
-    const lastTo = new Date(window.appState.jobsTo);
-    if (now.getTime() - lastTo.getTime() > 5 * 60 * 1000) {
-        window.appState.jobsFrom = defaultFrom;
-        window.appState.jobsTo = defaultTo;
-    }
-
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">
-            <div class="page-title flex-between dashboard-page-title-compact">
-                <div class="dashboard-title-line">
-                    <h1 style="font-size:1.1rem; margin:0;"><i class="fa-solid fa-briefcase text-accent"></i> SQL Agent Jobs</h1>
-                    <p class="subtitle">Instance: ${window.escapeHtml(inst.name)} | Time-series status & history</p>
-                </div>
-                <div class="dashboard-page-title-actions" style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
-                    <div class="glass-panel" style="display:flex; align-items:center; gap:0.4rem; padding:0.2rem 0.5rem; border-radius:6px; font-size:0.72rem;">
-                        <input type="datetime-local" id="jobsFrom" class="custom-date-input" value="${window.appState.jobsFrom}" style="font-size:0.7rem; background:transparent; border:none; color:var(--text);">
-                        <span class="text-muted">→</span>
-                        <input type="datetime-local" id="jobsTo" class="custom-date-input" value="${window.appState.jobsTo}" style="font-size:0.7rem; background:transparent; border:none; color:var(--text);">
-                        <button id="jobsApplyRange" class="btn btn-xs btn-accent">Apply</button>
+            <div class="page-title flex-between" style="padding: 10px 20px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); height: 65px;">
+                <div>
+                    <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;">
+                        <i class="fa-solid fa-briefcase text-accent"></i>
+                        SQL Agent Jobs
+                    </h1>
+                    <div style="display:flex; gap:12px; align-items:center; margin-top:2px;">
+                        <span style="font-size:0.7rem; color:var(--text-secondary); font-weight:600;"><i class="fa-solid fa-server" style="font-size:0.6rem;"></i> ${window.escapeHtml(inst.name)}</span>
+                        <span style="font-size:0.7rem; color:var(--text-muted);"><i class="fa-solid fa-clock-rotate-left" style="font-size:0.6rem;"></i> Time-series status &amp; history</span>
                     </div>
-                    <button class="btn btn-sm btn-outline text-accent" data-action="navigate" data-route="dashboard"><i class="fa-solid fa-arrow-left"></i></button>
+                </div>
+                <div class="flex-between" style="align-items:center; gap:1rem;">
+                    <div id="time-picker-insertion-point"></div>
+                    <div class="text-muted" style="font-size:0.65rem; background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px;">
+                        Update: <span id="jobs-last-update" class="text-accent">--:--:--</span>
+                    </div>
                 </div>
             </div>
 
@@ -65,20 +42,19 @@ window.JobsView = function() {
         </div>
     `;
 
-    document.getElementById('jobsApplyRange')?.addEventListener('click', () => {
-        window.appState.jobsFrom = document.getElementById('jobsFrom').value;
-        window.appState.jobsTo = document.getElementById('jobsTo').value;
-        refreshJobsData(inst);
-    });
+    if (window.initPageTimePicker) window.initPageTimePicker();
 
     refreshJobsData(inst);
 }
 
 async function refreshJobsData(inst) {
-    let from = window.appState.jobsFrom || '';
-    let to = window.appState.jobsTo || '';
+    const fromLocal = window.appState.fromTs;
+    const toLocal = window.appState.toTs;
     const content = document.getElementById('jobsDashboardContent');
     if (!content) return;
+
+    let from = fromLocal || '';
+    let to = toLocal || '';
 
     // Convert local datetime-local strings to UTC ISO for the backend
     if (from && !from.includes('Z')) {
@@ -98,6 +74,8 @@ async function refreshJobsData(inst) {
         const data = await response.json();
         
         renderJobsContent(inst, data);
+        const updateEl = document.getElementById('jobs-last-update');
+        if (updateEl) updateEl.textContent = new Date().toLocaleTimeString();
     } catch(err) {
         content.innerHTML = `<div class="alert alert-danger" style="margin-top:1rem;">
             <i class="fa-solid fa-triangle-exclamation"></i> <strong>Historical Data Unavailable:</strong> ${window.escapeHtml(err.message)}

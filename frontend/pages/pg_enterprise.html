@@ -1,16 +1,15 @@
 <!--
  * SQL Optima — PostgreSQL Enterprise Monitor template
 -->
-<div class="page-view active dashboard-sky-theme">
+<div class="page-view active dashboard-sky-theme pg-enterprise-page">
     <!-- ROW 0: HEADER -->
     <div class="page-title flex-between dashboard-page-title-compact">
         <div class="dashboard-title-line">
-            <h1><i class="fa-solid fa-building-shield"></i> Enterprise Monitor <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Enterprise Monitor" title="Learn more about this dashboard"></i></h1>
+            <h1><i class="fa-solid fa-building-shield"></i> Enterprise Monitor <i class="fa-solid fa-circle-info text-accent info-icon-clickable cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Enterprise Monitor" title="Learn more about this dashboard"></i></h1>
             <span class="subtitle">BGWriter, Archiver, Contention &amp; Internal Engine Signals</span>
         </div>
         <div class="flex-center dashboard-page-title-actions" style="gap: 0.75rem;">
             <div id="time-picker-insertion-point"></div>
-            <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgEnterpriseDashboardView"><i class="fa-solid fa-refresh"></i> Refresh</button>
         </div>
     </div>
 
@@ -58,7 +57,7 @@
         <div class="col-12">
             <div class="card glass-panel">
                 <div class="card-header flex-between">
-                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-database text-accent"></i> BGWriter / Checkpoint Statistics</h3>
+                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-database text-accent"></i> BGWriter / Checkpoint Statistics <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="BGWriter Stats"></i></h3>
                     <span style="font-size:0.65rem; color:var(--text-muted);">Checkpoint frequency (per-interval deltas) &amp; write/sync duration</span>
                 </div>
                 <div class="card-body" id="bgwriter-section">
@@ -68,10 +67,10 @@
         </div>
 
         <!-- WAL Archiver -->
-        <div class="col-6 col-laptop-6 col-tablet-12">
+        <div class="col-6 col-laptop-4 col-tablet-3 pg-ent-pair-wal-drift">
             <div class="card glass-panel">
                 <div class="card-header flex-between">
-                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-archive text-accent"></i> WAL Archiver Statistics</h3>
+                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-archive text-accent"></i> WAL Archiver Statistics <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="WAL Archiver"></i></h3>
                     <span style="font-size:0.65rem; color:var(--text-muted);">Per-interval WALs archived</span>
                 </div>
                 <div class="card-body" id="archiver-section" style="min-height:280px;">
@@ -81,10 +80,10 @@
         </div>
 
         <!-- Config Drift -->
-        <div class="col-6 col-laptop-6 col-tablet-12">
+        <div class="col-6 col-laptop-4 col-tablet-3 pg-ent-pair-wal-drift">
             <div class="card glass-panel">
                 <div class="card-header flex-between">
-                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-sliders text-accent"></i> Config Drift (Audit)</h3>
+                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-sliders text-accent"></i> Config Drift (Audit) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="Config Drift"></i></h3>
                     <span style="font-size:0.65rem; color:var(--text-muted);">Settings changed in last 7 days</span>
                 </div>
                 <div class="card-body" id="drift-section" style="min-height:280px;">
@@ -94,10 +93,10 @@
         </div>
 
         <!-- Wait Events Contention -->
-        <div class="col-7 col-laptop-8 col-tablet-12">
+        <div class="col-7 col-laptop-4 col-tablet-3 pg-ent-pair-contention-io">
             <div class="card glass-panel">
                 <div class="card-header flex-between">
-                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-road-barrier text-accent"></i> Contention Wait Analysis</h3>
+                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-road-barrier text-accent"></i> Contention Wait Analysis <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="Contention Waits"></i></h3>
                     <span style="font-size:0.65rem; color:var(--text-muted);">Session counts by wait event type over time</span>
                 </div>
                 <div class="card-body" id="waits-section">
@@ -107,10 +106,10 @@
         </div>
 
         <!-- Database I/O & Temp Spill -->
-        <div class="col-5 col-laptop-4 col-tablet-12">
+        <div class="col-5 col-laptop-4 col-tablet-3 pg-ent-pair-contention-io">
             <div class="card glass-panel">
                 <div class="card-header flex-between">
-                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-hard-drive text-accent"></i> Database I/O &amp; Temp Spill</h3>
+                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-hard-drive text-accent"></i> Database I/O &amp; Temp Spill <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="I/O & Temp Spill"></i></h3>
                     <span style="font-size:0.65rem; color:var(--text-muted);">Disk reads &amp; temp file growth (per-interval)</span>
                 </div>
                 <div class="card-body" id="io-section">
@@ -123,7 +122,7 @@
         <div class="col-12">
             <div class="card glass-panel">
                 <div class="card-header flex-between">
-                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-magnifying-glass-chart text-accent"></i> High-Impact Internal Queries <span style="font-size:0.7rem; color:var(--text-muted); font-weight:normal;">via pg_stat_statements</span></h3>
+                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-magnifying-glass-chart text-accent"></i> High-Impact Internal Queries <span style="font-size:0.7rem; color:var(--text-muted); font-weight:normal;">via pg_stat_statements</span> <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="High-Impact Queries"></i></h3>
                     <span style="font-size:0.65rem; color:var(--text-muted);">Top 15 by total execution time — click SQL to view full text</span>
                 </div>
                 <div class="card-body" id="qint-section">

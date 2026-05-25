@@ -121,6 +121,14 @@ func (tl *TimescaleLogger) ToSafeUTF8(s string) string {
 	return string(v)
 }
 
+// volumeStatsHash hashes capacity metrics for a volume to support delta-logging.
+func volumeStatsHash(availableGB, freePct float64) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(normalizeMapValue(availableGB)))
+	_, _ = h.Write([]byte(normalizeMapValue(freePct)))
+	return h.Sum64()
+}
+
 // diskRowHash hashes (data_mb, log_mb, free_mb) for a single database disk row.
 func diskRowHash(dataMB, logMB, freeMB float64) uint64 {
 	h := fnv.New64a()
@@ -137,6 +145,14 @@ func fileIOHash(readLat, writeLat, readBPS, writeBPS float64) uint64 {
 	_, _ = h.Write([]byte(normalizeMapValue(writeLat)))
 	_, _ = h.Write([]byte(normalizeMapValue(readBPS)))
 	_, _ = h.Write([]byte(normalizeMapValue(writeBPS)))
+	return h.Sum64()
+}
+
+// perfCounterWriteHash fingerprints a perf counter row for unchanged-value skip.
+func perfCounterWriteHash(cntrValue int64, ratePerSec float64) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(normalizeMapValue(cntrValue)))
+	_, _ = h.Write([]byte(normalizeMapValue(ratePerSec)))
 	return h.Sum64()
 }
 

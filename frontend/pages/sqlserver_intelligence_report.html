@@ -1,7 +1,7 @@
 <!--
  * SQL Optima — https://github.com/rsharma155/sql_optima
  *
- * Purpose: SQL Server Health Intelligence Report (Autonomous Analysis).
+ * Purpose: SQL Server Health Intelligence Report (rule-based analysis).
  *
  * Author: Ravi Sharma
  * Copyright (c) 2026 Ravi Sharma
@@ -28,7 +28,10 @@
         flex: 1;
         border: 1px solid var(--border-color);
         border-radius: 8px;
-        background: var(--bg-surface);
+        background: var(--bg-base);
+    }
+    .intelligence-container {
+        background: var(--bg-base);
     }
     .loading-overlay {
         display: none;
@@ -52,18 +55,30 @@
 <div class="page-view active">
     <div class="page-title flex-between">
         <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:8px;">
-            <i class="fa-solid fa-brain text-accent"></i> SQL Server Intelligence Report 
-            <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" title="Autonomous analysis using expert rules and time-series forecasting"></i>
+            <i class="fa-solid fa-brain text-accent"></i> SQL Server Intelligence Report
+            <span id="ir-instance-name" style="font-size:0.75rem; color:var(--text-muted); font-weight:500; background:rgba(0,0,0,0.15); padding:2px 8px; border-radius:4px;"></span>
+            <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" title="Expert rules, dynamic thresholds, and time-series forecasting on collected telemetry"></i>
         </h1>
     </div>
 
+    <div class="alert" style="background: rgba(234,179,8,0.12); border: 1px solid rgba(234,179,8,0.35); border-radius: 6px; padding: 0.6rem 1rem; display:flex; align-items:center; gap:0.6rem; font-size:0.82rem; color:var(--text-secondary); margin-bottom: 0.5rem;">
+        <i class="fa-solid fa-triangle-exclamation" style="color:#eab308;"></i>
+        <span><strong style="color:#eab308;">Work in Progress:</strong> This intelligence report is still being refined and may not fully reflect your environment's actual state. Accuracy improvements are planned for upcoming releases.</span>
+    </div>
+
     <div class="intelligence-container">
-        <div class="report-actions">
+        <div class="report-actions" style="flex-wrap: wrap;">
             <button id="generate-report-btn" class="btn btn-primary">
-                <i class="fa-solid fa-wand-magic-sparkles"></i> Generate New Health Analysis
+                <i class="fa-solid fa-chart-line"></i> Run Analysis
             </button>
-            <div id="report-status" class="text-secondary" style="font-size: 0.9rem;">
-                Click the button to start autonomous analysis based on recent telemetry.
+            <button id="refresh-report-btn" class="btn btn-secondary" type="button" title="Force fresh analysis and bypass cache">
+                <i class="fa-solid fa-rotate"></i> Refresh
+            </button>
+            <div style="flex: 1; min-width: 200px;">
+                <div id="report-status" class="text-secondary" style="font-size: 0.9rem;">
+                    Loads a cached report when one exists from the last 24 hours; otherwise runs analysis.
+                </div>
+                <div id="report-generated-at" class="text-muted" style="font-size: 0.78rem; margin-top: 2px;"></div>
             </div>
         </div>
 
@@ -78,7 +93,7 @@
                     <div id="step-render" class="text-muted"><i class="fa-regular fa-circle"></i> Rendering report...</div>
                 </div>
             </div>
-            <iframe id="report-iframe" class="report-frame" sandbox="allow-scripts allow-downloads" src="about:blank"></iframe>
+            <iframe id="report-iframe" class="report-frame" src="about:blank"></iframe>
         </div>
     </div>
 </div>

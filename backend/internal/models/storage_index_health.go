@@ -14,7 +14,7 @@ import (
 )
 
 type IndexUsageStat struct {
-	Time           time.Time  `json:"time"`
+	Timestamp      time.Time  `json:"timestamp"`
 	Engine         string     `json:"engine"` // sqlserver | postgres
 	ServerID       uuid.UUID  `json:"server_id"`
 	DBName         string     `json:"db_name"`
@@ -35,7 +35,7 @@ type IndexUsageStat struct {
 }
 
 type TableUsageStat struct {
-	Time         time.Time `json:"time"`
+	Timestamp    time.Time `json:"timestamp"`
 	Engine       string    `json:"engine"` // sqlserver | postgres
 	ServerID     uuid.UUID `json:"server_id"`
 	DBName       string    `json:"db_name"`
@@ -51,7 +51,7 @@ type TableUsageStat struct {
 }
 
 type TableSizeHistory struct {
-	Time        time.Time `json:"time"`
+	Timestamp   time.Time `json:"timestamp"`
 	Engine      string    `json:"engine"` // sqlserver | postgres
 	ServerID    uuid.UUID `json:"server_id"`
 	DBName      string    `json:"db_name"`
@@ -63,7 +63,7 @@ type TableSizeHistory struct {
 }
 
 type IndexDefinition struct {
-	Time             time.Time `json:"time"`
+	Timestamp        time.Time `json:"timestamp"`
 	Engine           string    `json:"engine"`
 	ServerID         uuid.UUID `json:"server_id"`
 	DBName           string    `json:"db_name"`

@@ -24,6 +24,7 @@ type PgQueryStat struct {
 	DbID              int64   `json:"db_id"`
 	DbName            string  `json:"db_name"`
 	UserName          string  `json:"username"`
+	AppName           string  `json:"app_name"`
 	Query             string  `json:"query"`
 	QueryType         string  `json:"query_type"`
 	Calls             int64   `json:"calls"`
@@ -56,6 +57,8 @@ func (c *PgRepository) FetchQuerySnapshot(ctx context.Context, instanceName stri
 		return nil, fmt.Errorf("pg_stat_statements not supported or enabled on %s", instanceName)
 	}
 
+	tableName := c.GetPgssTableName(instanceName)
+
 	version := c.GetPgVersion(ctx, instanceName)
 	hasBlkTime := c.GetPgssHasBlkTime(instanceName)
 
@@ -75,9 +78,24 @@ func (c *PgRepository) FetchQuerySnapshot(ctx context.Context, instanceName stri
 	}
 
 	// PG13+ exposes WAL counters and plan-time columns; older versions don't.
-	walCols := "0 as wal_bytes, 0 as wal_records, 0 as wal_fpi, 0 as total_plan_time, 0 as mean_plan_time, 0 as plans"
+	// Use CASE WHEN to avoid NULL mean_plan_time when plans=0 (cached plans never re-plan),
+	// which would cause database/sql Scan to fail for non-pointer float64 targets.
+	walCols := "0 as wal_bytes, 0 as wal_records, 0 as wal_fpi, 0 as total_plan_time, 0.0 as mean_plan_time, 0 as plans"
 	if version >= 130000 {
-		walCols = "COALESCE(s.wal_bytes,0), COALESCE(s.wal_records,0), COALESCE(s.wal_fpi,0), COALESCE(s.total_plan_time,0), (COALESCE(s.total_plan_time,0)/NULLIF(s.plans,0)), COALESCE(s.plans,0)"
+		walCols = "COALESCE(s.wal_bytes,0), COALESCE(s.wal_records,0), COALESCE(s.wal_fpi,0), COALESCE(s.total_plan_time,0), CASE WHEN COALESCE(s.plans,0) > 0 THEN COALESCE(s.total_plan_time,0)/s.plans ELSE 0.0 END, COALESCE(s.plans,0)"
+	}
+
+	// PG14+ added query_id to pg_stat_activity, enabling app name lookup per query.
+	// For older versions we fall back to an empty string.
+	appNameCol := "'' AS app_name"
+	if version >= 140000 {
+		appNameCol = `COALESCE((
+			SELECT application_name FROM pg_stat_activity
+			WHERE query_id = s.queryid
+			  AND application_name IS NOT NULL
+			  AND application_name NOT IN ('', 'psql', 'pg_dump', 'pg_restore')
+			LIMIT 1
+		), '') AS app_name`
 	}
 
 	query := fmt.Sprintf(`/* SQL_OPTIMA */
@@ -87,8 +105,15 @@ func (c *PgRepository) FetchQuerySnapshot(ctx context.Context, instanceName stri
 			s.dbid,
 			d.datname                                        AS db_name,
 			COALESCE(r.rolname, s.userid::text)              AS username,
-			LEFT(s.query, 500),
-			'O' as query_type,
+			LEFT(s.query, 500)                               AS query,
+			CASE
+				WHEN s.query ~* '^\s*SELECT' THEN 'S'
+				WHEN s.query ~* '^\s*INSERT' THEN 'I'
+				WHEN s.query ~* '^\s*UPDATE' THEN 'U'
+				WHEN s.query ~* '^\s*DELETE' THEN 'D'
+				WHEN s.query ~* '^\s*(CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|ANALYZE|VACUUM)' THEN 'E'
+				ELSE 'O'
+			END                                              AS query_type,
 			s.calls,
 			%s,
 			(%s / NULLIF(s.calls, 0))                        AS mean_time,
@@ -101,15 +126,16 @@ func (c *PgRepository) FetchQuerySnapshot(ctx context.Context, instanceName stri
 			s.shared_blks_hit,
 			COALESCE(s.shared_blks_dirtied,0),
 			COALESCE(s.shared_blks_written,0),
+			%s,
 			%s
-		FROM pg_stat_statements s
+		FROM %s s
 		JOIN  pg_database d ON d.oid = s.dbid
 		LEFT JOIN pg_roles  r ON r.oid = s.userid
 		WHERE s.query NOT LIKE '%%/* SQL_OPTIMA */%%'
 		  AND d.datname NOT IN ('template0', 'template1')
 		ORDER BY %s DESC
 		LIMIT 200
-	`, execTimeCol, execTimeCol, blkReadCol, blkWriteCol, walCols, execTimeCol)
+	`, execTimeCol, execTimeCol, blkReadCol, blkWriteCol, walCols, appNameCol, tableName, execTimeCol)
 
 
 	ctx, cancel := WithQueryTimeout(ctx, 0)
@@ -121,6 +147,7 @@ func (c *PgRepository) FetchQuerySnapshot(ctx context.Context, instanceName stri
 	defer rows.Close()
 
 	var stats []PgQueryStat
+	scanErrs := 0
 	for rows.Next() {
 		var s PgQueryStat
 		err := rows.Scan(
@@ -130,11 +157,19 @@ func (c *PgRepository) FetchQuerySnapshot(ctx context.Context, instanceName stri
 			&s.SharedBlksRead, &s.SharedBlksHit, &s.SharedBlksDirtied, &s.SharedBlksWritten,
 			&s.WalBytes, &s.WalRecords, &s.WalFpi,
 			&s.TotalPlanTime, &s.MeanPlanTime, &s.Plans,
+			&s.AppName,
 		)
 		if err != nil {
+			scanErrs++
+			if scanErrs <= 3 {
+				slog.Warn("[PGSS] FetchQuerySnapshot scan error (row skipped)", "instance", instanceName, "err", err)
+			}
 			continue
 		}
 		stats = append(stats, s)
+	}
+	if scanErrs > 0 {
+		slog.Warn("[PGSS] FetchQuerySnapshot completed with scan errors", "instance", instanceName, "scan_errors", scanErrs, "rows_collected", len(stats))
 	}
 
 	return stats, rows.Err()

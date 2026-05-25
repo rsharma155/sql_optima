@@ -17,7 +17,7 @@
             const html = await window.loadTemplate('pages/sqlserver_plan_analyzer.html?v=' + new Date().getTime());
             window.routerOutlet.innerHTML = html;
         } catch (err) {
-            window.routerOutlet.innerHTML = `<div class="alert alert-danger">Failed to load template: ${err.message}</div>`;
+            window.routerOutlet.innerHTML = `<div class="alert alert-danger">Failed to load template: ${window.escapeHtml(err.message)}</div>`;
             return;
         }
 

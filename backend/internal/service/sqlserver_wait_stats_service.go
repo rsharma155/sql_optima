@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/collectors/domain"
 	"github.com/rsharma155/sql_optima/internal/models"
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/pkg/dashboard"
 )
 
@@ -105,6 +106,14 @@ func (s *MetricsService) collectAndFanOutWaitStats(ctx context.Context) {
 
 		// Step A: Fetch cumulative snapshot from SQL Server DMV
 		snapshots, err := s.waitDMVCollector.FetchCumulativeSnapshot(ctx, db)
+		if err != nil && repository.IsMSSQLConnError(err) {
+			if s.MsRepo.ReconnectInstance(ctx, inst.Name) {
+				if db2, ok2 := s.MsRepo.GetConn(inst.Name); ok2 {
+					db = db2
+					snapshots, err = s.waitDMVCollector.FetchCumulativeSnapshot(ctx, db)
+				}
+			}
+		}
 		if err != nil {
 			slog.Error("[WaitStats]", "target", inst.Name, "err", err)
 			continue
@@ -203,6 +212,13 @@ func (s *MetricsService) collectActiveWaitSessions(ctx context.Context) {
 			continue
 		}
 		sessions, err := s.waitDMVCollector.FetchActiveWaitSessions(ctx, db)
+		if err != nil && repository.IsMSSQLConnError(err) {
+			if s.MsRepo.ReconnectInstance(ctx, inst.Name) {
+				if db2, ok2 := s.MsRepo.GetConn(inst.Name); ok2 {
+					sessions, err = s.waitDMVCollector.FetchActiveWaitSessions(ctx, db2)
+				}
+			}
+		}
 		if err != nil {
 			slog.Error("[WaitStats]", "target", inst.Name, "err", err)
 			continue

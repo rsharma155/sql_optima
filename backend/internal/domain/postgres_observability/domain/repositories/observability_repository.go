@@ -149,7 +149,7 @@ func (r *PostgresObservabilityRepository) GetLoadTrend(ctx context.Context, serv
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"ts":               ts,
+			"timestamp":        ts,
 			"active_sessions":  active,
 			"cpu_sessions":     cpu,
 			"waiting_sessions": waiting,
@@ -186,7 +186,7 @@ func (r *PostgresObservabilityRepository) GetWaitCategoryTrend(ctx context.Conte
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"bucket":          bucket,
+			"timestamp":       bucket,
 			"wait_event_type": wet,
 			"sessions":        sessions,
 		})
@@ -296,7 +296,7 @@ func (r *PostgresObservabilityRepository) GetLongRunningSessions(ctx context.Con
 			"pid":               pid,
 			"usename":           user,
 			"duration":          formatDuration(durationSec),
-			"capture_timestamp": captureTs,
+			"timestamp":         captureTs,
 			"wait_event":        waitEvent,
 			"query":             queryStr,
 			"application_name":  appName,
@@ -307,7 +307,14 @@ func (r *PostgresObservabilityRepository) GetLongRunningSessions(ctx context.Con
 
 func (r *PostgresObservabilityRepository) GetTopQueries(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {
 	query := `
-		SELECT capture_timestamp, queryid, calls, total_exec_time, mean_exec_time, temp_blks_written, query, usename
+		SELECT capture_timestamp, 
+		       COALESCE(queryid, 0), 
+		       COALESCE(calls, 0), 
+		       COALESCE(total_exec_time, 0), 
+		       COALESCE(mean_exec_time, 0), 
+		       COALESCE(temp_blks_written, 0), 
+		       COALESCE(query, ''), 
+		       COALESCE(usename, '')
 		FROM monitor.pg_query_wait_profile_ts
 		WHERE capture_timestamp BETWEEN $1 AND $2 AND server_id = $3
 		  AND (usename IS NULL OR usename <> 'dbmonitor_user')
@@ -327,29 +334,20 @@ func (r *PostgresObservabilityRepository) GetTopQueries(ctx context.Context, ser
 		var calls int64
 		var total, mean float64
 		var temp int64
-		var queryStr, usename *string
+		var queryStr, usename string
 		if err := rows.Scan(&ts, &qid, &calls, &total, &mean, &temp, &queryStr, &usename); err != nil {
-			return nil, err
-		}
-
-		qVal := ""
-		if queryStr != nil {
-			qVal = *queryStr
-		}
-		uVal := ""
-		if usename != nil {
-			uVal = *usename
+			continue
 		}
 
 		results = append(results, map[string]interface{}{
-			"ts":                ts,
+			"timestamp":         ts,
 			"queryid":           qid,
 			"calls":             calls,
 			"total_exec_time":   total,
 			"mean_exec_time":    mean,
 			"temp_blks_written": temp,
-			"query":             qVal,
-			"usename":           uVal,
+			"query":             queryStr,
+			"usename":           usename,
 		})
 	}
 	return results, nil
@@ -382,9 +380,9 @@ func (r *PostgresObservabilityRepository) GetSessionStateTrend(ctx context.Conte
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"bucket": bucket,
-			"state":  state,
-			"count":  count,
+			"timestamp": bucket,
+			"state":     state,
+			"count":     count,
 		})
 	}
 	return results, nil

@@ -1,0 +1,303 @@
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Page-specific styles for the unified PostgreSQL Backup & DR dashboard
+ *          (readiness pillars, KPI grid, charts, and section layout).
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+.pg-backups-page {
+    min-height: calc(100vh - 80px);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 2rem;
+}
+
+.pg-backups-page .dashboard-grid-12 {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 0.75rem;
+    width: 100%;
+}
+
+.pg-backups-page .col-span-2 { grid-column: span 2; }
+.pg-backups-page .col-span-3 { grid-column: span 3; }
+.pg-backups-page .col-span-4 { grid-column: span 4; }
+.pg-backups-page .col-span-5 { grid-column: span 5; }
+.pg-backups-page .col-span-6 { grid-column: span 6; }
+.pg-backups-page .col-span-7 { grid-column: span 7; }
+.pg-backups-page .col-span-8 { grid-column: span 8; }
+.pg-backups-page .col-span-12 { grid-column: span 12; }
+
+@media (max-width: 1024px) {
+    .pg-backups-page .col-span-6,
+    .pg-backups-page .col-span-5,
+    .pg-backups-page .col-span-7,
+    .pg-backups-page .col-span-8 { grid-column: span 12; }
+    .pg-backups-page .col-span-2,
+    .pg-backups-page .col-span-3 { grid-column: span 4; }
+}
+
+@media (max-width: 600px) {
+    .pg-backups-page .col-span-2,
+    .pg-backups-page .col-span-3 { grid-column: span 6; }
+}
+
+.pg-backups-page .kpi-card {
+    padding: 0.5rem;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.pg-backups-page .kpi-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.pg-backups-page .kpi-value {
+    font-size: 1.25rem;
+    font-weight: bold;
+    margin: 0.2rem 0;
+}
+
+.pg-backups-page .kpi-unit {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+}
+
+.pg-backups-page .chart-container-sm {
+    height: 220px;
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.pg-backups-page .chart-container-sm canvas {
+    flex: 1;
+    min-height: 0;
+    width: 100% !important;
+}
+
+.pg-backups-page .table-card-compact {
+    min-height: 200px;
+    padding: 0.5rem;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.pg-backups-page .table-responsive {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.pg-backups-page .section-heading {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin: 0.5rem 0 0.35rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.pg-dr-readiness-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.6rem;
+}
+
+@media (max-width: 900px) {
+    .pg-dr-readiness-row { grid-template-columns: repeat(2, 1fr); }
+}
+
+.pg-dr-pillar {
+    padding: 0.65rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.pg-dr-pillar.status-green { border-left: 3px solid #22c55e; }
+.pg-dr-pillar.status-amber { border-left: 3px solid #f59e0b; }
+.pg-dr-pillar.status-red { border-left: 3px solid #ef4444; }
+
+.pg-dr-pillar h4 {
+    font-size: 0.72rem;
+    margin: 0 0 0.25rem;
+    color: var(--text-muted);
+}
+
+.pg-dr-pillar .pillar-status {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.pg-dr-pillar p {
+    font-size: 0.72rem;
+    margin: 0.35rem 0 0;
+    line-height: 1.35;
+    color: var(--text-secondary);
+}
+
+.pg-dr-overall {
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.pg-backups-page .panel-header h4 {
+    font-size: 0.8rem;
+    margin: 0 0 0.4rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.pg-backups-page .pg-dr-table-panel {
+    padding: 0.55rem 0.65rem 0.65rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 220px;
+}
+
+.pg-backups-page .pg-dr-table-panel .panel-header {
+    margin-bottom: 0.35rem;
+}
+
+.pg-backups-page .pg-dr-table-wrap {
+    flex: 1;
+    overflow: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.12);
+}
+
+.pg-backups-page .pg-dr-grid-table {
+    width: 100%;
+    font-size: 0.72rem;
+}
+
+.pg-backups-page .pg-dr-grid-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-secondary);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+}
+
+.pg-backups-page .pg-dr-grid-table tbody tr:hover {
+    background: rgba(76, 201, 240, 0.06);
+}
+
+.pg-backups-page .pg-dr-grid-table tbody tr.pg-dr-row-risk {
+    background: rgba(245, 158, 11, 0.08);
+}
+
+.pg-backups-page .pg-dr-empty-cell {
+    text-align: center;
+    padding: 2rem 1rem !important;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.pg-backups-page .pg-dr-empty-cell i {
+    display: block;
+    font-size: 1.25rem;
+    margin-bottom: 0.5rem;
+    opacity: 0.55;
+}
+
+.pg-backups-page .pg-dr-row-count {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.pg-backups-page .pg-dr-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.68rem;
+}
+
+.pg-backups-page .pg-dr-lag-cell {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.pg-backups-page .pg-dr-lag-ok { color: var(--text-secondary); }
+.pg-backups-page .pg-dr-lag-warn { color: var(--warning); font-weight: 600; }
+.pg-backups-page .pg-dr-lag-critical { color: var(--danger); font-weight: 700; }
+
+.pg-backups-page .pg-dr-latest-backup {
+    padding: 0.65rem 0.75rem;
+    min-height: 220px;
+}
+
+.pg-backups-page .pg-dr-latest-body {
+    margin-top: 0.5rem;
+}
+
+.pg-backups-page .pg-dr-latest-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.pg-backups-page .pg-dr-latest-type {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.pg-backups-page .pg-dr-latest-meta {
+    margin: 0.75rem 0 0;
+    display: grid;
+    gap: 0.45rem;
+}
+
+.pg-backups-page .pg-dr-latest-meta > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    font-size: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.35rem;
+}
+
+.pg-backups-page .pg-dr-latest-meta dt {
+    margin: 0;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.pg-backups-page .pg-dr-latest-meta dd {
+    margin: 0;
+    text-align: right;
+}
+
+.pg-backups-page .pg-dr-empty-inline {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.4;
+}
+
+.pg-backups-page .pg-dr-empty-inline i {
+    margin-top: 0.15rem;
+    opacity: 0.6;
+}

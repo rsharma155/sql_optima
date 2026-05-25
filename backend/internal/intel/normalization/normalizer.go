@@ -20,14 +20,16 @@ func NormalizeSystem(ont *ontology.OntologyGraph, rawData map[string]interface{}
 	system := &NormalizedSystem{}
 
 	host := &HostHealth{}
-	host.CPU = buildMetricFromKeys(rawData, "cpu_utilization", []string{"avg_cpu_load", "sql_process", "cpu_user_pct"}, 45.0)
-	host.Memory = buildMetricFromKeys(rawData, "memory_usage", []string{"memory_usage", "sql_memory_used_mb", "memory_used_pct"}, 72.0)
-	host.Disk = buildMetricFromKeys(rawData, "disk_usage", []string{"data_disk_mb", "disk_used_pct", "free_disk_mb"}, 65.0)
-	host.IO = buildMetricFromKeys(rawData, "io_latency", []string{"read_latency_ms", "write_latency_ms", "avg_read_latency_ms"}, 15.0)
+	host.CPU = buildMetricFromKeys(rawData, "cpu_utilization", []string{"avg_cpu_load", "sql_process", "cpu_user_pct"}, 0.0)
+	// DEFECT-11 fix: removed phantom default of 72.0 for memory. When no memory metric is
+	// present the metric is now marked as unobserved (zero series) rather than invented.
+	host.Memory = buildMetricFromKeys(rawData, "memory_usage", []string{"memory_usage", "sql_memory_used_mb", "memory_used_pct"}, 0.0)
+	host.Disk = buildMetricFromKeys(rawData, "disk_usage", []string{"data_disk_mb", "disk_used_pct", "free_disk_mb"}, 0.0)
+	host.IO = buildMetricFromKeys(rawData, "io_latency", []string{"read_latency_ms", "write_latency_ms", "avg_read_latency_ms"}, 0.0)
 	system.Host = host
 
 	db := &DatabaseHealth{}
-	db.TempDB = buildMetricFromKeys(rawData, "tempdb_usage", []string{"tempdb_used_percent", "temp_files"}, 30.0)
+	db.TempDB = buildMetricFromKeys(rawData, "tempdb_usage", []string{"tempdb_used_percent", "temp_files"}, 0.0)
 	system.Database = db
 
 	storage := &StorageHealth{}
@@ -76,30 +78,39 @@ func NormalizeSystem(ont *ontology.OntologyGraph, rawData map[string]interface{}
 func BuildMetricMapFromRaw(rawData map[string]interface{}) map[string]float64 {
 	m := make(map[string]float64)
 
-	m["avg_cpu_load"] = getValueOr(rawData, 45.0, "avg_cpu_load")
-	m["sql_process_cpu"] = getValueOr(rawData, 30.0, "sql_process")
-	m["memory_usage_pct"] = getValueOr(rawData, 72.0, "memory_usage")
-	m["ple_seconds"] = getValueOr(rawData, 500.0, "ple_seconds", "ple")
-	m["memory_grants_pending"] = getValueOr(rawData, 0.0, "memory_grants_pending", "waiting_memory_grants")
-	m["buffer_cache_hit_ratio"] = getValueOr(rawData, 98.0, "buffer_cache_hit_ratio")
-	m["free_disk_mb"] = getValueOr(rawData, 5000.0, "free_disk_mb", "free_mb")
-	m["data_disk_mb"] = getValueOr(rawData, 50000.0, "data_disk_mb", "data_mb")
-	m["log_disk_mb"] = getValueOr(rawData, 10000.0, "log_disk_mb", "log_mb")
-	m["tempdb_used_pct"] = getValueOr(rawData, 30.0, "tempdb_used_percent")
-	m["blocking_sessions"] = getValueOr(rawData, 0.0, "blocking_sessions")
-	m["deadlocks"] = getValueOr(rawData, 0.0, "deadlocks")
-	m["tps"] = getValueOr(rawData, 100.0, "tps")
-	m["batch_requests_per_sec"] = getValueOr(rawData, 500.0, "batch_requests_per_sec")
-	m["read_latency_ms"] = getValueOr(rawData, 5.0, "read_latency_ms")
-	m["write_latency_ms"] = getValueOr(rawData, 5.0, "write_latency_ms")
-	m["secondary_lag_seconds"] = getValueOr(rawData, 0.0, "secondary_lag_seconds")
-	m["failed_jobs_24h"] = getValueOr(rawData, 0.0, "failed_jobs_24h")
-	m["total_runnable_tasks"] = getValueOr(rawData, 0.0, "total_runnable_tasks_count", "avg_runnable_tasks_count")
-	m["sort_warnings_per_sec"] = getValueOr(rawData, 0.0, "sort_warnings_per_sec")
-	m["hash_warnings_per_sec"] = getValueOr(rawData, 0.0, "hash_warnings_per_sec")
-	m["delta_data_mb"] = getValueOr(rawData, 0.0, "delta_data_mb")
-	m["log_send_queue_kb"] = getValueOr(rawData, 0.0, "log_send_queue_kb")
-	m["redo_queue_kb"] = getValueOr(rawData, 0.0, "redo_queue_kb")
+	// Only add metrics that are actually present in rawData.
+	// Using fake defaults causes YAML rules to fire on phantom metrics, producing
+	// identical analysis output for all instances that have no collected data yet.
+	set := func(mapKey string, rawKeys ...string) {
+		if v := getValue(rawData, rawKeys...); v != nil {
+			m[mapKey] = *v
+		}
+	}
+
+	set("avg_cpu_load", "avg_cpu_load")
+	set("sql_process_cpu", "sql_process")
+	set("memory_usage_pct", "memory_usage")
+	set("ple_seconds", "ple_seconds", "ple")
+	set("memory_grants_pending", "memory_grants_pending", "waiting_memory_grants")
+	set("buffer_cache_hit_ratio", "buffer_cache_hit_ratio")
+	set("free_disk_mb", "free_disk_mb", "free_mb")
+	set("data_disk_mb", "data_disk_mb", "data_mb")
+	set("log_disk_mb", "log_disk_mb", "log_mb")
+	set("tempdb_used_pct", "tempdb_used_percent")
+	set("blocking_sessions", "blocking_sessions")
+	set("deadlocks", "deadlocks")
+	set("tps", "tps")
+	set("batch_requests_per_sec", "batch_requests_per_sec")
+	set("read_latency_ms", "read_latency_ms")
+	set("write_latency_ms", "write_latency_ms")
+	set("secondary_lag_seconds", "secondary_lag_seconds")
+	set("failed_jobs_24h", "failed_jobs_24h")
+	set("total_runnable_tasks", "total_runnable_tasks_count", "avg_runnable_tasks_count")
+	set("sort_warnings_per_sec", "sort_warnings_per_sec")
+	set("hash_warnings_per_sec", "hash_warnings_per_sec")
+	set("delta_data_mb", "delta_data_mb")
+	set("log_send_queue_kb", "log_send_queue_kb")
+	set("redo_queue_kb", "redo_queue_kb")
 
 	return m
 }
@@ -123,12 +134,6 @@ func getValue(rawData map[string]interface{}, keys ...string) *float64 {
 	return nil
 }
 
-func getValueOr(rawData map[string]interface{}, def float64, keys ...string) float64 {
-	if v := getValue(rawData, keys...); v != nil {
-		return *v
-	}
-	return def
-}
 
 func buildMetricFromKeys(rawData map[string]interface{}, metricKey string, possibleKeys []string, defaultVal float64) *HealthMetric {
 	metric := &HealthMetric{}

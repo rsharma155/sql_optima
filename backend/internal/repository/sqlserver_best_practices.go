@@ -399,14 +399,15 @@ func (c *SqlServerRepository) queryStorageRisks(ctx context.Context, db *sql.DB)
 func (c *SqlServerRepository) queryDiskSpace(ctx context.Context, db *sql.DB) []models.DiskSpaceInfo {
 	// Get disk space with log file sizes
 	query := `
-		/* SQL_OPTIMA */ 	
-		SELECT   
-			LEFT(vs.volume_mount_point, 1) AS drive_letter,
+		/* SQL_OPTIMA */
+		SELECT
+			vs.volume_mount_point AS drive_letter,
 			vs.total_bytes / 1024 / 1024 AS total_size_mb,
 			vs.available_bytes / 1024 / 1024 AS free_space_mb,
 			ISNULL(SUM(CASE WHEN mf.type_desc = 'LOG' THEN mf.size * 8 / 1024 ELSE 0 END), 0) AS log_size_mb
-		FROM sys.dm_os_volume_stats() vs
-		LEFT JOIN sys.master_files mf ON LEFT(mf.physical_name, 1) = LEFT(vs.volume_mount_point, 1) AND mf.database_id > 4 AND mf.state_desc = 'ONLINE'
+		FROM sys.master_files mf WITH (NOLOCK)
+		CROSS APPLY sys.dm_os_volume_stats(mf.database_id, mf.file_id) vs
+		WHERE mf.database_id > 4 AND mf.state = 0
 		GROUP BY vs.volume_mount_point, vs.total_bytes, vs.available_bytes
 	`
 	ctx, cancel := WithQueryTimeout(ctx, 0)

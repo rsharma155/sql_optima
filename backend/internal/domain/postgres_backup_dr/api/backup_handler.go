@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/rsharma155/sql_optima/internal/api/handlers"
+	drdomain "github.com/rsharma155/sql_optima/internal/domain/postgres_backup_dr/domain"
 	"github.com/rsharma155/sql_optima/internal/service"
+	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
 type PostgresBackupHandler struct {
@@ -73,6 +75,25 @@ func (h *PostgresBackupHandler) GetDashboardData(w http.ResponseWriter, r *http.
 
 	archiverFailures, _ := repo.GetArchiverFailures(ctx, serverID)
 	data["archiver_failures"] = archiverFailures
+
+	slots, _ := repo.GetReplicationSlots(ctx, serverID)
+	data["replication_slots"] = slots
+
+	var latestBackup *hot.PostgresBackupRunRow
+	if tl := h.metricsSvc.GetTimescaleDBLogger(); tl != nil {
+		if row, err := tl.GetLatestPostgresBackupRun(ctx, serverID); err == nil && row != nil {
+			latestBackup = row
+			data["backup_latest"] = row
+		}
+		if hist, err := tl.GetPostgresBackupRunHistory(ctx, serverID, 10); err == nil {
+			data["backup_history"] = hist
+		}
+	}
+
+	policy := h.metricsSvc.GetDRPolicy(ctx, serverID)
+	data["dr_policy"] = policy
+	readiness := drdomain.EvaluateReadiness(policy, kpis, slots, latestBackup)
+	data["readiness"] = readiness
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(data)

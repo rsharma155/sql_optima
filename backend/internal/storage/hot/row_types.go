@@ -40,29 +40,22 @@ type SQLServerDatabaseCatalogRow struct {
 	IsSubscribed                   bool      `json:"is_subscribed"`
 	IsDistributor                  bool      `json:"is_distributor"`
 	GroupDatabaseID                *string   `json:"group_database_id"`
+	IsQueryStoreOn                 bool      `json:"is_query_store_on"`
 }
 
-type AGHealthRow struct {
-	CaptureTimestamp     time.Time  `json:"capture_timestamp"`
-	ServerID             uuid.UUID  `json:"server_id"`
-	AGName               string     `json:"ag_name"`
-	ReplicaServerName    string     `json:"replica_server_name"`
-	DatabaseName         string     `json:"database_name"`
-	ReplicaRole          string     `json:"replica_role"`
-	OperationalState     string     `json:"operational_state"`
-	ConnectedState       string     `json:"connected_state"`
-	SynchronizationState string     `json:"synchronization_state"`
-	SyncStateDesc        string     `json:"synchronization_state_desc"`
-	IsPrimaryReplica     bool       `json:"is_primary_replica"`
-	LogSendQueueKB       int64      `json:"log_send_queue_kb"`
-	RedoQueueKB          int64      `json:"redo_queue_kb"`
-	LogSendRateKB        int64      `json:"log_send_rate_kb"`
-	RedoRateKB           int64      `json:"redo_rate_kb"`
-	LastSentTime         *time.Time `json:"last_sent_time"`
-	LastReceivedTime     *time.Time `json:"last_received_time"`
-	LastHardenedTime     *time.Time `json:"last_hardened_time"`
-	LastRedoneTime       *time.Time `json:"last_redone_time"`
-	SecondaryLagSecs     int64      `json:"secondary_lag_seconds"`
+type VolumeStatsRow struct {
+	CaptureTimestamp  time.Time `json:"capture_timestamp"`
+	ServerID          uuid.UUID `json:"server_id"`
+	DatabaseName      string    `json:"database_name"`
+	LogicalFileName   string    `json:"logical_file_name"`
+	PhysicalName      string    `json:"physical_name"`
+	FileType          string    `json:"file_type"`
+	FileSizeMB        float64   `json:"file_size_mb"`
+	VolumeMountPoint  string    `json:"volume_mount_point"`
+	VolumeLabel       string    `json:"volume_label"`
+	VolumeTotalGB     float64   `json:"volume_total_gb"`
+	VolumeAvailableGB float64   `json:"volume_available_gb"`
+	VolumeFreePct     float64   `json:"volume_free_pct"`
 }
 
 type DatabaseThroughputRow struct {
@@ -113,6 +106,7 @@ type PostgresQueryStatsSnapRow struct {
 	QueryText         string
 	DbName            string
 	UserName          string
+	AppName           string
 	QueryType         string
 	Calls             int64
 	TotalTimeMs       float64
@@ -147,26 +141,6 @@ type PostgresLockRow struct {
 	WaitingSeconds float64
 }
 
-type PostgresStatStatementsDeltaRow struct {
-	CaptureTimestamp       time.Time
-	ServerID               uuid.UUID
-	QueryID                int64
-	DatabaseName           string
-	UserName               string
-	CallsDelta             int64
-	TotalTimeDeltaMs       float64
-	RowsDelta              int64
-	SharedBlksHitDelta     int64
-	SharedBlksReadDelta    int64
-	SharedBlksDirtiedDelta int64
-	SharedBlksWrittenDelta int64
-	TempBlksReadDelta      int64
-	TempBlksWrittenDelta   int64
-	BlkReadTimeDeltaMs     float64
-	BlkWriteTimeDeltaMs    float64
-	WalBytesDelta          int64
-	TotalPlanTimeDelta     float64
-}
 
 type LongRunningQueryRow struct {
 	CaptureTimestamp     time.Time `json:"capture_timestamp"`

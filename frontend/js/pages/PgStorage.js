@@ -41,6 +41,10 @@ window.PgStorageView = async function() {
         if (s < 3600) return `${(s/60).toFixed(1)}m`;
         return `${(s/3600).toFixed(2)}h`;
     };
+    const num = (v) => {
+        const x = Number(v);
+        return Number.isFinite(x) ? x : 0;
+    };
     const riskBadge = (level) => {
         const map = { low: 'text-success', medium: 'text-warning', high: 'text-danger', critical: 'text-danger' };
         const cls = map[level] || 'text-muted';
@@ -48,7 +52,7 @@ window.PgStorageView = async function() {
     };
 
     window.routerOutlet.innerHTML = `
-        <div class="page-view active dashboard-sky-theme">
+        <div class="page-view active dashboard-sky-theme pg-storage-page">
             <div class="page-title flex-between dashboard-page-title-compact">
                 <div class="dashboard-title-line">
                     <h1><i class="fa-solid fa-hard-drive"></i> Storage &amp; Maintenance</h1>
@@ -97,14 +101,15 @@ window.PgStorageView = async function() {
                     </div>
                 </div>
 
+                <div class="pg-storage-charts-laptop">
                 <div class="grid-container mt-3">
-                    <div class="col-4 col-laptop-4 col-tablet-6">
+                    <div class="col-4 col-laptop-4 col-tablet-6 pg-storage-bloat-col">
                         <div class="card glass-panel h-chart-md">
                             <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Bloat Estimation</h3></div>
                             <div class="chart-container" style="height:210px;"><canvas id="pgBloatChart"></canvas></div>
                         </div>
                     </div>
-                    <div class="col-8 col-laptop-8 col-tablet-6">
+                    <div class="col-8 col-laptop-8 col-tablet-6 pg-storage-autovac-col">
                         <div class="card glass-panel h-chart-md">
                             <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Autovacuum Activity Trend</h3></div>
                             <div class="chart-container" style="height:210px;"><canvas id="pgVacChart"></canvas></div>
@@ -113,13 +118,13 @@ window.PgStorageView = async function() {
                 </div>
                 
                 <div class="grid-container mt-3">
-                    <div class="col-7 col-laptop-8 col-tablet-6">
+                    <div class="col-7 col-laptop-8 col-tablet-6 pg-storage-growth-col">
                         <div class="card glass-panel h-chart-md">
                             <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Database Growth History</h3></div>
                             <div class="chart-container" style="height:230px;"><canvas id="pgGrowthTrendChart"></canvas></div>
                         </div>
                     </div>
-                    <div class="col-5 col-laptop-4 col-tablet-6">
+                    <div class="col-5 col-laptop-4 col-tablet-6 pg-storage-vac-col">
                         <div class="card glass-panel h-chart-md">
                             <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Live Vacuum Progress</h3></div>
                             <div class="table-container-compact" style="height:230px; overflow-y:auto;">
@@ -130,6 +135,7 @@ window.PgStorageView = async function() {
                             </div>
                         </div>
                     </div>
+                </div>
                 </div>
             </div>
 
@@ -160,10 +166,32 @@ window.PgStorageView = async function() {
             <!-- RISKS TAB -->
             <div id="pgStorageTab-risks" class="tab-panel" style="display:none;">
                 <div class="grid-container mt-3">
+                    <!-- High Level Risk Summary Row -->
+                    <div class="col-12 mb-3">
+                        <div class="glass-panel" style="padding:1rem; display:flex; gap:1.5rem; align-items:center;">
+                            <div style="flex:1;">
+                                <h3 style="font-size:0.9rem; margin:0 0 0.25rem 0; color:var(--text-secondary);"><i class="fa-solid fa-triangle-exclamation text-warning"></i> Operational Risk Assessment</h3>
+                                <p class="text-muted" style="font-size:0.7rem; margin:0;">These items represent immediate or systemic risks to database stability and vacuum efficiency.</p>
+                            </div>
+                            <div class="flex-center" style="gap:1rem;">
+                                <div class="text-center" style="min-width:80px;">
+                                    <div class="text-muted small" style="font-size:0.6rem; text-transform:uppercase;">Active Risks</div>
+                                    <div class="metric-value" style="font-size:1.2rem;" id="risk-summary-count">0</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="col-6 col-laptop-12">
                         <div class="card glass-panel h-table-md">
-                            <div class="card-header"><h3 style="font-size:0.8rem;margin:0;">Idle In Transaction Sessions</h3></div>
-                            <div class="table-container-compact">
+                            <div class="card-header flex-between">
+                                <h3 style="font-size:0.8rem;margin:0;"><i class="fa-solid fa-hourglass-half text-warning"></i> Idle In Transaction Sessions</h3>
+                                <span class="badge badge-outline" style="font-size:0.6rem;">Snapshot</span>
+                            </div>
+                            <div class="p-2 text-muted" style="font-size:0.65rem; border-bottom:1px solid var(--border-color);">
+                                Sessions holding transaction IDs without active work. Prevents vacuum from cleaning up old rows (bloat risk).
+                            </div>
+                            <div class="table-container-compact" style="flex:1; overflow-y:auto;">
                                 <table class="modern-table modern-table-compact">
                                     <thead><tr><th>PID</th><th>User</th><th>Idle Dur</th><th>Query</th></tr></thead>
                                     <tbody id="pgIdleTbody"></tbody>
@@ -173,8 +201,14 @@ window.PgStorageView = async function() {
                     </div>
                     <div class="col-6 col-laptop-12">
                         <div class="card glass-panel h-table-md">
-                            <div class="card-header"><h3 style="font-size:0.8rem;margin:0;">Long-Running Active Transactions</h3></div>
-                            <div class="table-container-compact">
+                            <div class="card-header flex-between">
+                                <h3 style="font-size:0.8rem;margin:0;"><i class="fa-solid fa-clock text-danger"></i> Long-Running Transactions</h3>
+                                <span class="badge badge-outline" style="font-size:0.6rem;">Snapshot</span>
+                            </div>
+                            <div class="p-2 text-muted" style="font-size:0.65rem; border-bottom:1px solid var(--border-color);">
+                                Transactions open for an extended period. Can cause heavy bloat and lock contention.
+                            </div>
+                            <div class="table-container-compact" style="flex:1; overflow-y:auto;">
                                 <table class="modern-table modern-table-compact">
                                     <thead><tr><th>PID</th><th>User</th><th>Txn Dur</th><th>Query</th></tr></thead>
                                     <tbody id="pgLongTxnTbody"></tbody>
@@ -182,10 +216,31 @@ window.PgStorageView = async function() {
                             </div>
                         </div>
                     </div>
-                    <div class="col-12">
+                    <div class="col-12 mt-3">
                         <div class="card glass-panel">
-                            <div class="card-header"><h3 style="font-size:0.8rem;margin:0;">XID Wraparound Risk</h3></div>
-                            <div id="pgXIDBody" style="padding:1rem;"></div>
+                            <div class="card-header flex-between">
+                                <h3 style="font-size:0.8rem;margin:0;"><i class="fa-solid fa-rotate text-accent"></i> Transaction ID (XID) Wraparound Risk</h3>
+                                <span class="text-muted small">Max capacity: 2.1 Billion XIDs</span>
+                            </div>
+                            <div class="p-2 text-muted" style="font-size:0.65rem; border-bottom:1px solid var(--border-color);">
+                                If any database reaches 100%, the server will stop accepting writes to prevent data corruption.
+                            </div>
+                            <div class="table-container-compact">
+                                <table class="modern-table modern-table-compact">
+                                    <thead>
+                                        <tr>
+                                            <th>Database</th>
+                                            <th class="text-right">Age (XIDs)</th>
+                                            <th class="text-right">Limit</th>
+                                            <th>Usage</th>
+                                            <th>Risk Level</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="pgXIDTbody">
+                                        <tr><td colspan="5" class="text-center py-4"><div class="spinner"></div></td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -201,14 +256,14 @@ window.PgStorageView = async function() {
                         </div>
                     </div>
                     <div class="col-12 mt-3">
-                        <div class="card glass-panel">
+                        <div class="card glass-panel" style="display:flex; flex-direction:column; min-height:520px;">
                             <div class="card-header"><h3 style="font-size:0.85rem;margin:0;">Index Bloat &amp; Inefficiency</h3></div>
-                            <div class="table-container-compact h-table-md">
-                                <table class="modern-table modern-table-compact">
+                            <div style="overflow-x:auto; flex:1;">
+                                <table class="modern-table modern-table-compact" style="width:100%;">
                                     <thead>
                                         <tr>
                                             <th class="sortable" data-col="database_name">DB</th>
-                                            <th class="sortable" data-col="table">Table</th>
+                                            <th class="sortable" data-col="table_name">Table</th>
                                             <th class="sortable" data-col="index_name">Index</th>
                                             <th class="sortable" data-col="index_bytes">Size</th>
                                             <th class="sortable" data-col="idx_scans">Scans</th>
@@ -217,6 +272,16 @@ window.PgStorageView = async function() {
                                     </thead>
                                     <tbody id="pgIdxBloatTbody"></tbody>
                                 </table>
+                            </div>
+                            <div id="pgIdxBloatPagination" style="display:flex; align-items:center; justify-content:space-between; padding:0.4rem 0.75rem; border-top:1px solid var(--border-color); font-size:0.72rem; flex-shrink:0;">
+                                <span id="pgIdxBloatPageInfo" class="text-muted"></span>
+                                <div style="display:flex; gap:0.25rem; align-items:center;">
+                                    <button id="pgIdxBloatFirst" class="btn btn-xs btn-outline" title="First page">«</button>
+                                    <button id="pgIdxBloatPrev" class="btn btn-xs btn-outline" title="Previous page">‹ Prev</button>
+                                    <span id="pgIdxBloatPageNum" class="text-muted" style="padding:0 0.4rem; white-space:nowrap;"></span>
+                                    <button id="pgIdxBloatNext" class="btn btn-xs btn-outline" title="Next page">Next ›</button>
+                                    <button id="pgIdxBloatLast" class="btn btn-xs btn-outline" title="Last page">»</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -273,7 +338,7 @@ window.PgStorageView = async function() {
             const sih = await sihResp.value.json();
             if (!isStillActive()) return;
             const k = sih.kpis || {};
-            setT('val-total-db-size', k.total_db_size_mb ? `${k.total_db_size_mb.toFixed(1)} MB` : '--');
+            setT('val-total-db-size', k.total_db_size_mb ? fmtBytes(k.total_db_size_mb * 1024 * 1024) : '--');
             setT('val-growth-7d', k.growth_7d_pct ? `${k.growth_7d_pct.toFixed(2)}%` : '0.0%');
             setT('val-unused-idx-count', k.unused_index_count || '0');
             setT('sub-unused-idx-size', k.unused_index_mb ? `${k.unused_index_mb.toFixed(1)} MB waste` : '0 MB');
@@ -326,7 +391,7 @@ window.PgStorageView = async function() {
             const points = data.points || [];
             const timeMap = {};
             points.forEach(p => {
-                const t = new Date(p.time).toISOString().slice(0, 16);
+                if (!p.time) return; const dt = new Date(p.time); if (isNaN(dt.getTime())) return; const t = dt.toISOString().slice(0, 16);
                 if (!timeMap[t]) timeMap[t] = { scans: 0, updates: 0, size: 0, count: 0 };
                 timeMap[t].scans += (p.scans || 0);
                 timeMap[t].updates += (p.updates || 0);
@@ -537,9 +602,14 @@ window.PgStorageView = async function() {
         }
         
         const risksBadge = document.getElementById('tabBadge-risks');
+        const summaryCount = document.getElementById('risk-summary-count');
         if (risksBadge) {
             risksBadge.textContent = riskCount;
             risksBadge.style.display = riskCount > 0 ? '' : 'none';
+        }
+        if (summaryCount) {
+            summaryCount.textContent = riskCount;
+            summaryCount.className = 'metric-value ' + (riskCount > 0 ? 'text-danger' : 'text-success');
         }
 
         if (xidResp.status === 'fulfilled' && xidResp.value.ok) {
@@ -549,15 +619,25 @@ window.PgStorageView = async function() {
             if (selectedDb && selectedDb !== 'all') {
                 dbs = dbs.filter(d => d.database_name === selectedDb);
             }
-            setH('pgXIDBody', dbs.map(d => `
-                <div class="mb-2">
-                    <div class="flex-between small mb-1">
-                        <strong>${esc(d.database_name)}</strong>
-                        <span>${riskBadge(d.risk_level)} — ${d.used_pct.toFixed(1)}% of 2.1B XIDs</span>
-                    </div>
-                    <div class="progress-bar-container" style="height:8px;"><div class="progress-bar" style="width:${d.used_pct}%; background:${d.risk_level==='critical'?'var(--danger)':'var(--warning)'}"></div></div>
-                </div>
-            `).join(''));
+            setH('pgXIDTbody', dbs.map(d => {
+                const usedPct = num(d.used_pct);
+                const barColor = d.risk_level === 'critical' ? 'var(--danger)' : (d.risk_level === 'high' ? 'var(--warning)' : 'var(--accent)');
+                return `
+                <tr>
+                    <td><strong>${esc(d.database_name)}</strong></td>
+                    <td class="text-right">${Number(d.freeze_age || 0).toLocaleString()}</td>
+                    <td class="text-right text-muted small">${Number(d.wraparound_limit || 0).toLocaleString()}</td>
+                    <td style="width:250px;">
+                        <div class="flex-between small mb-1">
+                            <span>${usedPct.toFixed(1)}%</span>
+                        </div>
+                        <div class="progress-bar-container" style="height:6px; background:rgba(255,255,255,0.05);">
+                            <div class="progress-bar" style="width:${usedPct}%; background:${barColor}"></div>
+                        </div>
+                    </td>
+                    <td>${riskBadge(d.risk_level)}</td>
+                </tr>
+            `}).join('') || '<tr><td colspan="5" class="text-center text-muted">No database XID data found.</td></tr>');
         }
 
         // --- 6. INDICES ---
@@ -565,6 +645,7 @@ window.PgStorageView = async function() {
             const data = await idxBloatResp.value.json();
             if (!isStillActive()) return;
             state.allIndexes = data.indexes || [];
+            state.idxPage = 0;
             renderIndexTable();
         }
 
@@ -602,6 +683,8 @@ window.PgStorageView = async function() {
         })();
     };
 
+    const IDX_PAGE_SIZE = 15;
+
     const renderIndexTable = () => {
         const elDb = document.getElementById('pgStorageDb');
         if (!elDb) return;
@@ -616,12 +699,19 @@ window.PgStorageView = async function() {
                 const va = a[state.idxSortCol];
                 const vb = b[state.idxSortCol];
                 const dir = state.idxSortDir === 'asc' ? 1 : -1;
-                if (typeof va === 'string') return va.localeCompare(vb) * dir;
-                return (va - vb) * dir;
+                if (typeof va === 'string') return (va || '').localeCompare(vb || '') * dir;
+                return ((Number(va) || 0) - (Number(vb) || 0)) * dir;
             });
         }
 
-        const html = idxs.map(ix => `
+        const totalCount = idxs.length;
+        const maxPage = Math.max(0, Math.ceil(totalCount / IDX_PAGE_SIZE) - 1);
+        if ((state.idxPage || 0) > maxPage) state.idxPage = maxPage;
+        const page = state.idxPage || 0;
+        const start = page * IDX_PAGE_SIZE;
+        const pageRows = idxs.slice(start, start + IDX_PAGE_SIZE);
+
+        const html = pageRows.map(ix => `
             <tr>
                 <td>${esc(ix.database_name)}</td>
                 <td>${esc(ix.table_name)}</td>
@@ -630,9 +720,24 @@ window.PgStorageView = async function() {
                 <td>${Number(ix.idx_scans).toLocaleString()}</td>
                 <td class="small">${esc(ix.recommendation)}</td>
             </tr>
-        `).join('') || '<tr><td colspan="6" class="text-center text-muted">No data</td></tr>';
+        `).join('') || '<tr><td colspan="6" class="text-center text-muted" style="padding:1.5rem;">No index data</td></tr>';
         const tbody = document.getElementById('pgIdxBloatTbody');
         if (tbody) tbody.innerHTML = html;
+
+        // Update pagination controls
+        const pageInfo = document.getElementById('pgIdxBloatPageInfo');
+        const pageNum = document.getElementById('pgIdxBloatPageNum');
+        const firstBtn = document.getElementById('pgIdxBloatFirst');
+        const prevBtn = document.getElementById('pgIdxBloatPrev');
+        const nextBtn = document.getElementById('pgIdxBloatNext');
+        const lastBtn = document.getElementById('pgIdxBloatLast');
+
+        if (pageInfo) pageInfo.textContent = totalCount > 0 ? `Rows ${start + 1}–${Math.min(start + IDX_PAGE_SIZE, totalCount)} of ${totalCount}` : 'No data';
+        if (pageNum) pageNum.textContent = totalCount > 0 ? `Page ${page + 1} of ${maxPage + 1}` : '';
+        if (firstBtn) firstBtn.disabled = page === 0;
+        if (prevBtn) prevBtn.disabled = page === 0;
+        if (nextBtn) nextBtn.disabled = page >= maxPage;
+        if (lastBtn) lastBtn.disabled = page >= maxPage;
     };
 
     // Load DB filters
@@ -643,7 +748,10 @@ window.PgStorageView = async function() {
                 const filters = await resp.json();
                 const dbSelect = document.getElementById('pgStorageDb');
                 if (dbSelect) {
-                    dbSelect.innerHTML = '<option value="all">All DBs</option>' + (filters.databases || []).map(d => `<option value="${d}" ${state.db === d ? 'selected' : ''}>${d}</option>`).join('');
+                    dbSelect.innerHTML = '<option value="all">All DBs</option>' + (filters.databases || []).map(d => {
+                        const v = window.escapeHtml(String(d));
+                        return `<option value="${v}" ${state.db === d ? 'selected' : ''}>${v}</option>`;
+                    }).join('');
                 }
             }
         } catch (e) { console.error('Failed to load filters', e); }
@@ -668,7 +776,7 @@ window.PgStorageView = async function() {
     document.getElementById('pgStorageRefreshBtn')?.addEventListener('click', handleApply);
     document.getElementById('pgStorageDb')?.addEventListener('change', handleApply);
 
-    // Sorting event listeners
+    // Sorting event listeners (reset to page 0 on sort change)
     document.querySelectorAll('#pgStorageTab-indices th.sortable').forEach(th => {
         th.style.cursor = 'pointer';
         th.addEventListener('click', () => {
@@ -679,8 +787,20 @@ window.PgStorageView = async function() {
                 state.idxSortCol = col;
                 state.idxSortDir = 'desc';
             }
+            state.idxPage = 0;
             renderIndexTable();
         });
+    });
+
+    // Pagination button event listeners
+    const wirePagBtn = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+    wirePagBtn('pgIdxBloatFirst', () => { state.idxPage = 0; renderIndexTable(); });
+    wirePagBtn('pgIdxBloatPrev',  () => { state.idxPage = Math.max(0, (state.idxPage || 0) - 1); renderIndexTable(); });
+    wirePagBtn('pgIdxBloatNext',  () => { state.idxPage = (state.idxPage || 0) + 1; renderIndexTable(); });
+    wirePagBtn('pgIdxBloatLast',  () => {
+        const total = (state.allIndexes || []).length;
+        state.idxPage = Math.max(0, Math.ceil(total / IDX_PAGE_SIZE) - 1);
+        renderIndexTable();
     });
 
     await loadFilters();

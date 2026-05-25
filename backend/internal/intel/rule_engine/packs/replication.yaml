@@ -1,30 +1,8 @@
-name: ha_replication_lag
-description: AG secondary lag
-conditions:
-  - metric: secondary_lag_seconds
-    operator: ">"
-    value: 60
-logic: AND
-severity: high
-message: "Availability Group secondary lag is {secondary_lag_seconds}s (exceeds 60s threshold)."
-recommendation:
-  - "Check synchronization state"
-  - "Review log_send_queue_kb and redo_queue_kb"
-  - "Verify failover readiness"
-  - "Check network bandwidth between replicas"
-
----
-name: ha_replication_lag_critical
-description: Critical AG replication lag
-conditions:
-  - metric: secondary_lag_seconds
-    operator: ">"
-    value: 300
-logic: AND
-severity: critical
-message: "AG replication lag is {secondary_lag_seconds}s (critical)."
-recommendation:
-  - "Immediate investigation of replica synchronization"
-  - "Check log send and redo rates"
-  - "Verify replica server is responsive"
-  - "Consider failover if primary is unhealthy"
+# Replication threshold rules removed (DEFECT-7):
+# ha_replication_lag and ha_replication_lag_critical both fire on secondary_lag_seconds,
+# which is already covered by the dynamic "replication_lag" rule in engine.go with
+# hardware-tuned thresholds (default 60s, scales with observed p95 lag).
+# Keeping both caused duplicate CurrentIssues entries with conflicting rule names.
+#
+# To add replication rules here in future, use ONLY binary/configuration checks
+# (e.g. synchronization_health != 'HEALTHY') — not threshold comparisons on lag seconds.

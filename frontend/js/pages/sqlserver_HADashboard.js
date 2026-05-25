@@ -42,8 +42,8 @@ window.HADashboardView = async function () {
 
     // Redirect if this is a Postgres instance
     if (instance.type === 'postgres') {
-        if (typeof window.PgReplicationView === 'function') {
-            return window.PgReplicationView();
+        if (typeof window.PgBackupsView === 'function') {
+            return window.PgBackupsView();
         }
     }
 
@@ -81,6 +81,12 @@ window.HADashboardView = async function () {
 
     // Apply section visibility and page title based on detected mode before data loads.
     _applyRenderMode(feature, instance.name);
+    _initHATabs(feature);
+    window.appState.haFeature = feature;
+
+    if (typeof window.initPageTimePicker === 'function') {
+        window.initPageTimePicker();
+    }
 
     await _loadDashboard(instance, feature);
 
@@ -101,7 +107,10 @@ function _buildPageSkeleton(instanceName) {
 
   <!-- ROW 0: sticky status banner -->
   <div id="ha-banner" class="ha-banner ha-banner-loading">
-    <i class="fa-solid fa-circle-notch fa-spin"></i>&nbsp;Loading status for <strong>${window.escapeHtml(instanceName)}</strong>&hellip;
+    <div class="ha-banner-main">
+      <i class="fa-solid fa-circle-notch fa-spin"></i>&nbsp;Loading status for <strong>${window.escapeHtml(instanceName)}</strong>&hellip;
+    </div>
+    <div id="ha-feature-badges" class="ha-feature-badges"></div>
   </div>
 
   <!-- Page header — title and subtitle updated by _applyRenderMode() after feature detection -->
@@ -113,9 +122,12 @@ function _buildPageSkeleton(instanceName) {
       </h1>
       <p class="subtitle" id="ha-page-subtitle">Instance: ${window.escapeHtml(instanceName)}</p>
     </div>
-    <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="HADashboardView">
-      <i class="fa-solid fa-rotate"></i> Refresh
-    </button>
+    <div style="display:flex; gap:10px; align-items:center;">
+       <div id="time-picker-insertion-point"></div>
+       <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="HADashboardView">
+         <i class="fa-solid fa-rotate"></i> Refresh
+       </button>
+    </div>
   </div>
 
   <!-- ROW 1: KPI cards — fill full width -->
@@ -123,26 +135,40 @@ function _buildPageSkeleton(instanceName) {
     <div id="ha-kpi-row" class="ha-kpi-flex">${_kpiSkeleton(6)}</div>
   </div>
 
+  <!-- ROW 1b: Database protection coverage (Gold / Silver / Bronze / Red) -->
+  <div class="glass-panel mt-2" id="ha-coverage-panel">
+    <div class="ha-card-hdr">
+      Database Protection Coverage
+      <span class="ha-badge-info" title="Gold = AG + replication; Silver = AG only; Bronze = replication only; Red = neither HA nor replication, or stale full backup">Gold · Silver · Bronze · Red</span>
+    </div>
+    <div id="ha-coverage-table" class="mt-2"><p class="text-muted small p-2">Loading&hellip;</p></div>
+  </div>
+
+  <!-- Technology tabs: Always On | Log Shipping | Replication -->
+  <div class="ha-tech-tabs mt-2" id="ha-tech-tabs" role="tablist" aria-label="HA and DR technologies"></div>
+
+  <!-- TAB: Always On AG -->
+  <div id="ha-tab-panel-ag" class="ha-tab-panel" data-ha-panel="ag">
   <!-- ROW 2: RPO / RTO charts + failover readiness (HA mode only) -->
   <div class="ha-row-3col mt-2" id="ha-rpo-rto-row">
     <div class="glass-panel ha-chart-card">
       <div class="ha-card-hdr">
         RPO Trend &mdash; Data Loss Risk
-        <span class="ha-badge-info">24 h &nbsp;|&nbsp; Y: seconds of data loss</span>
+        <span class="ha-badge-info">Trend &nbsp;|&nbsp; Y: seconds of data loss</span>
       </div>
       <div class="chart-container" style="height:140px;"><canvas id="rpoChart"></canvas></div>
     </div>
     <div class="glass-panel ha-chart-card">
       <div class="ha-card-hdr">
         RTO Trend &mdash; Est. Failover Time
-        <span class="ha-badge-info">24 h &nbsp;|&nbsp; Y: seconds to failover</span>
+        <span class="ha-badge-info">Trend &nbsp;|&nbsp; Y: seconds to failover</span>
       </div>
       <div class="chart-container" style="height:140px;"><canvas id="rtoChart"></canvas></div>
     </div>
     <div class="glass-panel ha-chart-card" id="ha-readiness-card">
       <div class="ha-card-hdr">Failover Readiness <span class="ha-badge-live">live</span></div>
       <div id="ha-readiness-body" class="ha-readiness-body">
-        ${Array(4).fill('<div class="ha-skeleton-line"></div>').join('')}
+        ${Array(7).fill('<div class="ha-skeleton-line"></div>').join('')}
       </div>
     </div>
   </div>
@@ -160,8 +186,24 @@ function _buildPageSkeleton(instanceName) {
       <div id="ha-replica-table" class="mt-2"></div>
     </div>
   </div>
+  </div><!-- /ha-tab-panel-ag -->
 
-  <!-- REPLICATION SECTION (hidden until replication_enabled=true, or shown immediately in replication-only mode) -->
+  <!-- TAB: Log Shipping -->
+  <div id="ha-tab-panel-logshipping" class="ha-tab-panel" data-ha-panel="logshipping" style="display:none;">
+    <div class="glass-panel mt-2">
+      <div class="ha-card-hdr">
+        Log Shipping Monitor
+        <span class="ha-badge-info" title="From msdb log_shipping_monitor_* tables via collector">Timescale · 5 min</span>
+      </div>
+      <p class="text-muted small px-2" style="margin:0 0 0.5rem 0;">
+        Primary backup and secondary restore/copy lag. Alert when restore delay exceeds threshold.
+      </p>
+      <div id="ha-logshipping-table"><p class="text-muted small p-2">Loading&hellip;</p></div>
+    </div>
+  </div>
+
+  <!-- TAB: Replication -->
+  <div id="ha-tab-panel-replication" class="ha-tab-panel" data-ha-panel="replication" style="display:none;">
   <div id="ha-repl-section" style="display:none;">
     <!-- ROW 5: Replication KPI cards -->
     <div id="ha-repl-kpi-row" class="ha-kpi-row mt-2">${_kpiSkeleton(6)}</div>
@@ -171,14 +213,14 @@ function _buildPageSkeleton(instanceName) {
       <div class="glass-panel ha-chart-card">
         <div class="ha-card-hdr">
           Replication Latency Trend
-          <span class="ha-badge-info">24 h &nbsp;|&nbsp; Y: latency in seconds</span>
+          <span class="ha-badge-info">Trend &nbsp;|&nbsp; Y: latency in seconds</span>
         </div>
         <div class="chart-container" style="height:130px;"><canvas id="replLatencyChart"></canvas></div>
       </div>
       <div class="glass-panel ha-chart-card">
         <div class="ha-card-hdr">
           Undelivered Commands Backlog
-          <span class="ha-badge-info">24 h &nbsp;|&nbsp; Y: command count</span>
+          <span class="ha-badge-info">Trend &nbsp;|&nbsp; Y: command count</span>
         </div>
         <div class="chart-container" style="height:130px;"><canvas id="replBacklogChart"></canvas></div>
       </div>
@@ -196,6 +238,8 @@ function _buildPageSkeleton(instanceName) {
       <div id="ha-articles-table"></div>
     </div>
   </div>
+  </div><!-- /ha-repl-section -->
+  </div><!-- /ha-tab-panel-replication -->
 
   <!-- ROW 9: Alerts Timeline + Failover History (side by side) -->
   <div class="ha-row-2col mt-2" id="ha-bottom-row">
@@ -204,7 +248,7 @@ function _buildPageSkeleton(instanceName) {
       <div id="ha-alerts-timeline" class="mt-2"></div>
     </div>
     <div class="glass-panel" id="ha-failover-panel">
-      <div class="ha-card-hdr">Failover History <span class="ha-badge-info">24 h</span></div>
+      <div class="ha-card-hdr">Failover History <span class="ha-badge-info">History</span></div>
       <div id="ha-failover-history" class="mt-2"></div>
     </div>
   </div>
@@ -247,56 +291,47 @@ function _applyRenderMode(feature, instanceName) {
     const iconEl     = document.getElementById('ha-page-icon');
     const safeInst   = window.escapeHtml(instanceName);
 
+    const tech = _featureTechSubtitle(feature);
     if (replOnly) {
-        if (titleEl)    titleEl.textContent = 'Replication';
+        if (titleEl)    titleEl.textContent = 'HA & DR — Replication';
         if (iconEl)     iconEl.className = 'fa-solid fa-clone text-accent';
-        if (subtitleEl) subtitleEl.textContent =
-            `Instance: ${instanceName}  |  Transactional · Snapshot · Merge`;
+        if (subtitleEl) subtitleEl.textContent = `Instance: ${safeInst}  |  ${tech}`;
     } else {
-        // HA only, or both HA + Replication
-        if (titleEl)    titleEl.textContent = 'High Availability Disaster Recovery';
+        if (titleEl)    titleEl.textContent = 'HA & DR';
         if (iconEl)     iconEl.className = 'fa-solid fa-shield-halved text-accent';
-        if (subtitleEl) subtitleEl.textContent = both
-            ? `Instance: ${instanceName}  |  AlwaysOn · Log Shipping · Replication`
-            : `Instance: ${instanceName}  |  AlwaysOn · Log Shipping · Failover`;
+        if (subtitleEl) subtitleEl.textContent = `Instance: ${safeInst}  |  ${tech}`;
     }
 
     // ── Section visibility ───────────────────────────────────
     // #ha-kpi-row is the universal KPI slot: HA KPIs in HA/both modes,
     // Replication KPIs in replication-only mode. Never hide it.
     //
-    // RPO/RTO charts, AG topology, and failover history are HA-only.
-    const haSections = ['#ha-rpo-rto-row', '#ha-topology-row', '#ha-failover-panel'];
-    haSections.forEach(sel => {
+    // Always On / FCI / mirroring panels (not log-shipping-only).
+    const showAG = !!(feature.ag_enabled || feature.fci_enabled || feature.mirroring_enabled);
+    ['#ha-rpo-rto-row', '#ha-topology-row', '#ha-failover-panel'].forEach(sel => {
         const el = document.querySelector(sel);
-        if (el) el.style.display = feature.ha_enabled ? '' : 'none';
+        if (el) el.style.display = showAG ? '' : 'none';
     });
+    const agPanel = document.getElementById('ha-tab-panel-ag');
+    if (agPanel && !showAG) agPanel.style.display = 'none';
 
-    // In replication-only mode the replication KPI row inside ha-repl-section is
-    // redundant because those KPIs are rendered into #ha-kpi-row instead.
+    // Replication KPI row inside ha-repl-section is redundant in replication-only mode.
     const replKpiRow = document.getElementById('ha-repl-kpi-row');
     if (replKpiRow) replKpiRow.style.display = replOnly ? 'none' : '';
 
-    // Show replication section skeleton immediately in replication-only mode.
-    // In HA-only mode keep it hidden (latency trend, backlog, topology, articles all hidden).
-    if (replOnly) {
-        const replSection = document.getElementById('ha-repl-section');
-        if (replSection) replSection.style.display = '';
-    }
-    if (haOnly) {
-        const replSection = document.getElementById('ha-repl-section');
-        if (replSection) replSection.style.display = 'none';
-    }
+    // Tab panels control replication / log shipping visibility (_initHATabs).
 }
 
 /* ============================================================
    FULL LOAD — parallel fetch of all sections
    ============================================================ */
 async function _loadDashboard(instance, feature) {
+    _renderFeatureBadges(feature);
     await Promise.all([
         _refreshKPISection(instance, feature),
         _refreshCharts(instance, feature),
         _refreshTables(instance, feature),
+        _loadDatabaseCoverage(instance.name),
     ]);
 }
 
@@ -307,29 +342,30 @@ async function _refreshKPISection(instance, feature) {
     if (!feature.ha_enabled) {
         // Replication-only mode: render replication KPIs into the main #ha-kpi-row
         // so they sit on the same row as the Database Protection Coverage panel.
+        _renderFeatureBadges(feature);
         _bannerColor('green');
         _setInner('ha-banner',
             '<i class="fa-solid fa-circle-dot"></i>&nbsp;Replication active &mdash; monitoring publisher&nbsp;&rarr;&nbsp;subscriber pipeline');
-        const replSection = document.getElementById('ha-repl-section');
-        if (replSection) replSection.style.display = '';
         _loadReplKPIs(instance.name, 'ha-kpi-row');
         return;
     }
 
     try {
+        const from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : new Date(Date.now() - 86400000).toISOString();
+        const to   = window.appState.toTs   ? new Date(window.appState.toTs).toISOString()   : new Date().toISOString();
+        const qs   = `instance=${encodeURIComponent(instance.name)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+
         const res = await window.apiClient.authenticatedFetch(
-            `/api/sqlserver/ha/dashboard-summary?instance=${encodeURIComponent(instance.name)}`
+            `/api/sqlserver/ha/dashboard-summary?${qs}`
         );
         const data = await res.json();
         if (data.error) return;
 
-        _renderBanner(data.banner);
+        _renderBanner(data.banner, feature);
         _renderKPICards(data.kpis, feature);
         _renderReadiness(data.failover_readiness);
 
         if (feature.replication_enabled) {
-            const replSection = document.getElementById('ha-repl-section');
-            if (replSection) replSection.style.display = '';
             _loadReplKPIs(instance.name);
         }
     } catch (e) {
@@ -339,16 +375,19 @@ async function _refreshKPISection(instance, feature) {
 
 async function _refreshCharts(instance, feature) {
     const iname = instance.name;
-    const from = encodeURIComponent(new Date(Date.now() - 86400000).toISOString());
-    const to   = encodeURIComponent(new Date().toISOString());
-    const qs   = `instance=${encodeURIComponent(iname)}&from=${from}&to=${to}`;
+    
+    // Use selected time range if available
+    let from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : new Date(Date.now() - 86400000).toISOString();
+    let to   = window.appState.toTs   ? new Date(window.appState.toTs).toISOString()   : new Date().toISOString();
+    
+    const qs = `instance=${encodeURIComponent(iname)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
 
     if (feature.ha_enabled) {
-        _fetchLineChart(`/api/sqlserver/ha/rpo/trend?${qs}`, 'rpoChart', 'RPO (seconds)', 'rpo_seconds', '#4ade80');
-        _fetchLineChart(`/api/sqlserver/ha/rto/trend?${qs}`, 'rtoChart', 'Est. RTO (seconds)', 'estimated_rto', '#60a5fa');
+        _fetchLineChart(`/api/sqlserver/ha/rpo/trend?${qs}`, 'rpoChart', 'RPO (seconds)', 'rpo_seconds', '#4ade80', 's');
+        _fetchLineChart(`/api/sqlserver/ha/rto/trend?${qs}`, 'rtoChart', 'Est. RTO (lag+30s trend)', 'estimated_rto_seconds', '#60a5fa', 's');
     }
     if (feature.replication_enabled) {
-        _fetchReplCharts(iname, from, to);
+        _fetchReplCharts(iname, encodeURIComponent(from), encodeURIComponent(to));
     }
 }
 
@@ -360,6 +399,10 @@ async function _refreshTables(instance, feature) {
         _loadFailoverHistory(iname);
     }
     _loadAlertsTimeline(iname);
+    _loadDatabaseCoverage(iname);
+    if (feature.log_shipping_enabled) {
+        _loadLogShipping(iname);
+    }
     if (feature.replication_enabled) {
         _loadReplTopologyTable(iname);
         _loadArticlesTable(iname);
@@ -369,10 +412,18 @@ async function _refreshTables(instance, feature) {
 /* ============================================================
    BANNER
    ============================================================ */
-function _renderBanner(banner) {
+function _renderBanner(banner, feature) {
     if (!banner) return;
-    _setInner('ha-banner', `<i class="fa-solid fa-circle-dot"></i>&nbsp;${window.escapeHtml(banner.text || 'HA Active')}`);
+    const main = document.querySelector('#ha-banner .ha-banner-main');
+    const html = `<i class="fa-solid fa-circle-dot"></i>&nbsp;${window.escapeHtml(banner.text || 'HA Active')}`;
+    if (main) {
+        main.innerHTML = html;
+    } else {
+        _setInner('ha-banner',
+            `<div class="ha-banner-main">${html}</div><div id="ha-feature-badges" class="ha-feature-badges"></div>`);
+    }
     _bannerColor(banner.color || 'green');
+    if (feature) _renderFeatureBadges(feature);
 }
 
 function _bannerColor(color) {
@@ -393,7 +444,7 @@ function _renderKPICards(kpis, feature) {
             icon: 'fa-crown',
             label: 'Primary Replica',
             value: kpis.primary_server || '—',
-            sub: `Uptime: ${kpis.uptime_human || '—'}`,
+            sub: `Since last failover: ${kpis.uptime_human || '—'}`,
             valueClass: 'text-accent',
         },
         {
@@ -694,20 +745,233 @@ function _setChartMessage(canvasId, message) {
     }
 }
 
-async function _fetchLineChart(url, canvasId, label, dataKey, color) {
+/* ============================================================
+   TECHNOLOGY TABS (Always On | Log Shipping | Replication)
+   ============================================================ */
+function _initHATabs(feature) {
+    const tabsEl = document.getElementById('ha-tech-tabs');
+    if (!tabsEl) return;
+
+    const defs = [
+        { id: 'ag', label: 'Always On', show: !!(feature.ag_enabled || feature.fci_enabled || feature.mirroring_enabled) },
+        { id: 'logshipping', label: 'Log Shipping', show: !!feature.log_shipping_enabled },
+        { id: 'replication', label: 'Replication', show: !!feature.replication_enabled },
+    ].filter(t => t.show);
+
+    if (defs.length === 0) {
+        tabsEl.style.display = 'none';
+        return;
+    }
+
+    if (defs.length === 1) {
+        tabsEl.style.display = 'none';
+        _switchHATab(defs[0].id, feature);
+        return;
+    }
+
+    tabsEl.style.display = 'flex';
+    tabsEl.innerHTML = defs.map((t, i) =>
+        `<button type="button" class="ha-tab${i === 0 ? ' active' : ''}" data-ha-tab="${t.id}" role="tab" aria-selected="${i === 0}">${t.label}</button>`
+    ).join('');
+
+    tabsEl.querySelectorAll('.ha-tab').forEach(btn => {
+        btn.addEventListener('click', () => _switchHATab(btn.dataset.haTab, feature));
+    });
+    _switchHATab(defs[0].id, feature);
+}
+
+function _switchHATab(tabId, feature) {
+    const feat = feature || window.appState.haFeature;
+    document.querySelectorAll('.ha-tab-panel').forEach(p => {
+        p.style.display = 'none';
+    });
+    const panel = document.getElementById(`ha-tab-panel-${tabId}`);
+    if (panel) panel.style.display = '';
+
+    document.querySelectorAll('#ha-tech-tabs .ha-tab').forEach(btn => {
+        const on = btn.dataset.haTab === tabId;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+
+    const replSection = document.getElementById('ha-repl-section');
+    if (replSection) {
+        replSection.style.display = tabId === 'replication' && feat?.replication_enabled ? '' : 'none';
+    }
+
+    if (tabId === 'logshipping' && feat?.log_shipping_enabled) {
+        const inst = window.appState?.config?.instances?.[window.appState.currentInstanceIdx];
+        if (inst) _loadLogShipping(inst.name);
+    }
+}
+
+async function _loadLogShipping(instanceName) {
+    const host = document.getElementById('ha-logshipping-table');
+    if (!host) return;
+    try {
+        const res = await window.apiClient.authenticatedFetch(
+            `/api/sqlserver/log-shipping?instance=${encodeURIComponent(instanceName)}`
+        );
+        if (!res.ok) {
+            _setInner('ha-logshipping-table', '<p class="text-muted small p-2">Log shipping data unavailable.</p>');
+            return;
+        }
+        const data = await res.json();
+        _renderLogShippingTable(data.log_shipping || []);
+    } catch (e) {
+        console.warn('[HA] Log shipping load failed', e);
+        _setInner('ha-logshipping-table', '<p class="text-muted small p-2">Failed to load log shipping health.</p>');
+    }
+}
+
+function _renderLogShippingTable(rows) {
+    if (!rows.length) {
+        _setInner('ha-logshipping-table',
+            '<p class="text-muted small p-2">No log shipping rows in the last hour &mdash; confirm log shipping is configured and collector <code>sqlserver_log_shipping</code> is active.</p>');
+        return;
+    }
+    const fmtTime = (t) => {
+        if (!t) return '—';
+        const d = new Date(t);
+        return isNaN(d.getTime()) ? '—' : d.toLocaleString();
+    };
+    const tr = rows.map(r => {
+        const delay = +(r.restore_delay_minutes ?? 0);
+        const thresh = +(r.restore_threshold_minutes ?? 0);
+        const behind = thresh > 0 && delay > thresh;
+        const delayCls = behind ? 'text-danger' : (delay > 0 ? 'text-warning' : 'text-success');
+        const role = r.is_primary ? 'Primary' : 'Secondary';
+        const pair = r.is_primary
+            ? `${window.escapeHtml(r.primary_database || '')}`
+            : `${window.escapeHtml(r.primary_database || '')} → ${window.escapeHtml(r.secondary_database || '')}`;
+        const remote = r.is_primary
+            ? (r.secondary_server || '—')
+            : (r.primary_server || '—');
+        return `<tr class="${behind ? 'ha-row-danger' : ''}">
+  <td>${role}</td>
+  <td>${pair}</td>
+  <td class="text-muted small">${window.escapeHtml(remote)}</td>
+  <td>${fmtTime(r.last_backup_date)}</td>
+  <td>${fmtTime(r.last_copied_date)}</td>
+  <td>${fmtTime(r.last_restore_date)}</td>
+  <td class="${delayCls}">${delay}m / ${thresh || '—'}m</td>
+  <td>${behind ? '<span class="text-danger">Behind</span>' : '<span class="text-success">OK</span>'}</td>
+</tr>`;
+    }).join('');
+    _setInner('ha-logshipping-table', `<table class="ha-table ha-logshipping-table">
+<thead><tr>
+  <th>Role</th><th>Database</th><th>Remote server</th>
+  <th>Last backup</th><th>Last copy</th><th>Last restore</th>
+  <th>Delay / threshold</th><th>Status</th>
+</tr></thead><tbody>${tr}</tbody></table>`);
+}
+
+function _featureTechSubtitle(feature) {
+    const parts = [];
+    if (feature.ag_enabled) parts.push('Always On');
+    if (feature.log_shipping_enabled) parts.push('Log Shipping');
+    if (feature.fci_enabled) parts.push('FCI');
+    if (feature.mirroring_enabled) parts.push('Mirroring');
+    if (feature.replication_enabled && feature.replication_types?.length) {
+        parts.push(feature.replication_types.join(' · '));
+    } else if (feature.replication_enabled) {
+        parts.push('Replication');
+    }
+    return parts.length ? parts.join(' · ') : 'HA / DR features';
+}
+
+function _renderFeatureBadges(feature) {
+    if (!feature) return;
+    const badges = [];
+    if (feature.ag_enabled) badges.push('<span class="ha-tech-badge">AG</span>');
+    if (feature.log_shipping_enabled) badges.push('<span class="ha-tech-badge">Log Shipping</span>');
+    if (feature.fci_enabled) badges.push('<span class="ha-tech-badge">FCI</span>');
+    if (feature.mirroring_enabled) badges.push('<span class="ha-tech-badge">Mirroring</span>');
+    if (feature.replication_enabled) badges.push('<span class="ha-tech-badge">Replication</span>');
+    const el = document.getElementById('ha-feature-badges');
+    if (el) el.innerHTML = badges.join('');
+}
+
+function _pointTime(p) {
+    const t = p?.timestamp ?? p?.bucket;
+    if (!t) return '';
+    return typeof t === 'string' ? t : new Date(t).toISOString();
+}
+
+/** Max latency/backlog per minute across all publications (fixes multi-series collision). */
+function _aggregateReplTrendByBucket(pts) {
+    const byBucket = new Map();
+    for (const p of pts) {
+        const key = _pointTime(p);
+        if (!key) continue;
+        let row = byBucket.get(key);
+        if (!row) {
+            row = { timestamp: p.timestamp || p.bucket, max_latency_seconds: 0, peak_backlog: 0 };
+            byBucket.set(key, row);
+        }
+        row.max_latency_seconds = Math.max(row.max_latency_seconds, +(p.max_latency_seconds ?? 0));
+        row.peak_backlog = Math.max(row.peak_backlog, +(p.peak_backlog ?? 0));
+    }
+    return Array.from(byBucket.values()).sort((a, b) => _pointTime(a).localeCompare(_pointTime(b)));
+}
+
+async function _loadDatabaseCoverage(instanceName) {
+    const panel = document.getElementById('ha-coverage-panel');
+    if (!panel) return;
+    try {
+        const res = await window.apiClient.authenticatedFetch(
+            `/api/sqlserver/ha/database-coverage?instance=${encodeURIComponent(instanceName)}`
+        );
+        const data = await res.json();
+        _renderDatabaseCoverage(data.coverage || []);
+    } catch (e) {
+        _setInner('ha-coverage-table', '<p class="text-muted small p-2">Coverage data unavailable.</p>');
+    }
+}
+
+function _renderDatabaseCoverage(rows) {
+    if (!rows.length) {
+        _setInner('ha-coverage-table',
+            '<p class="text-muted small p-2">No database coverage data &mdash; AG/replication collectors may not have run yet.</p>');
+        return;
+    }
+    const tierClass = { Gold: 'ha-tier-gold', Silver: 'ha-tier-silver', Bronze: 'ha-tier-bronze', Red: 'ha-tier-red' };
+    const tr = rows.map(r => {
+        const tier = r.protection_level || 'Red';
+        const backupOk = r.backup_fresh_ok === true;
+        const backupCell = backupOk
+            ? '<span class="text-success">OK (&lt;24h)</span>'
+            : '<span class="text-danger" title="No full backup within 24 hours on this database">Stale</span>';
+        const staleWarn = !backupOk && tier !== 'Red'
+            ? ' <span class="ha-badge-warn" title="In AG/replication but full backup older than 24h">backup stale</span>'
+            : '';
+        return `<tr>
+  <td>${window.escapeHtml(r.database_name || '')}</td>
+  <td>${r.in_ha ? '✓' : '—'}</td>
+  <td>${r.in_replication ? '✓' : '—'}</td>
+  <td>${backupCell}</td>
+  <td><span class="ha-tier-pill ${tierClass[tier] || 'ha-tier-red'}">${window.escapeHtml(tier)}</span>${staleWarn}</td>
+</tr>`;
+    }).join('');
+    _setInner('ha-coverage-table', `<table class="ha-table ha-coverage-table">
+<thead><tr><th>Database</th><th>AG</th><th>Replication</th><th>Full backup</th><th>Tier</th></tr></thead>
+<tbody>${tr}</tbody></table>`);
+}
+
+async function _fetchLineChart(url, canvasId, label, dataKey, color, unit = 's') {
     try {
         const res  = await window.apiClient.authenticatedFetch(url);
         const resp = await res.json();
         const pts  = resp.data || [];
         if (pts.length === 0) {
-            _setChartMessage(canvasId, "No trend data available for the last 24 hours.");
+            _setChartMessage(canvasId, "No trend data available for the selected range.");
             if (_haCharts[canvasId]) { _haCharts[canvasId].destroy(); delete _haCharts[canvasId]; }
             return;
         }
         _setChartMessage(canvasId, null);
-        const labels = pts.map(p => _shortTime(p.bucket));
+        const labels = pts.map(p => _shortTime(p.timestamp || p.bucket));
         const values = pts.map(p => +(p[dataKey] ?? 0));
-        _renderLineChart(canvasId, label, labels, values, color);
+        _renderLineChart(canvasId, label, labels, values, color, unit);
     } catch (e) {
         console.warn(`[HA] Chart ${canvasId} load failed`, e);
         _setChartMessage(canvasId, "Error loading chart data.");
@@ -730,10 +994,11 @@ async function _fetchReplCharts(instanceName, from, to) {
         _setChartMessage('replLatencyChart', null);
         _setChartMessage('replBacklogChart', null);
 
-        _renderLineChart('replLatencyChart', 'Latency (s)',
-            pts.map(p => _shortTime(p.bucket)), pts.map(p => +(p.max_latency_seconds ?? 0)), '#a78bfa');
-        _renderLineChart('replBacklogChart', 'Undelivered Commands',
-            pts.map(p => _shortTime(p.bucket)), pts.map(p => +(p.peak_backlog ?? 0)), '#f97316');
+        const agg = _aggregateReplTrendByBucket(pts);
+        _renderLineChart('replLatencyChart', 'Latency (s) — instance max',
+            agg.map(p => _shortTime(p.timestamp || p.bucket)), agg.map(p => p.max_latency_seconds), '#a78bfa', 's');
+        _renderLineChart('replBacklogChart', 'Undelivered Commands — instance max',
+            agg.map(p => _shortTime(p.timestamp || p.bucket)), agg.map(p => p.peak_backlog), '#f97316', 'cmds');
     } catch (e) {
         console.warn('[HA] Replication charts load failed', e);
         _setChartMessage('replLatencyChart', "Error loading replication trend");
@@ -741,7 +1006,7 @@ async function _fetchReplCharts(instanceName, from, to) {
     }
 }
 
-function _renderLineChart(canvasId, label, labels, data, color) {
+function _renderLineChart(canvasId, label, labels, data, color, unit = 's') {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     if (_haCharts[canvasId]) { _haCharts[canvasId].destroy(); }
@@ -796,13 +1061,16 @@ function _renderLineChart(canvasId, label, labels, data, color) {
                     callbacks: {
                         label(ctx) {
                             const vals = ctx.dataset.data.filter(v => v != null && !isNaN(v));
-                            if (!vals.length) return `${ctx.dataset.label}: ${ctx.parsed.y}`;
-                            const min = Math.min(...vals).toFixed(1);
-                            const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
-                            const max = Math.max(...vals).toFixed(1);
+                            const suffix = unit === 'cmds' ? '' : (unit || 's');
+                            const fmt = (v) => unit === 'cmds' ? String(Math.round(v)) : `${v}${suffix}`;
+                            if (!vals.length) return `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}`;
+                            const min = Math.min(...vals);
+                            const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+                            const max = Math.max(...vals);
+                            const u = unit === 'cmds' ? ' cmds' : 's';
                             return [
-                                `${ctx.dataset.label}: ${ctx.parsed.y}s`,
-                                `Min: ${min}s  Avg: ${avg}s  Max: ${max}s`,
+                                `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}`,
+                                `Min: ${fmt(min)}  Avg: ${fmt(avg)}  Max: ${fmt(max)}`,
                             ];
                         },
                     },
@@ -1092,10 +1360,10 @@ function _renderDataTable(containerId, tableId, cols, rows, options = {}) {
    ============================================================ */
 async function _loadAlertsTimeline(instanceName) {
     try {
-        const from = encodeURIComponent(new Date(Date.now() - 86400000).toISOString());
-        const to   = encodeURIComponent(new Date().toISOString());
+        const from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : new Date(Date.now() - 86400000).toISOString();
+        const to   = window.appState.toTs   ? new Date(window.appState.toTs).toISOString()   : new Date().toISOString();
         const res  = await window.apiClient.authenticatedFetch(
-            `/api/sqlserver/ha/alerts-timeline?instance=${encodeURIComponent(instanceName)}&from=${from}&to=${to}`
+            `/api/sqlserver/ha/alerts-timeline?instance=${encodeURIComponent(instanceName)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
         );
         const data = await res.json();
         _renderAlertsTimeline(data.data || []);
@@ -1107,7 +1375,7 @@ async function _loadAlertsTimeline(instanceName) {
 function _renderAlertsTimeline(alerts) {
     if (!alerts.length) {
         _setInner('ha-alerts-timeline',
-            '<p class="text-muted small p-2">No alerts in the last 24 hours &mdash; system healthy.</p>');
+            '<p class="text-muted small p-2">No alerts in the selected range &mdash; system healthy.</p>');
         return;
     }
     const rows = alerts.map(a => {
@@ -1132,10 +1400,10 @@ function _renderAlertsTimeline(alerts) {
    ============================================================ */
 async function _loadFailoverHistory(instanceName) {
     try {
-        const from = encodeURIComponent(new Date(Date.now() - 86400000).toISOString());
-        const to   = encodeURIComponent(new Date().toISOString());
+        const from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : new Date(Date.now() - 86400000).toISOString();
+        const to   = window.appState.toTs   ? new Date(window.appState.toTs).toISOString()   : new Date().toISOString();
         const res  = await window.apiClient.authenticatedFetch(
-            `/api/sqlserver/ha/failover-history?instance=${encodeURIComponent(instanceName)}&from=${from}&to=${to}`
+            `/api/sqlserver/ha/failover-history?instance=${encodeURIComponent(instanceName)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
         );
         const data = await res.json();
         _renderFailoverHistory(data.events || []);
@@ -1147,7 +1415,7 @@ async function _loadFailoverHistory(instanceName) {
 function _renderFailoverHistory(events) {
     if (!events.length) {
         _setInner('ha-failover-history',
-            '<p class="text-muted small p-2">No failover events in the last 24 hours &mdash; good stability.</p>');
+            '<p class="text-muted small p-2">No failover events in the selected range &mdash; good stability.</p>');
         return;
     }
     const rows = events.map(e => `
@@ -1226,7 +1494,14 @@ function _shortSyncMode(desc) {
 function _shortTime(ts) {
     if (!ts) return '';
     const d = new Date(ts);
-    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    const now = new Date();
+    const isToday = d.getDate() === now.getDate() &&
+                    d.getMonth() === now.getMonth() &&
+                    d.getFullYear() === now.getFullYear();
+    
+    const time = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    if (isToday) return time;
+    return `${d.getMonth() + 1}/${d.getDate()} ${time}`;
 }
 
 function _relTime(ts) {
@@ -1276,10 +1551,45 @@ function _haStyles() {
     position: sticky; top: 0; z-index: 20;
     padding: 10px 16px; font-size: 0.82rem; font-weight: 500;
     border-radius: 0 0 6px 6px;
-    display: flex; align-items: center; gap: 8px;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    flex-wrap: wrap;
     transition: background 0.3s, border-color 0.3s;
 }
+.ha-banner-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ha-feature-badges { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; }
+.ha-tech-badge {
+    font-size: 0.62rem; padding: 2px 8px; border-radius: 4px;
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(148,163,184,0.35);
+    color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.ha-tier-pill { font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+.ha-tier-gold { background: #eab30822; color: #facc15; border: 1px solid #eab30855; }
+.ha-tier-silver { background: #94a3b822; color: #cbd5e1; border: 1px solid #94a3b855; }
+.ha-tier-bronze { background: #d9770622; color: #fb923c; border: 1px solid #d9770655; }
+.ha-tier-red { background: #dc262622; color: #f87171; border: 1px solid #dc262655; }
+.ha-badge-warn { font-size: 0.62rem; color: #fbbf24; margin-left: 4px; }
+.ha-coverage-table { width: 100%; font-size: 0.78rem; }
+.ha-coverage-table th { text-align: left; color: var(--color-muted); font-weight: 600; padding: 6px 8px; }
+.ha-coverage-table td { padding: 6px 8px; border-top: 1px solid rgba(148,163,184,0.12); }
+
+/* ── Technology tabs ── */
+.ha-tech-tabs {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 4px 0;
+}
+.ha-tab {
+    font-size: 0.75rem; font-weight: 600; padding: 6px 14px;
+    border-radius: 6px; border: 1px solid rgba(148,163,184,0.35);
+    background: rgba(255,255,255,0.04); color: var(--color-muted);
+    cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.ha-tab:hover { color: var(--text-primary); background: rgba(255,255,255,0.08); }
+.ha-tab.active {
+    color: #38bdf8; border-color: #38bdf866;
+    background: rgba(56,189,248,0.12);
+}
+.ha-tab-panel { display: block; }
+.ha-logshipping-table { width: 100%; font-size: 0.78rem; }
 .ha-banner-green  { background:#16a34a18; border-bottom:2px solid #16a34a; color:#4ade80; }
 .ha-banner-yellow { background:#d9770618; border-bottom:2px solid #d97706; color:#fbbf24; }
 .ha-banner-red    { background:#dc262618; border-bottom:2px solid #dc2626; color:#f87171; }

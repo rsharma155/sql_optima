@@ -58,6 +58,16 @@ func (tl *TimescaleLogger) LogSQLServerBlockingSnapshots(ctx context.Context, se
 			s.TransactionIsolationLevel, s.MemoryUsage, s.TransactionLogBytesUsed, s.TransactionLogBytesReserved,
 			s.WaitResource, s.PercentComplete,
 		)
+
+		// Also upsert the SQL text to the dimension table if available
+		if s.QueryText != "" && s.SqlHash != "" {
+			batch.Queue(`
+				INSERT INTO sqlserver_text_dim (sql_hash, sql_text)
+				VALUES ($1, $2)
+				ON CONFLICT (sql_hash) DO NOTHING`,
+				sqlHash, s.QueryText,
+			)
+		}
 	}
 
 	res := tl.pool.SendBatch(ctx, batch)
@@ -158,7 +168,9 @@ func (tl *TimescaleLogger) UpsertSQLServerQueryPlanDim(ctx context.Context, plan
 	return err
 }
 
-// GetSQLServerBlockingKPIs returns current blocking KPIs
+// GetSQLServerBlockingKPIs returns current blocking KPIs.
+// snapshot_age_sec measures how many seconds ago the latest snapshot was captured so
+// the frontend can distinguish a stale "no blocking" snapshot from a live one.
 func (tl *TimescaleLogger) GetSQLServerBlockingKPIs(ctx context.Context, serverID uuid.UUID) (map[string]interface{}, error) {
 	query := `
 		WITH latest AS (
@@ -167,13 +179,14 @@ func (tl *TimescaleLogger) GetSQLServerBlockingKPIs(ctx context.Context, serverI
 		current_snaps AS (
 			SELECT * FROM sqlserver_blocking_snapshots WHERE server_id = $1 AND capture_timestamp = (SELECT capture_timestamp FROM latest)
 		)
-		SELECT 
+		SELECT
 			COALESCE((SELECT COUNT(*) FROM current_snaps WHERE blocking_session_id != 0), 0) AS active_blocked_sessions,
 			COALESCE((SELECT COUNT(DISTINCT blocking_session_id) FROM current_snaps WHERE blocking_session_id != 0 AND blocking_session_id NOT IN (SELECT session_id FROM current_snaps WHERE blocking_session_id != 0)), 0) AS root_blockers,
 			COALESCE((SELECT MAX(wait_duration_ms) FROM current_snaps), 0) AS max_wait_duration_ms,
 			COALESCE((SELECT COUNT(*) FROM current_snaps WHERE transaction_start_time <= (SELECT capture_timestamp FROM latest) - INTERVAL '1 minute'), 0) AS open_tran_over_1min,
 			COALESCE((SELECT COUNT(*) FROM sqlserver_deadlock_events WHERE server_id = $1 AND capture_timestamp >= NOW() - INTERVAL '24 hours'), 0) AS deadlocks_24h,
-			COALESCE((SELECT COUNT(DISTINCT capture_timestamp) FROM sqlserver_blocking_snapshots WHERE server_id = $1 AND capture_timestamp >= NOW() - INTERVAL '24 hours' AND blocking_session_id != 0), 0) AS blocking_incidents_24h
+			COALESCE((SELECT COUNT(DISTINCT capture_timestamp) FROM sqlserver_blocking_snapshots WHERE server_id = $1 AND capture_timestamp >= NOW() - INTERVAL '24 hours' AND blocking_session_id != 0), 0) AS blocking_incidents_24h,
+			COALESCE(EXTRACT(EPOCH FROM (NOW() - (SELECT capture_timestamp FROM latest)))::int, -1) AS snapshot_age_sec
 	`
 
 	var kpi struct {
@@ -183,11 +196,12 @@ func (tl *TimescaleLogger) GetSQLServerBlockingKPIs(ctx context.Context, serverI
 		OpenTranOver1Min      int64
 		Deadlocks24h          int64
 		Incidents24h          int64
+		SnapshotAgeSec        int64
 	}
 
 	err := tl.pool.QueryRow(ctx, query, serverID).Scan(
 		&kpi.ActiveBlockedSessions, &kpi.RootBlockers, &kpi.MaxWaitDurationMs,
-		&kpi.OpenTranOver1Min, &kpi.Deadlocks24h, &kpi.Incidents24h,
+		&kpi.OpenTranOver1Min, &kpi.Deadlocks24h, &kpi.Incidents24h, &kpi.SnapshotAgeSec,
 	)
 	if err != nil && err != pgx.ErrNoRows {
 		return nil, err
@@ -200,6 +214,7 @@ func (tl *TimescaleLogger) GetSQLServerBlockingKPIs(ctx context.Context, serverI
 		"open_tran_over_1min":     kpi.OpenTranOver1Min,
 		"deadlocks_24h":           kpi.Deadlocks24h,
 		"blocking_incidents_24h":  kpi.Incidents24h,
+		"snapshot_age_sec":        kpi.SnapshotAgeSec,
 	}, nil
 }
 
@@ -281,18 +296,18 @@ func (tl *TimescaleLogger) GetSQLServerMostBlockedDatabases(ctx context.Context,
 	return results, rows.Err()
 }
 
-// GetSQLServerMostBlockedObjects returns objects with most blocking incidents
+// GetSQLServerMostBlockedObjects returns objects with most blocking incidents.
+// Uses sqlserver_blocking_snapshots (wait_resource + wait_type) since sqlserver_blocking_locks
+// is not populated by the current collector path.
 func (tl *TimescaleLogger) GetSQLServerMostBlockedObjects(ctx context.Context, serverID uuid.UUID, start, end time.Time) ([]map[string]interface{}, error) {
-	// Handling NULLs with COALESCE and including total_wait as expected by frontend
-	// Using CAST to BIGINT to ensure Scan works correctly with Go int64
 	query := `
-		SELECT 
-			COALESCE(resource_description, 'Unknown') AS object_name,
-			COALESCE(request_mode, 'Unknown') AS lock_type,
-			CAST(COALESCE(SUM(COALESCE(wait_duration_ms, 0)), 0) AS BIGINT) AS total_wait,
+		SELECT
+			COALESCE(NULLIF(wait_resource, ''), database_name, 'Unknown') AS object_name,
+			COALESCE(NULLIF(wait_type, ''), 'Unknown') AS lock_type,
+			CAST(SUM(COALESCE(wait_duration_ms, 0)) AS BIGINT) AS total_wait,
 			COUNT(*) AS incident_count
-		FROM sqlserver_blocking_locks
-		WHERE server_id = $1 AND capture_timestamp BETWEEN $2 AND $3
+		FROM sqlserver_blocking_snapshots
+		WHERE server_id = $1 AND capture_timestamp BETWEEN $2 AND $3 AND blocking_session_id != 0
 		GROUP BY object_name, lock_type
 		ORDER BY incident_count DESC
 		LIMIT 20
@@ -448,6 +463,15 @@ func (tl *TimescaleLogger) GetSQLServerBlockingLocks(ctx context.Context, server
 
 // GetSQLServerBlockingRecurrence returns historical blocking incidents for a specific SQL hash or login
 func (tl *TimescaleLogger) GetSQLServerBlockingRecurrence(ctx context.Context, serverID uuid.UUID, sqlHash string, loginName string) ([]map[string]interface{}, error) {
+	var sqlHashVal int64
+	if strings.HasPrefix(sqlHash, "0x") {
+		if h, err := strconv.ParseUint(strings.TrimPrefix(sqlHash, "0x"), 16, 64); err == nil {
+			sqlHashVal = int64(h)
+		}
+	} else if sqlHash != "" {
+		sqlHashVal, _ = strconv.ParseInt(sqlHash, 10, 64)
+	}
+
 	query := `
 		SELECT 
 			time_bucket('1 hour', capture_timestamp) AS bucket,
@@ -461,7 +485,7 @@ func (tl *TimescaleLogger) GetSQLServerBlockingRecurrence(ctx context.Context, s
 		GROUP BY bucket
 		ORDER BY bucket DESC
 	`
-	rows, err := tl.pool.Query(ctx, query, serverID, sqlHash, loginName)
+	rows, err := tl.pool.Query(ctx, query, serverID, sqlHashVal, loginName)
 	if err != nil {
 		return nil, err
 	}

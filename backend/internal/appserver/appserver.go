@@ -46,6 +46,7 @@ import (
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/security"
 	"github.com/rsharma155/sql_optima/internal/service"
+	"github.com/rsharma155/sql_optima/internal/storage/cold"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 	"github.com/rsharma155/sql_optima/internal/telemetry"
 )
@@ -188,6 +189,13 @@ func Main() {
 	pgRepo := repository.NewPgRepository(context.Background(), cfg)
 	msRepo := repository.NewSqlServerRepository(cfg)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start background health checks to ensure offline instances are retried
+	msRepo.StartBackgroundHealthCheck(ctx)
+	pgRepo.StartBackgroundHealthCheck(ctx)
+
 	// Wire LocalPool for staging access
 	if tsHotStorage != nil {
 		pgRepo.LocalPool = tsHotStorage.Pool()
@@ -207,9 +215,6 @@ func Main() {
 		}
 		slog.Info("[auth] AUTH_REQUIRED with local mode: Timescale not connected — use /setup to add the metrics DB first; login stays unavailable until the")
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// 1. Start the new Pulse Service (Handles Tier 1, 2, 3)
 	// This replaces most ad-hoc DMV collectors started below.
@@ -254,7 +259,11 @@ func Main() {
 	go metricsSvc.StartPostgresEnterpriseCollector(ctx)
 	go metricsSvc.StartSqlServerHealthCollector(ctx)
 	go metricsSvc.StartSqlServerHAReplicationCollector(ctx)
+	go metricsSvc.StartSqlServerBackupCollector(ctx)
 	go metricsSvc.StartSqlServerDatabaseCatalogCollector(ctx)
+	go metricsSvc.StartPerfCountersCollector(ctx)
+	go metricsSvc.StartSessionCollector(ctx)
+	go metricsSvc.StartIndexCollector(ctx)
 	go metricsSvc.StartXEFileTargetWorker(ctx)
 
 	// SQL Server Wait Stats V2 & Shared Collectors
@@ -266,13 +275,13 @@ func Main() {
 	// Legacy Collectors DISABLED (Now handled by PulseService or Shared Collectors)
 
 	// go metricsSvc.StartPgLocksBlockingCollector(ctx)
-	// go metricsSvc.StartMsLocksBlockingCollector(ctx)
 	// go metricsSvc.StartSQLServerHealthKPICollector(ctx)
 	// go metricsSvc.StartEnterpriseCollector(ctx)
 	// go metricsSvc.StartEnterpriseMetricsCollector(ctx)
 
 	if tsHotStorage != nil {
-		go startQueryV2Collector(ctx, tsHotStorage.Pool(), cfg)
+		go startQueryV2Collector(ctx, tsHotStorage.Pool(), cfg, msRepo, pgRepo)
+		go startColdStorageExporter(ctx, tsHotStorage.Pool())
 	}
 
 	// ── Alert evaluation loop ──────────────────────────────────
@@ -408,8 +417,9 @@ func Main() {
 
 	server := &http.Server{
 		Handler:      httpHandler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		ReadTimeout:  2 * time.Minute,
+		// Best-practices evaluation can run many detection queries sequentially (up to ~6 min).
+		WriteTimeout: 8 * time.Minute,
 		IdleTimeout:  120 * time.Second,
 	}
 
@@ -469,11 +479,8 @@ func Main() {
 	slog.Info("Server exited")
 }
 
-func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) {
-	if os.Getenv("ENABLE_QUERY_V2_PIPELINE") == "false" {
-		return
-	}
-
+func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, msRepo *repository.SqlServerRepository, pgRepo *repository.PgRepository) {
+	// Query V2 pipeline is always enabled (hash-based query deltas for SQL Server and PostgreSQL).
 	slog.Info("[collector-v2] starting lightweight query metrics pipeline")
 
 	// Repositories
@@ -528,8 +535,8 @@ func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.
 				for _, inst := range cfg.Instances {
 					if inst.Type == "sqlserver" {
 						if _, ok := mssqlApps[inst.ServerID]; !ok {
-							db, err := config.ConnectToInstance(inst)
-							if err == nil {
+							db, ok := msRepo.GetConn(inst.Name)
+							if ok {
 								repo := sqlserver.NewSQLServerSnapshotRepository(db)
 								mssqlApps[inst.ServerID] = application.NewCollectorApp(jobScheduler, repo, nil, writer, filter)
 								slog.Info("[collector-v2] Dynamic start: SQL Server collector for", "val", inst.Name)
@@ -537,8 +544,8 @@ func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.
 						}
 					} else if inst.Type == "postgres" {
 						if _, ok := pgApps[inst.ServerID]; !ok {
-							db, err := config.ConnectToInstance(inst)
-							if err == nil {
+							db, ok := pgRepo.GetConn(inst.Name)
+							if ok {
 								repo := postgres.NewPGSnapshotRepository(db)
 								pgApps[inst.ServerID] = application.NewCollectorApp(jobScheduler, nil, repo, writer, filter)
 								slog.Info("[collector-v2] Dynamic start: Postgres collector for", "val", inst.Name)
@@ -548,9 +555,39 @@ func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.
 				}
 
 				for sid, app := range mssqlApps {
+					// Drop collector if instance is no longer online in repository
+					online := false
+					for _, inst := range cfg.Instances {
+						if inst.ServerID == sid {
+							if msRepo.GetInstanceStatus(inst.Name) == "online" {
+								online = true
+							}
+							break
+						}
+					}
+					if !online {
+						delete(mssqlApps, sid)
+						slog.Info("[collector-v2] Dynamic stop: SQL Server collector offline", "target", sid)
+						continue
+					}
 					app.RunCycle(ctx, sid)
 				}
 				for sid, app := range pgApps {
+					// Drop collector if instance is no longer online in repository
+					online := false
+					for _, inst := range cfg.Instances {
+						if inst.ServerID == sid {
+							if pgRepo.GetInstanceStatus(inst.Name) == "online" {
+								online = true
+							}
+							break
+						}
+					}
+					if !online {
+						delete(pgApps, sid)
+						slog.Info("[collector-v2] Dynamic stop: Postgres collector offline", "target", sid)
+						continue
+					}
 					app.RunCycle(ctx, sid)
 				}
 			}
@@ -575,4 +612,52 @@ func (a *schedulerRepoAdapter) GetActiveConfigs(ctx context.Context) ([]schedule
 		})
 	}
 	return res, nil
+}
+
+func startColdStorageExporter(ctx context.Context, pool *pgxpool.Pool) {
+	cfg := cold.ConfigFromEnv()
+	if !cfg.Enabled {
+		slog.Info("[ColdExporter] disabled via COLD_STORAGE_ENABLED=false")
+		return
+	}
+
+	uploader, err := cold.NewS3Uploader(ctx, cfg)
+	if err != nil {
+		slog.Error("[ColdExporter] failed to initialize uploader", "err", err)
+		return
+	}
+
+	if err := uploader.EnsureBucket(ctx); err != nil {
+		slog.Warn("[ColdExporter] could not ensure bucket", "err", err)
+	}
+
+	watermark := cold.NewWatermarkStore(pool)
+	exporter := cold.NewExporter(pool, uploader, watermark, cfg)
+
+	// Register core tables
+	cold.RegisterCoreTables(exporter)
+
+	slog.Info("[ColdExporter] initialized and scheduled (2am UTC daily)")
+
+	// Schedule nightly at 02:00 UTC
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		now := time.Now().UTC()
+		if now.Hour() == 2 {
+			if err := exporter.Run(ctx); err != nil {
+				slog.Error("[ColdExporter] run failed", "err", err)
+			}
+			// Sleep for an hour to avoid multiple runs within the same hour window
+			time.Sleep(1 * time.Hour)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// check again
+		}
+	}
 }

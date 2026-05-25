@@ -57,7 +57,7 @@ func (tl *TimescaleLogger) GetLastIndexUsageSnapshot(ctx context.Context, engine
 	var out models.IndexUsageStat
 	var seeks, scans, lookups, updates sql.NullInt64
 	if err := row.Scan(
-		&out.Time, &out.Engine, &out.ServerID, &out.DBName, &out.SchemaName, &out.TableName, &out.IndexName,
+		&out.Timestamp, &out.Engine, &out.ServerID, &out.DBName, &out.SchemaName, &out.TableName, &out.IndexName,
 		&seeks, &scans, &lookups, &updates,
 		&out.IndexSizeMB,
 		&out.IsUnique, &out.IsPK, &out.FillFactor,
@@ -120,7 +120,7 @@ func (tl *TimescaleLogger) InsertIndexUsageStat(ctx context.Context, s models.In
 		ON CONFLICT DO NOTHING
 	`
 	_, err := tl.pool.Exec(ctx, query,
-		s.Time.UTC(), s.Engine, s.ServerID, s.DBName, s.SchemaName, s.TableName, s.IndexName,
+		s.Timestamp.UTC(), s.Engine, s.ServerID, s.DBName, s.SchemaName, s.TableName, s.IndexName,
 		s.Seeks, s.Scans, s.Lookups, s.Updates, s.IndexSizeMB, s.IsUnique, s.IsPK, s.FillFactor,
 		s.LastUserSeek, s.LastUserScan, s.LastUserLookup,
 	)
@@ -147,7 +147,7 @@ func (tl *TimescaleLogger) GetLastTableUsageSnapshot(ctx context.Context, engine
 	var out models.TableUsageStat
 	var seq, idx, rr, rm sql.NullInt64
 	if err := row.Scan(
-		&out.Time, &out.Engine, &out.ServerID, &out.DBName, &out.SchemaName, &out.TableName,
+		&out.Timestamp, &out.Engine, &out.ServerID, &out.DBName, &out.SchemaName, &out.TableName,
 		&seq, &idx, &rr, &rm,
 		&out.TableSizeMB, &out.IndexSizeMB, &out.RowCount,
 	); err != nil {
@@ -212,7 +212,7 @@ func (tl *TimescaleLogger) InsertTableUsageStat(ctx context.Context, s models.Ta
 		ON CONFLICT DO NOTHING
 	`
 	_, err := tl.pool.Exec(ctx, query,
-		s.Time.UTC(), s.Engine, s.ServerID, s.DBName, s.SchemaName, s.TableName,
+		s.Timestamp.UTC(), s.Engine, s.ServerID, s.DBName, s.SchemaName, s.TableName,
 		s.SeqScans, s.IdxScans, s.RowsRead, s.RowsModified,
 		s.TableSizeMB, s.IndexSizeMB, s.RowCount,
 	)
@@ -231,7 +231,7 @@ func (tl *TimescaleLogger) InsertTableSizeHistory(ctx context.Context, s models.
 		ON CONFLICT DO NOTHING
 	`
 	_, err := tl.pool.Exec(ctx, query,
-		s.Time.UTC(), s.Engine, s.ServerID, s.DBName, s.SchemaName, s.TableName,
+		s.Timestamp.UTC(), s.Engine, s.ServerID, s.DBName, s.SchemaName, s.TableName,
 		s.TableSizeMB, s.IndexSizeMB, s.RowCount,
 	)
 	if err != nil {
@@ -249,7 +249,7 @@ func (tl *TimescaleLogger) InsertIndexDefinition(ctx context.Context, d models.I
 		ON CONFLICT DO NOTHING
 	`
 	_, err := tl.pool.Exec(ctx, q,
-		d.Time.UTC(), d.Engine, d.ServerID, d.DBName, d.SchemaName, d.TableName, d.IndexName,
+		d.Timestamp.UTC(), d.Engine, d.ServerID, d.DBName, d.SchemaName, d.TableName, d.IndexName,
 		d.KeyColumns, d.IncludeColumns, d.FilterDefinition, d.IsUnique, d.IsPK, d.IndexType,
 	)
 	return err
@@ -323,14 +323,45 @@ func (tl *TimescaleLogger) QueryIndexDefinition(ctx context.Context, engine, ser
 	return out, rows.Err()
 }
 
-func (tl *TimescaleLogger) QueryStorageIndexHealthIndexUsage(ctx context.Context, engine, serverID, from, to string, limit int) ([]models.IndexUsageStat, error) {
-	if limit <= 0 {
-		limit = 500
+func (tl *TimescaleLogger) QueryStorageIndexHealthIndexUsage(ctx context.Context, engine, serverID, from, to, db, schema, table string, limit int) ([]models.IndexUsageStat, error) {
+	where := "engine = $1 AND server_id = $2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz"
+	args := []interface{}{engine, serverID, from, to}
+
+	if db != "" {
+		args = append(args, db)
+		where += fmt.Sprintf(" AND db_name = $%d", len(args))
 	}
-	q := `SELECT capture_timestamp, engine, server_id, db_name, schema_name, table_name, index_name, seeks, scans, lookups, updates, index_size_mb, is_unique, is_pk, fillfactor
-	      FROM monitor.index_usage_stats WHERE engine = $1 AND server_id = $2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz
-	      ORDER BY capture_timestamp DESC LIMIT $5`
-	rows, err := tl.pool.Query(ctx, q, engine, serverID, from, to, limit)
+	if schema != "" {
+		args = append(args, schema)
+		where += fmt.Sprintf(" AND schema_name = $%d", len(args))
+	}
+	if table != "" {
+		args = append(args, table)
+		where += fmt.Sprintf(" AND table_name = $%d", len(args))
+	}
+
+	args = append(args, limit)
+	q := fmt.Sprintf(`SELECT 
+			MAX(capture_timestamp) as capture_timestamp, 
+			engine, server_id, db_name, schema_name, table_name, index_name, 
+			SUM(COALESCE(seeks,0)) as seeks, 
+			SUM(COALESCE(scans,0)) as scans, 
+			SUM(COALESCE(lookups,0)) as lookups, 
+			SUM(COALESCE(updates,0)) as updates, 
+			MAX(COALESCE(index_size_mb,0))::float8 as index_size_mb, 
+			BOOL_OR(COALESCE(is_unique,false)) as is_unique, 
+			BOOL_OR(COALESCE(is_pk,false)) as is_pk, 
+			MAX(COALESCE(fillfactor,0)) as fillfactor,
+			MAX(last_user_seek) as last_user_seek,
+			MAX(last_user_scan) as last_user_scan,
+			MAX(last_user_lookup) as last_user_lookup
+	      FROM monitor.index_usage_stats 
+		  WHERE %s
+		  GROUP BY engine, server_id, db_name, schema_name, table_name, index_name
+	      ORDER BY (SUM(COALESCE(seeks,0)) + SUM(COALESCE(scans,0)) + SUM(COALESCE(lookups,0))) DESC, SUM(COALESCE(updates,0)) DESC 
+		  LIMIT $%d`, where, len(args))
+
+	rows, err := tl.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -338,15 +369,17 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthIndexUsage(ctx context.Context
 	var out []models.IndexUsageStat
 	for rows.Next() {
 		var r models.IndexUsageStat
-		if err := rows.Scan(&r.Time, &r.Engine, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.IndexName, &r.Seeks, &r.Scans, &r.Lookups, &r.Updates, &r.IndexSizeMB, &r.IsUnique, &r.IsPK, &r.FillFactor); err != nil {
+		if err := rows.Scan(&r.Timestamp, &r.Engine, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.IndexName,
+			&r.Seeks, &r.Scans, &r.Lookups, &r.Updates, &r.IndexSizeMB, &r.IsUnique, &r.IsPK, &r.FillFactor,
+			&r.LastUserSeek, &r.LastUserScan, &r.LastUserLookup); err != nil {
 			continue
 		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
+	}
 
-func (tl *TimescaleLogger) QueryStorageIndexHealthTableUsage(ctx context.Context, engine, serverID, from, to string, limit int) ([]models.TableUsageStat, error) {
+	func (tl *TimescaleLogger) QueryStorageIndexHealthTableUsage(ctx context.Context, engine, serverID, from, to string, limit int) ([]models.TableUsageStat, error) {
 	q := `SELECT capture_timestamp, engine, server_id, db_name, schema_name, table_name, seq_scans, idx_scans, rows_read, rows_modified, table_size_mb, index_size_mb, row_count
 	      FROM monitor.table_usage_stats WHERE engine = $1 AND server_id = $2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz
 	      ORDER BY capture_timestamp DESC LIMIT $5`
@@ -358,15 +391,15 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthTableUsage(ctx context.Context
 	var out []models.TableUsageStat
 	for rows.Next() {
 		var r models.TableUsageStat
-		if err := rows.Scan(&r.Time, &r.Engine, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.SeqScans, &r.IdxScans, &r.RowsRead, &r.RowsModified, &r.TableSizeMB, &r.IndexSizeMB, &r.RowCount); err != nil {
+		if err := rows.Scan(&r.Timestamp, &r.Engine, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.SeqScans, &r.IdxScans, &r.RowsRead, &r.RowsModified, &r.TableSizeMB, &r.IndexSizeMB, &r.RowCount); err != nil {
 			continue
 		}
 		out = append(out, r)
 	}
 	return out, nil
-}
+	}
 
-func (tl *TimescaleLogger) QueryStorageIndexHealthTableGrowth(ctx context.Context, engine, serverID string, from, to string, limit int) ([]models.TableSizeHistory, error) {
+	func (tl *TimescaleLogger) QueryStorageIndexHealthTableGrowth(ctx context.Context, engine, serverID string, from, to string, limit int) ([]models.TableSizeHistory, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -381,14 +414,13 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthTableGrowth(ctx context.Contex
 	var out []models.TableSizeHistory
 	for rows.Next() {
 		var r models.TableSizeHistory
-		if err := rows.Scan(&r.Time, &r.Engine, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.TableSizeMB, &r.IndexSizeMB, &r.RowCount); err != nil {
+		if err := rows.Scan(&r.Timestamp, &r.Engine, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.TableSizeMB, &r.IndexSizeMB, &r.RowCount); err != nil {
 			continue
 		}
 		out = append(out, r)
 	}
 	return out, nil
-}
-
+	}
 func (tl *TimescaleLogger) RefreshIndexUnusedCandidatesDaily(ctx context.Context, engine, serverID string, analysisEnd time.Time, minUpdates int64) (int64, error) {
 	if minUpdates <= 0 {
 		minUpdates = 100
@@ -459,9 +491,10 @@ func (tl *TimescaleLogger) RefreshIndexUnusedCandidatesDaily(ctx context.Context
 }
 
 func (tl *TimescaleLogger) QueryStorageIndexHealthFilterOptions(ctx context.Context, engine, serverID, from, to string, dbName, schemaName string) (*SIHFilterOptions, error) {
-	baseWhereTime := `engine=$1 AND server_id=$2 AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
+	baseWhereTime := `engine=$1 AND server_id=$2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 	baseArgsTime := []interface{}{engine, serverID, from, to}
-	baseWhereAny := `engine=$1 AND server_id=$2`
+
+	baseWhereAny := `engine=$1 AND server_id=$2::uuid`
 	baseArgsAny := []interface{}{engine, serverID}
 
 	countIn := func(rel string) (int64, error) {
@@ -623,7 +656,7 @@ func (tl *TimescaleLogger) GetTableSizeHistory(ctx context.Context, engine, serv
 	var out []models.TableSizeHistory
 	for rows.Next() {
 		var r models.TableSizeHistory
-		if err := rows.Scan(&r.Time, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.RowCount, &r.TableSizeMB, &r.IndexSizeMB); err != nil {
+		if err := rows.Scan(&r.Timestamp, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.RowCount, &r.TableSizeMB, &r.IndexSizeMB); err != nil {
 			continue
 		}
 		r.Engine = engine
@@ -669,7 +702,7 @@ func (tl *TimescaleLogger) GetTableSizeHistory(ctx context.Context, engine, serv
 			defer rows2.Close()
 			for rows2.Next() {
 				var r models.TableSizeHistory
-				if err := rows2.Scan(&r.Time, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.RowCount, &r.TableSizeMB, &r.IndexSizeMB); err != nil {
+				if err := rows2.Scan(&r.Timestamp, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.RowCount, &r.TableSizeMB, &r.IndexSizeMB); err != nil {
 					continue
 				}
 				r.Engine = engine
@@ -722,7 +755,7 @@ func (tl *TimescaleLogger) GetIndexUsageHistory(ctx context.Context, engine, ser
 	var out []models.IndexUsageStat
 	for rows.Next() {
 		var r models.IndexUsageStat
-		if err := rows.Scan(&r.Time, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.IndexName, &r.IndexSizeMB, &r.Seeks, &r.Scans, &r.Lookups, &r.Updates); err != nil {
+		if err := rows.Scan(&r.Timestamp, &r.ServerID, &r.DBName, &r.SchemaName, &r.TableName, &r.IndexName, &r.IndexSizeMB, &r.Seeks, &r.Scans, &r.Lookups, &r.Updates); err != nil {
 			continue
 		}
 		r.Engine = engine

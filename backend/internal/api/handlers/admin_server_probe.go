@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/microsoft/go-mssqldb"
 )
 
@@ -45,7 +46,45 @@ func probeSQLServer(ctx context.Context, host string, port int, user, pass, data
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	return db.PingContext(ctx)
+	if err := db.PingContext(ctx); err != nil {
+		return err
+	}
+	return checkSQLServerPermissions(ctx, db)
+}
+
+func checkSQLServerPermissions(ctx context.Context, db *sql.DB) error {
+	checks := []struct {
+		name string
+		sql  string
+	}{
+		{"VIEW SERVER STATE", "SELECT HAS_PERMS_BY_NAME(null, null, 'VIEW SERVER STATE')"},
+		{"VIEW ANY DEFINITION", "SELECT HAS_PERMS_BY_NAME(null, null, 'VIEW ANY DEFINITION')"},
+		{"VIEW ANY DATABASE", "SELECT HAS_PERMS_BY_NAME(null, null, 'VIEW ANY DATABASE')"},
+	}
+
+	var missing []string
+	for _, c := range checks {
+		var hasPerm int
+		err := db.QueryRowContext(ctx, c.sql).Scan(&hasPerm)
+		if err != nil || hasPerm != 1 {
+			missing = append(missing, c.name)
+		}
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required permissions: %s", strings.Join(missing, ", "))
+	}
+
+	// Optional check for msdb access if we can
+	var hasMsdb int
+	_ = db.QueryRowContext(ctx, "SELECT CASE WHEN DB_ID('msdb') IS NOT NULL THEN 1 ELSE 0 END").Scan(&hasMsdb)
+	if hasMsdb == 1 {
+		var canSelect int
+		_ = db.QueryRowContext(ctx, "SELECT HAS_PERMS_BY_NAME('msdb.dbo.sysjobs', 'OBJECT', 'SELECT')").Scan(&canSelect)
+		_ = canSelect // msdb job visibility is optional for core monitoring
+	}
+
+	return nil
 }
 
 // probePostgres opens a transient connection to verify credentials and network access.
@@ -57,7 +96,7 @@ func probePostgres(ctx context.Context, host string, port int, user, pass, datab
 		database = "postgres"
 	}
 	if strings.TrimSpace(sslMode) == "" {
-		sslMode = "prefer"
+		sslMode = "disable"
 	}
 
 	pgURL := &url.URL{
@@ -77,7 +116,40 @@ func probePostgres(ctx context.Context, host string, port int, user, pass, datab
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	return db.PingContext(ctx)
+	if err := db.PingContext(ctx); err != nil {
+		return err
+	}
+	return checkPostgresPermissions(ctx, db)
+}
+
+func checkPostgresPermissions(ctx context.Context, db *sql.DB) error {
+	// Check for pg_monitor or superuser
+	var hasMonitor bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_roles 
+			WHERE rolname = current_user 
+			AND (rolsuper OR pg_has_role(current_user, 'pg_monitor', 'USAGE'))
+		)`).Scan(&hasMonitor)
+
+	if err != nil {
+		return fmt.Errorf("failed to check permissions: %w", err)
+	}
+
+	if !hasMonitor {
+		return fmt.Errorf("user lacks 'pg_monitor' role or superuser privileges")
+	}
+
+	// Check pg_stat_statements
+	var hasStatStatements bool
+	_ = db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')").Scan(&hasStatStatements)
+	if hasStatStatements {
+		var canReadStats bool
+		_ = db.QueryRowContext(ctx, "SELECT HAS_TABLE_PRIVILEGE(current_user, 'pg_stat_statements', 'SELECT')").Scan(&canReadStats)
+		_ = canReadStats // extension present but SELECT may still be restricted
+	}
+
+	return nil
 }
 
 // draftConnectTimeout is the per-probe deadline.

@@ -132,14 +132,51 @@ func (s *MetricsService) runPgLocksBlockingForInstance(ctx context.Context, serv
 
 func (s *MetricsService) collectPgSessionsSnapshot(ctx context.Context, db *sql.DB, serverID uuid.UUID, now time.Time) error {
 	if s.PgObsCollector != nil {
-		return s.PgObsCollector.CollectSessionActivity(ctx, serverID, db)
+		if err := s.PgObsCollector.CollectSessionActivity(ctx, serverID, db); err != nil {
+			slog.Warn("[PGLocksBlocking] CollectSessionActivity failed", "target", serverID, "err", err)
+		}
 	}
-	return nil
+
+	// pg_session_snapshot requires all sessions each cycle (not just changed ones) so that
+	// blocking KPIs and idle-in-transaction alerts see a complete point-in-time picture.
+	// CollectSessionActivity deduplicates per-PID before writing, making its data incompatible.
+	if s.tsLogger == nil {
+		return nil
+	}
+	pgRows, err := db.QueryContext(ctx, `
+		SELECT pid, COALESCE(usename,''), COALESCE(datname,''),
+		       COALESCE(application_name,''), COALESCE(client_addr::text,''),
+		       COALESCE(state,''), COALESCE(wait_event_type,''), COALESCE(wait_event,''),
+		       xact_start, query_start, state_change, COALESCE(LEFT(query,2000),'')
+		FROM pg_stat_activity
+		WHERE pid <> pg_backend_pid()
+		  AND (query IS NULL OR query NOT LIKE '%/* SQL_OPTIMA */%')`)
+	if err != nil {
+		return err
+	}
+	defer pgRows.Close()
+
+	var snapshotRows []hot.PgSessionSnapshotRow
+	for pgRows.Next() {
+		r := hot.PgSessionSnapshotRow{CollectedAt: now, ServerID: serverID}
+		if scanErr := pgRows.Scan(
+			&r.PID, &r.UserName, &r.DatabaseName, &r.ApplicationName,
+			&r.ClientAddr, &r.State, &r.WaitEventType, &r.WaitEvent,
+			&r.XactStart, &r.QueryStart, &r.StateChange, &r.Query,
+		); scanErr != nil {
+			continue
+		}
+		snapshotRows = append(snapshotRows, r)
+	}
+	if err := pgRows.Err(); err != nil {
+		return err
+	}
+	return s.tsLogger.LogPgSessionSnapshot(ctx, snapshotRows)
 }
 
 func (s *MetricsService) collectPgLocksSnapshot(ctx context.Context, db *sql.DB, serverID uuid.UUID, now time.Time) error {
 	if s.PgTimescaleColl != nil {
-		instanceName := s.getServerName(serverID)
+		instanceName := s.GetServerName(serverID)
 		if instanceName == "" {
 			return fmt.Errorf("instance not found for %s", serverID)
 		}

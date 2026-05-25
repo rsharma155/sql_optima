@@ -103,7 +103,7 @@ func (r *InstanceHealthRepository) LogSnapshotMetrics(ctx context.Context, s *Pg
 }
 
 type MetricDataPoint struct {
-	Time   time.Time `json:"time"`
+	Time   time.Time `json:"timestamp"`
 	Metric string    `json:"metric"`
 	Value  float64   `json:"value"`
 }
@@ -155,7 +155,7 @@ func (r *InstanceHealthRepository) GetMetricHistory(ctx context.Context, serverI
 
 // SnapshotMetricPoint is a single time-bucketed row from postgres_snapshot_metrics.
 type SnapshotMetricPoint struct {
-	Bucket             time.Time `json:"time"`
+	Bucket             time.Time `json:"timestamp"`
 	TPS                float64   `json:"tps"`
 	WALMBPerMin        float64   `json:"wal_mb_per_min"`
 	DeadTuplePct       float64   `json:"dead_tuple_pct"`

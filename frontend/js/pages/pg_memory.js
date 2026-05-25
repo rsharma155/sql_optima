@@ -78,7 +78,7 @@ async function initPgMemoryCockpit(instanceName) {
             throw new Error(errBody.error || `HTTP ${response.status}`);
         }
         const data = await response.json();
-        renderPgMemoryCockpit(data);
+        renderPgMemoryCockpit(data, instanceName);
     } catch (e) {
         console.error("PG Memory Cockpit fetch failed:", e);
         _showMemoryError(e.message);
@@ -89,16 +89,39 @@ function _showMemoryError(msg) {
     const notice = document.getElementById('memory-data-notice');
     if (notice) { notice.textContent = `Unable to load memory data: ${msg}`; notice.style.display = 'block'; }
     const tbody = document.getElementById('pg-memory-raw-tbody');
-    if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">${msg}</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">${window.escapeHtml(msg)}</td></tr>`;
 }
 
-function renderPgMemoryCockpit(data) {
+function updateOsCollectorSetupMount(instanceName, osConfigured) {
+    const mount = document.getElementById('os-collector-setup-mount');
+    if (!mount || !window.mountOsCollectorSetupPanel) return;
+    if (osConfigured || (window.isOsCollectorPromptDismissed && window.isOsCollectorPromptDismissed())) {
+        mount.style.display = 'none';
+        mount.innerHTML = '';
+        return;
+    }
+    mount.style.display = 'block';
+    if (!mount.querySelector('.os-collector-setup-panel')) {
+        window.mountOsCollectorSetupPanel(mount, {
+            instanceName,
+            statusId: 'os-collector-memory-status',
+            compact: true
+        });
+    } else if (window.refreshOsCollectorSetupStatus) {
+        const slot = document.getElementById('os-collector-memory-status');
+        window.refreshOsCollectorSetupStatus(slot, instanceName);
+    }
+}
+
+function renderPgMemoryCockpit(data, instanceName) {
     const series = data.time_series || [];
     const components = data.components || {};
     const osConfigured = !!data.os_collector_configured;
 
     const notice = document.getElementById('memory-data-notice');
     if (notice) notice.style.display = 'none';
+
+    updateOsCollectorSetupMount(instanceName, osConfigured);
 
     // Show/hide OS collector badge
     const osBadge = document.getElementById('os-collector-badge');
@@ -108,7 +131,7 @@ function renderPgMemoryCockpit(data) {
         const noDataMsg = 'No memory data collected yet. The collector runs on the next cycle (typically within 1 minute).';
         if (notice) { notice.textContent = noDataMsg; notice.style.display = 'block'; }
         const tbody = document.getElementById('pg-memory-raw-tbody');
-        if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">${noDataMsg}</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">${window.escapeHtml(noDataMsg)}</td></tr>`;
         renderPgComponentsChart(components);
         updateGucTable(components);
         return;
@@ -161,7 +184,7 @@ function renderPgMemoryCockpit(data) {
     renderPgComponentsChart(components);
     updateGucTable(components);
     updatePgMemoryTable(series);
-    updateAdvisorContent(latest, components);
+    updateAdvisorContent(latest, components, osConfigured);
 }
 
 // ── Color helpers ──────────────────────────────────────────────────────────
@@ -203,7 +226,7 @@ const _baseOpts = {
 };
 
 function _labels(series) {
-    return series.map(s => new Date(s.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+    return series.map(s => window.fmtChartTick ? window.fmtChartTick(s, { hour: '2-digit', minute: '2-digit' }) : '');
 }
 
 function _destroyAndCreate(key, ctx, config) {
@@ -550,7 +573,15 @@ function updatePgMemoryTable(series) {
 
 // ── Advisor panels ────────────────────────────────────────────────────────
 
-function updateAdvisorContent(latest, components) {
+function updateAdvisorContent(latest, components, osConfigured) {
+    const totalRamMB = latest.total_mem_mb || 0;
+    const hostPressure = latest.memory_pressure_percent || 0;
+    const swapMB = latest.swap_used_mb || 0;
+    const pgRssMB = latest.postgres_rss_mb || 0;
+    const recommendedSB = totalRamMB > 0 ? Math.round(totalRamMB * 0.25) : 0;
+    const recommendedEffLow = totalRamMB > 0 ? Math.round(totalRamMB * 0.5) : 0;
+    const recommendedEffHigh = totalRamMB > 0 ? Math.round(totalRamMB * 0.75) : 0;
+
     // ── Shared Buffers / Cache Hit Advisor ───────────────────────────────
     const memAdvisor = document.getElementById('mem-advisor-content');
     if (memAdvisor) {
@@ -559,29 +590,71 @@ function updateAdvisorContent(latest, components) {
         const eff = components.effective_cache_size_mb || 0;
         let html = '<ul class="p-0 m-0" style="list-style:none; font-size:0.78rem;">';
 
-        // Cache hit ratio assessment
-        if (hit < 90) {
-            html += `<li class="text-danger"><i class="fa-solid fa-circle-exclamation"></i> <strong>Critical:</strong> Cache hit ratio is ${hit.toFixed(2)}% — far below target. Substantial disk I/O on every query. Increase <code>shared_buffers</code> significantly.</li>`;
-        } else if (hit < 95) {
-            html += `<li class="text-danger"><i class="fa-solid fa-circle-exclamation"></i> Cache hit ratio ${hit.toFixed(2)}% is below 95%. Each miss costs a disk read. Check for large sequential scans bypassing the buffer pool.</li>`;
-        } else if (hit < 99) {
-            html += `<li class="text-warning"><i class="fa-solid fa-triangle-exclamation"></i> Cache hit ratio ${hit.toFixed(2)}% — below the 99% baseline. Monitor <code>pg_statio_user_tables.heap_blks_read</code> to identify cold tables.</li>`;
-        } else {
-            html += `<li class="text-success"><i class="fa-solid fa-circle-check"></i> Cache hit ratio ${hit.toFixed(2)}% — excellent. Buffer pool is absorbing the workload efficiently.</li>`;
+        if (osConfigured && totalRamMB > 0) {
+            if (hostPressure >= 90 || swapMB > 0) {
+                html += `<li class="text-danger"><i class="fa-solid fa-server"></i> <strong>Host memory pressure:</strong> OS RAM use is ${hostPressure.toFixed(1)}%` +
+                    (swapMB > 0 ? ` with ${swapMB.toLocaleString()} MB swap in use` : '') +
+                    `. Reduce connection count or <code>work_mem</code> before raising PostgreSQL caches.</li>`;
+            } else if (hostPressure >= 80) {
+                html += `<li class="text-warning"><i class="fa-solid fa-server"></i> Host RAM use is ${hostPressure.toFixed(1)}% (${(totalRamMB / 1024).toFixed(1)} GB total). Headroom is limited for larger <code>shared_buffers</code> / sort memory.</li>`;
+            } else {
+                html += `<li class="text-success"><i class="fa-solid fa-server"></i> Host RAM ${(totalRamMB / 1024).toFixed(1)} GB — OS pressure ${hostPressure.toFixed(1)}%, no swap. Safe to tune PostgreSQL memory GUCs against physical RAM.</li>`;
+            }
+            if (pgRssMB > 0) {
+                const rssPct = (pgRssMB / totalRamMB) * 100;
+                if (rssPct > 85) {
+                    html += `<li class="text-danger mt-1"><i class="fa-solid fa-database"></i> PostgreSQL RSS ${pgRssMB.toLocaleString()} MB is ${rssPct.toFixed(1)}% of host RAM — instance is memory-bound at the OS level.</li>`;
+                } else if (rssPct > 60) {
+                    html += `<li class="text-warning mt-1"><i class="fa-solid fa-database"></i> PostgreSQL RSS ${pgRssMB.toLocaleString()} MB (${rssPct.toFixed(1)}% of ${totalRamMB.toLocaleString()} MB host RAM).</li>`;
+                }
+            }
+        } else if (!osConfigured) {
+            html += `<li class="text-muted"><i class="fa-solid fa-circle-info"></i> Install the OS Collector to compare GUC settings against actual host RAM (25% / 50–75% sizing rules).</li>`;
         }
 
-        // shared_buffers sizing
-        if (sb > 0 && sb < 128) {
-            html += `<li class="text-danger mt-1"><i class="fa-solid fa-memory"></i> <code>shared_buffers</code> = ${sb} MB is very low. Set to at least 25% of server RAM (typically 256 MB–8 GB). Current value starves the buffer pool.</li>`;
+        // Cache hit ratio assessment
+        if (hit < 90) {
+            html += `<li class="text-danger mt-1"><i class="fa-solid fa-circle-exclamation"></i> <strong>Critical:</strong> Cache hit ratio is ${hit.toFixed(2)}% — far below target. Substantial disk I/O on every query. Increase <code>shared_buffers</code> significantly.</li>`;
+        } else if (hit < 95) {
+            html += `<li class="text-danger mt-1"><i class="fa-solid fa-circle-exclamation"></i> Cache hit ratio ${hit.toFixed(2)}% is below 95%. Each miss costs a disk read. Check for large sequential scans bypassing the buffer pool.</li>`;
+        } else if (hit < 99) {
+            html += `<li class="text-warning mt-1"><i class="fa-solid fa-triangle-exclamation"></i> Cache hit ratio ${hit.toFixed(2)}% — below the 99% baseline. Monitor <code>pg_statio_user_tables.heap_blks_read</code> to identify cold tables.</li>`;
+        } else {
+            html += `<li class="text-success mt-1"><i class="fa-solid fa-circle-check"></i> Cache hit ratio ${hit.toFixed(2)}% — excellent. Buffer pool is absorbing the workload efficiently.</li>`;
+        }
+
+        // shared_buffers sizing (OS-aware when collector is present)
+        if (sb > 0 && recommendedSB > 0) {
+            if (sb < recommendedSB * 0.5) {
+                html += `<li class="text-danger mt-1"><i class="fa-solid fa-memory"></i> <code>shared_buffers</code> = ${sb} MB is well below the 25% host-RAM guideline (~${recommendedSB.toLocaleString()} MB on this server). Raise gradually and watch cache hit ratio.</li>`;
+            } else if (sb < recommendedSB * 0.85) {
+                html += `<li class="text-warning mt-1"><i class="fa-solid fa-memory"></i> <code>shared_buffers</code> = ${sb} MB is below the recommended ~${recommendedSB.toLocaleString()} MB (25% of ${totalRamMB.toLocaleString()} MB RAM).</li>`;
+            } else if (sb > recommendedSB * 1.35 && hostPressure >= 80) {
+                html += `<li class="text-warning mt-1"><i class="fa-solid fa-memory"></i> <code>shared_buffers</code> = ${sb} MB exceeds the usual 25% RAM target while host pressure is ${hostPressure.toFixed(1)}%. Consider lowering before adding more backends.</li>`;
+            } else {
+                html += `<li class="text-success mt-1"><i class="fa-solid fa-circle-check"></i> <code>shared_buffers</code> = ${sb} MB aligns with ~25% of host RAM (${recommendedSB.toLocaleString()} MB target).</li>`;
+            }
+        } else if (sb > 0 && sb < 128) {
+            html += `<li class="text-danger mt-1"><i class="fa-solid fa-memory"></i> <code>shared_buffers</code> = ${sb} MB is very low. Set to at least 25% of server RAM (typically 256 MB–8 GB).</li>`;
         } else if (sb > 0 && sb < 256) {
-            html += `<li class="text-warning mt-1"><i class="fa-solid fa-memory"></i> <code>shared_buffers</code> = ${sb} MB may be undersized for a production workload. Consider raising to 25% of server RAM.</li>`;
+            html += `<li class="text-warning mt-1"><i class="fa-solid fa-memory"></i> <code>shared_buffers</code> = ${sb} MB may be undersized for a production workload.</li>`;
         } else if (sb > 0) {
             html += `<li class="text-success mt-1"><i class="fa-solid fa-circle-check"></i> <code>shared_buffers</code> = ${sb} MB appears adequately sized.</li>`;
         }
 
-        // effective_cache_size sanity check
-        if (eff > 0 && sb > 0 && eff < sb * 2) {
-            html += `<li class="text-warning mt-1"><i class="fa-solid fa-lightbulb"></i> <code>effective_cache_size</code> = ${eff} MB is less than 2× <code>shared_buffers</code>. This hint tells the planner how much OS page cache is available — set it to 50–75% of total server RAM for better query plans.</li>`;
+        // effective_cache_size vs host RAM and shared_buffers
+        if (eff > 0 && recommendedEffLow > 0) {
+            if (eff < recommendedEffLow) {
+                html += `<li class="text-warning mt-1"><i class="fa-solid fa-lightbulb"></i> <code>effective_cache_size</code> = ${eff} MB understates OS cache — set between ${recommendedEffLow.toLocaleString()}–${recommendedEffHigh.toLocaleString()} MB (50–75% of ${totalRamMB.toLocaleString()} MB RAM) so the planner favors index scans.</li>`;
+            } else if (eff > recommendedEffHigh * 1.2) {
+                html += `<li class="text-warning mt-1"><i class="fa-solid fa-lightbulb"></i> <code>effective_cache_size</code> = ${eff} MB exceeds realistic OS cache on this host (${totalRamMB.toLocaleString()} MB RAM). Planner may overestimate cache availability.</li>`;
+            } else if (sb > 0 && eff < sb * 2) {
+                html += `<li class="text-warning mt-1"><i class="fa-solid fa-lightbulb"></i> <code>effective_cache_size</code> = ${eff} MB is less than 2× <code>shared_buffers</code> (${sb} MB). Raise toward ${recommendedEffLow.toLocaleString()}–${recommendedEffHigh.toLocaleString()} MB.</li>`;
+            } else {
+                html += `<li class="text-success mt-1"><i class="fa-solid fa-circle-check"></i> <code>effective_cache_size</code> = ${eff} MB is within the 50–75% host-RAM planner hint range.</li>`;
+            }
+        } else if (eff > 0 && sb > 0 && eff < sb * 2) {
+            html += `<li class="text-warning mt-1"><i class="fa-solid fa-lightbulb"></i> <code>effective_cache_size</code> = ${eff} MB is less than 2× <code>shared_buffers</code>. Set it to 50–75% of total server RAM when OS metrics are available.</li>`;
         }
 
         html += '</ul>';
@@ -594,22 +667,38 @@ function updateAdvisorContent(latest, components) {
         const spill = latest.temp_spill_rate_mb_s || 0;
         const wm    = components.work_mem_mb || 4;
         const tmpFiles = latest.temp_files || 0;
+        const active = latest.active_connections || 0;
+        const sortNodes = 4;
+        const estWorkMemMB = active > 0 ? active * wm * sortNodes : 0;
+        const freeRamMB = totalRamMB > 0 ? Math.max(0, totalRamMB - (latest.used_mb || 0)) : 0;
         let html = '<ul class="p-0 m-0" style="list-style:none; font-size:0.78rem;">';
 
+        if (osConfigured && totalRamMB > 0 && estWorkMemMB > 0) {
+            if (estWorkMemMB > freeRamMB * 0.6 && hostPressure >= 75) {
+                html += `<li class="text-danger"><i class="fa-solid fa-calculator"></i> Worst-case <code>work_mem</code> footprint ~${estWorkMemMB.toLocaleString()} MB (${active} active × ${wm} MB × ~${sortNodes} sort nodes) vs ~${freeRamMB.toLocaleString()} MB free host RAM — raising <code>work_mem</code> is risky until connections drop.</li>`;
+            } else if (estWorkMemMB > totalRamMB * 0.4) {
+                html += `<li class="text-warning"><i class="fa-solid fa-calculator"></i> Estimated peak sort memory ~${estWorkMemMB.toLocaleString()} MB could exceed 40% of host RAM if many queries sort concurrently. Prefer query tuning or PgBouncer before large <code>work_mem</code> increases.</li>`;
+            }
+        }
+
         if (spill > 1.0) {
-            html += `<li class="text-danger"><i class="fa-solid fa-bolt"></i> <strong>High spill rate:</strong> ${spill.toFixed(2)} MB/s being written to temp files. Queries are heavily overflowing <code>work_mem</code> (${wm} MB).</li>`;
-            const suggested = Math.min(wm * 4, 256);
-            html += `<li class="text-accent mt-1"><i class="fa-solid fa-lightbulb"></i> Consider raising <code>work_mem</code> to ${suggested} MB. Caution: this applies per sort/hash node × concurrent connections — test under load first.</li>`;
+            html += `<li class="text-danger mt-1"><i class="fa-solid fa-bolt"></i> <strong>High spill rate:</strong> ${spill.toFixed(2)} MB/s being written to temp files. Queries are heavily overflowing <code>work_mem</code> (${wm} MB).</li>`;
+            let suggested = Math.min(Math.max(wm * 2, 16), 256);
+            if (osConfigured && totalRamMB > 0 && active > 0) {
+                const budgetPerConn = Math.max(4, Math.floor((totalRamMB * 0.15) / (active * sortNodes)));
+                suggested = Math.min(suggested, budgetPerConn, 256);
+            }
+            html += `<li class="text-accent mt-1"><i class="fa-solid fa-lightbulb"></i> Consider raising <code>work_mem</code> toward ${suggested} MB (per sort/hash node × active backends). Test under load; use session-level overrides for heavy reports.</li>`;
         } else if (spill > 0.1) {
-            html += `<li class="text-warning"><i class="fa-solid fa-circle-exclamation"></i> Disk spill rate ${spill.toFixed(3)} MB/s. Some queries exceed <code>work_mem</code> = ${wm} MB. Identify offending queries via <code>pg_stat_statements.temp_blks_written</code>.</li>`;
+            html += `<li class="text-warning mt-1"><i class="fa-solid fa-circle-exclamation"></i> Disk spill rate ${spill.toFixed(3)} MB/s. Some queries exceed <code>work_mem</code> = ${wm} MB. Identify offenders via <code>pg_stat_statements.temp_blks_written</code>.</li>`;
         } else if (spill > 0) {
-            html += `<li class="text-warning"><i class="fa-solid fa-circle-exclamation"></i> Minor spill (${spill.toFixed(4)} MB/s). Monitor complex sorts and hash joins; may be intermittent.</li>`;
+            html += `<li class="text-warning mt-1"><i class="fa-solid fa-circle-exclamation"></i> Minor spill (${spill.toFixed(4)} MB/s). Monitor complex sorts and hash joins; may be intermittent.</li>`;
         } else {
-            html += `<li class="text-success"><i class="fa-solid fa-circle-check"></i> No disk spills. <code>work_mem</code> = ${wm} MB is sufficient for the current workload.</li>`;
+            html += `<li class="text-success mt-1"><i class="fa-solid fa-circle-check"></i> No disk spills. <code>work_mem</code> = ${wm} MB is sufficient for the current workload.</li>`;
         }
 
         if (tmpFiles > 10) {
-            html += `<li class="text-warning mt-1"><i class="fa-solid fa-file-alt"></i> ${tmpFiles} temp files created in this window — a symptom of repeated sort/hash overflows. Review slow-query plans for <code>Sort Method: external merge</code>.</li>`;
+            html += `<li class="text-warning mt-1"><i class="fa-solid fa-file-alt"></i> ${tmpFiles} temp files created in this window — review plans for <code>Sort Method: external merge</code>.</li>`;
         }
 
         html += '</ul>';
@@ -627,7 +716,19 @@ function updateAdvisorContent(latest, components) {
         const estOverheadMB = total * 7;
         let html = '<ul class="p-0 m-0" style="list-style:none; font-size:0.78rem;">';
 
-        html += `<li><i class="fa-solid fa-info-circle text-info"></i> ${active} active / ${total} total out of ${maxConn} max connections (${usagePct.toFixed(1)}% used). Estimated memory overhead: ~${estOverheadMB.toLocaleString()} MB.</li>`;
+        html += `<li><i class="fa-solid fa-info-circle text-info"></i> ${active} active / ${total} total out of ${maxConn} max connections (${usagePct.toFixed(1)}% used). Estimated backend overhead: ~${estOverheadMB.toLocaleString()} MB.</li>`;
+
+        if (osConfigured && totalRamMB > 0) {
+            const wm = components.work_mem_mb || 4;
+            const sb = components.shared_buffers_mb || 0;
+            const connBudget = total * wm * 4;
+            const totalEst = sb + connBudget + estOverheadMB;
+            if (totalEst > totalRamMB * 0.9) {
+                html += `<li class="text-danger mt-1"><i class="fa-solid fa-scale-balanced"></i> Rough memory budget (shared_buffers + connections×work_mem×4 + overhead) ≈ ${totalEst.toLocaleString()} MB exceeds ~90% of ${totalRamMB.toLocaleString()} MB host RAM — lower <code>max_connections</code> or add PgBouncer.</li>`;
+            } else if (totalEst > totalRamMB * 0.7) {
+                html += `<li class="text-warning mt-1"><i class="fa-solid fa-scale-balanced"></i> Estimated PostgreSQL footprint ~${totalEst.toLocaleString()} MB vs ${totalRamMB.toLocaleString()} MB host RAM leaves limited headroom for OS page cache.</li>`;
+            }
+        }
 
         if (usagePct > 90) {
             html += `<li class="text-danger mt-1"><i class="fa-solid fa-users-slash"></i> <strong>Connection saturation critical:</strong> ${usagePct.toFixed(1)}% of <code>max_connections</code> consumed. Remaining headroom: ${maxConn - total}. Deploy PgBouncer immediately.</li>`;
@@ -649,3 +750,5 @@ function updateAdvisorContent(latest, components) {
         connAdvisor.innerHTML = html;
     }
 }
+
+window.initPgMemoryCockpit = initPgMemoryCockpit;

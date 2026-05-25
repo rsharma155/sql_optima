@@ -125,9 +125,9 @@ window.WaitStatsV2View = async function () {
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
             <div class="glass-panel" style="padding:0.2rem 0.5rem;display:flex;align-items:center;gap:0.4rem;font-size:0.7rem;border:1px solid var(--border-color);flex-wrap:nowrap;">
                 <label class="text-muted" style="margin:0;font-weight:600;text-transform:uppercase;font-size:0.6rem;">From</label>
-                <input type="datetime-local" id="from-ts" style="background:transparent;border:none;color:inherit;font-size:0.7rem;width:9.5rem;padding:0;" />
+                <input type="datetime-local" id="from-ts" step="1" style="background:transparent;border:none;color:inherit;font-size:0.7rem;width:9.5rem;padding:0;" />
                 <label class="text-muted" style="margin:0;font-weight:600;text-transform:uppercase;font-size:0.6rem;">To</label>
-                <input type="datetime-local" id="to-ts" style="background:transparent;border:none;color:inherit;font-size:0.7rem;width:9.5rem;padding:0;" />
+                <input type="datetime-local" id="to-ts" step="1" style="background:transparent;border:none;color:inherit;font-size:0.7rem;width:9.5rem;padding:0;" />
                 <button id="apply-time-btn" class="btn btn-xs btn-accent" style="padding:2px 8px;min-width:auto;" title="Apply Range">Apply</button>
             </div>
         </div>
@@ -252,12 +252,17 @@ window.WaitStatsV2View = async function () {
     const fromEl = document.getElementById('from-ts');
     const toEl   = document.getElementById('to-ts');
     {
+        const _fmt = window.formatDateTimeLocalInput || ((d) => {
+            const _pad = n => n.toString().padStart(2, '0');
+            const x = d instanceof Date ? d : new Date(d);
+            return `${x.getFullYear()}-${_pad(x.getMonth()+1)}-${_pad(x.getDate())}T${_pad(x.getHours())}:${_pad(x.getMinutes())}:${_pad(x.getSeconds())}`;
+        });
         const _now = new Date();
         const _ago = new Date(_now.getTime() - 3600000);
-        const _pad = n => n.toString().padStart(2, '0');
-        const _fmt = d => `${d.getFullYear()}-${_pad(d.getMonth()+1)}-${_pad(d.getDate())}T${_pad(d.getHours())}:${_pad(d.getMinutes())}`;
         if (fromEl) fromEl.value = window.appState.fromTs || _fmt(_ago);
         if (toEl)   toEl.value   = window.appState.toTs   || _fmt(_now);
+        window.appState.fromTs = fromEl?.value || window.appState.fromTs;
+        window.appState.toTs = toEl?.value || window.appState.toTs;
     }
 
     // ── Helper: format milliseconds ────────────────────────────────────────────
@@ -833,7 +838,15 @@ window.WaitStatsV2View = async function () {
         Object.values(window._wsV2Charts).forEach(c => { try { c.destroy(); } catch (_) {} });
         window._wsV2Charts = {};
 
-        const _safeIso = (val, fallback) => { if (!val) return fallback; const d = new Date(val); return isNaN(d.getTime()) ? fallback : d.toISOString(); };
+        const _safeIso = (val, fallback) => {
+            if (!val) return fallback;
+            const iso = window.localDateTimeToISO ? window.localDateTimeToISO(val) : '';
+            if (iso) return iso;
+            const d = new Date(val);
+            return isNaN(d.getTime()) ? fallback : d.toISOString();
+        };
+        if (fromEl?.value) window.appState.fromTs = fromEl.value;
+        if (toEl?.value) window.appState.toTs = toEl.value;
         const from = _safeIso(fromEl?.value, new Date(Date.now() - 3600000).toISOString());
         const to   = _safeIso(toEl?.value,   new Date().toISOString());
 
@@ -855,7 +868,7 @@ window.WaitStatsV2View = async function () {
             showPlaceholder('ph-db-impact', 'Failed to load data');
             showPlaceholder('ph-blocking-tree', 'Failed to load data');
             showPlaceholder('ph-heatmap', 'Failed to load data');
-            const errRow = `<tr><td colspan="7" style="text-align:center;padding:12px;color:var(--danger);font-size:.7rem;">Error: ${e.message}</td></tr>`;
+            const errRow = `<tr><td colspan="7" style="text-align:center;padding:12px;color:var(--danger);font-size:.7rem;">Error: ${escape(e.message)}</td></tr>`;
             const t1 = document.getElementById('tbody-top-waits');
             const t2 = document.getElementById('tbody-active-waits');
             if (t1) t1.innerHTML = errRow;
@@ -899,10 +912,22 @@ window.WaitStatsV2View = async function () {
     }
 
     // ── Wire time-picker ───────────────────────────────────────────────────────
-    if (fromEl) fromEl.addEventListener('change', () => { window.appState.fromTs = fromEl.value; });
-    if (toEl)   toEl.addEventListener('change',   () => { window.appState.toTs   = toEl.value;   });
+    const syncWsRange = () => {
+        if (fromEl?.value) window.appState.fromTs = fromEl.value;
+        if (toEl?.value) window.appState.toTs = toEl.value;
+    };
+    if (fromEl) {
+        fromEl.addEventListener('change', syncWsRange);
+        fromEl.addEventListener('input', syncWsRange);
+    }
+    if (toEl) {
+        toEl.addEventListener('change', syncWsRange);
+        toEl.addEventListener('input', syncWsRange);
+    }
     const applyBtn = document.getElementById('apply-time-btn');
-    if (applyBtn) applyBtn.addEventListener('click', loadData);
+    if (applyBtn) applyBtn.addEventListener('click', () => { syncWsRange(); loadData(); });
+
+    window._waitStatsV2LoadData = () => { syncWsRange(); return loadData(); };
 
     // ── Initial load ───────────────────────────────────────────────────────────
     await loadData();

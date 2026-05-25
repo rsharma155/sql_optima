@@ -1,19 +1,4 @@
 services:
-  intelligence-report:
-    build:
-      context: ../intelligence-report
-      dockerfile: docker/Dockerfile
-    ports:
-      - "8765:8765"
-    environment:
-      IntelligenceReportSqloptima_DATABASE_URL: "postgresql+psycopg2://${DB_USER:-dbmonitor}:${DB_PASSWORD}@timescaledb:5432/${DB_NAME:-dbmonitor_metrics}"
-      IntelligenceReportSqloptima_REDIS_URL: "redis://redis:6379/0"
-      IntelligenceReportSqloptima_INTERNAL_API_TOKEN: "${INTERNAL_SERVICE_TOKEN:-change_me_internal_token}"
-    depends_on:
-      timescaledb:
-        condition: service_healthy
-    restart: unless-stopped
-
   api:
     build:
       context: ..
@@ -26,7 +11,10 @@ services:
     environment:
       PORT: ":8080"
       SQL_OPTIMA_DEPLOYMENT: ${SQL_OPTIMA_DEPLOYMENT:-docker}
-      AUTH_REQUIRED: ${AUTH_REQUIRED:-0}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-1}
+      DISABLE_PUBLIC_SETUP: ${DISABLE_PUBLIC_SETUP:-1}
+      # OS_METRICS_INGEST_ENABLED: set only in .env when forcing on (1) or off (0).
+      # If unset, ingest is controlled from the UI (optima_platform_settings).
       JWT_SECRET: ${JWT_SECRET:-change-me-to-32chars-minimum-for-prod}
       VAULT_ADDR: ${VAULT_ADDR:-http://vault:8200}
       VAULT_TOKEN: ${VAULT_TOKEN:-root}
@@ -38,8 +26,6 @@ services:
       DB_USER: ${DB_USER:-dbmonitor}
       DB_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
       DB_NAME: ${DB_NAME:-dbmonitor_metrics}
-      INTELLIGENCE_REPORT_URL: "http://intelligence-report:8765"
-      INTELLIGENCE_REPORT_TOKEN: "${INTERNAL_SERVICE_TOKEN:-change_me_internal_token}"
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -63,8 +49,8 @@ services:
       POSTGRES_USER: ${DB_USER:-dbmonitor}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
       POSTGRES_DB: ${DB_NAME:-dbmonitor_metrics}
-    ports:
-      - "${DB_PORT:-5432}:5432"
+    # Not published to the host by default (metrics DB stays on the Docker network).
+    # For local psql access, add: ports: ["5432:5432"] in docker-compose.override.yml
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
     command:
@@ -192,14 +178,68 @@ services:
         psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/05_os_metrics_collector.sql || true
         echo "[6/6] Seeding initial data..."
         psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/06_seed_data.sql || true
-        echo "[7/7] Applying Postgres Backup & DR schema..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/07_pg_backup_dr.sql || true
+        echo "[7/7] Applying cold storage schema..."
         echo "Schema setup complete."
     depends_on:
       timescaledb:
         condition: service_healthy
     restart: "no"
 
+  # Cold storage — MinIO (S3-compatible object storage)
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER:     ${COLD_STORAGE_ACCESS_KEY_ID:-sqloptima}
+      MINIO_ROOT_PASSWORD: ${COLD_STORAGE_SECRET_ACCESS_KEY:-change_me_in_production}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # MinIO bucket initializer
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        mc alias set local http://minio:9000
+          $${COLD_STORAGE_ACCESS_KEY_ID:-sqloptima}
+          $${COLD_STORAGE_SECRET_ACCESS_KEY:-change_me_in_production} &&
+        mc mb --ignore-existing local/${COLD_STORAGE_BUCKET:-sql-optima-cold} &&
+        mc anonymous set none local/${COLD_STORAGE_BUCKET:-sql-optima-cold} &&
+        echo 'MinIO bucket ready.'
+      "
+    restart: "no"
+
+  # Nessie — Iceberg catalog
+  nessie:
+    image: projectnessie/nessie:latest
+    ports:
+      - "${NESSIE_PORT:-19120}:19120"
+    environment:
+      QUARKUS_DATASOURCE_DB_KIND: h2
+    restart: unless-stopped
+
+  # Trino — Distributed SQL Query Engine
+  trino:
+    image: trinodb/trino:latest
+    ports:
+      - "${TRINO_PORT:-8081}:8080"
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog
+    restart: unless-stopped
+
 volumes:
   timescaledb_data: {}
   vault_data: {}
+  minio_data: {}

@@ -40,8 +40,11 @@ func (h *PgStorageIndexHealthHandlers) GetIndexUsage(w http.ResponseWriter, r *h
 
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
+	db := r.URL.Query().Get("db")
+	schema := r.URL.Query().Get("schema")
+	table := r.URL.Query().Get("table")
 
-	res, err := h.metricsSvc.TimescaleStorageIndexHealthIndexUsage(r.Context(), id, from, to)
+	res, err := h.metricsSvc.TimescaleStorageIndexHealthIndexUsage(r.Context(), id, from, to, db, schema, table)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

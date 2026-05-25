@@ -82,6 +82,7 @@ func (m *memServerStore) UpdateCredentials(ctx context.Context, id uuid.UUID, en
 func (m *memServerStore) TouchLastTest(ctx context.Context, id uuid.UUID, at time.Time) error {
 	return nil
 }
+func (m *memServerStore) SetEngineEdition(_ context.Context, _ uuid.UUID, _ int) error { return nil }
 func (m *memServerStore) CheckDuplicate(ctx context.Context, excludeID uuid.UUID, name, host string, port int) (string, error) {
 	for _, s := range m.created {
 		if s.ID == excludeID {

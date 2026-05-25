@@ -1,28 +1,42 @@
-// SQL Optima — https://github.com/rsharma155/sql_optima
-//
-// Purpose: PostgreSQL Control Center metrics logger.
-//
-// Author: Ravi Sharma
-// Copyright (c) 2026 Ravi Sharma
-// SPDX-License-Identifier: MIT
+/*
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: TimescaleDB storage for PostgreSQL Control Center metrics.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
 package hot
 
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/cespare/xxhash/v2"
 )
+
+type PostgresReplicationLagDetailRow struct {
+	CaptureTimestamp time.Time `json:"capture_timestamp"`
+	ServerID         uuid.UUID `json:"server_id"`
+	ReplicaName      string    `json:"replica_name"`
+	LagMB            float64   `json:"lag_mb"`
+	State            string    `json:"state"`
+	SyncState        string    `json:"sync_state"`
+	WriteLagSec      float64   `json:"write_lag_sec"`
+	FlushLagSec      float64   `json:"flush_lag_sec"`
+	ReplayLagSec     float64   `json:"replay_lag_sec"`
+}
 
 type PostgresControlCenterRow struct {
 	CaptureTimestamp   time.Time `json:"capture_timestamp"`
 	ServerID           uuid.UUID `json:"server_id"`
 	WALMBPerMin        float64   `json:"wal_mb_per_min"`
 	WALSizeMB          float64   `json:"wal_size_mb"`
-	ReplicaLagMB       float64   `json:"max_replication_lag_mb"`
+	ReplicaLagMB       float64   `json:"replica_lag_mb"`
 	ReplicaLagSec      float64   `json:"replica_lag_sec"`
 	CheckpointReqRatio float64   `json:"checkpoint_req_ratio"`
 	XIDAge             int64     `json:"xid_age"`
@@ -36,56 +50,25 @@ type PostgresControlCenterRow struct {
 	DeadTuplePct       float64   `json:"dead_tuple_pct"`
 	HealthScore        int       `json:"health_score"`
 	HealthStatus       string    `json:"health_status"`
-
-	// v2 additions — 2026-05-07
-	IdleSessions        int     `json:"idle_sessions"`
-	IdleInTxnSessions   int     `json:"idle_in_txn_sessions"`
-	ConnectionsMax      int     `json:"connections_max"`
-	ConnectionsUsed     int     `json:"connections_used"`
-	ConnectionsUsagePct float64 `json:"connections_usage_pct"`
-	CacheHitRatioPct    float64 `json:"cache_hit_ratio_pct"`
-	DeadlocksPerMin     float64 `json:"deadlocks_per_min"`
-}
-
-type PostgresReplicationLagDetailRow struct {
-	CaptureTimestamp time.Time
-	ServerID         uuid.UUID
-	ReplicaName      string
-	LagMB            float64
-	State            string
-	SyncState        string
-	WriteLagSec      float64
-	FlushLagSec      float64
-	ReplayLagSec     float64
+	IdleSessions       int       `json:"idle_sessions"`
+	IdleInTxnSessions  int       `json:"idle_in_txn_sessions"`
+	ConnectionsMax     int       `json:"connections_max"`
+	ConnectionsUsed    int       `json:"connections_used"`
+	ConnectionsUsagePct float64  `json:"connections_usage_pct"`
+	CacheHitRatioPct   float64   `json:"cache_hit_ratio_pct"`
+	DeadlocksPerMin    float64   `json:"deadlocks_per_min"`
 }
 
 func pgControlCenterHash(r PostgresControlCenterRow) uint64 {
-	h := fnv.New64a()
-	// exclude timestamp
-	_, _ = fmt.Fprintf(h, "%s|%g|%g|%g|%g|%g|%d|%g|%g|%d|%d|%d|%d|%d|%g|%d|%s|%d|%d|%d|%d|%g|%g|%g",
-		r.ServerID.String(),
-		r.WALMBPerMin,
-		r.WALSizeMB,
-		r.ReplicaLagMB,
-		r.ReplicaLagSec,
-		r.CheckpointReqRatio,
-		r.XIDAge,
-		r.XIDWraparoundPct,
-		r.TPS,
-		r.ActiveSessions,
-		r.WaitingSessions,
-		r.SlowQueriesCount,
-		r.BlockingSessions,
-		r.AutovacuumWorkers,
-		r.DeadTuplePct,
-		r.HealthScore,
-		r.HealthStatus,
-		r.IdleSessions,
-		r.IdleInTxnSessions,
-		r.ConnectionsMax,
-		r.ConnectionsUsed,
-		r.ConnectionsUsagePct,
-		r.CacheHitRatioPct,
+	h := xxhash.New()
+	_, _ = fmt.Fprintf(h, "%v|%f|%f|%f|%f|%f|%d|%f|%f|%d|%d|%d|%d|%d|%f|%d|%s|%d|%d|%d|%d|%f|%f|%f",
+		r.ServerID, r.WALMBPerMin, r.WALSizeMB, r.ReplicaLagMB, r.ReplicaLagSec,
+		r.CheckpointReqRatio, r.XIDAge, r.XIDWraparoundPct,
+		r.TPS, r.ActiveSessions, r.WaitingSessions, r.SlowQueriesCount,
+		r.BlockingSessions, r.AutovacuumWorkers, r.DeadTuplePct,
+		r.HealthScore, r.HealthStatus,
+		r.IdleSessions, r.IdleInTxnSessions, r.ConnectionsMax,
+		r.ConnectionsUsed, r.ConnectionsUsagePct, r.CacheHitRatioPct,
 		r.DeadlocksPerMin,
 	)
 	return h.Sum64()
@@ -203,6 +186,65 @@ func (tl *TimescaleLogger) LogPostgresReplicationLagDetail(ctx context.Context, 
 	return nil
 }
 
+// ComputePgTps calculates Transactions Per Second based on the delta of xact_total.
+func (tl *TimescaleLogger) ComputePgTps(serverID uuid.UUID, xactTotal uint64, intervalSeconds float64) (float64, bool) {
+	if intervalSeconds <= 0 {
+		intervalSeconds = 15.0
+	}
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+
+	if tl.prevPgXactTotal == nil {
+		tl.prevPgXactTotal = make(map[uuid.UUID]uint64)
+	}
+
+	prev, ok := tl.prevPgXactTotal[serverID]
+	tl.prevPgXactTotal[serverID] = xactTotal
+
+	if !ok {
+		return 0, false
+	}
+
+	if xactTotal < prev {
+		// Counter reset
+		return 0, true
+	}
+
+	delta := float64(xactTotal - prev)
+	return delta / intervalSeconds, true
+}
+
+// ComputeWalRateMBPerMin calculates WAL generation rate in MB/minute based on pg_wal_bytes_total delta.
+func (tl *TimescaleLogger) ComputeWalRateMBPerMin(serverID uuid.UUID, walBytesTotal uint64, intervalSeconds float64) (float64, bool) {
+	if intervalSeconds <= 0 {
+		intervalSeconds = 15.0
+	}
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+
+	if tl.prevPgWalBytesTotal == nil {
+		tl.prevPgWalBytesTotal = make(map[uuid.UUID]uint64)
+	}
+
+	prev, ok := tl.prevPgWalBytesTotal[serverID]
+	tl.prevPgWalBytesTotal[serverID] = walBytesTotal
+
+	if !ok {
+		return 0, false
+	}
+
+	if walBytesTotal < prev {
+		// Counter reset or overflow
+		return 0, true
+	}
+
+	deltaBytes := float64(walBytesTotal - prev)
+	deltaMB := deltaBytes / (1024 * 1024)
+	rateMBPerMin := deltaMB / (intervalSeconds / 60.0)
+
+	return rateMBPerMin, true
+}
+
 type PostgresControlCenterHistory struct {
 	Labels              []string  `json:"labels"`
 	TPS                 []float64 `json:"tps"`
@@ -312,6 +354,57 @@ type PostgresReplicationLagSeries struct {
 	SyncState     string    `json:"sync_state"`
 }
 
+func (tl *TimescaleLogger) GetPostgresReplicationLagHistory(ctx context.Context, serverID uuid.UUID, from, to string, limit int) ([]map[string]interface{}, error) {
+	if limit <= 0 {
+		limit = 180
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	where := `server_id = $1`
+	args := []interface{}{serverID}
+	if from != "" && to != "" {
+		where += ` AND capture_timestamp >= $2 AND capture_timestamp <= $3`
+		args = append(args, from, to)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT capture_timestamp as time, MAX(lag_mb) as value
+		FROM postgres_replication_lag_detail
+		WHERE %s
+		GROUP BY capture_timestamp
+		ORDER BY capture_timestamp DESC
+		LIMIT $%d
+	`, where, len(args)+1)
+	args = append(args, limit)
+
+	rows, err := tl.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var ts time.Time
+		var val float64
+		if err := rows.Scan(&ts, &val); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"timestamp": ts.UTC().Format(time.RFC3339),
+			"value":     val,
+		})
+	}
+
+	// Reverse to ascending for Chart.js
+	for i, j := 0, len(results)-1; i < j; i, j = i+1, j-1 {
+		results[i], results[j] = results[j], results[i]
+	}
+
+	return results, nil
+}
+
 func (tl *TimescaleLogger) GetPostgresReplicationLagDetail(ctx context.Context, serverID uuid.UUID, from, to string, limit int) (map[string]PostgresReplicationLagSeries, error) {
 	if limit <= 0 {
 		limit = 180
@@ -382,43 +475,4 @@ func (tl *TimescaleLogger) GetPostgresReplicationLagDetail(ctx context.Context, 
 		out[r.name] = s
 	}
 	return out, nil
-}
-
-// ComputeWalRateMBPerMin updates internal WAL bytes state and returns MB/min.
-func (tl *TimescaleLogger) ComputeWalRateMBPerMin(serverID uuid.UUID, walBytesTotal uint64, intervalSec float64) (rate float64, ok bool) {
-	if intervalSec <= 0 {
-		intervalSec = 60
-	}
-	tl.mu.Lock()
-	defer tl.mu.Unlock()
-	prev, seen := tl.prevPgWalBytesTotal[serverID]
-	tl.prevPgWalBytesTotal[serverID] = walBytesTotal
-	if !seen {
-		return 0, false
-	}
-	deltaBytes := int64(walBytesTotal) - int64(prev)
-	if deltaBytes < 0 {
-		deltaBytes = 0
-	}
-	mb := float64(deltaBytes) / 1024.0 / 1024.0
-	return mb * (60.0 / intervalSec), true
-}
-
-// ComputePgTps updates internal transaction state and returns average TPS for the interval.
-func (tl *TimescaleLogger) ComputePgTps(serverID uuid.UUID, xactTotal uint64, intervalSec float64) (tps float64, ok bool) {
-	if intervalSec <= 0 {
-		intervalSec = 60
-	}
-	tl.mu.Lock()
-	defer tl.mu.Unlock()
-	prev, seen := tl.prevPgXactTotal[serverID]
-	tl.prevPgXactTotal[serverID] = xactTotal
-	if !seen {
-		return 0, false
-	}
-	delta := int64(xactTotal) - int64(prev)
-	if delta < 0 {
-		delta = 0
-	}
-	return float64(delta) / intervalSec, true
 }

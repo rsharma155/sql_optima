@@ -18,10 +18,15 @@ func (s *MetricsService) SaveOSMetrics(ctx context.Context, serverID, collectorI
 		return fmt.Errorf("timescale logger not initialized")
 	}
 	hostname := ""
-	for _, inst := range s.Config.Instances {
-		if inst.ServerID == serverID {
-			hostname = inst.Name
-			break
+	if h, ok := metrics["hostname"].(string); ok && h != "" {
+		hostname = h
+	}
+	if hostname == "" {
+		for _, inst := range s.Config.Instances {
+			if inst.ServerID == serverID {
+				hostname = inst.Name
+				break
+			}
 		}
 	}
 	return s.tsLogger.SaveOSMetrics(ctx, hostname, serverID, metrics)

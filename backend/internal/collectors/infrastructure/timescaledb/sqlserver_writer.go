@@ -63,14 +63,14 @@ ON CONFLICT (server_id) DO UPDATE SET
 			total_worker_time, total_logical_reads, total_logical_writes,
 			execution_count, total_rows, total_grant_kb,
 			max_worker_time, max_logical_reads, max_dop, max_grant_kb, max_rows,
-			last_execution_time
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+			last_execution_time, total_elapsed_ms, total_physical_reads
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
 			pollTime, sqlStartTime, serverID, s.DBID, s.DatabaseName,
 			qHash, s.PlanHandle, s.QueryTextRaw, s.StatementText,
 			s.TotalCPUMs, s.TotalLogicalReads, s.TotalLogicalWrites,
 			s.TotalExecutions, s.TotalRows, s.TotalGrantKB,
 			s.MaxWorkerTime, s.MaxLogicalReads, s.MaxDOP, s.MaxGrantKB, s.MaxRows,
-			s.LastExecutionTime,
+			s.LastExecutionTime, s.TotalElapsedMs, s.TotalPhysicalReads,
 		)
 	}
 
@@ -100,6 +100,8 @@ aggregated_staging AS (
         SUM(execution_count)        AS execution_count,
         SUM(total_rows)             AS total_rows,
         SUM(total_grant_kb)         AS total_grant_kb,
+        SUM(total_elapsed_ms)       AS total_elapsed_ms,
+        SUM(total_physical_reads)   AS total_physical_reads,
         MAX(max_worker_time)        AS max_worker_time,
         MAX(max_logical_reads)      AS max_logical_reads,
         MAX(max_dop)                AS max_dop,
@@ -117,7 +119,9 @@ joined AS (
         p.last_total_logical_reads,
         p.last_total_logical_writes,
         p.last_total_execution_count,
-        p.last_total_rows
+        p.last_total_rows,
+        p.last_total_elapsed_ms,
+        p.last_total_physical_reads
     FROM aggregated_staging s
     LEFT JOIN previous p
         ON p.server_id = s.server_id
@@ -129,11 +133,13 @@ deltas AS (
     SELECT
         poll_time_utc AS ts,
         server_id, db_id, query_hash, plan_handle,
-        CASE WHEN last_total_worker_time     IS NULL THEN 0 WHEN total_worker_time     < last_total_worker_time     THEN total_worker_time     ELSE total_worker_time     - last_total_worker_time     END AS cpu_delta_ms,
-        CASE WHEN last_total_execution_count IS NULL THEN 0 WHEN execution_count        < last_total_execution_count THEN execution_count        ELSE execution_count        - last_total_execution_count END AS exec_delta,
-        CASE WHEN last_total_logical_reads   IS NULL THEN 0 WHEN total_logical_reads    < last_total_logical_reads   THEN total_logical_reads    ELSE total_logical_reads    - last_total_logical_reads   END AS reads_delta,
-        CASE WHEN last_total_logical_writes  IS NULL THEN 0 WHEN total_logical_writes   < last_total_logical_writes  THEN total_logical_writes   ELSE total_logical_writes   - last_total_logical_writes  END AS writes_delta,
-        CASE WHEN last_total_rows            IS NULL THEN 0 WHEN total_rows             < last_total_rows            THEN total_rows             ELSE total_rows             - last_total_rows            END AS rows_delta,
+        CASE WHEN last_total_worker_time     IS NULL THEN total_worker_time     WHEN total_worker_time     < last_total_worker_time     THEN total_worker_time     ELSE total_worker_time     - last_total_worker_time     END AS cpu_delta_ms,
+        CASE WHEN last_total_execution_count IS NULL THEN execution_count        WHEN execution_count        < last_total_execution_count THEN execution_count        ELSE execution_count        - last_total_execution_count END AS exec_delta,
+        CASE WHEN last_total_logical_reads   IS NULL THEN total_logical_reads    WHEN total_logical_reads    < last_total_logical_reads   THEN total_logical_reads    ELSE total_logical_reads    - last_total_logical_reads   END AS reads_delta,
+        CASE WHEN last_total_logical_writes  IS NULL THEN total_logical_writes   WHEN total_logical_writes   < last_total_logical_writes  THEN total_logical_writes   ELSE total_logical_writes   - last_total_logical_writes  END AS writes_delta,
+        CASE WHEN last_total_rows            IS NULL THEN total_rows             WHEN total_rows             < last_total_rows            THEN total_rows             ELSE total_rows             - last_total_rows            END AS rows_delta,
+        CASE WHEN last_total_elapsed_ms      IS NULL THEN total_elapsed_ms       WHEN total_elapsed_ms       < last_total_elapsed_ms      THEN total_elapsed_ms       ELSE total_elapsed_ms       - last_total_elapsed_ms      END AS elapsed_delta_ms,
+        CASE WHEN last_total_physical_reads  IS NULL THEN total_physical_reads   WHEN total_physical_reads   < last_total_physical_reads  THEN total_physical_reads   ELSE total_physical_reads   - last_total_physical_reads  END AS physical_reads_delta,
         max_worker_time   AS period_max_cpu_ms,
         max_logical_reads AS period_max_reads,
         max_grant_kb      AS period_max_grant_kb,
@@ -168,14 +174,28 @@ INSERT INTO sqlserver_query_metrics_v2 (
 )
 SELECT
     d.ts, d.server_id, d.database_name,
-    COALESCE(e.login_name, 'unknown'), COALESCE(e.application_name, 'unknown'),
-    d.query_hash, d.plan_handle, d.exec_delta, d.cpu_delta_ms, 0,
-    d.reads_delta, 0, d.rows_delta, d.statement_text,
-    d.query_text_raw, d.last_execution_time, COALESCE(e.is_user_workload, 1)
+    CASE
+        WHEN COALESCE(d.query_text_raw, '') ILIKE '%/* SQL_OPTIMA%'
+            THEN COALESCE(NULLIF(TRIM(e.login_name), ''), 'sql-optima')
+        ELSE COALESCE(e.login_name, 'unknown')
+    END,
+    CASE
+        WHEN COALESCE(d.query_text_raw, '') ILIKE '%/* SQL_OPTIMA%'
+            THEN COALESCE(NULLIF(TRIM(e.application_name), ''), 'sql-optima')
+        ELSE COALESCE(e.application_name, 'unknown')
+    END,
+    d.query_hash, d.plan_handle, d.exec_delta, d.cpu_delta_ms, d.elapsed_delta_ms,
+    d.reads_delta, d.physical_reads_delta, d.rows_delta, d.statement_text,
+    d.query_text_raw, d.last_execution_time,
+    CASE
+        WHEN COALESCE(d.query_text_raw, '') ILIKE '%/* SQL_OPTIMA%' THEN 0
+        WHEN COALESCE(e.is_user_workload, 1) = 0 THEN 0
+        ELSE 1
+    END
 FROM deltas d
 LEFT JOIN sqlserver_plan_enrichment e
     ON e.server_id = d.server_id AND e.plan_handle = d.plan_handle
-WHERE d.exec_delta > 0
+WHERE d.exec_delta > 0 OR d.cpu_delta_ms > 0 OR d.reads_delta > 0
 `
 	if _, err := tx.Exec(ctx, mergeMetricsSQL, serverID); err != nil {
 		return fmt.Errorf("merge deltas to metrics_v2: %w", err)
@@ -187,6 +207,7 @@ server_id, db_id, query_hash, plan_handle,
 database_name, query_text_raw, statement_text,
 last_total_worker_time, last_total_logical_reads, last_total_logical_writes,
 last_total_execution_count, last_total_rows, last_total_grant_kb,
+last_total_elapsed_ms, last_total_physical_reads,
 max_worker_time, max_logical_reads, max_dop, max_grant_kb, max_rows,
 last_execution_time, last_seen_poll_time
 )
@@ -195,6 +216,7 @@ server_id, db_id, query_hash, plan_handle,
 MAX(database_name), MAX(query_text_raw), MAX(statement_text),
 SUM(total_worker_time), SUM(total_logical_reads), SUM(total_logical_writes),
 SUM(execution_count), SUM(total_rows), SUM(total_grant_kb),
+SUM(total_elapsed_ms), SUM(total_physical_reads),
 MAX(max_worker_time), MAX(max_logical_reads), MAX(max_dop), MAX(max_grant_kb), MAX(max_rows),
 MAX(last_execution_time), MAX(poll_time_utc)
 FROM sqlserver_query_stats_staging_v2
@@ -211,6 +233,8 @@ DO UPDATE SET
     last_total_execution_count = EXCLUDED.last_total_execution_count,
     last_total_rows = EXCLUDED.last_total_rows,
     last_total_grant_kb = EXCLUDED.last_total_grant_kb,
+    last_total_elapsed_ms = EXCLUDED.last_total_elapsed_ms,
+    last_total_physical_reads = EXCLUDED.last_total_physical_reads,
     last_execution_time = EXCLUDED.last_execution_time,
     last_seen_poll_time = EXCLUDED.last_seen_poll_time,
     max_worker_time = GREATEST(sqlserver_query_stats_snapshot_v2.max_worker_time, EXCLUDED.max_worker_time),

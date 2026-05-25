@@ -25,9 +25,55 @@ import { ViewLoader } from './modules/view-loader.js';
 import { GlobalEstate } from './modules/global-estate.js';
 import { PgOverview } from './modules/pg-overview.js';
 import { AdminManager } from './modules/admin-manager.js';
+import {
+    tsMs,
+    parseChartTimestamp,
+    parseChartTimestampOrNow,
+    fmtChartTick,
+    sortByChartTime,
+    alignSeriesByTime
+} from './utils/time-axis.js';
+import {
+    applyChartJsDefaults,
+    chartInteractionOptions,
+    chartTooltipPlugin,
+    chartTimeScaleX,
+    chartTrendOptions,
+    mergeChartOptions,
+    formatChartTooltipValue,
+    getInstanceMonitoringUser,
+    filterOutMonitoringPgQueries
+} from './utils/chart-options.js';
+import {
+    formatDateTimeLocalInput,
+    syncTimeRangeFromPicker,
+    localDateTimeToISO,
+    getAppTimeRangeISO,
+    applyGlobalTimeRangeRefresh
+} from './utils/time-range.js';
+import { decodeQueryText } from './utils/query-text.js';
 
 window.appState = appState;
+window.tsMs = tsMs;
+window.parseChartTimestamp = parseChartTimestamp;
+window.parseChartTimestampOrNow = parseChartTimestampOrNow;
+window.fmtChartTick = fmtChartTick;
+window.sortByChartTime = sortByChartTime;
+window.alignSeriesByTime = alignSeriesByTime;
+applyChartJsDefaults();
+window.chartInteractionOptions = chartInteractionOptions;
+window.chartTooltipPlugin = chartTooltipPlugin;
+window.chartTimeScaleX = chartTimeScaleX;
+window.chartTrendOptions = chartTrendOptions;
+window.mergeChartOptions = mergeChartOptions;
+window.formatChartTooltipValue = formatChartTooltipValue;
+window.getInstanceMonitoringUser = getInstanceMonitoringUser;
+window.filterOutMonitoringPgQueries = filterOutMonitoringPgQueries;
 window.apiClient = apiClient;
+window.downloadAuthenticatedCSV = (url, fallbackFilename) =>
+    apiClient.downloadAuthenticatedCSV(url, fallbackFilename);
+window.downloadAuthenticatedBlob = (url, fallbackFilename) =>
+    apiClient.downloadAuthenticatedBlob(url, fallbackFilename);
 window.AuthManager = AuthManager;
 window._auth = AuthManager;
 window.loadTemplate = loadTemplate;
@@ -39,9 +85,16 @@ window.PgOverview = PgOverview;
 window.setDashboardRefresh = setDashboardRefresh;
 window.setJobsRefresh = setJobsRefresh;
 window.showQueryModal = showQueryModal;
+window.decodeQueryText = decodeQueryText;
 window.boot = boot;
 window.deleteAdminServer = AdminManager.deleteServer;
 window.patchServerActive = AdminManager.patchServerActive;
+
+window.formatDateTimeLocalInput = formatDateTimeLocalInput;
+window.syncTimeRangeFromPicker = syncTimeRangeFromPicker;
+window.localDateTimeToISO = localDateTimeToISO;
+window.getAppTimeRangeISO = getAppTimeRangeISO;
+window.applyGlobalTimeRangeRefresh = applyGlobalTimeRangeRefresh;
 
 window.initPageTimePicker = function() {
     const template = document.getElementById('global-time-picker-template');
@@ -65,25 +118,25 @@ window.initPageTimePicker = function() {
     if (!fromInput.value || !toInput.value) {
         const now = new Date();
         const oneHourAgo = new Date(now.getTime() - (60 * 60 * 1000));
-        const formatForInput = (date) => {
-            const pad = (n) => n.toString().padStart(2, '0');
-            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-        };
-        if (!fromInput.value) fromInput.value = formatForInput(oneHourAgo);
-        if (!toInput.value) toInput.value = formatForInput(now);
+        if (!fromInput.value) fromInput.value = formatDateTimeLocalInput(oneHourAgo);
+        if (!toInput.value) toInput.value = formatDateTimeLocalInput(now);
         window.appState.fromTs = fromInput.value;
         window.appState.toTs = toInput.value;
     }
 
-    fromInput.addEventListener('change', (e) => { window.appState.fromTs = e.target.value; });
-    toInput.addEventListener('change', (e) => { window.appState.toTs = e.target.value; });
+    const onInputChange = () => syncTimeRangeFromPicker();
+    fromInput.addEventListener('change', onInputChange);
+    toInput.addEventListener('change', onInputChange);
+    fromInput.addEventListener('input', onInputChange);
+    toInput.addEventListener('input', onInputChange);
 
     if (refreshBtn) {
-        refreshBtn.addEventListener('click', () => {
-            if (window.appNavigate && window.appState.activeViewId) {
-                window.appNavigate(window.appState.activeViewId);
-            }
-        });
+        refreshBtn.addEventListener('click', () => applyGlobalTimeRangeRefresh());
+    }
+
+    const reloadBtn = document.getElementById('global-reload-btn');
+    if (reloadBtn) {
+        reloadBtn.addEventListener('click', () => applyGlobalTimeRangeRefresh());
     }
 };
 

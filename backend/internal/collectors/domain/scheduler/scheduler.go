@@ -26,7 +26,16 @@ func NewJobSchedulerService(repo ConfigRepository) *JobSchedulerService {
 	}
 }
 
-func (s *JobSchedulerService) GetJobsToRun(ctx context.Context) ([]Config, error) {
+func jobSchedulerKey(name, scope string) string {
+	if scope == "" {
+		return name
+	}
+	return name + "|" + scope
+}
+
+// GetJobsToRun returns jobs due for the given scope (e.g. server UUID).
+// Each monitored instance has its own last-run schedule for the same job name.
+func (s *JobSchedulerService) GetJobsToRun(ctx context.Context, scope string) ([]Config, error) {
 	configs, err := s.repo.GetActiveConfigs(ctx)
 	if err != nil {
 		return nil, err
@@ -35,7 +44,7 @@ func (s *JobSchedulerService) GetJobsToRun(ctx context.Context) ([]Config, error
 	var jobsToRun []Config
 	now := time.Now()
 	for _, cfg := range configs {
-		lastRun, ok := s.lastRunMap[cfg.Name]
+		lastRun, ok := s.lastRunMap[jobSchedulerKey(cfg.Name, scope)]
 		if !ok || now.Sub(lastRun) >= time.Duration(cfg.FrequencySeconds)*time.Second {
 			jobsToRun = append(jobsToRun, cfg)
 		}
@@ -43,6 +52,6 @@ func (s *JobSchedulerService) GetJobsToRun(ctx context.Context) ([]Config, error
 	return jobsToRun, nil
 }
 
-func (s *JobSchedulerService) MarkAsRun(name string) {
-	s.lastRunMap[name] = time.Now()
+func (s *JobSchedulerService) MarkAsRun(name, scope string) {
+	s.lastRunMap[jobSchedulerKey(name, scope)] = time.Now()
 }

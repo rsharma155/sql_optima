@@ -126,51 +126,30 @@ func (tl *TimescaleLogger) GetSQLServerTopQueriesWithRange(ctx context.Context, 
 		limit = 500
 	}
 
+	db := strings.TrimSpace(database)
+	dbScoped := db != ""
+	dbClause := ""
+	args := []interface{}{serverID, start, end, limit}
+	if dbScoped {
+		dbClause = workloadDatabaseClause(5)
+		args = append(args, db)
+	}
+	readFilter := sqlServerQueryAnalysisReadFilter(true, "q.", nil)
+	classFilter := sqlServerQueryAnalysisClassificationFilter(true, "q.")
+
 	query := `
-		SELECT q.query_hash,
-		       MAX(q.query_text_raw) AS query_text,
-		       SUM(q.total_executions)::bigint AS total_executions,
-		       SUM(q.total_cpu_ms)::bigint AS sum_cpu_ms,
-		       CASE WHEN SUM(q.total_executions) > 0
-		            THEN SUM(q.total_cpu_ms)::float8 / NULLIF(SUM(q.total_executions)::float8, 0)
-		            ELSE 0 END AS avg_cpu_ms,
-		       SUM(q.total_logical_reads)::bigint AS sum_logical_reads,
-		       CASE WHEN SUM(q.total_executions) > 0
-		            THEN SUM(q.total_logical_reads)::float8 / NULLIF(SUM(q.total_executions)::float8, 0)
-		            ELSE 0 END AS avg_logical_reads,
-		       SUM(q.total_elapsed_ms)::bigint AS sum_exec_ms,
-		       q.database_name,
-		       MAX(q.login_name) AS login_name,
-		       MAX(q.application_name) AS program_name,
-		       MAX(q.capture_timestamp) AS last_capture
+		SELECT q.query_hash,` + sqlServerTopQueryMetricsAggSQL("q.") + `
 		FROM sqlserver_query_metrics_v2 q
-		LEFT JOIN sqlserver_query_classification_dim class
-		  ON class.server_id = q.server_id
-		 AND class.query_hash = q.query_hash
 		WHERE q.server_id = $1
 		  AND q.capture_timestamp >= $2
 		  AND q.capture_timestamp <= $3
-		  AND ($5 = '' OR q.database_name = $5)
-		  AND COALESCE(q.is_user_workload, 1) = 1
-		  AND q.query_text_raw NOT LIKE '%/* SQL_OPTIMA */%'
-		  AND (q.login_name IS NULL OR q.login_name <> 'dbmonitor_user')
-		  AND UPPER(q.query_text_raw) NOT LIKE 'FETCH NEXT FROM %'
-		  AND UPPER(q.query_text_raw) NOT LIKE 'SET %'
-		  AND UPPER(q.query_text_raw) NOT LIKE 'DECLARE %'
-		  AND UPPER(q.query_text_raw) NOT LIKE '(@%'
-		  AND UPPER(q.query_text_raw) NOT LIKE 'CREATE %'
-		  AND UPPER(q.query_text_raw) NOT LIKE 'ALTER %'
-		  AND UPPER(q.query_text_raw) NOT LIKE 'CHECKPOINT%'
-		  AND UPPER(q.query_text_raw) NOT LIKE 'DBCC %'
-		  AND COALESCE(q.application_name, '') NOT LIKE 'Microsoft SQL Server Management Studio%'
-		  AND COALESCE(q.application_name, '') NOT LIKE 'SQLAgent%'
-		  AND COALESCE(class.classification, 'UNKNOWN') <> 'SYSTEM'
-		GROUP BY q.query_hash, q.database_name
+		  ` + dbClause + readFilter + classFilter + sqlServerTopQueryGroupBySQL("q.", dbScoped) + `
+		HAVING SUM(q.total_executions) > 0 OR SUM(q.total_cpu_ms) > 0
 		ORDER BY SUM(q.total_cpu_ms) DESC
 		LIMIT $4
 	`
 
-	rows, err := tl.pool.Query(ctx, query, serverID, start, end, limit, strings.TrimSpace(database))
+	rows, err := tl.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -180,13 +159,14 @@ func (tl *TimescaleLogger) GetSQLServerTopQueriesWithRange(ctx context.Context, 
 	for rows.Next() {
 		var qh int64
 		var queryText sql.NullString
-		var totalExecutions, sumCPU, sumReads, sumExec int64
-		var avgCpuMs, avgLogicalReads float64
 		var dbName, loginName, programName sql.NullString
+		var planCount, totalExecutions, sumCPU, sumExec, sumReads int64
+		var avgCpuMs, avgElapsedMs, avgLogicalReads float64
 		var lastCap time.Time
 
-		if err := rows.Scan(&qh, &queryText, &totalExecutions, &sumCPU, &avgCpuMs, &sumReads, &avgLogicalReads, &sumExec,
-			&dbName, &loginName, &programName, &lastCap); err != nil {
+		if err := rows.Scan(&qh, &queryText, &dbName, &loginName, &programName, &planCount,
+			&totalExecutions, &sumCPU, &sumExec, &sumReads,
+			&avgCpuMs, &avgElapsedMs, &avgLogicalReads, &lastCap); err != nil {
 			slog.Info("[TSLogger] GetSQLServerTopQueriesWithRange scan", "err", err)
 			continue
 		}
@@ -209,6 +189,8 @@ func (tl *TimescaleLogger) GetSQLServerTopQueriesWithRange(ctx context.Context, 
 			"total_logical_reads": totalReadsF,
 			"exec_time_ms":        totalExecF,
 			"total_exec_time_ms":  totalExecF,
+			"avg_duration_ms":     avgElapsedMs,
+			"plan_count":          planCount,
 			"database_name":       dbName.String,
 			"login_name":          loginName.String,
 			"program_name":        programName.String,

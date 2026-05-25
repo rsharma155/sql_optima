@@ -114,25 +114,25 @@ const (
 // RPOResult is the calculated Recovery Point Objective for a server.
 type RPOResult struct {
 	// Seconds is the worst-case data loss across all secondaries (MAX lag).
-	Seconds     int64        `json:"rpo_seconds"`
-	AvgSeconds  int64        `json:"avg_rpo_seconds"`
-	Threshold   RPOThreshold `json:"threshold"`
-	ReplicaName string       `json:"worst_replica"`
-	// Bucket is the time the measurement was taken (from continuous aggregate).
-	Bucket time.Time `json:"bucket"`
+	Seconds      int64        `json:"rpo_seconds"`
+	AvgSeconds   int64        `json:"avg_rpo_seconds"`
+	MaxLagMB     float64      `json:"max_lag_mb"`
+	Threshold    RPOThreshold `json:"threshold"`
+	WorstReplica string       `json:"worst_replica"`
+	// Timestamp is the time the measurement was taken (from continuous aggregate).
+	Timestamp    time.Time    `json:"timestamp"`
 }
 
 // RTOResult is the estimated Recovery Time Objective for a server.
 type RTOResult struct {
 	// EstimatedSeconds = redo_time + cluster_failover_overhead (30 s constant).
-	EstimatedSeconds      int64        `json:"estimated_rto_seconds"`
-	RedoSeconds           int64        `json:"redo_seconds"`
-	MaxRedoQueueKB        int64        `json:"max_redo_queue_kb"`
-	ClusterOverheadSec    int64        `json:"cluster_overhead_sec"`
-	Threshold             RTOThreshold `json:"threshold"`
-	Bucket                time.Time    `json:"bucket"`
+	EstimatedSeconds   int64        `json:"estimated_rto_seconds"`
+	RedoSeconds        int64        `json:"redo_seconds"`
+	MaxRedoQueueKB     int64        `json:"max_redo_queue_kb"`
+	ClusterOverheadSec int64        `json:"cluster_overhead_sec"`
+	Threshold          RTOThreshold `json:"threshold"`
+	Timestamp          time.Time    `json:"timestamp"`
 }
-
 // ---------------------------------------------------------------------------
 // HA — Failover Readiness
 // ---------------------------------------------------------------------------
@@ -308,6 +308,7 @@ type KPICards struct {
 	UptimeHuman        string       `json:"uptime_human"`
 	LastFailoverAt     *time.Time   `json:"last_failover_at"`
 	LastFailoverSecs   int          `json:"last_failover_secs"`
+	ReplicationSummary string       `json:"replication_summary,omitempty"`
 }
 
 // DashboardSummary is the single response payload returned by

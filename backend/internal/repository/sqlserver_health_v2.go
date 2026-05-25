@@ -126,21 +126,27 @@ func (c *SqlServerRepository) getKPIsV2(ctx context.Context, db *sql.DB) (models
 
 	if hasCache {
 		var pr, br, sc, ls float64
+		var dummyEdition sql.NullString
+		var dummyStartTime sql.NullTime
+
 		ctx, cancel := WithQueryTimeout(ctx, 0)
 		defer cancel()
 		err = db.QueryRowContext(ctx, string(query)).Scan(
-			&k.SqlCpuPct,
-			&k.RunnableTasks,
-			&k.MemGrantsPending,
-			&pr,
-			&k.LogWriteWaitMs,
-			&br,
-			&sc,
-			&ls,
-			&k.TargetServerMemoryMB,
-			&k.TotalServerMemoryMB,
-			&k.BlockedSessions,
-			&k.UserConnections,
+			&k.SqlCpuPct,            // 1
+			&k.RunnableTasks,        // 2
+			&k.MemGrantsPending,     // 3
+			&pr,                    // 4
+			&k.LogWriteWaitMs,       // 5
+			&br,                    // 6
+			&sc,                    // 7
+			&ls,                    // 8
+			&k.TargetServerMemoryMB, // 9
+			&k.TotalServerMemoryMB,  // 10
+			&k.BlockedSessions,      // 11
+			&k.UserConnections,      // 12
+			&dummyEdition,          // 13
+			&dummyStartTime,        // 14
+			&k.DataCacheLifeLifeSec, // 15
 		)
 		k.PageReadsPerSec, k.BatchRequests, k.Compilations, k.LoginsPerSec = c.applyDeltas(serverID, pr, br, sc, ls)
 
@@ -156,20 +162,21 @@ func (c *SqlServerRepository) getKPIsV2(ctx context.Context, db *sql.DB) (models
 		ctx, cancel := WithQueryTimeout(ctx, 0)
 		defer cancel()
 		err = db.QueryRowContext(ctx, string(query)).Scan(
-			&sqlCpu,
-			&k.RunnableTasks,
-			&k.MemGrantsPending,
-			&pr,
-			&k.LogWriteWaitMs,
-			&br,
-			&sc,
-			&ls,
-			&k.TargetServerMemoryMB,
-			&k.TotalServerMemoryMB,
-			&k.BlockedSessions,
-			&k.UserConnections,
-			&edition,
-			&startTime,
+			&sqlCpu,                // 1
+			&k.RunnableTasks,        // 2
+			&k.MemGrantsPending,     // 3
+			&pr,                    // 4
+			&k.LogWriteWaitMs,       // 5
+			&br,                    // 6
+			&sc,                    // 7
+			&ls,                    // 8
+			&k.TargetServerMemoryMB, // 9
+			&k.TotalServerMemoryMB,  // 10
+			&k.BlockedSessions,      // 11
+			&k.UserConnections,      // 12
+			&edition,               // 13
+			&startTime,             // 14
+			&k.DataCacheLifeLifeSec, // 15
 		)
 		if err == nil {
 			k.SqlCpuPct = sqlCpu.Float64
@@ -191,6 +198,24 @@ func (c *SqlServerRepository) getKPIsV2(ctx context.Context, db *sql.DB) (models
 
 	if err != nil {
 		return k, startTime, err
+	}
+
+	// Calculate Memory Utilization
+	if k.TargetServerMemoryMB > 0 {
+		k.MemoryUtilizationPct = (k.TotalServerMemoryMB / k.TargetServerMemoryMB) * 100.0
+	}
+
+	// Calculate Storage KPIs
+	vols, _ := c.FetchVolumeStats(ctx, instanceName)
+	if len(vols) > 0 {
+		minFree := 100.0
+		for _, v := range vols {
+			if v.VolumeFreePct < minFree {
+				minFree = v.VolumeFreePct
+			}
+		}
+		k.StorageMinimumFreePct = minFree
+		k.VolumesTracked = len(vols)
 	}
 
 	// Status Logic
@@ -241,21 +266,25 @@ func (c *SqlServerRepository) applyDeltas(serverID uuid.UUID, pageReads, batchRe
 func (c *SqlServerRepository) getTempDBHealthV2(ctx context.Context, db *sql.DB) (models.TempDBHealth, error) {
 	var t models.TempDBHealth
 
-	sqlPath := filepath.Join("infrastructure", "sql_scripts", "collection", "sqlserver_tempdb_health_v2.sql")
-	if _, err := os.Stat(sqlPath); os.IsNotExist(err) {
-		sqlPath = filepath.Join("..", sqlPath)
-	}
+	// Robust embedded query to avoid file I/O issues and handle potential connection drops.
+	query := `
+		/* SQL_OPTIMA */
+		SELECT
+			ISNULL(SUM(user_object_reserved_page_count) * 8.0 / 1024.0, 0) AS user_obj_mb,
+			ISNULL(SUM(internal_object_reserved_page_count) * 8.0 / 1024.0, 0) AS internal_obj_mb,
+			ISNULL(SUM(version_store_reserved_page_count) * 8.0 / 1024.0, 0) AS version_store_mb,
+			ISNULL(SUM(unallocated_extent_page_count) * 8.0 / 1024.0, 0) AS free_mb,
+			ISNULL((SELECT SUM(used_log_space_in_bytes) * 1.0 / 1024 / 1024 FROM tempdb.sys.dm_db_log_space_usage), 0) as log_used_mb,
+			CAST(CASE WHEN EXISTS (SELECT 1 FROM sys.dm_os_waiting_tasks WHERE resource_description LIKE '2:%' AND wait_type LIKE 'PAGELATCH_%') THEN 1 ELSE 0 END AS BIT) as contention
+		FROM tempdb.sys.dm_db_file_space_usage
+	`
 
-	query, err := os.ReadFile(sqlPath)
-	if err != nil {
-		return t, err
-	}
-
-	var userObj, internalObj, versionStore, free, logUsed sql.NullFloat64
-	var contention sql.NullBool
+	var userObj, internalObj, versionStore, free, logUsed float64
+	var contention bool
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
-	err = db.QueryRowContext(ctx, string(query)).Scan(
+
+	err := db.QueryRowContext(ctx, query).Scan(
 		&userObj,
 		&internalObj,
 		&versionStore,
@@ -263,12 +292,16 @@ func (c *SqlServerRepository) getTempDBHealthV2(ctx context.Context, db *sql.DB)
 		&logUsed,
 		&contention,
 	)
-	t.UserObjMB = userObj.Float64
-	t.InternalObjMB = internalObj.Float64
-	t.VersionStoreMB = versionStore.Float64
-	t.FreeMB = free.Float64
-	t.LogUsedMB = logUsed.Float64
-	t.ContentionFound = contention.Bool
+	if err != nil {
+		return t, err
+	}
 
-	return t, err
+	t.UserObjMB = userObj
+	t.InternalObjMB = internalObj
+	t.VersionStoreMB = versionStore
+	t.FreeMB = free
+	t.LogUsedMB = logUsed
+	t.ContentionFound = contention
+
+	return t, nil
 }

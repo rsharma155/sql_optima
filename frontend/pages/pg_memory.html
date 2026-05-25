@@ -5,12 +5,11 @@
     <!-- ROW 0: HEADER -->
     <div class="page-title flex-between dashboard-page-title-compact">
         <div class="dashboard-title-line">
-            <h1><i class="fa-solid fa-memory"></i> Postgres Memory Intelligence <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Memory Intelligence" title="Learn more about this dashboard"></i></h1>
+            <h1><i class="fa-solid fa-memory"></i> Postgres Memory Intelligence <i class="fa-solid fa-circle-info text-accent info-icon-clickable cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Memory Intelligence" title="Learn more about this dashboard"></i></h1>
             <span class="subtitle">PostgreSQL Buffer Cache, GUC Configuration, and Session Memory Pressure</span>
         </div>
         <div class="flex-center dashboard-page-title-actions" style="gap: 0.75rem;">
             <div id="time-picker-insertion-point"></div>
-            <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgMemoryView"><i class="fa-solid fa-refresh"></i> Refresh</button>
         </div>
     </div>
 
@@ -32,21 +31,24 @@
             <span style="font-size:0.6rem; color:var(--text-muted);">Shared Buffer Efficiency</span>
         </div>
         <div class="glass-panel metric-card-compact h-kpi">
-            <div class="metric-label">Active Connections <i class="fa-solid fa-circle-info info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="OS Used %"></i></div>
+            <div class="metric-label">Active Connections <i class="fa-solid fa-circle-info info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="Connection Memory"></i></div>
             <div class="metric-value" id="active-conn-kpi">--</div>
             <span style="font-size:0.6rem; color:var(--text-muted);" id="conn-overhead-kpi">~-- MB est. overhead</span>
         </div>
         <div class="glass-panel metric-card-compact h-kpi">
-            <div class="metric-label">Temp Spill Rate <i class="fa-solid fa-circle-info info-icon-sm" data-action="show-pg-info" data-section="Enterprise Monitor" data-metric="Checkpoint Ratio"></i></div>
+            <div class="metric-label">Temp Spill Rate <i class="fa-solid fa-circle-info info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="Temp Spill Rate"></i></div>
             <div class="metric-value text-warning" id="temp-spill-rate">-- MB/s</div>
             <span style="font-size:0.6rem; color:var(--text-muted);">work_mem Pressure</span>
         </div>
         <div class="glass-panel metric-card-compact h-kpi">
-            <div class="metric-label">Swap Activity <i class="fa-solid fa-circle-info info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="OS Used %"></i></div>
+            <div class="metric-label">Swap Activity <i class="fa-solid fa-circle-info info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="Swap Activity"></i></div>
             <div class="metric-value text-danger" id="swap-used-mb">-- MB</div>
             <span style="font-size:0.6rem; color:var(--text-muted);" id="swap-status">OS Collector Required</span>
         </div>
     </div>
+
+    <!-- OS collector setup (shown when host metrics not configured) -->
+    <div id="os-collector-setup-mount" style="display:none; margin-top:0.75rem;"></div>
 
     <!-- Data notice (shown on error or empty data) -->
     <div id="memory-data-notice" class="alert-banner alert-warning mt-2" style="display:none; padding:0.6rem 1rem; border-radius:6px; font-size:0.8rem;"></div>
@@ -56,7 +58,7 @@
         <div class="col-8 col-laptop-8 col-tablet-6">
             <div class="card glass-panel h-chart-md">
                 <div class="card-header flex-between">
-                    <h3 style="font-size:0.8rem; margin:0;" id="main-memory-trend-title">Memory Load History</h3>
+                    <h3 style="font-size:0.8rem; margin:0;" id="main-memory-trend-title">Memory Load History <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="Memory Load History"></i></h3>
                     <span id="os-collector-badge" style="display:none; font-size:0.65rem; padding:2px 6px; border-radius:4px; background:rgba(59,130,246,0.15); color:#60a5fa;">OS Collector Active</span>
                 </div>
                 <div class="chart-container" style="height: 220px;">
@@ -66,7 +68,7 @@
         </div>
         <div class="col-4 col-laptop-4 col-tablet-6">
             <div class="card glass-panel h-chart-md">
-                <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Cache Hit Ratio Trend</h3></div>
+                <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Cache Hit Ratio Trend <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="Cache Efficiency Trend"></i></h3></div>
                 <div class="chart-container" style="height: 220px;">
                     <canvas id="cacheEfficiencyChart"></canvas>
                 </div>
@@ -79,7 +81,7 @@
         <div class="col-6 col-laptop-6 col-tablet-6">
             <div class="card glass-panel">
                 <div class="card-header flex-between">
-                    <h3 style="font-size:0.8rem; margin:0;">Connection Trend</h3>
+                    <h3 style="font-size:0.8rem; margin:0;">Connection Trend <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="Connection Memory"></i></h3>
                     <span style="font-size:0.65rem; color:var(--text-muted);">Active / Idle / Total</span>
                 </div>
                 <div class="chart-container" style="height: 190px;">
@@ -90,7 +92,7 @@
         <div class="col-6 col-laptop-6 col-tablet-6">
             <div class="card glass-panel">
                 <div class="card-header flex-between">
-                    <h3 style="font-size:0.8rem; margin:0;">BGWriter Buffer Allocation</h3>
+                    <h3 style="font-size:0.8rem; margin:0;">BGWriter Buffer Allocation <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="BGWriter Allocation"></i></h3>
                     <span style="font-size:0.65rem; color:var(--text-muted);">Delta buffers written per interval</span>
                 </div>
                 <div class="chart-container" style="height: 190px;">
@@ -105,9 +107,9 @@
         <div class="col-12">
             <div class="card glass-panel" style="padding:0;">
                 <div class="qa-tab-bar">
-                    <button class="cockpit-tab-btn active" data-tab="advisor">Memory Advisor</button>
+                    <button class="cockpit-tab-btn active" data-tab="advisor">Memory Advisor <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="Memory Advisor"></i></button>
                     <button class="cockpit-tab-btn" data-tab="config">Config Analysis</button>
-                    <button class="cockpit-tab-btn" data-tab="forecast">Saturation Forecast</button>
+                    <button class="cockpit-tab-btn" data-tab="forecast">Saturation Forecast <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Memory Intelligence" data-metric="Saturation Forecast"></i></button>
                     <button class="cockpit-tab-btn" data-tab="raw">Raw Telemetry</button>
                 </div>
 

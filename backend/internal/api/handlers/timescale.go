@@ -12,10 +12,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/rsharma155/sql_optima/internal/domain"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
@@ -153,9 +155,29 @@ func (h *TimescaleHandlers) SqlServerQueryStatsTimeSeries(w http.ResponseWriter,
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
 	metric := r.URL.Query().Get("metric") // cpu, duration, reads, executions
-	dbName := r.URL.Query().Get("database")
+	dbName := strings.TrimSpace(r.URL.Query().Get("database"))
+	if strings.EqualFold(dbName, "all") {
+		dbName = ""
+	}
+	excludeSystem := true
+	if es := r.URL.Query().Get("exclude_system"); es == "false" {
+		excludeSystem = false
+	}
 
-	series, err := h.metricsSvc.GetSqlServerQueryStatsTimeSeries(r.Context(), serverID, metric, from, to, dbName)
+	tFrom, tTo, _ := parseTimeRange(from, to)
+	if dbName == "" {
+		qa := &SqlServerQueryAnalysisHandlers{metricsSvc: h.metricsSvc, cfg: h.metricsSvc.Config}
+		partial := domain.WorkloadQueryFilter{
+			ExcludeSystem:    excludeSystem,
+			MonitoringLogins: sqlServerExcludeLoginsForInstance(h.metricsSvc.Config, strings.TrimSpace(r.URL.Query().Get("instance"))),
+		}
+		if resolved, err := qa.resolveAnalysisDatabase(r.Context(), serverID, tFrom, tTo, "", partial); err == nil {
+			dbName = resolved
+		}
+	}
+	logins := sqlServerExcludeLoginsForInstance(h.metricsSvc.Config, strings.TrimSpace(r.URL.Query().Get("instance")))
+
+	series, err := h.metricsSvc.GetSqlServerQueryStatsTimeSeries(r.Context(), serverID, metric, from, to, dbName, excludeSystem, logins)
 	if err != nil {
 		slog.Error("[Timescale] GetSqlServerQueryStatsTimeSeries error", "err", err)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"series": []interface{}{}, "error": err.Error()})
@@ -163,7 +185,8 @@ func (h *TimescaleHandlers) SqlServerQueryStatsTimeSeries(w http.ResponseWriter,
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"series": series,
+		"series":   series,
+		"database": dbName,
 	})
 }
 

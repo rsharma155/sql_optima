@@ -222,8 +222,8 @@ func (c *SqlServerRepository) CollectCPUSchedulerStats(ctx context.Context, db *
 
 // CollectServerProperties collects server hardware properties
 func (c *SqlServerRepository) CollectServerProperties(ctx context.Context, db *sql.DB) (*models.ServerProperties, error) {
-	query := `		
-		/* SQL_OPTIMA */ SELECT   
+	query := `
+		/* SQL_OPTIMA */ SELECT
 			GETUTCDATE() AS capture_timestamp,
 			osi.cpu_count,
 			osi.hyperthread_ratio,
@@ -235,14 +235,20 @@ func (c *SqlServerRepository) CollectServerProperties(ctx context.Context, db *s
 			CASE WHEN osi.hyperthread_ratio < osi.cpu_count THEN 1 ELSE 0 END AS hyperthread_enabled,
 			(SELECT /* SQL_OPTIMA */   COUNT(*) FROM sys.dm_os_nodes WHERE node_id < 64) AS numa_nodes,
 			osi.max_workers_count,
-			CONVERT(VARCHAR(64), HASHBYTES('SHA2_256', 
-				CONCAT(osi.cpu_count, osi.hyperthread_ratio, osi.socket_count, osi.cores_per_socket, 
-					   osi.physical_memory_kb)), 2) AS properties_hash
+			CONVERT(VARCHAR(64), HASHBYTES('SHA2_256',
+				CONCAT(osi.cpu_count, osi.hyperthread_ratio, osi.socket_count, osi.cores_per_socket,
+					   osi.physical_memory_kb)), 2) AS properties_hash,
+			CONVERT(VARCHAR(30), osi.sqlserver_start_time, 126) AS sqlserver_start_time,
+			osi.ms_ticks,
+			osi.scheduler_count
 		FROM sys.dm_os_sys_info osi
 		OPTION (RECOMPILE)`
 
 	props := &models.ServerProperties{}
 	var hyperthreadEnabled sql.NullInt64
+	var startTimeStr sql.NullString
+	var msTicks sql.NullInt64
+	var schedulerCount sql.NullInt32
 
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()
@@ -259,6 +265,9 @@ func (c *SqlServerRepository) CollectServerProperties(ctx context.Context, db *s
 		&props.NUMANodes,
 		&props.MaxWorkersCount,
 		&props.PropertiesHash,
+		&startTimeStr,
+		&msTicks,
+		&schedulerCount,
 	)
 	if err != nil {
 		slog.Error("[SQLSERVER] CollectServerProperties Error", "err", err)
@@ -266,6 +275,9 @@ func (c *SqlServerRepository) CollectServerProperties(ctx context.Context, db *s
 	}
 
 	props.HyperthreadEnabled = hyperthreadEnabled.Int64 == 1
+	props.SQLServerStartTime = startTimeStr.String
+	props.MsTicks = msTicks.Int64
+	props.SchedulerCount = int(schedulerCount.Int32)
 
 	return props, nil
 }

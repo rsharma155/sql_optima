@@ -44,18 +44,40 @@ window.EnterpriseMetricsView = async function() {
         loadData();
     };
 
-    if (refreshBtn) refreshBtn.onclick = loadData;
+    window._enterpriseMetricsLoadData = loadData;
 
     // Chart state
     window._emCharts = window._emCharts || {};
     function destroyCharts() {
         Object.values(window._emCharts).forEach(c => { try { c.destroy(); } catch (_) {} });
         window._emCharts = {};
+        ['chart-wait-stats', 'chart-throughput', 'chart-file-io', 'chart-plan-cache', 'chart-memory'].forEach(id => {
+            if (window.destroyChartOnCanvas) window.destroyChartOnCanvas(id);
+        });
+    }
+
+    function makeChart(canvasId, config) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return null;
+        if (window.destroyChartOnCanvas) window.destroyChartOnCanvas(canvas);
+        const chart = (typeof window.createOptimaChart === 'function')
+            ? window.createOptimaChart(canvas, config)
+            : new Chart(canvas, config);
+        return chart;
     }
 
     async function loadData() {
-        const from = new Date(fromEl.value).toISOString();
-        const to = new Date(toEl.value).toISOString();
+        const range = window.getAppTimeRangeISO
+            ? window.getAppTimeRangeISO({ sync: true, fallbackHours: 1 })
+            : null;
+        let from = range?.from || (window.localDateTimeToISO ? window.localDateTimeToISO(fromEl?.value) : '');
+        let to = range?.to || (window.localDateTimeToISO ? window.localDateTimeToISO(toEl?.value) : '');
+        if (!from || !to) {
+            console.warn('[EnterpriseMetrics] Invalid time range; using last 1 hour');
+            const now = Date.now();
+            from = new Date(now - 3600000).toISOString();
+            to = new Date(now).toISOString();
+        }
         
         try {
             const resp = await window.apiClient.authenticatedFetch(
@@ -175,7 +197,7 @@ window.EnterpriseMetricsView = async function() {
             tension: 0.2
         }));
 
-        window._emCharts.waits = new Chart(ctx, {
+        window._emCharts.waits = makeChart('chart-wait-stats', {
             type: 'line',
             data: { labels, datasets },
             options: {
@@ -192,7 +214,7 @@ window.EnterpriseMetricsView = async function() {
 
         const labels = throughput.map(p => new Date(p.timestamp).toLocaleTimeString());
 
-        window._emCharts.throughput = new Chart(ctx, {
+        window._emCharts.throughput = makeChart('chart-throughput', {
             type: 'line',
             data: {
                 labels,
@@ -223,7 +245,9 @@ window.EnterpriseMetricsView = async function() {
         
         // 1. Filter and group
         io.forEach(f => {
-            const db = f.database_name.toLowerCase();
+            const dbName = f.database_name;
+            if (!dbName) return;
+            const db = String(dbName).toLowerCase();
             if (systemDbsToIgnore.includes(db)) return;
             
             dbGroups[f.database_name] = dbGroups[f.database_name] || [];
@@ -241,7 +265,7 @@ window.EnterpriseMetricsView = async function() {
 
         if (sortedDbs.length === 0) return;
 
-        const labels = dbGroups[sortedDbs[0]].map(f => new Date(f.event_time).toLocaleTimeString());
+        const labels = dbGroups[sortedDbs[0]].map(f => window.fmtChartTick ? window.fmtChartTick(f) : '');
         const datasets = sortedDbs.map((db, idx) => ({
             label: db,
             data: dbGroups[db].map(f => (f.read_latency_ms + f.write_latency_ms) / 2),
@@ -250,7 +274,7 @@ window.EnterpriseMetricsView = async function() {
             tension: 0.2
         }));
 
-        window._emCharts.fileio = new Chart(ctx, {
+        window._emCharts.fileio = makeChart('chart-file-io', {
             type: 'line',
             data: { labels, datasets },
             options: {
@@ -267,24 +291,25 @@ window.EnterpriseMetricsView = async function() {
         const types = ['Adhoc', 'Prepared', 'Proc'];
         const groups = {};
         cache.forEach(c => {
-            const t = c.event_time;
-            groups[t] = groups[t] || {};
-            groups[t][c.cache_type] = c.size_mb;
+            const ms = window.tsMs(c);
+            if (ms == null) return;
+            groups[ms] = groups[ms] || {};
+            groups[ms][c.cache_type] = c.size_mb;
         });
 
-        const sortedTimestamps = Object.keys(groups).sort();
+        const sortedTimes = Object.keys(groups).map(Number).sort((a, b) => a - b);
         const datasets = types.map((type, idx) => ({
             label: type,
-            data: sortedTimestamps.map(t => groups[t][type] || 0),
+            data: sortedTimes.map(ms => groups[ms][type] || 0),
             backgroundColor: getPaletteColor(idx + 5, 0.5),
             borderColor: getPaletteColor(idx + 5, 1),
             fill: true,
             pointRadius: 0
         }));
 
-        window._emCharts.plancache = new Chart(ctx, {
+        window._emCharts.plancache = makeChart('chart-plan-cache', {
             type: 'line',
-            data: { labels: sortedTimestamps.map(t => new Date(t).toLocaleTimeString()), datasets },
+            data: { labels: sortedTimes.map(ms => window.fmtChartTick(ms)), datasets },
             options: {
                 responsive: true, maintainAspectRatio: false,
                 scales: { y: { stacked: true, beginAtZero: true, title: { display: true, text: 'MB' } } }
@@ -314,23 +339,36 @@ window.EnterpriseMetricsView = async function() {
             })
             .slice(0, 5);
 
-        const firstClerk = clerkGroups[topClerks[0]] || [];
-        const labels = firstClerk.map(c => new Date(c.event_time).toLocaleTimeString());
+        const firstClerk = window.sortByChartTime(clerkGroups[topClerks[0]] || []);
+        const labelTimes = firstClerk.map(c => window.tsMs(c)).filter(t => t != null);
+        const labels = labelTimes.map(ms => window.fmtChartTick(ms));
 
-        const datasets = topClerks.map((name, idx) => ({
-            label: name,
-            data: clerkGroups[name].map(c => c.pages_mb),
-            backgroundColor: getPaletteColor(idx + 10, 0.5),
-            borderColor: getPaletteColor(idx + 10, 1),
-            fill: true,
-            pointRadius: 0,
-            yAxisID: 'y'
-        }));
+        const datasets = topClerks.map((name, idx) => {
+            const byTime = new Map();
+            (clerkGroups[name] || []).forEach(c => {
+                const ms = window.tsMs(c);
+                if (ms != null) byTime.set(ms, c.pages_mb);
+            });
+            return {
+                label: name,
+                data: labelTimes.map(ms => byTime.get(ms) ?? null),
+                backgroundColor: getPaletteColor(idx + 10, 0.5),
+                borderColor: getPaletteColor(idx + 10, 1),
+                fill: true,
+                pointRadius: 0,
+                yAxisID: 'y'
+            };
+        });
 
         if (grants && grants.length > 0) {
+            const grantByTime = new Map();
+            grants.forEach(g => {
+                const ms = window.tsMs(g);
+                if (ms != null) grantByTime.set(ms, g.pending_grants);
+            });
             datasets.push({
                 label: 'Pending Grants',
-                data: grants.map(g => g.pending_grants),
+                data: labelTimes.map(ms => grantByTime.get(ms) ?? null),
                 borderColor: '#ef4444',
                 borderWidth: 2,
                 pointRadius: 0,
@@ -340,7 +378,7 @@ window.EnterpriseMetricsView = async function() {
             });
         }
 
-        window._emCharts.memory = new Chart(ctx, {
+        window._emCharts.memory = makeChart('chart-memory', {
             type: 'line',
             data: { labels, datasets },
             options: {
@@ -362,10 +400,12 @@ window.EnterpriseMetricsView = async function() {
             return;
         }
 
-        // Get latest snapshot
-        const latestTime = consumers[consumers.length - 1].event_time;
-        const latest = consumers.filter(c => c.event_time === latestTime)
-            .sort((a, b) => (b.allocated_mb || 0) - (a.allocated_mb || 0))
+        const sortedConsumers = window.sortByChartTime(consumers);
+        const latestMs = window.tsMs(sortedConsumers[sortedConsumers.length - 1]);
+        const latest = sortedConsumers.filter(c => {
+            const ms = window.tsMs(c);
+            return latestMs != null && ms != null && Math.abs(ms - latestMs) < 1000;
+        }).sort((a, b) => (b.tempdb_mb || b.allocated_mb || 0) - (a.tempdb_mb || a.allocated_mb || 0))
             .slice(0, 15);
 
         tbody.innerHTML = latest.map((c, idx) => {
@@ -376,7 +416,7 @@ window.EnterpriseMetricsView = async function() {
             return `
                 <tr>
                     <td>${c.session_id}</td>
-                    <td>${(c.allocated_mb || 0).toFixed(1)} MB</td>
+                    <td>${(c.tempdb_mb || c.allocated_mb || 0).toFixed(1)} MB</td>
                     <td>${(c.user_objects_mb || 0).toFixed(1)} MB</td>
                     <td>${(c.internal_objects_mb || 0).toFixed(1)} MB</td>
                     <td style="max-width: 500px;">

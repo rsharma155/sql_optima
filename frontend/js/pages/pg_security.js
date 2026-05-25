@@ -4,6 +4,53 @@
  */
 (function() {
     let lastFetchedData = null;
+    const chartKeys = { login: 'pg-login-trend-chart', audit: 'pg-audit-trend-chart', role: 'pg-role-trend-chart' };
+
+    function sortedTrend(trend) {
+        return window.sortByChartTime ? window.sortByChartTime(trend || []) : [...(trend || [])];
+    }
+
+    function trendLabels(trend) {
+        const rows = sortedTrend(trend);
+        if (!rows.length) return [];
+        const spanMs = rows.length >= 2
+            ? (window.tsMs(rows[rows.length - 1]) ?? 0) - (window.tsMs(rows[0]) ?? 0)
+            : 0;
+        const multiDay = spanMs > 36 * 3600 * 1000;
+        return rows.map((row) => {
+            const d = window.parseChartTimestamp ? window.parseChartTimestamp(row) : null;
+            if (!d) return '';
+            if (multiDay) {
+                return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            }
+            return window.fmtChartTick
+                ? window.fmtChartTick(row, { hour: '2-digit', minute: '2-digit' })
+                : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        });
+    }
+
+    function destroySecurityChart(key) {
+        const id = chartKeys[key];
+        window.pgSecurityCharts = window.pgSecurityCharts || {};
+        if (window.pgSecurityCharts[id]) {
+            window.pgSecurityCharts[id].destroy();
+            delete window.pgSecurityCharts[id];
+        }
+    }
+
+    function baseChartOptions(extra = {}) {
+        const tooltip = window.chartTooltipPlugin ? window.chartTooltipPlugin() : { enabled: true };
+        const interaction = window.chartInteractionOptions
+            ? window.chartInteractionOptions()
+            : { mode: 'index', intersect: false };
+        const base = {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction,
+            plugins: { legend: { display: false }, tooltip },
+        };
+        return window.mergeChartOptions ? window.mergeChartOptions(base, extra) : { ...base, ...extra };
+    }
 
     window.PgSecurityView = function() {
         const instance = window.appState.config?.instances?.[window.appState.currentInstanceIdx]?.name;
@@ -12,27 +59,22 @@
         window.appState.activeViewId = 'pg-security';
         
         window.routerOutlet.innerHTML = `
-            <div class="page-view active dashboard-sky-theme">
+            <div class="page-view active dashboard-sky-theme pg-security-page">
                 <!-- HEADER BAR (ROW 0) -->
-                <div class="page-title flex-between dashboard-page-title-compact" style="height: 64px; margin-bottom: 0.75rem;">
+                <div class="page-title flex-between dashboard-page-title-compact pg-security-page-title">
                     <div class="dashboard-title-line">
                         <h1><i class="fa-solid fa-user-lock"></i> Security Monitor <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Security Monitor" title="Learn more about this dashboard"></i></h1>
-                        <span class="subtitle">Failed logins • Privilege escalation • DDL monitoring</span>
+                        <span class="subtitle pg-security-subtitle">Failed logins • Privilege escalation • DDL monitoring</span>
                     </div>
-                    <div class="flex-center dashboard-page-title-actions" style="gap: 0.5rem;">
+                    <div class="flex-center dashboard-page-title-actions pg-security-title-actions">
                         <div id="time-picker-insertion-point"></div>
-                        <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.5rem; border: 1px solid var(--border-color);">
-                            <button id="refresh-security-btn" class="btn btn-xs btn-accent" title="Refresh data"><i class="fa-solid fa-sync"></i> Refresh</button>
-                            <button id="export-security-btn" class="btn btn-xs btn-outline" title="Export Security Report as CSV"><i class="fa-solid fa-file-csv"></i> CSV</button>
-                        </div>
+                        <button id="export-security-btn" class="btn btn-xs btn-outline" title="Export Security Report as CSV"><i class="fa-solid fa-file-csv"></i> CSV</button>
                     </div>
                 </div>
 
-                <!-- MAIN SECURITY GRID -->
-                <div class="security-grid">
-                    
-                    <!-- ROW 1: KPI STRIP (Including Risk Level) -->
-                    <div class="col-span-3 col-laptop-4 col-tablet-6">
+                <!-- ROW 1: KPI STRIP (single row on laptop/small) -->
+                <div class="kpi-row pg-security-kpi-row">
+                    <div class="pg-security-kpi-risk">
                         <div class="glass-panel risk-card risk-info" id="risk-level-card">
                             <div class="risk-main">
                                 <div class="risk-label">Overall Risk Level <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Security Monitor" data-metric="Failed Logins"></i></div>
@@ -45,7 +87,7 @@
                         </div>
                     </div>
 
-                    <div class="col-span-3 col-laptop-4 col-tablet-3">
+                    <div class="pg-security-kpi-item">
                         <div class="glass-panel security-kpi-card row-height-kpi">
                             <div class="kpi-label">Failed Logins <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Security Monitor" data-metric="Failed Logins"></i></div>
                             <div class="kpi-value text-danger" id="kpi-failed-logins">--</div>
@@ -55,7 +97,7 @@
                         </div>
                     </div>
 
-                    <div class="col-span-2 col-laptop-2 col-tablet-3">
+                    <div class="pg-security-kpi-item">
                         <div class="glass-panel security-kpi-card row-height-kpi">
                             <div class="kpi-label">New Roles 7d <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Security Monitor" data-metric="Superuser Count"></i></div>
                             <div class="kpi-value text-warning" id="kpi-new-roles">--</div>
@@ -63,7 +105,7 @@
                         </div>
                     </div>
 
-                    <div class="col-span-2 col-laptop-2 col-tablet-3">
+                    <div class="pg-security-kpi-item">
                         <div class="glass-panel security-kpi-card row-height-kpi">
                             <div class="kpi-label">Superusers <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Security Monitor" data-metric="Superuser Count"></i></div>
                             <div class="kpi-value text-critical" id="kpi-superusers">--</div>
@@ -71,22 +113,26 @@
                         </div>
                     </div>
 
-                    <div class="col-span-2 col-laptop-2 col-tablet-3">
+                    <div class="pg-security-kpi-item">
                         <div class="glass-panel security-kpi-card row-height-kpi">
                             <div class="kpi-label">Replica Privs <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Backup & DR" data-metric="Replication Slots Risk"></i></div>
                             <div class="kpi-value text-info" id="kpi-repl-privs">--</div>
                             <div class="kpi-trend" id="trend-repl-privs"><span class="text-muted">Stable</span></div>
                         </div>
                     </div>
+                </div>
+
+                <!-- MAIN SECURITY GRID -->
+                <div class="security-grid">
 
                     <!-- ROW 2: DETAILED ACCESS GRID -->
-                    <div class="col-span-12">
-                        <div class="card glass-panel">
-                            <div class="card-header flex-between">
-                                <h3 style="font-size:0.75rem; margin:0;">Roles, Login & Access Privileges</h3>
-                                <span class="text-muted" style="font-size:0.65rem;">Active session-level and object-level permissions summary for all users and roles</span>
+                    <div class="col-span-12 col-mobile-12">
+                        <div class="card glass-panel pg-security-access-card">
+                            <div class="card-header flex-between pg-security-card-header">
+                                <h3 class="pg-security-card-title">Roles, Login & Access Privileges</h3>
+                                <span class="text-muted pg-security-card-hint">Active session-level and object-level permissions summary for all users and roles</span>
                             </div>
-                            <div class="table-container-compact" style="height: 280px; overflow-y: auto;">
+                            <div class="table-container-compact pg-security-table-scroll pg-security-access-table-wrap">
                                 <table class="compact-security-table" id="pg-access-privs-grid">
                                     <thead>
                                         <tr>
@@ -106,24 +152,24 @@
                     </div>
 
                     <!-- ROW 3: TREND CHARTS -->
-                    <div class="col-span-6 col-laptop-8 col-tablet-6">
-                        <div class="card glass-panel" style="height: 220px;">
-                            <div class="card-header flex-between" style="padding: 0.4rem 0.6rem;">
-                                <h3 style="font-size:0.65rem; margin:0;">Failed Login Trend</h3>
+                    <div class="col-span-6 col-laptop-8 col-tablet-6 col-mobile-12">
+                        <div class="card glass-panel pg-security-chart-card">
+                            <div class="card-header flex-between pg-security-card-header">
+                                <h3 class="pg-security-card-title">Failed Login Trend</h3>
                             </div>
-                            <div class="security-chart-container" style="height: 170px; position:relative;">
+                            <div class="security-chart-container pg-security-chart-wrap">
                                 <canvas id="pg-login-trend-chart"></canvas>
                                 <div id="login-no-data" class="no-data-placeholder" style="display:none;">No data</div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="col-span-6 col-laptop-8 col-tablet-6">
-                        <div class="card glass-panel" style="height: 220px;">
-                            <div class="card-header flex-between" style="padding: 0.4rem 0.6rem;">
-                                <h3 style="font-size:0.65rem; margin:0;">DML / Audit Activity</h3>
+                    <div class="col-span-6 col-laptop-8 col-tablet-6 col-mobile-12">
+                        <div class="card glass-panel pg-security-chart-card">
+                            <div class="card-header flex-between pg-security-card-header">
+                                <h3 class="pg-security-card-title">DML / Audit Activity</h3>
                             </div>
-                            <div class="security-chart-container" style="height: 170px; position:relative;">
+                            <div class="security-chart-container pg-security-chart-wrap">
                                 <canvas id="pg-audit-trend-chart"></canvas>
                                 <div id="audit-no-data" class="no-data-placeholder" style="display:none;">No data</div>
                             </div>
@@ -131,10 +177,10 @@
                     </div>
 
                     <!-- ROW 4: INVESTIGATION ZONE -->
-                    <div class="col-span-5 col-laptop-8 col-tablet-6">
-                        <div class="card glass-panel">
-                            <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Failed Login Origins</h3></div>
-                            <div class="table-container-compact row-height-table">
+                    <div class="col-span-5 col-laptop-8 col-tablet-6 col-mobile-12">
+                        <div class="card glass-panel pg-security-origins-card">
+                            <div class="card-header"><h3 class="pg-security-card-title">Failed Login Origins</h3></div>
+                            <div class="table-container-compact row-height-table pg-security-table-scroll">
                                 <table class="compact-security-table" id="pg-origins-table">
                                     <thead><tr><th>IP Address</th><th>Fails</th><th>Action</th></tr></thead>
                                     <tbody></tbody>
@@ -142,10 +188,10 @@
                             </div>
                         </div>
                     </div>
-                    <div class="col-span-7 col-laptop-8 col-tablet-6">
-                        <div class="card glass-panel">
-                            <div class="card-header"><h3 style="font-size:0.75rem; margin:0;">Role History Trend</h3></div>
-                            <div class="security-chart-container row-height-table" style="position:relative;">
+                    <div class="col-span-7 col-laptop-8 col-tablet-6 col-mobile-12">
+                        <div class="card glass-panel pg-security-role-chart-card">
+                            <div class="card-header"><h3 class="pg-security-card-title">Role History Trend</h3></div>
+                            <div class="security-chart-container row-height-table pg-security-chart-wrap pg-security-role-chart-wrap">
                                 <canvas id="pg-role-trend-chart"></canvas>
                                 <div id="role-no-data" class="no-data-placeholder" style="display:none;">No data</div>
                             </div>
@@ -157,7 +203,6 @@
 
         window.initPageTimePicker();
         
-        document.getElementById('refresh-security-btn')?.addEventListener('click', () => fetchData(instance));
         document.getElementById('export-security-btn')?.addEventListener('click', () => {
             exportToCSV(instance);
         });
@@ -236,31 +281,47 @@
     function renderLoginTrend(trend) {
         const canvas = document.getElementById('pg-login-trend-chart');
         const noData = document.getElementById('login-no-data');
+        destroySecurityChart('login');
         if (!trend || trend.length === 0) {
             if (canvas) canvas.style.display = 'none';
             if (noData) noData.style.display = 'flex';
             return;
         }
+        const rows = sortedTrend(trend);
         canvas.style.display = 'block';
         noData.style.display = 'none';
-        new Chart(canvas.getContext('2d'), {
+        window.pgSecurityCharts = window.pgSecurityCharts || {};
+        window.pgSecurityCharts[chartKeys.login] = new Chart(canvas.getContext('2d'), {
             type: 'line',
             data: {
-                labels: trend.map(t => new Date(t.bucket)),
-                datasets: [{ 
-                    label: 'Failed Logins', data: trend.map(t => t.count), 
-                    borderColor: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    fill: true, tension: 0.3, pointRadius: 1 
-                }]
+                labels: trendLabels(rows),
+                datasets: [{
+                    label: 'Failed Logins',
+                    data: rows.map(t => t.count),
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 1,
+                }],
             },
-            options: {
-                responsive: true, maintainAspectRatio: false,
+            options: baseChartOptions({
                 plugins: { legend: { display: false } },
-                scales: { 
-                    x: { type: 'time', time: { unit: 'hour' }, display: true }, 
-                    y: { beginAtZero: true } 
-                }
-            }
+                scales: {
+                    x: {
+                        display: true,
+                        ticks: {
+                            color: '#64748b',
+                            font: { size: 9 },
+                            maxRotation: 45,
+                            autoSkip: true,
+                            maxTicksLimit: window.innerWidth < 768 ? 5 : 8,
+                        },
+                        grid: { display: false },
+                    },
+                    y: { beginAtZero: true, ticks: { color: '#64748b', font: { size: 9 } } },
+                },
+            }),
         });
     }
 
@@ -298,31 +359,50 @@
     function renderAuditTrend(trend) {
         const canvas = document.getElementById('pg-audit-trend-chart');
         const noData = document.getElementById('audit-no-data');
+        destroySecurityChart('audit');
         if (!trend || trend.length === 0) {
             if (canvas) canvas.style.display = 'none';
             if (noData) noData.style.display = 'flex';
             return;
         }
+        const rows = sortedTrend(trend);
         canvas.style.display = 'block';
         noData.style.display = 'none';
-        new Chart(canvas.getContext('2d'), {
+        window.pgSecurityCharts = window.pgSecurityCharts || {};
+        window.pgSecurityCharts[chartKeys.audit] = new Chart(canvas.getContext('2d'), {
             type: 'bar',
             data: {
-                labels: trend.map(t => new Date(t.bucket)),
+                labels: trendLabels(rows),
                 datasets: [
-                    { label: 'Inserts', data: trend.map(t => t.ins), backgroundColor: '#22c55e' },
-                    { label: 'Updates', data: trend.map(t => t.upd), backgroundColor: '#f59e0b' },
-                    { label: 'Deletes', data: trend.map(t => t.del), backgroundColor: '#ef4444' }
-                ]
+                    { label: 'Inserts', data: rows.map(t => t.ins), backgroundColor: '#22c55e' },
+                    { label: 'Updates', data: rows.map(t => t.upd), backgroundColor: '#f59e0b' },
+                    { label: 'Deletes', data: rows.map(t => t.del), backgroundColor: '#ef4444' },
+                ],
             },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: true, labels: { boxWidth: 10, font: { size: 9 } } } },
-                scales: { 
-                    x: { type: 'time', display: true, stacked: true }, 
-                    y: { stacked: true, beginAtZero: true } 
-                }
-            }
+            options: baseChartOptions({
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { boxWidth: 10, font: { size: 9 }, color: '#94a3b8' },
+                    },
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        stacked: true,
+                        ticks: {
+                            color: '#64748b',
+                            font: { size: 9 },
+                            maxRotation: 45,
+                            autoSkip: true,
+                            maxTicksLimit: window.innerWidth < 768 ? 5 : 8,
+                        },
+                        grid: { display: false },
+                    },
+                    y: { stacked: true, beginAtZero: true, ticks: { color: '#64748b', font: { size: 9 } } },
+                },
+            }),
         });
     }
 
@@ -344,28 +424,47 @@
     function renderRoleTrend(trend) {
         const canvas = document.getElementById('pg-role-trend-chart');
         const noData = document.getElementById('role-no-data');
+        destroySecurityChart('role');
         if (!trend || trend.length === 0) {
             if (canvas) canvas.style.display = 'none';
             if (noData) noData.style.display = 'flex';
             return;
         }
+        const rows = sortedTrend(trend);
         canvas.style.display = 'block';
         noData.style.display = 'none';
-        new Chart(canvas.getContext('2d'), {
+        window.pgSecurityCharts = window.pgSecurityCharts || {};
+        window.pgSecurityCharts[chartKeys.role] = new Chart(canvas.getContext('2d'), {
             type: 'line',
             data: {
-                labels: trend.map(t => new Date(t.bucket)),
-                datasets: [{ 
-                    label: 'Total Roles', data: trend.map(t => t.total), 
-                    borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.05)', 
-                    fill: true, tension: 0.4, pointRadius: 0
-                }]
+                labels: trendLabels(rows),
+                datasets: [{
+                    label: 'Total Roles',
+                    data: rows.map(t => t.total),
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.05)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0,
+                }],
             },
-            options: {
-                responsive: true, maintainAspectRatio: false,
+            options: baseChartOptions({
                 plugins: { legend: { display: false } },
-                scales: { x: { type: 'time', display: true }, y: { beginAtZero: false } }
-            }
+                scales: {
+                    x: {
+                        display: true,
+                        ticks: {
+                            color: '#64748b',
+                            font: { size: 9 },
+                            maxRotation: 45,
+                            autoSkip: true,
+                            maxTicksLimit: window.innerWidth < 768 ? 5 : 8,
+                        },
+                        grid: { display: false },
+                    },
+                    y: { beginAtZero: false, ticks: { color: '#64748b', font: { size: 9 } } },
+                },
+            }),
         });
     }
 

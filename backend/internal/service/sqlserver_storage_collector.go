@@ -11,17 +11,22 @@ import (
 	"fmt"
 	"log/slog"
 	"context"
-	"database/sql"
 	"strings"
 	"time"
 
+	"github.com/rsharma155/sql_optima/internal/collectors"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
 func (s *MetricsService) StartSqlServerStorageHistoryCollector(ctx context.Context) {
 	interval := s.GetCollectorInterval(ctx, "SQL Server Storage History", 6*time.Hour)
-	slog.Info("[SQLServerStorage] Starting background collector (interval: %v)", "val", interval)
+	if interval <= 0 {
+		slog.Warn("[SQLServerStorage] Collector is disabled (interval=0)")
+		// Still start a ticker but with a very long interval to avoid panic and allow dynamic re-enable
+		interval = 24 * time.Hour
+	}
+	slog.Info("[SQLServerStorage] Starting background collector", "interval", interval)
 
 	ticker := time.NewTicker(interval)
 	go func() {
@@ -77,6 +82,7 @@ func (s *MetricsService) collectSqlServerStorageStats(ctx context.Context) {
 			}
 			rows.Close()
 		}
+		slog.Info("[SQLServerStorage] Discovered databases", "instance", inst.Name, "count", len(databases))
 
 		for _, dbName := range databases {
 			// Table Size History
@@ -87,6 +93,7 @@ func (s *MetricsService) collectSqlServerStorageStats(ctx context.Context) {
 				continue
 			}
 			if len(stats) > 0 {
+				slog.Debug("[SQLServerStorage] Collected table size stats", "db", dbName, "tables", len(stats))
 				var hotRows []hot.TableSizeHistoryRow
 				now := time.Now().UTC()
 				for _, st := range stats {
@@ -105,7 +112,7 @@ func (s *MetricsService) collectSqlServerStorageStats(ctx context.Context) {
 
 					// Also populate unified monitor table
 					_ = s.tsLogger.InsertTableSizeHistory(ctx, models.TableSizeHistory{
-						Time:        now,
+						Timestamp:   now,
 						Engine:      "sqlserver",
 						ServerID:    serverID,
 						DBName:      dbName,
@@ -119,38 +126,21 @@ func (s *MetricsService) collectSqlServerStorageStats(ctx context.Context) {
 				_ = s.tsLogger.LogTableSizeHistoryWithChangeDetection(ctx, serverID, hotRows)
 			}
 
-			// Index Usage History
-			idxStats, err := s.MsRepo.CollectSQLServerIndexUsageMetrics(ctx, inst.Name, dbName)
+			// Index Usage History - using delta logic to avoid double-counting cumulative counters
+			// We use the specialized collector that handles state management and delta calculation.
+			// DMVs are per-database, so we must be in the correct context (handled inside Collect function).
+			idxRows, err := collectors.CollectSQLServerIndexUsage(ctx, db, dbName)
 			if err != nil {
-				slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: IndexUsage error: %v", inst.Name, dbName, err))
+				slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: IndexUsage collection error: %v", inst.Name, dbName, err))
 				_ = s.tsLogger.LogCollectorError(ctx, serverID, "Index usage collection error: "+err.Error())
 				continue
 			}
-			if len(idxStats) > 0 {
-				now := time.Now().UTC()
-				for _, st := range idxStats {
-					var lastSeek *time.Time
-					if lus, ok := st["last_user_seek"].(sql.NullTime); ok && lus.Valid {
-						t := lus.Time
-						lastSeek = &t
-					}
-					_ = s.tsLogger.InsertIndexUsageStat(ctx, models.IndexUsageStat{
-						Time:         now,
-						Engine:       "sqlserver",
-						ServerID:     serverID,
-						DBName:       dbName,
-						SchemaName:   st["schema_name"].(string),
-						TableName:    st["table_name"].(string),
-						IndexName:    st["index_name"].(string),
-						Seeks:        st["user_seeks"].(int64),
-						Scans:        st["user_scans"].(int64),
-						Lookups:      st["user_lookups"].(int64),
-						Updates:      st["user_updates"].(int64),
-						IndexSizeMB:  st["index_size_mb"].(float64),
-						IsPK:         st["is_pk"].(bool),
-						IsUnique:     st["is_unique"].(bool),
-						LastUserSeek: lastSeek,
-					})
+			if len(idxRows) > 0 {
+				inserted, pErr := collectors.PersistSQLServerIndexUsageDeltas(ctx, s.tsLogger, serverID, dbName, idxRows, time.Now())
+				if pErr != nil {
+					slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: IndexUsage persistence error: %v", inst.Name, dbName, pErr))
+				} else if inserted > 0 {
+					slog.Debug("[SQLServerStorage] Persisted index usage deltas", "count", inserted, "db", dbName)
 				}
 			}
 
@@ -199,7 +189,7 @@ func (s *MetricsService) collectSqlServerStorageStats(ctx context.Context) {
 						continue
 					}
 					_ = s.tsLogger.InsertTableUsageStat(ctx, models.TableUsageStat{
-						Time:         now,
+						Timestamp:    now,
 						Engine:       "sqlserver",
 						ServerID:     serverID,
 						DBName:       dbName,

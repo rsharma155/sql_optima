@@ -17,30 +17,30 @@ import (
 )
 
 type PostgresWaitEventRow struct {
-	CaptureTimestamp time.Time `json:"capture_timestamp"`
-	ServerID         uuid.UUID `json:"server_id"`
-	WaitEventType    string    `json:"wait_event_type"`
-	WaitEvent        string    `json:"wait_event"`
-	SessionsCount    int       `json:"sessions_count"`
+	Timestamp     time.Time `json:"timestamp"`
+	ServerID      uuid.UUID `json:"server_id"`
+	WaitEventType string    `json:"wait_event_type"`
+	WaitEvent     string    `json:"wait_event"`
+	SessionsCount int       `json:"sessions_count"`
 }
 
 type PostgresDbIORow struct {
-	CaptureTimestamp time.Time `json:"capture_timestamp"`
-	ServerID         uuid.UUID `json:"server_id"`
-	DatabaseName     string    `json:"database_name"`
-	BlksRead         int64     `json:"blks_read"`
-	BlksHit          int64     `json:"blks_hit"`
-	TempFiles        int64     `json:"temp_files"`
-	TempBytes        int64     `json:"temp_bytes"`
+	Timestamp    time.Time `json:"timestamp"`
+	ServerID     uuid.UUID `json:"server_id"`
+	DatabaseName string    `json:"database_name"`
+	BlksRead     int64     `json:"blks_read"`
+	BlksHit      int64     `json:"blks_hit"`
+	TempFiles    int64     `json:"temp_files"`
+	TempBytes    int64     `json:"temp_bytes"`
 }
 
 type PostgresSettingSnapshotRow struct {
-	CaptureTimestamp time.Time `json:"capture_timestamp"`
-	ServerID         uuid.UUID `json:"server_id"`
-	Name             string    `json:"name"`
-	Setting          string    `json:"setting"`
-	Unit             string    `json:"unit"`
-	Source           string    `json:"source"`
+	Timestamp time.Time `json:"timestamp"`
+	ServerID  uuid.UUID `json:"server_id"`
+	Name      string    `json:"name"`
+	Setting   string    `json:"setting"`
+	Unit      string    `json:"unit"`
+	Source    string    `json:"source"`
 }
 
 func (tl *TimescaleLogger) LogPostgresWaitEvents(ctx context.Context, serverID uuid.UUID, rows []PostgresWaitEventRow) error {
@@ -65,7 +65,7 @@ func (tl *TimescaleLogger) LogPostgresWaitEvents(ctx context.Context, serverID u
 	) VALUES ($1,$2,$3,$4,$5)`
 	batch := &pgx.Batch{}
 	for _, r := range rows {
-		batch.Queue(q, r.CaptureTimestamp, serverID, r.WaitEventType, r.WaitEvent, r.SessionsCount)
+		batch.Queue(q, r.Timestamp, serverID, r.WaitEventType, r.WaitEvent, r.SessionsCount)
 	}
 	br := tl.pool.SendBatch(ctx, batch)
 	defer br.Close()
@@ -114,7 +114,7 @@ func (tl *TimescaleLogger) GetPostgresWaitEventsHistory(ctx context.Context, ser
 	var out []PostgresWaitEventRow
 	for rows.Next() {
 		var r PostgresWaitEventRow
-		if err := rows.Scan(&r.CaptureTimestamp, &r.ServerID, &r.WaitEventType, &r.WaitEvent, &r.SessionsCount); err != nil {
+		if err := rows.Scan(&r.Timestamp, &r.ServerID, &r.WaitEventType, &r.WaitEvent, &r.SessionsCount); err != nil {
 			continue
 		}
 		out = append(out, r)
@@ -182,7 +182,7 @@ func (tl *TimescaleLogger) LogPostgresDbIOStats(ctx context.Context, serverID uu
 	) VALUES ($1,$2,$3,$4,$5,$6,$7)`
 	batch := &pgx.Batch{}
 	for _, r := range rows {
-		batch.Queue(q, r.CaptureTimestamp, serverID, r.DatabaseName, r.BlksRead, r.BlksHit, r.TempFiles, r.TempBytes)
+		batch.Queue(q, r.Timestamp, serverID, r.DatabaseName, r.BlksRead, r.BlksHit, r.TempFiles, r.TempBytes)
 	}
 	br := tl.pool.SendBatch(ctx, batch)
 	defer br.Close()
@@ -231,7 +231,7 @@ func (tl *TimescaleLogger) GetPostgresDbIOHistory(ctx context.Context, serverID 
 	var out []PostgresDbIORow
 	for rows.Next() {
 		var r PostgresDbIORow
-		if err := rows.Scan(&r.CaptureTimestamp, &r.ServerID, &r.DatabaseName, &r.BlksRead, &r.BlksHit, &r.TempFiles, &r.TempBytes); err != nil {
+		if err := rows.Scan(&r.Timestamp, &r.ServerID, &r.DatabaseName, &r.BlksRead, &r.BlksHit, &r.TempFiles, &r.TempBytes); err != nil {
 			continue
 		}
 		out = append(out, r)
@@ -261,7 +261,7 @@ func (tl *TimescaleLogger) LogPostgresSettingsSnapshot(ctx context.Context, serv
 
 	batch := &pgx.Batch{}
 	for _, r := range rows {
-		batch.Queue(q, r.CaptureTimestamp, serverID, r.Name, r.Setting, r.Unit, r.Source)
+		batch.Queue(q, r.Timestamp, serverID, r.Name, r.Setting, r.Unit, r.Source)
 	}
 
 	br := tl.pool.SendBatch(ctx, batch)
@@ -319,7 +319,7 @@ func (tl *TimescaleLogger) GetPostgresSettingsSnapshotLatestTwo(ctx context.Cont
 		var out []PostgresSettingSnapshotRow
 		for rows.Next() {
 			var r PostgresSettingSnapshotRow
-			if err := rows.Scan(&r.CaptureTimestamp, &r.ServerID, &r.Name, &r.Setting, &r.Unit, &r.Source); err == nil {
+			if err := rows.Scan(&r.Timestamp, &r.ServerID, &r.Name, &r.Setting, &r.Unit, &r.Source); err == nil {
 				out = append(out, r)
 			}
 		}
@@ -393,7 +393,7 @@ func (tl *TimescaleLogger) GetPostgresBGWriterHistory(ctx context.Context, serve
 			continue
 		}
 		results = append(results, map[string]interface{}{
-			"time":                  ts,
+			"timestamp":             ts,
 			"checkpoints_timed":     timed,
 			"checkpoints_req":       req,
 			"checkpoint_write_time": write,
@@ -432,7 +432,7 @@ func (tl *TimescaleLogger) GetPostgresArchiverHistory(ctx context.Context, serve
 			continue
 		}
 		results = append(results, map[string]interface{}{
-			"time":              ts,
+			"timestamp":         ts,
 			"archived_count":    archived,
 			"failed_count":      failed,
 			"last_archived_wal": lastArchivedWAL,

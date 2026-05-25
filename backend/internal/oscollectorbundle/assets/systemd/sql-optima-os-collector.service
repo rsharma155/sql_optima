@@ -1,0 +1,16 @@
+[Unit]
+Description=SQL Optima OS Collector
+Documentation=https://github.com/rsharma155/sql_optima/blob/main/docs/os_collector.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=postgres
+EnvironmentFile=-/etc/sql-optima/os-collector.env
+ExecStart=/usr/local/bin/sql-optima-os-collector.sh -interval 30s
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

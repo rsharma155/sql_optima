@@ -58,69 +58,9 @@ func (c *PgTimescaleCollector) Collect(ctx context.Context, inst config.Instance
 		}
 	}
 
-	// 2. Query Stats (via pg_stat_statements)
-	stats, err := c.pgRepo.FetchStatStatements(ctx, instanceName, db)
-	if err == nil {
-		now := time.Now().UTC()
-		var deltas []hot.PostgresStatStatementsDeltaRow
-		for _, s := range stats {
-			prev, ok := c.pgRepo.GetPreviousSnapshot(instanceName, s.QueryID)
-			if ok {
-				if s.Calls > prev.Calls {
-					deltas = append(deltas, hot.PostgresStatStatementsDeltaRow{
-						CaptureTimestamp:       now,
-						ServerID:               serverID,
-						QueryID:                s.QueryID,
-						DatabaseName:           s.DbName,
-						UserName:               s.UserName,
-						CallsDelta:             s.Calls - prev.Calls,
-						TotalTimeDeltaMs:       s.TotalTime - prev.TotalTime,
-						RowsDelta:              s.Rows - prev.Rows,
-						SharedBlksHitDelta:     s.SharedBlksHit - prev.SharedBlksHit,
-						SharedBlksReadDelta:    s.SharedBlksRead - prev.SharedBlksRead,
-						SharedBlksDirtiedDelta: s.SharedBlksDirtied - prev.SharedBlksDirtied,
-						SharedBlksWrittenDelta: s.SharedBlksWritten - prev.SharedBlksWritten,
-						TempBlksReadDelta:      s.TempBlksRead - prev.TempBlksRead,
-						TempBlksWrittenDelta:   s.TempBlksWritten - prev.TempBlksWritten,
-						BlkReadTimeDeltaMs:     s.BlkReadTime - prev.BlkReadTime,
-						BlkWriteTimeDeltaMs:    s.BlkWriteTime - prev.BlkWriteTime,
-						WalBytesDelta:          int64(s.WalBytes) - prev.WalBytes,
-					})
-				}
-			}
-			// Map internal struct back to repository expected struct
-			c.pgRepo.UpdatePreviousSnapshot(instanceName, s.QueryID, repository.PgQueryStat{
-				QueryID:           s.QueryID,
-				DbName:            s.DbName,
-				UserName:          s.UserName,
-				Query:             s.Query,
-				QueryType:         s.QueryType,
-				Calls:             s.Calls,
-				TotalTime:         s.TotalTime,
-				MeanTime:          s.MeanTime,
-				Rows:              s.Rows,
-				SharedBlksHit:     s.SharedBlksHit,
-				SharedBlksRead:    s.SharedBlksRead,
-				SharedBlksDirtied: s.SharedBlksDirtied,
-				SharedBlksWritten: s.SharedBlksWritten,
-				TempBlksRead:      s.TempBlksRead,
-				TempBlksWritten:   s.TempBlksWritten,
-				BlkReadTime:       s.BlkReadTime,
-				BlkWriteTime:      s.BlkWriteTime,
-				WalBytes:          int64(s.WalBytes),
-				TotalPlanTime:     s.TotalPlanTime,
-				MeanPlanTime:      s.MeanPlanTime,
-				Plans:             s.Plans,
-			})
-		}
-		if len(deltas) > 0 {
-			if err := c.tsLogger.LogPostgresStatStatementsDelta(ctx, serverID, deltas); err != nil {
-				slog.Error("[PgTimescaleCollector] ERROR: LogPostgresStatStatementsDelta failed", "target", instanceName, "err", err)
-			}
-		}
-	}
-
-	// 3. Table & Index Usage (for SIH Dashboard)
+	// 2. Table & Index Usage (for SIH Dashboard)
+	// Note: pgss_delta_1m writes are handled exclusively by StartPostgresQueryStatsCollector
+	// via ComputeAndStorePgssDelta1m, which correctly matches the table schema.
 	tableUsage, err := collectors.CollectPostgresTableUsageAndSize(ctx, db)
 	if err == nil {
 		_, _ = collectors.PersistPostgresTableUsageDeltas(ctx, c.tsLogger, serverID, tableUsage, time.Now())

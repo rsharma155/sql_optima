@@ -149,9 +149,70 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 	return results, rows.Err()
 }
 
-func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, serverID, metric string, from, to string, dbName string) ([]map[string]interface{}, error) {
-	// Parse dates to determine range for dynamic bucketing
-	var bucket = "5 min"
+func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, serverID, metric string, from, to string, dbName string, excludeSystem bool, monitoringLogins []string) ([]map[string]interface{}, error) {
+	bucket := queryStatsTimeseriesBucket(from, to)
+	metricCol := queryStatsTimeseriesMetricCol(metric)
+	readFilter := sqlServerQueryAnalysisReadFilter(excludeSystem, "q.", monitoringLogins)
+	classFilter := sqlServerQueryAnalysisClassificationFilter(excludeSystem, "q.")
+
+	dbFilter := workloadDatabaseClause(4)
+	args := []interface{}{serverID, from, to, dbName}
+
+	query := fmt.Sprintf(`
+		SELECT time_bucket('%s', q.capture_timestamp) AS time,
+		       SUM(q.total_cpu_ms)::float8 AS cpu_ms,
+		       SUM(q.total_logical_reads)::float8 AS logical_reads,
+		       SUM(q.total_elapsed_ms)::float8 AS total_duration_ms,
+		       SUM(q.total_executions)::float8 AS executions,
+		       SUM(q.%s)::float8 AS value
+		FROM sqlserver_query_metrics_v2 q
+		LEFT JOIN sqlserver_query_classification_dim class
+		  ON class.server_id = q.server_id
+		 AND class.query_hash = q.query_hash
+		WHERE q.server_id = $1::uuid
+		  AND q.capture_timestamp >= $2::timestamptz AND q.capture_timestamp <= $3::timestamptz
+		  %s%s
+		  %s
+		GROUP BY time
+		ORDER BY time
+	`, bucket, metricCol, readFilter, classFilter, dbFilter)
+
+	rows, err := tl.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	bucketSec := queryStatsTimeseriesBucketSeconds(bucket)
+	results := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var ts time.Time
+		var cpu, reads, dur, exec, val float64
+		if err := rows.Scan(&ts, &cpu, &reads, &dur, &exec, &val); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"timestamp":          ts,
+			"cpu_ms":             cpu,
+			"logical_reads":      reads,
+			"total_duration_ms":  dur,
+			"avg_duration_ms":    dur / (exec + 0.00001),
+			"executions":         exec,
+			"executions_per_sec": exec / bucketSec,
+			"value":              val,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(results) > 0 {
+		return results, nil
+	}
+	return tl.getQueryStatsTimeSeriesFromPerfCounters(ctx, serverID, from, to, bucket)
+}
+
+func queryStatsTimeseriesBucket(from, to string) string {
+	bucket := "5 min"
 	tFrom, errF := time.Parse(time.RFC3339, from)
 	tTo, errT := time.Parse(time.RFC3339, to)
 	if errF == nil && errT == nil {
@@ -162,7 +223,10 @@ func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, serverID
 			bucket = "15 min"
 		}
 	}
+	return bucket
+}
 
+func queryStatsTimeseriesMetricCol(metric string) string {
 	metricCol := map[string]string{
 		"cpu":        "total_cpu_ms",
 		"duration":   "total_elapsed_ms",
@@ -170,54 +234,61 @@ func (tl *TimescaleLogger) GetQueryStatsTimeSeries(ctx context.Context, serverID
 		"executions": "total_executions",
 	}[metric]
 	if metricCol == "" {
-		metricCol = "total_cpu_ms"
+		return "total_cpu_ms"
 	}
+	return metricCol
+}
 
-	dbFilter := ""
-	if dbName != "" && dbName != "all" {
-		dbFilter = fmt.Sprintf("AND q.database_name = '%s'", strings.ReplaceAll(dbName, "'", "''"))
+func queryStatsTimeseriesBucketSeconds(bucket string) float64 {
+	switch bucket {
+	case "1 hour":
+		return 3600
+	case "15 min":
+		return 900
+	default:
+		return 300
 	}
+}
 
+// getQueryStatsTimeSeriesFromPerfCounters provides chart data from instance perf counters
+// when sqlserver_query_metrics_v2 has no rows in the selected window.
+func (tl *TimescaleLogger) getQueryStatsTimeSeriesFromPerfCounters(ctx context.Context, serverID, from, to, bucket string) ([]map[string]interface{}, error) {
 	query := fmt.Sprintf(`
-		SELECT time_bucket('%s', q.capture_timestamp) AS time,
-		       SUM(q.%s)::float8 AS value
-		FROM sqlserver_query_metrics_v2 q
-		LEFT JOIN sqlserver_query_classification_dim class
-		  ON class.server_id = q.server_id
-		 AND class.query_hash = q.query_hash
-		WHERE q.server_id = $1::uuid
-		  AND q.capture_timestamp >= $2 AND q.capture_timestamp <= $3
-		  AND q.query_text_raw NOT LIKE '%%%%/* SQL_OPTIMA%%%%'
-		  AND q.statement_text NOT LIKE '%%%%sys.all_objects%%%%'
-		  AND q.statement_text NOT LIKE '%%%%[sys].all_objects%%%%'
-		  AND q.statement_text NOT LIKE '%%%%sp_MShistory_cleanup%%%%'
-		  AND UPPER(q.statement_text) NOT LIKE '%%%%SYS.%%%%'
-		  AND UPPER(q.statement_text) NOT LIKE '%%%%[SYS].%%%%'
-		  AND COALESCE(q.is_user_workload, 1) = 1
-		  AND COALESCE(class.classification, 'UNKNOWN') <> 'SYSTEM'
-		  %s
-		GROUP BY time
-		ORDER BY time
-	`, bucket, metricCol, dbFilter)
+		SELECT
+			time_bucket('%s', capture_timestamp) AS bucket,
+			COALESCE(MAX(CASE WHEN counter_name = 'Batch Requests/sec' THEN value_per_sec END), 0) AS batch_rate,
+			COALESCE(MAX(CASE WHEN counter_name = 'Page Reads/sec' THEN value_per_sec END), 0) AS page_reads_rate
+		FROM sqlserver_perf_counters
+		WHERE server_id = $1::uuid
+		  AND capture_timestamp >= $2::timestamptz
+		  AND capture_timestamp <= $3::timestamptz
+		  AND counter_name IN ('Batch Requests/sec', 'Page Reads/sec')
+		GROUP BY bucket
+		ORDER BY bucket ASC
+	`, bucket)
 
 	rows, err := tl.pool.Query(ctx, query, serverID, from, to)
 	if err != nil {
-		return nil, err
+		return []map[string]interface{}{}, err
 	}
 	defer rows.Close()
 
-	var results []map[string]interface{}
+	results := make([]map[string]interface{}, 0)
 	for rows.Next() {
 		var ts time.Time
-		var value float64
-
-		if err := rows.Scan(&ts, &value); err != nil {
+		var batchRate, readsRate float64
+		if err := rows.Scan(&ts, &batchRate, &readsRate); err != nil {
 			continue
 		}
-
 		results = append(results, map[string]interface{}{
-			"time":  ts,
-			"value": value,
+			"timestamp":          ts,
+			"cpu_ms":             0.0,
+			"logical_reads":      readsRate,
+			"total_duration_ms":  0.0,
+			"avg_duration_ms":    0.0,
+			"executions":         batchRate,
+			"executions_per_sec": batchRate,
+			"value":              batchRate,
 		})
 	}
 	return results, rows.Err()

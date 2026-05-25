@@ -42,6 +42,40 @@
                 "PLE": {
                     title: "Page Life Expectancy (PLE)",
                     text: "**What it is:** Number of seconds a data page stays in the buffer pool without being referenced.\n\n**Why it matters:** A key indicator of memory pressure. If PLE drops below 300-1000s, SQL Server is frequently evicting pages to make room for new ones, causing excessive disk I/O."
+                },
+                "Page Reads/sec": {
+                    title: "Page Reads/sec",
+                    text: "**What it is:** The number of physical 8KB pages read from disk per second.\n\n**Why it matters:** High physical reads indicate that SQL Server is not finding the data it needs in memory (Buffer Cache). This is a primary driver of I/O latency and often correlates with low PLE."
+                },
+                "Log Write Stall": {
+                    title: "Log Write Stall (ms)",
+                    text: "**What it is:** The average wait time for transaction log writes to complete.\n\n**Why it matters:** Every 'write' transaction must wait for the log flush. If log I/O is slow, every insert/update/delete in the system will be delayed, leading to high WRITELOG waits."
+                },
+                "IO Latency": {
+                    title: "I/O Latency (ms)",
+                    text: "**What it is:** The average time in milliseconds for the disk subsystem to complete an I/O request.\n\n**Why it matters:** High latency (>20ms for data, >5ms for log) indicates that the storage subsystem is a bottleneck. This can be caused by physical disk limits, RAID controller issues, or excessive I/O demand from poorly tuned queries."
+                }
+            }
+        },
+        "Wait Statistics": {
+            description: "Wait statistics are the primary diagnostic signal in SQL Server. Instead of just showing what the server is doing, they reveal what the server is *waiting* for. By analyzing wait categories, a DBA can distinguish between CPU saturation (SOS_SCHEDULER_YIELD), memory pressure (PAGEIOLATCH), or blocking (LCK_M).",
+            metrics: {
+                "Wait Categories": {
+                    title: "Wait Categories",
+                    text: "**CPU (Signal):** Tasks waiting for a CPU core.\n**I/O:** Waiting for data to be read from or written to disk.\n**Locking:** Waiting for another session to release a resource.\n**Memory:** Waiting for workspace memory or buffer pool pages.\n**Parallelism:** Overhead from managing parallel query execution (CXPACKET)."
+                }
+            }
+        },
+        "TempDB Analysis": {
+            description: "TempDB is a global resource used by all databases for temporary objects, internal worktables, and version store (RCSI). Because it is shared, it can easily become a performance bottleneck for the entire instance.",
+            metrics: {
+                "Space Distribution": {
+                    title: "TempDB Space Distribution",
+                    text: "**User Objects:** Global and local temporary tables (#table) and indexes.\n**Internal Objects:** Worktables created for sorts, hashes, and cursors.\n**Version Store:** Row versions used for snapshot isolation and online index builds.\n**Free Space:** Unallocated space available in TempDB data files."
+                },
+                "Contention": {
+                    title: "PFS/GAM/SGAM Contention",
+                    text: "**What it is:** Latch contention on metadata allocation pages.\n\n**Why it matters:** Occurs when many sessions try to allocate space simultaneously. Fix by adding TempDB data files (up to the number of logical cores) and enabling Trace Flag 1118 (or using default SQL 2016+ behavior)."
                 }
             }
         },
@@ -59,6 +93,10 @@
                 "IO Volume": {
                     title: "Logical Reads",
                     text: "**What it is:** The number of 8KB pages read from the buffer cache.\n\n**Why it matters:** High logical reads are a proxy for I/O pressure. Even if the data is in memory, high read volume consumes CPU cycles and can indicate missing indexes or poorly written queries."
+                },
+                "SQL Compilations": {
+                    title: "SQL Compilations/sec",
+                    text: "**What it is:** Number of times SQL Server compiles a query execution plan per second.\n\n**Why it matters:** Compiling a plan is a CPU-intensive operation. A high rate of compilations (relative to batch requests) suggests that plans are not being reused effectively, often due to lack of parameterization or plan cache pressure."
                 }
             }
         },
@@ -98,10 +136,18 @@
                 "Latch Waits/sec": {
                     title: "Latch Waits/sec",
                     text: "**What it is:** Rate of internal latch waits. Latches are lightweight synchronization objects that protect internal memory structures.\n\n**Why it matters:** High latch waits indicate internal contention, such as Buffer Pool contention or TempDB allocation bottlenecks."
+                },
+                "Logins/sec": {
+                    title: "Logins/sec",
+                    text: "**What it is:** The rate of successful logins per second.\n\n**Why it matters:** High login rates can indicate 'connection churn' where applications frequently open and close connections instead of using a pool. This adds significant overhead to SQL Server."
+                },
+                "Server Memory": {
+                    title: "Server Memory (GB)",
+                    text: "**What it is:** Comparison of Target Server Memory (what SQL Server wants) vs Total Server Memory (what it currently has allocated).\n\n**Why it matters:** If Total is consistently lower than Target, it may indicate that the OS is under memory pressure and SQL Server cannot grow to its full configured potential."
                 }
             }
         },
-        "Storage & Maintenance": {
+        "Storage & Index Health": {
             description: "Tracks database size, growth trends, and evaluates index efficiency and fragmentation. Maintaining healthy indexes is the single most effective way to ensure consistent query performance. Fragmented indexes cause SQL Server to perform extra I/O to read what should be sequential data. This dashboard identifies candidate indexes for reorganization or rebuilding, and identifies 'wasted' indexes that are updated often but never read.",
             metrics: {
                 "Read:Write Ratio": {

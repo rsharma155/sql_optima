@@ -1,0 +1,327 @@
+/**
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: Styles for SQL Server Backup & Recovery dashboard.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+ */
+.mssql-backups-page {
+    min-height: calc(100vh - 80px);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 2rem;
+    --mssql-backup-gap: 0.75rem;
+}
+
+.mssql-backups-page .dashboard-grid-12 {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: var(--mssql-backup-gap);
+    width: 100%;
+}
+
+.mssql-backups-page .col-span-2 { grid-column: span 2; }
+.mssql-backups-page .col-span-6 { grid-column: span 6; }
+
+@media (max-width: 1024px) {
+    .mssql-backups-page .col-span-6 { grid-column: span 12; }
+    .mssql-backups-page .col-span-2 { grid-column: span 4; }
+}
+@media (max-width: 600px) {
+    .mssql-backups-page .col-span-2 { grid-column: span 6; }
+}
+
+.mssql-backups-page .kpi-card {
+    padding: 0.85rem 1rem;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.mssql-backups-page .kpi-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-muted, var(--text-muted));
+}
+
+.mssql-backups-page .kpi-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin-top: 0.25rem;
+}
+
+.mssql-backups-page .kpi-unit {
+    font-size: 0.65rem;
+    color: var(--color-muted, var(--text-muted));
+}
+
+.mssql-backup-readiness-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0.5rem;
+}
+
+.mssql-backup-readiness-chip {
+    font-size: 0.72rem;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.mssql-backup-readiness-chip.ok { color: #4ade80; border-color: #16a34a55; border-left: 3px solid #22c55e; }
+.mssql-backup-readiness-chip.warn { color: #fbbf24; border-color: #d9770655; border-left: 3px solid #f59e0b; }
+.mssql-backup-readiness-chip.bad { color: #f87171; border-color: #dc262655; border-left: 3px solid #ef4444; }
+
+.mssql-dr-overall {
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.mssql-table-card {
+    padding: 0.65rem 0.85rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 200px;
+}
+
+.mssql-table-card .panel-header {
+    margin-bottom: 0.4rem;
+}
+
+.mssql-table-card .panel-header h4 {
+    font-size: 0.8rem;
+    margin: 0;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.mssql-table-wrap {
+    flex: 1;
+    overflow: auto;
+    max-height: 420px;
+    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.25));
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.12);
+}
+
+.mssql-backups-page .mssql-grid-table {
+    width: 100%;
+    font-size: 0.74rem;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.mssql-backups-page .mssql-grid-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg-secondary, rgba(15, 23, 42, 0.95));
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-muted, var(--text-muted));
+    font-weight: 600;
+    padding: 10px 12px;
+    text-align: left;
+    white-space: nowrap;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.mssql-backups-page .mssql-grid-table tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    vertical-align: middle;
+    color: var(--text-primary, #e2e8f0);
+}
+
+.mssql-backups-page .mssql-grid-table tbody tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.mssql-backups-page .mssql-grid-table tbody tr:hover {
+    background: rgba(56, 189, 248, 0.06);
+}
+
+.mssql-backups-page .mssql-grid-table tbody tr.mssql-row-stale {
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.mssql-backups-page .mssql-grid-table tbody tr.mssql-row-warn {
+    background: rgba(245, 158, 11, 0.06);
+}
+
+.mssql-backups-page .mssql-grid-table .col-db {
+    font-weight: 600;
+    color: var(--text-accent, #38bdf8);
+}
+
+.mssql-backups-page .mssql-grid-table .col-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.mssql-backups-page .mssql-grid-table .col-status {
+    white-space: nowrap;
+}
+
+.mssql-empty-cell {
+    text-align: center;
+    padding: 2.5rem 1rem !important;
+    color: var(--color-muted, var(--text-muted));
+    font-size: 0.78rem;
+}
+
+.mssql-empty-cell i {
+    display: block;
+    font-size: 1.2rem;
+    margin-bottom: 0.5rem;
+    opacity: 0.6;
+}
+
+.mssql-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-left: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.mssql-badge.ok {
+    color: #4ade80;
+    background: rgba(74, 222, 128, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.mssql-badge.bad {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.mssql-badge.warn {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.mssql-badge.tier {
+    color: #94a3b8;
+    background: rgba(148, 163, 184, 0.12);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    text-transform: none;
+}
+
+.mssql-badge.type-D { color: #4ade80; background: rgba(74, 222, 128, 0.12); border: none; }
+.mssql-badge.type-I { color: #60a5fa; background: rgba(96, 165, 250, 0.12); border: none; }
+.mssql-badge.type-L { color: #fbbf24; background: rgba(251, 191, 36, 0.12); border: none; }
+
+.mssql-backup-tabs {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+}
+
+.mssql-backup-tab {
+    font-size: 0.75rem;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--color-muted, var(--text-muted));
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.mssql-backup-tab:hover {
+    border-color: rgba(56, 189, 248, 0.35);
+    color: var(--text-primary, #e2e8f0);
+}
+
+.mssql-backup-tab.active {
+    color: var(--color-accent, #38bdf8);
+    border-color: rgba(56, 189, 248, 0.45);
+    background: rgba(56, 189, 248, 0.1);
+}
+
+.mssql-policy-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+    align-items: end;
+    max-width: 720px;
+    padding: 0.25rem 0;
+}
+
+.mssql-policy-form label {
+    display: flex;
+    flex-direction: column;
+    font-size: 0.75rem;
+    color: var(--color-muted, var(--text-muted));
+    gap: 0.35rem;
+}
+
+.mssql-policy-form input.form-control {
+    padding: 0.45rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    background: rgba(0, 0, 0, 0.2);
+    color: inherit;
+}
+
+.mssql-backups-page .chart-container-sm {
+    min-height: 220px;
+    padding: 0.65rem 0.85rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.mssql-backups-page .chart-container-sm canvas {
+    flex: 1;
+    min-height: 0;
+    max-height: 190px;
+    width: 100% !important;
+}
+
+.mssql-backups-page .section-heading {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-muted, var(--text-muted));
+    margin: 0.5rem 0 0.35rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.mssql-time-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    line-height: 1.25;
+}
+
+.mssql-time-cell-single {
+    flex-direction: row;
+    align-items: center;
+}
+
+.mssql-time-cell .mssql-time-age {
+    font-size: 0.65rem;
+    color: var(--color-muted, var(--text-muted));
+}

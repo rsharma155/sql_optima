@@ -88,7 +88,7 @@ type TSConnParams struct {
 func (p TSConnParams) parsePoolConfig() (*pgxpool.Config, error) {
 	ssl := strings.TrimSpace(p.SSLMode)
 	if ssl == "" {
-		ssl = "require"
+		ssl = "disable"
 	}
 	u := &url.URL{
 		Scheme: "postgres",

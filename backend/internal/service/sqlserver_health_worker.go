@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/models"
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
@@ -35,6 +36,25 @@ var (
 	perfCounterMu        sync.Mutex
 	perfCounterSnapshots = make(map[uuid.UUID]*perfCounterState)
 )
+
+// readPerfCounterRatesFromCache reads pre-computed rates from sqlserver_perf_counters
+// (written by StartPerfCountersCollector) and avoids a DMV round-trip.
+// Returns zeros when tsLogger is nil or when no fresh row exists (first boot).
+func readPerfCounterRatesFromCache(ctx context.Context, serverID uuid.UUID, tsLogger *hot.TimescaleLogger) (
+	pageReadsPerSec, batchReqPerSec, compilationsPerSec, loginsPerSec float64, err error,
+) {
+	if tsLogger == nil {
+		return 0, 0, 0, 0, nil
+	}
+	pr, prOk, _ := tsLogger.GetLatestPerfCounter(ctx, serverID, "Page Reads/sec", "")
+	br, brOk, _ := tsLogger.GetLatestPerfCounter(ctx, serverID, "Batch Requests/sec", "")
+	sc, scOk, _ := tsLogger.GetLatestPerfCounter(ctx, serverID, "SQL Compilations/sec", "")
+	ls, lsOk, _ := tsLogger.GetLatestPerfCounter(ctx, serverID, "Logins/sec", "")
+	if prOk || brOk || scOk || lsOk {
+		return pr, br, sc, ls, nil
+	}
+	return 0, 0, 0, 0, nil
+}
 
 // readPerfCounterRates reads the four rate counters from a single
 // fast DMV query and computes per-second rates using the previous snapshot.
@@ -137,16 +157,19 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 
 		serverID := inst.ServerID
 
+		// Update status via Ping before collection
+		s.MsRepo.UpdateInstanceStatus(inst.Name)
+
 		// Fetch basic metrics
 		db, ok := s.MsRepo.GetConn(inst.Name)
-		if !ok {
+		if !ok || s.MsRepo.GetInstanceStatus(inst.Name) != "online" {
 			continue
 		}
 
 		// Comprehensive query for Health V2 Dashboard (KPIs that don't need delta in Go)
 		query := `
 			/* SQL_OPTIMA */ SELECT 
-				(SELECT TOP(1) [SQLProcessUtilization]
+				ISNULL((SELECT TOP(1) [SQLProcessUtilization]
 				 FROM ( 
 					SELECT record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') AS [SQLProcessUtilization], [timestamp] 
 					FROM ( 
@@ -156,7 +179,7 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 						AND record LIKE N'%<SystemHealth>%'
 					) AS x 
 				 ) AS y 
-				 ORDER BY [timestamp] DESC) as sql_cpu_pct,
+				 ORDER BY [timestamp] DESC), 0) as sql_cpu_pct,
 				(SELECT ISNULL(SUM(runnable_tasks_count), 0) FROM sys.dm_os_schedulers WITH (NOLOCK) WHERE status = 'VISIBLE ONLINE') as runnable_tasks,
 				(SELECT COUNT(*) FROM sys.dm_exec_query_memory_grants WITH (NOLOCK) WHERE grant_time IS NULL) as grants_pending,
 				(SELECT ISNULL(CAST(SUM(io_stall_write_ms) / CASE WHEN SUM(num_of_writes) = 0 THEN 1 ELSE SUM(num_of_writes) END AS DOUBLE PRECISION), 0) 
@@ -164,32 +187,56 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 				 WHERE file_id = 2) as log_write_wait_ms,
 				(SELECT COUNT(*) FROM sys.dm_exec_requests WITH (NOLOCK) WHERE blocking_session_id <> 0) as blocked_sessions,
 				(SELECT COUNT(*) FROM sys.dm_exec_sessions WITH (NOLOCK) WHERE is_user_process = 1) as user_connections,
-				(SELECT CAST(cntr_value/1024.0 AS DOUBLE PRECISION) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Target Server Memory (KB)' AND object_name LIKE '%Memory Manager%') as target_mem_mb,
-				(SELECT CAST(cntr_value/1024.0 AS DOUBLE PRECISION) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Total Server Memory (KB)' AND object_name LIKE '%Memory Manager%') as total_mem_mb,
-				CAST(SERVERPROPERTY('Edition') AS NVARCHAR(128)) as edition,
-				(SELECT DATEDIFF(SECOND, sqlserver_start_time, GETDATE()) FROM sys.dm_os_sys_info WITH (NOLOCK)) as uptime_seconds;
+				ISNULL((SELECT CAST(cntr_value/1024.0 AS DOUBLE PRECISION) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Target Server Memory (KB)' AND object_name LIKE '%Memory Manager%'), 0) as target_mem_mb,
+				ISNULL((SELECT CAST(cntr_value/1024.0 AS DOUBLE PRECISION) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Total Server Memory (KB)' AND object_name LIKE '%Memory Manager%'), 0) as total_mem_mb,
+				CAST(ISNULL(SERVERPROPERTY('Edition'), 'Unknown') AS NVARCHAR(128)) as edition,
+				CAST(ISNULL(SERVERPROPERTY('EngineEdition'), 0) AS INT) as engine_edition,
+				ISNULL((SELECT DATEDIFF(SECOND, sqlserver_start_time, GETDATE()) FROM sys.dm_os_sys_info WITH (NOLOCK)), 0) as uptime_seconds,
+				ISNULL((SELECT TOP 1 cntr_value FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Page life expectancy' AND object_name LIKE '%Buffer Manager%'), 0) as ple;
 		`
 
 		var k models.HealthV2KPIs
 		var uptimeSeconds int64
-		err := db.QueryRowContext(ctx, query).Scan(
-			&k.SqlCpuPct, &k.RunnableTasks, &k.MemGrantsPending,
-			&k.LogWriteWaitMs, &k.BlockedSessions,
-			&k.UserConnections, &k.TargetServerMemoryMB, &k.TotalServerMemoryMB,
-			&k.Edition, &uptimeSeconds,
-		)
+		var engineEdition int
+		scanHealth := func(d *sql.DB) error {
+			return d.QueryRowContext(ctx, query).Scan(
+				&k.SqlCpuPct, &k.RunnableTasks, &k.MemGrantsPending,
+				&k.LogWriteWaitMs, &k.BlockedSessions,
+				&k.UserConnections, &k.TargetServerMemoryMB, &k.TotalServerMemoryMB,
+				&k.Edition, &engineEdition, &uptimeSeconds, &k.DataCacheLifeLifeSec,
+			)
+		}
+		err := scanHealth(db)
+		if err != nil && repository.IsMSSQLConnError(err) {
+			// Transport-level disconnect — try to reopen the pool and retry once.
+			if s.MsRepo.ReconnectInstance(ctx, inst.Name) {
+				if db2, ok2 := s.MsRepo.GetConn(inst.Name); ok2 {
+					db = db2
+					err = scanHealth(db)
+				}
+			}
+		}
 		if err != nil {
 			slog.Error("[SQLServerHealth] ERROR: Failed to collect health metrics", "target", inst.Name, "err", err)
 			continue
 		}
 
-		// Fill in rate metrics using Go-side delta computation
-		pr, br, sc, ls, err := readPerfCounterRates(ctx, db, serverID)
-		if err == nil {
+		// Fill in rate metrics — prefer TimescaleDB cache to avoid a DMV round-trip.
+		// Falls back to direct DMV read on first boot (before StartPerfCountersCollector
+		// has written its first snapshot).
+		pr, br, sc, ls, cacheErr := readPerfCounterRatesFromCache(ctx, serverID, s.tsLogger)
+		if cacheErr == nil && (pr > 0 || br > 0 || sc > 0 || ls > 0) {
 			k.PageReadsPerSec = pr
 			k.BatchRequests = br
 			k.Compilations = sc
 			k.LoginsPerSec = ls
+		} else {
+			if pr2, br2, sc2, ls2, err := readPerfCounterRates(ctx, db, serverID); err == nil {
+				k.PageReadsPerSec = pr2
+				k.BatchRequests = br2
+				k.Compilations = sc2
+				k.LoginsPerSec = ls2
+			}
 		}
 
 		k.InstanceStatus = "Healthy"
@@ -202,28 +249,65 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 
 		_ = s.tsLogger.LogSqlServerHealthV2KPIs(ctx, serverID, k, uptimeSeconds)
 
+		// 13b. Update Dashboard Cache for DashboardV2/Triage UI
+		cached := s.GetCachedDashboard(serverID)
+		cached.InstanceName = inst.Name
+		cached.AvgCPULoad = float64(k.SqlCpuPct)
+		cached.MemoryUsage = k.TotalServerMemoryMB / 1024.0 // Show in GB for the card
+		if k.TargetServerMemoryMB > 0 {
+			cached.MemoryUtilizationPct = (k.TotalServerMemoryMB / k.TargetServerMemoryMB) * 100.0
+		}
+		cached.PLE = k.DataCacheLifeLifeSec
+		cached.ActiveUsers = int(k.UserConnections)
+		cached.TotalLocks = int(k.BlockedSessions)
+		cached.Timestamp = time.Now().Format(time.RFC3339)
+
+		// Aggregate storage for the "Storage Capacity" KPI card
+		vols, _ := s.MsRepo.FetchVolumeStats(ctx, inst.Name)
+		if len(vols) > 0 {
+			minFree := 100.0
+			for _, v := range vols {
+				if v.VolumeFreePct < minFree {
+					minFree = v.VolumeFreePct
+				}
+			}
+			cached.StorageMinFreePct = minFree
+			cached.VolumesTracked = len(vols)
+		}
+		s.SetCachedDashboard(serverID, cached)
+
+		if engineEdition > 0 && s.ServerRepo != nil {
+			_ = s.ServerRepo.SetEngineEdition(ctx, serverID, engineEdition)
+		}
+
 		// 14. Server Properties (Log once per hour or on start)
 		if uptimeSeconds < 60 || time.Now().Minute() == 0 {
 			propQuery := `
 				/* SQL_OPTIMA */
-				SELECT 
+				SELECT
 					cpu_count, hyperthread_ratio, physical_memory_kb/1024 as physical_memory_mb,
 					virtual_memory_kb/1024 as virtual_memory_mb, socket_count, cores_per_socket,
-					max_workers_count
+					max_workers_count, scheduler_count, ms_ticks,
+					CONVERT(VARCHAR(30), sqlserver_start_time, 126) AS sqlserver_start_time
 				FROM sys.dm_os_sys_info WITH (NOLOCK);`
-			var cc, sc, cps, mwc int
+			var cc, sc, cps, mwc, schedCount int
 			var hr, pm, vm float64
-			if err := db.QueryRowContext(ctx, propQuery).Scan(&cc, &hr, &pm, &vm, &sc, &cps, &mwc); err == nil {
+			var msTicks int64
+			var startTimeStr string
+			if err := db.QueryRowContext(ctx, propQuery).Scan(&cc, &hr, &pm, &vm, &sc, &cps, &mwc, &schedCount, &msTicks, &startTimeStr); err == nil {
 				props := map[string]interface{}{
-					"cpu_count":          cc,
-					"hyperthread_ratio":  hr,
-					"physical_memory_gb": pm / 1024.0,
-					"virtual_memory_gb":  vm / 1024.0,
-					"socket_count":       sc,
-					"cores_per_socket":   cps,
-					"max_workers_count":  mwc,
-					"cpu_type":           "Unknown",
-					"properties_hash":    fmt.Sprintf("%d-%d-%d", cc, sc, int(pm)),
+					"cpu_count":            cc,
+					"hyperthread_ratio":    hr,
+					"physical_memory_gb":   pm / 1024.0,
+					"virtual_memory_gb":    vm / 1024.0,
+					"socket_count":         sc,
+					"cores_per_socket":     cps,
+					"max_workers_count":    mwc,
+					"scheduler_count":      schedCount,
+					"ms_ticks":             msTicks,
+					"sqlserver_start_time": startTimeStr,
+					"cpu_type":             "Unknown",
+					"properties_hash":      fmt.Sprintf("%d-%d-%d", cc, sc, int(pm)),
 				}
 				_ = s.tsLogger.LogServerProperties(ctx, serverID, props)
 			}
@@ -233,9 +317,9 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 		riskQuery := `
 			/* SQL_OPTIMA */
 			SELECT 
-				(SELECT cntr_value FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Page life expectancy' AND object_name LIKE '%Buffer Manager%') as ple,
-				(SELECT (a.cntr_value * 1.0 / b.cntr_value) * 100.0 FROM sys.dm_os_performance_counters a JOIN sys.dm_os_performance_counters b ON a.object_name = b.object_name WHERE a.counter_name = 'Buffer cache hit ratio' AND b.counter_name = 'Buffer cache hit ratio base' AND a.object_name LIKE '%Buffer Manager%') as bch_pct,
-				(SELECT MAX(used_log_space_in_percent) FROM sys.dm_db_log_space_usage) as max_log_pct,
+				ISNULL((SELECT cntr_value FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Page life expectancy' AND object_name LIKE '%Buffer Manager%'), 0) as ple,
+				ISNULL((SELECT (a.cntr_value * 1.0 / b.cntr_value) * 100.0 FROM sys.dm_os_performance_counters a JOIN sys.dm_os_performance_counters b ON a.object_name = b.object_name WHERE a.counter_name = 'Buffer cache hit ratio' AND b.counter_name = 'Buffer cache hit ratio base' AND a.object_name LIKE '%Buffer Manager%'), 0) as bch_pct,
+				ISNULL((SELECT MAX(used_log_space_in_percent) FROM sys.dm_db_log_space_usage), 0) as max_log_pct,
 				(SELECT ISNULL(COUNT(*), 0) FROM sys.dm_os_ring_buffers WHERE ring_buffer_type = 'RING_BUFFER_SECURITY_ERROR' AND DATEADD(ms, -1 * ((SELECT cpu_tick/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info) - [timestamp]), GETUTCDATE()) > DATEADD(minute, -5, GETUTCDATE())) as failed_logins;`
 		var ple, bch, mlp float64
 		var fl int
@@ -315,6 +399,7 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 
 		// 1. CPU History
 		cpuQuery := `
+			/* SQL_OPTIMA */
 			DECLARE @ts_now bigint = (SELECT cpu_tick/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
 			SELECT TOP(30)
 				SQLProcessUtilization AS sql_process, 
@@ -355,6 +440,7 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 
 		// 2. Connection stats
 		connQuery := `
+			/* SQL_OPTIMA */
 			SELECT 
 				ISNULL(s.login_name, 'Unknown'),
 				ISNULL(DB_NAME(s.database_id), 'Unknown'),
@@ -388,6 +474,7 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 
 		// 3. Disk usage
 		diskQuery := `
+			/* SQL_OPTIMA */
 			SELECT 
 				ISNULL(DB_NAME(database_id), 'Unknown'),
 				SUM(CASE WHEN type=0 THEN size * 8.0/1024.0 ELSE 0 END) as Data,
@@ -616,15 +703,8 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 			}
 		}
 
-		// 8. Perf counters — log the rates already computed above
-		if pr > 0 || br > 0 || sc > 0 || ls > 0 {
-			_ = s.tsLogger.LogSqlServerPerfCounters(ctx, serverID, map[string]float64{
-				"Page Reads/sec":       pr,
-				"Batch Requests/sec":   br,
-				"SQL Compilations/sec": sc,
-				"Logins/sec":           ls,
-			})
-		}
+		// 8. Perf counters are written by StartPerfCountersCollector (LogSqlServerPerfCountersV2).
+		// Health KPIs above read from that cache; do not duplicate inserts here.
 
 		// 9. File IO latency is handled by the dedicated StartFileIOLatencyCollector (60s interval,
 		// hash-based dedup, zero-row skipping). Do not duplicate it here.
@@ -759,7 +839,7 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 		}
 
 		// 17. Database Throughput
-		throughput, err := s.MsRepo.FetchDatabaseThroughput(ctx, inst.Name)
+		throughput, err := s.MsRepo.FetchDatabaseThroughput(ctx, serverID, inst.Name)
 		if err == nil && len(throughput) > 0 {
 			var stats []map[string]interface{}
 			for _, t := range throughput {

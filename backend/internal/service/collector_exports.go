@@ -122,11 +122,11 @@ func (s *MetricsService) StartPostgresNewDashboardsCollectors(ctx context.Contex
 					// Call PG snapshot collection for each instance
 					for _, inst := range s.Config.Instances {
 						if strings.ToLower(inst.Type) == "postgres" {
+							s.PgRepo.UpdateInstanceStatus(inst.Name)
 							serverID := inst.ServerID
 							s.EnqueueCollection(serverID, func() {
 								db, ok := s.PgRepo.GetConn(inst.Name)
-								if !ok {
-									slog.Error("[PostgresDashboards] ERROR: Connection failed for", "val", inst.Name)
+								if !ok || s.PgRepo.GetInstanceStatus(inst.Name) != "online" {
 									return
 								}
 

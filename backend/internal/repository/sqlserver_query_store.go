@@ -92,6 +92,53 @@ func (c *SqlServerRepository) FetchQueryStoreStats(ctx context.Context, instance
 	return merged, nil
 }
 
+type QueryStoreOptions struct {
+	DatabaseName          string
+	DesiredStateDesc      string
+	ActualStateDesc       string
+	ReadonlyReason        int
+	CurrentStorageSizeMB  float64
+	MaxStorageSizeMB      float64
+	StorageUsedPct        float64
+	BrokenForcedPlans     int
+}
+
+func (c *SqlServerRepository) FetchQueryStoreOptions(ctx context.Context, instanceName, databaseName string) (QueryStoreOptions, error) {
+	db, ok := c.GetConn(instanceName)
+	if !ok || db == nil {
+		return QueryStoreOptions{}, fmt.Errorf("connection not found")
+	}
+
+	query := fmt.Sprintf(`
+		/* SQL_OPTIMA */
+		USE %s;
+		SELECT
+			DB_NAME()                                                 AS database_name,
+			desired_state_desc,
+			actual_state_desc,
+			readonly_reason,
+			current_storage_size_mb,
+			max_storage_size_mb,
+			CAST(current_storage_size_mb * 100.0
+				 / NULLIF(max_storage_size_mb, 0) AS DECIMAL(5,2))  AS storage_used_pct,
+			(SELECT COUNT(*)
+			 FROM sys.query_store_plan
+			 WHERE is_forced_plan = 1
+			   AND force_failure_count > 0)                          AS broken_forced_plans
+		FROM sys.database_query_store_options;
+	`, sqlServerQuoteBracket(databaseName))
+
+	var o QueryStoreOptions
+	ctx, cancel := WithQueryTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	err := db.QueryRowContext(ctx, query).Scan(
+		&o.DatabaseName, &o.DesiredStateDesc, &o.ActualStateDesc, &o.ReadonlyReason,
+		&o.CurrentStorageSizeMB, &o.MaxStorageSizeMB, &o.StorageUsedPct, &o.BrokenForcedPlans,
+	)
+	return o, err
+}
+
 func queryStoreStatsSelectSQL(dbPrefix string) string {
 	return fmt.Sprintf(`
 		/* SQL_OPTIMA */ 

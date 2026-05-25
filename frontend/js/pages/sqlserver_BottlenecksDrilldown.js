@@ -248,12 +248,14 @@ window.loadBottlenecks = async function() {
             console.log('[Bottlenecks] Query Store table is empty, falling back to live top queries');
             // Fallback to live top queries from dashboard
             const liveResponse = await window.apiClient.authenticatedFetch(
-                `/api/sqlserver/dashboard?instance=${encodeURIComponent(inst.name)}`
+                `/api/sqlserver/dashboard?instance=${encodeURIComponent(inst.name)}&source=live`
             );
             if (liveResponse.ok) {
                 const liveData = await liveResponse.json();
-                console.log('[Bottlenecks] Live dashboard data:', JSON.stringify(liveData).substring(0, 500));
-                queries = liveData.top_queries || [];
+                if (liveData.status !== 'no_data') {
+                    console.log('[Bottlenecks] Live dashboard data:', JSON.stringify(liveData).substring(0, 500));
+                    queries = liveData.top_queries || [];
+                }
             }
         }
         
@@ -265,14 +267,16 @@ window.loadBottlenecks = async function() {
         // Final fallback - try live dashboard
         try {
             const liveResponse = await window.apiClient.authenticatedFetch(
-                `/api/sqlserver/dashboard?instance=${encodeURIComponent(inst.name)}`
+                `/api/sqlserver/dashboard?instance=${encodeURIComponent(inst.name)}&source=live`
             );
             if (liveResponse.ok) {
                 const liveData = await liveResponse.json();
-                const queries = liveData.top_queries || [];
-                window.renderBottlenecksTable(queries);
-                document.getElementById('bottleneckCount').textContent = `${queries.length} queries (live)`;
-                return;
+                if (liveData.status !== 'no_data') {
+                    const queries = liveData.top_queries || [];
+                    window.renderBottlenecksTable(queries);
+                    document.getElementById('bottleneckCount').textContent = `${queries.length} queries (live)`;
+                    return;
+                }
             }
         } catch (e) {
             console.error('Live fallback also failed:', e);

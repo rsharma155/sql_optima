@@ -121,7 +121,7 @@ func (s *MetricsService) collectPgTableIndexUsage(ctx context.Context, inst conf
 		if err == nil {
 			for _, t := range tables {
 				row := models.TableUsageStat{
-					Time:        t.CaptureTimestamp,
+					Timestamp:   t.CaptureTimestamp,
 					Engine:      "postgres",
 					ServerID:    inst.ServerID,
 					DBName:      dbName,
@@ -140,7 +140,7 @@ func (s *MetricsService) collectPgTableIndexUsage(ctx context.Context, inst conf
 		if err == nil {
 			for _, idx := range indexes {
 				row := models.IndexUsageStat{
-					Time:        idx.CaptureTimestamp,
+					Timestamp:   idx.CaptureTimestamp,
 					Engine:      "postgres",
 					ServerID:    inst.ServerID,
 					DBName:      dbName,
@@ -178,7 +178,7 @@ func (s *MetricsService) collectPgGrowth(ctx context.Context, inst config.Instan
 		}
 		for _, t := range tables {
 			_ = s.tsLogger.InsertTableSizeHistory(ctx, models.TableSizeHistory{
-				Time:        now,
+				Timestamp:   now,
 				Engine:      "postgres",
 				ServerID:    inst.ServerID,
 				DBName:      dbName,

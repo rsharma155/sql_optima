@@ -5,7 +5,7 @@
     <!-- ROW 0: HEADER -->
     <div class="page-title flex-between dashboard-page-title-compact">
         <div class="dashboard-title-line">
-            <h1><i class="fa-solid fa-magnifying-glass"></i> Query Monitor <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Query Monitor" title="Learn more about this dashboard"></i></h1>
+            <h1><i class="fa-solid fa-magnifying-glass"></i> Query Monitor <i class="fa-solid fa-circle-info text-accent info-icon-clickable cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="Query Monitor" title="Learn more about this dashboard"></i></h1>
             <span class="subtitle">Deep analysis of pg_stat_statements and query performance trends</span>
         </div>
         <div class="flex-center dashboard-page-title-actions" style="gap: 0.75rem;">
@@ -21,6 +21,10 @@
 
     <div id="pg-statements-warning" class="alert alert-warning mb-3" style="display:none; font-size:0.75rem;">
         <i class="fa-solid fa-triangle-exclamation"></i> pg_stat_statements is NOT enabled. Please add it to shared_preload_libraries.
+    </div>
+
+    <div id="pgss-status-banner" class="alert alert-info mb-3" style="display:none; font-size:0.75rem;">
+        <i class="fa-solid fa-circle-info"></i> <span id="pgss-status-msg"></span>
     </div>
 
     <!-- ROW 1: MISSION CONTROL KPIs (pg_stat_statements time-series window) -->
@@ -111,7 +115,7 @@
                                 <button class="btn btn-xs btn-outline" data-action="call" data-fn="resetPgQueries"><i class="fa-solid fa-trash"></i> Reset Stats</button>
                             </div>
                         </div>
-                        <div class="pgss-top-queries-grid" id="pgss-top-grid">
+                        <div class="pgss-top-queries-grid bordered-grid" id="pgss-top-grid">
                             <!-- High-density Grid Header -->
                             <div class="pgss-grid-header">
                                 <div>#</div>
@@ -192,4 +196,8 @@
     .pgss-badge { font-size: 0.55rem; padding: 1px 4px; border-radius: 3px; font-weight: 700; text-transform: uppercase; margin: 0 2px; border: 1px solid rgba(255,255,255,0.1); }
     .pgss-badge-slow { background: rgba(239,68,68,0.2); color: #ef4444; border-color: #ef4444; }
     .pgss-badge-heavy { background: rgba(245,158,11,0.2); color: #f59e0b; border-color: #f59e0b; }
+
+    .bordered-grid div { border-right: 1px solid var(--border-color); }
+    .bordered-grid div:last-child { border-right: none; }
+    .pgss-top-queries-grid.wide-view { grid-template-columns: 40px 100px 1fr 140px 80px 100px 100px 100px 100px 100px 100px 120px 120px !important; max-width: 100% !important; }
 </style>

@@ -1,27 +1,31 @@
 <!--
  * SQL Optima — PostgreSQL CPU utilization template
 -->
-<div class="page-view active dashboard-sky-theme">
+<div class="page-view active dashboard-sky-theme pg-cpu-page">
     <!-- ROW 0: HEADER -->
     <div class="page-title flex-between dashboard-page-title-compact">
         <div class="dashboard-title-line">
-            <h1><i class="fa-solid fa-microchip"></i> CPU Health Monitor <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="CPU Health" title="Learn more about this dashboard"></i></h1>
+            <h1><i class="fa-solid fa-microchip"></i> CPU Health Monitor <i class="fa-solid fa-circle-info text-accent info-icon-clickable cursor-pointer" style="font-size: 0.9rem; margin-left: 0.5rem;" data-action="show-pg-dashboard-detail" data-dashboard="CPU Health" title="Learn more about this dashboard"></i></h1>
             <span class="subtitle">PostgreSQL query execution load, latency trends, and buffer cache efficiency</span>
         </div>
-        <div class="flex-center dashboard-page-title-actions">
+        <div class="flex-center dashboard-page-title-actions" style="gap:0.75rem;">
             <div class="mr-3 text-muted" style="font-size: 0.75rem;">Uptime: <span id="pg-uptime">--</span></div>
-            <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgCpuView"><i class="fa-solid fa-refresh"></i> Refresh</button>
+            <div id="time-picker-insertion-point"></div>
         </div>
     </div>
 
-    <!-- OS COLLECTOR NOTICE -->
-    <div class="pg-cpu-os-notice">
+    <!-- pgss status banner: shown when pg_stat_statements is not ready -->
+    <div id="pgss-status-banner" class="alert alert-info mb-3" style="display:none; font-size:0.75rem;">
+        <i class="fa-solid fa-circle-info"></i> <span id="pgss-status-msg"></span>
+    </div>
+
+    <!-- OS collector setup (dynamic; replaces static notice when agent not configured) -->
+    <div id="os-collector-setup-mount-cpu" style="display:none; margin-bottom:0.75rem;"></div>
+    <div class="pg-cpu-os-notice" id="pg-cpu-os-notice-fallback">
         <i class="fa-solid fa-circle-info"></i>
         <span>
             <strong>System CPU metrics not available</strong> — the OS Collector agent is not deployed on this host.
-            This dashboard shows <strong>PostgreSQL query execution metrics</strong> as a CPU load proxy:
-            execution time, query throughput, and buffer cache efficiency.
-            Host-level CPU%, memory, and process metrics will appear here automatically once the OS agent is configured.
+            This dashboard shows <strong>PostgreSQL query execution metrics</strong> as a CPU load proxy.
         </span>
     </div>
 
@@ -57,13 +61,14 @@
         </div>
     </div>
 
+    <div class="pg-cpu-charts-laptop">
     <!-- ROW 2: PG EXECUTION LOAD + DB SHARE -->
     <div class="grid-container mt-3">
-        <div class="col-8 col-laptop-8 col-tablet-12">
+        <div class="col-8 col-laptop-8 col-tablet-12 pg-cpu-exec-col">
             <div class="card glass-panel h-chart-md">
                 <div class="card-header flex-between">
                     <div>
-                        <h3 style="font-size:0.8rem; margin:0;">PostgreSQL Execution Load</h3>
+                        <h3 style="font-size:0.8rem; margin:0;">PostgreSQL Execution Load <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="CPU Health" data-metric="Execution Load"></i></h3>
                         <span class="text-muted" style="font-size:0.65rem;">Total exec time per bucket (CPU proxy) · right axis: avg query latency</span>
                     </div>
                     <span class="badge badge-outline" id="pg-ts-bucket-label">5 min buckets</span>
@@ -73,9 +78,9 @@
                 </div>
             </div>
         </div>
-        <div class="col-4 col-laptop-4 col-tablet-12">
+        <div class="col-4 col-laptop-4 col-tablet-6 pg-cpu-db-share-col">
             <div class="card glass-panel h-chart-md">
-                <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Database Load Share</h3></div>
+                <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Database Load Share <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="CPU Health" data-metric="Database Share"></i></h3></div>
                 <div class="chart-container" style="height: 220px;">
                     <canvas id="cpuDbDonutChart"></canvas>
                 </div>
@@ -85,10 +90,10 @@
 
     <!-- ROW 3: QUERY TYPE + CACHE HIT TREND -->
     <div class="grid-container mt-3">
-        <div class="col-4 col-laptop-4 col-tablet-12">
+        <div class="col-4 col-laptop-4 col-tablet-6 pg-cpu-query-type-col">
             <div class="card glass-panel h-chart-md">
                 <div class="card-header">
-                    <h3 style="font-size:0.8rem; margin:0;">Query Type Breakdown</h3>
+                    <h3 style="font-size:0.8rem; margin:0;">Query Type Breakdown <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="CPU Health" data-metric="Query Type"></i></h3>
                     <span class="text-muted" style="font-size:0.65rem;">By execution time share</span>
                 </div>
                 <div class="chart-container" style="height: 220px;">
@@ -96,11 +101,11 @@
                 </div>
             </div>
         </div>
-        <div class="col-8 col-laptop-8 col-tablet-12">
+        <div class="col-8 col-laptop-8 col-tablet-12 pg-cpu-cache-col">
             <div class="card glass-panel h-chart-md">
                 <div class="card-header flex-between">
                     <div>
-                        <h3 style="font-size:0.8rem; margin:0;">Buffer Cache Hit Ratio</h3>
+                        <h3 style="font-size:0.8rem; margin:0;">Buffer Cache Hit Ratio <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="CPU Health" data-metric="Cache Hit %"></i></h3>
                         <span class="text-muted" style="font-size:0.65rem;">Healthy &gt; 99% · Warning &lt; 95%</span>
                     </div>
                     <span class="pg-cpu-cache-badge" id="pg-cache-badge">--</span>
@@ -111,14 +116,24 @@
             </div>
         </div>
     </div>
+    </div>
 
     <!-- ROW 4: TOP USER QUERIES -->
     <div class="grid-container mt-3">
         <div class="col-12">
             <div class="card glass-panel">
                 <div class="card-header flex-between">
-                    <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-fire text-danger"></i> Top CPU-Consuming User Queries</h3>
-                    <span class="text-muted" style="font-size:0.65rem;">User queries only · ranked by total execution time · monitoring users excluded</span>
+                    <div>
+                        <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-fire text-danger"></i> Top CPU-Consuming Queries <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="CPU Health" data-metric="Top CPU Queries"></i></h3>
+                        <span class="text-muted" style="font-size:0.65rem;" id="pg-cpu-queries-subtitle">Ranked by total execution time · monitoring users excluded</span>
+                    </div>
+                    <div class="flex-center" style="gap:1rem;">
+                        <label class="flex-center cursor-pointer" style="font-size:0.7rem; gap:0.4rem; user-select:none;">
+                            <input type="checkbox" id="pg-cpu-show-system" />
+                            Include System Queries
+                        </label>
+                        <span class="text-muted" style="font-size:0.65rem;">Top 15</span>
+                    </div>
                 </div>
                 <div class="table-container-compact h-table-md">
                     <table class="modern-table modern-table-compact pg-cpu-queries-table">

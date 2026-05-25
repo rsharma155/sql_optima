@@ -2,21 +2,37 @@
  * SQL Optima — SQL Server Workload Observability
 -->
 <div class="page-view active dashboard-sky-theme workload-page-modern">
-    <!-- ROW 0: HEADER -->
-    <div class="wl-page-header">
-        <div class="dashboard-title-line">
-            <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-gauge-high"></i> SQL Server Workload <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Workload Analytics" title="Learn more about this dashboard"></i></h1>
-            <span class="subtitle" style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px; display:block;">Instance: <span id="wlInstanceName" class="text-accent">--</span> | Workload Intelligence &amp; Root Cause Analytics</span>
-        </div>
-        <div class="wl-header-actions">
-            <div class="glass-panel wl-range-picker">
-                <input type="datetime-local" id="wlFrom" class="wl-dt-input" />
-                <span class="text-muted">→</span>
-                <input type="datetime-local" id="wlTo" class="wl-dt-input" />
-                <button type="button" class="btn btn-xs btn-accent" id="wlApplyRange"><i class="fa-solid fa-filter"></i> Apply</button>
+    <div class="page-title flex-between dash-header-stack-laptop dash-v2-page-header dashboard-page-title-compact" style="padding: 10px 20px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color);">
+        <div class="dash-v2-header-body">
+            <div class="dash-v2-header-row-top dash-header-title-inline">
+                <h1 class="dash-v2-h1" style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;">
+                    <i class="fa-solid fa-gauge-high text-accent"></i>
+                    SQL Server Workload
+                    <i class="fa-solid fa-circle-info text-accent info-icon-clickable cursor-pointer" style="font-size: 0.9rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Workload Analytics" title="Learn more about this dashboard"></i>
+                </h1>
             </div>
-            <button class="btn btn-sm btn-outline text-accent" id="wlRefreshBtn" data-action="call" data-fn="wlRefreshAll"><i class="fa-solid fa-refresh"></i> Refresh</button>
+            <div class="dash-v2-header-row-bottom">
+                <span class="dash-v2-instance-name" style="font-size:0.7rem; color:var(--text-secondary); font-weight:600;"><i class="fa-solid fa-server" style="font-size:0.6rem;"></i> <span id="wlInstanceName" class="text-accent">--</span></span>
+                <div class="dash-v2-header-badges dash-header-meta">
+                    <span style="font-size:0.7rem; color:var(--text-muted);"><i class="fa-solid fa-database" style="font-size:0.6rem;"></i> Workload Intelligence &amp; Root Cause Analytics</span>
+                </div>
+                <div class="dash-v2-header-actions dash-header-actions dashboard-page-title-actions" style="align-items:center; gap:1rem;">
+                    <div id="time-picker-insertion-point"></div>
+                    <div class="text-muted" style="font-size:0.65rem; background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px;">
+                        Update: <span id="wl-last-update" class="text-accent">--:--:--</span>
+                    </div>
+                </div>
+            </div>
         </div>
+    </div>
+
+    <div id="wl-error-banner" class="alert alert-danger wl-error-banner" style="display:none; margin: 0.5rem 1rem 0; font-size: 0.75rem;"></div>
+
+    <div class="wl-toolbar" style="margin: 0 1rem 0.5rem; display:flex; flex-wrap:wrap; align-items:center; gap:0.75rem; font-size:0.72rem;">
+        <span class="text-muted"><i class="fa-solid fa-database"></i> Database</span>
+        <select id="wl-database-filter" class="form-control form-control-sm" style="min-width:10rem; max-width:14rem;" title="Database with highest CPU in the selected time range (user workload only; system and monitoring SQL excluded)">
+        </select>
+        <button type="button" class="btn btn-xs btn-outline" id="wl-apply-filters">Apply</button>
     </div>
 
     <!-- ROW 1: KPI STRIPS -->
@@ -28,9 +44,9 @@
                 <div id="wl-server-props" class="metrics-row-integrated">
                     <div class="metric-item"><div class="m-label">Cores</div><div class="m-value" id="wl-prop-cpu">--</div></div>
                     <div class="metric-item"><div class="m-label">RAM GB</div><div class="m-value" id="wl-prop-mem">--</div></div>
-                    <div class="metric-item"><div class="m-label">CPU Sec <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Workload Analytics" data-metric="CPU Sec"></i></div><div class="m-value text-accent" id="wl-kpi-cpu">--</div></div>
-                    <div class="metric-item"><div class="m-label">Throughput <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Workload Analytics" data-metric="Throughput"></i></div><div class="m-value text-success" id="wl-kpi-execs">--</div></div>
-                    <div class="metric-item"><div class="m-label">IO Volume <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Workload Analytics" data-metric="IO Volume"></i></div><div class="m-value text-warning" id="wl-kpi-reads">--</div></div>
+                    <div class="metric-item"><div class="m-label">CPU Sec <span class="wl-src-badge" title="TimescaleDB">TS</span> <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Workload Analytics" data-metric="CPU Sec"></i></div><div class="m-value text-accent" id="wl-kpi-cpu">--</div></div>
+                    <div class="metric-item"><div class="m-label">Throughput <span class="wl-src-badge" title="TimescaleDB">TS</span></div><div class="m-value text-success" id="wl-kpi-execs">--</div></div>
+                    <div class="metric-item"><div class="m-label">IO Volume <span class="wl-src-badge" title="TimescaleDB">TS</span></div><div class="m-value text-warning" id="wl-kpi-reads">--</div></div>
                 </div>
             </div>
         </div>
@@ -39,11 +55,11 @@
             <div class="glass-panel" style="padding:0.5rem; height: 100%;">
                 <h4 style="margin:0 0 0.4rem 0; color:var(--text-secondary); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em;"><i class="fa-solid fa-microchip"></i> Scheduler Status &amp; Pressure</h4>
                 <div id="wl-scheduler-stats" class="metrics-row-integrated">
-                    <div class="metric-item"><div class="m-label">Active <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Workload Analytics" data-metric="Active Workers"></i></div><div class="m-value" id="wl-sched-workers">--</div></div>
-                    <div class="metric-item"><div class="m-label">Queue <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Enterprise Metrics" data-metric="Runnable Tasks"></i></div><div class="m-value" id="wl-sched-queue">--</div></div>
-                    <div class="metric-item"><div class="m-label">Peak Grant <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Memory Analyzer" data-metric="Grants Pending"></i></div><div class="m-value text-danger" id="wl-kpi-mem">--</div></div>
-                    <div class="metric-item"><div class="m-label">Top 10 CPU% <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Query Analysis" data-metric="Regressions"></i></div><div class="m-value text-rose" id="kpi-cpu-share">--</div></div>
-                    <div class="metric-item"><div class="m-label">Regressions <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Query Analysis" data-metric="Regressions"></i></div><div class="m-value text-critical" id="kpi-regressions">--</div></div>
+                    <div class="metric-item"><div class="m-label">Active <span class="wl-src-badge" title="TimescaleDB">TS</span></div><div class="m-value" id="wl-sched-workers">--</div></div>
+                    <div class="metric-item"><div class="m-label">Queue <span class="wl-src-badge" title="TimescaleDB">TS</span></div><div class="m-value" id="wl-sched-queue">--</div></div>
+                    <div class="metric-item"><div class="m-label">Peak Grant <span class="wl-src-badge" title="TimescaleDB">TS</span></div><div class="m-value text-danger" id="wl-kpi-mem">--</div></div>
+                    <div class="metric-item"><div class="m-label">Top 10 CPU% <span class="wl-src-badge" title="Query Store">QS</span> <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Query Analysis" data-metric="Regressions"></i></div><div class="m-value text-rose" id="kpi-cpu-share">--</div></div>
+                    <div class="metric-item"><div class="m-label">Regressions <span class="wl-src-badge" title="Query Store">QS</span> <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Query Analysis" data-metric="Regressions"></i></div><div class="m-value text-critical" id="kpi-regressions" style="cursor:pointer;" data-action="navigate" data-route="query-analysis" title="Open Query Analysis">--</div></div>
                 </div>
             </div>
         </div>
@@ -59,13 +75,13 @@
         </div>
         <div class="col-4 col-laptop-4 col-tablet-6">
             <div class="card glass-panel h-chart-md">
-                <div class="card-header" style="font-size:0.85rem;">Executions per Sec</div>
+                <div class="card-header" style="font-size:0.85rem;">Executions <span class="text-muted" style="font-size:0.65rem;">(sum per bucket)</span></div>
                 <div class="chart-container" style="height:230px;"><canvas id="wlExecTrendChart"></canvas></div>
             </div>
         </div>
         <div class="col-4 col-laptop-8 col-tablet-6">
             <div class="card glass-panel h-chart-md">
-                <div class="card-header" style="font-size:0.85rem;">Logical Reads Rate</div>
+                <div class="card-header" style="font-size:0.85rem;">Logical Reads <span class="text-muted" style="font-size:0.65rem;">(sum per bucket)</span></div>
                 <div class="chart-container" style="height:230px;"><canvas id="wlReadTrendChart"></canvas></div>
             </div>
         </div>
@@ -85,22 +101,27 @@
                 <div class="tab-content" id="workloadTabsContent" style="padding:0.75rem;">
                     <!-- Tab 1: Top Queries Grid -->
                     <div class="tab-pane fade show active" id="queries-content">
-                        <div class="table-container-compact" style="height: 450px; overflow-y: auto;">
-                            <table class="modern-table modern-table-compact" id="wlTopQueriesTable">
-                                <thead>
-                                    <tr>
-                                        <th class="sortable" data-sort="last_seen">Last Seen</th>
-                                        <th class="query-column">Query Statement</th>
-                                        <th class="text-end sortable" data-sort="total_executions">Execs</th>
-                                        <th class="text-end sortable" data-sort="avg_cpu_ms">Avg CPU</th>
-                                        <th class="text-end sortable" data-sort="total_logical_reads">Reads</th>
-                                        <th>Database</th>
-                                        <th>Application</th>
-                                        <th>Login</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="wlTopQueriesBody"></tbody>
-                            </table>
+                        <div class="wl-top-queries-panel">
+                            <div class="wl-top-queries-table-wrap">
+                                <table class="modern-table modern-table-compact" id="wlTopQueriesTable">
+                                    <thead>
+                                        <tr>
+                                            <th class="sortable" data-sort="last_seen" title="Last execution time as reported by SQL Server (server local time)">Last Seen <i class="fa-solid fa-circle-info" style="font-size:0.65rem; color:var(--text-muted);"></i></th>
+                                            <th class="query-column">Query Statement</th>
+                                            <th class="text-end sortable" data-sort="total_executions" title="Total executions in the selected time window (sum of per-cycle deltas)">Execs</th>
+                                            <th class="text-end sortable" data-sort="avg_cpu_ms" title="Average CPU time per execution (ms)">Avg CPU (ms)</th>
+                                            <th class="text-end sortable" data-sort="avg_elapsed_ms" title="Average elapsed time per execution (ms), when captured in metrics_v2">Avg Elapsed (ms)</th>
+                                            <th class="text-end sortable" data-sort="total_reads">Reads</th>
+                                            <th class="text-end sortable" data-sort="total_cpu_ms">CPU (sec)</th>
+                                            <th>Database</th>
+                                            <th>Application</th>
+                                            <th>Login</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="wlTopQueriesBody"></tbody>
+                                </table>
+                            </div>
+                            <div class="wl-top-queries-pagination" id="wlTopQueriesPagination" aria-label="Top queries pages"></div>
                         </div>
                     </div>
 
@@ -238,8 +259,43 @@
     .qa-tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); background: rgba(56,189,248,0.05); }
     .tab-pane { display: none; }
     .tab-pane.active { display: block; }
+    .wl-src-badge { font-size: 0.55rem; padding: 1px 4px; border-radius: 3px; background: rgba(56,189,248,0.15); color: var(--accent); vertical-align: middle; }
+    .wl-qa-link { color: var(--accent); opacity: 0.85; }
+    .wl-qa-link:hover { opacity: 1; }
     @media (max-width: 600px) {
         .qa-tab-btn { padding: 0.5rem 0.6rem; font-size: 0.7rem; }
         .qa-tab-btn i { display: none; }
     }
+
+    /* Top queries: fixed viewport for 10 rows + pagination */
+    .wl-top-queries-panel { display: flex; flex-direction: column; gap: 0.5rem; }
+    .wl-top-queries-table-wrap {
+        height: auto !important;
+        overflow: visible;
+        min-height: 22.5rem;
+    }
+    #wlTopQueriesTable tbody tr { height: 2rem; }
+    #wlTopQueriesTable tbody td { vertical-align: middle; }
+    .wl-top-queries-pagination {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        padding: 0.25rem 0.15rem 0;
+    }
+    .wl-top-queries-pagination .wl-page-btns { display: flex; align-items: center; gap: 0.35rem; }
+    .wl-top-queries-pagination button {
+        padding: 0.2rem 0.55rem;
+        font-size: 0.68rem;
+        border: 1px solid var(--border-color);
+        background: rgba(255,255,255,0.03);
+        color: var(--text-primary);
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    .wl-top-queries-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .wl-top-queries-pagination button:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
 </style>

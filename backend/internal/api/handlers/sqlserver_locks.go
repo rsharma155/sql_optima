@@ -8,7 +8,6 @@
 package handlers
 
 import (
-	"time"
 	"encoding/json"
 	"net/http"
 
@@ -55,16 +54,7 @@ func (h *SqlServerLockHandlers) GetBlockingTimeline(w http.ResponseWriter, r *ht
 		return
 	}
 
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	from, _ := time.Parse(time.RFC3339, fromStr)
-	to, _ := time.Parse(time.RFC3339, toStr)
-	if to.IsZero() {
-		to = time.Now().UTC()
-	}
-	if from.IsZero() {
-		from = to.Add(-24 * time.Hour)
-	}
+	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 
 	res, err := h.metricsSvc.GetSQLServerBlockingTimeline(r.Context(), id, from, to)
 	if err != nil {
@@ -83,16 +73,7 @@ func (h *SqlServerLockHandlers) GetBlockingDetails(w http.ResponseWriter, r *htt
 		return
 	}
 
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	from, _ := time.Parse(time.RFC3339, fromStr)
-	to, _ := time.Parse(time.RFC3339, toStr)
-	if to.IsZero() {
-		to = time.Now().UTC()
-	}
-	if from.IsZero() {
-		from = to.Add(-1 * time.Hour)
-	}
+	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 
 	res, err := h.metricsSvc.GetSQLServerBlockingDetails(r.Context(), id, from, to)
 	if err != nil {
@@ -111,16 +92,7 @@ func (h *SqlServerLockHandlers) GetBlockingLocks(w http.ResponseWriter, r *http.
 		return
 	}
 
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	from, _ := time.Parse(time.RFC3339, fromStr)
-	to, _ := time.Parse(time.RFC3339, toStr)
-	if to.IsZero() {
-		to = time.Now().UTC()
-	}
-	if from.IsZero() {
-		from = to.Add(-1 * time.Hour)
-	}
+	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 
 	res, err := h.metricsSvc.GetSQLServerBlockingLocks(r.Context(), id, from, to)
 	if err != nil {
@@ -139,16 +111,7 @@ func (h *SqlServerLockHandlers) GetTopBlockingQueries(w http.ResponseWriter, r *
 		return
 	}
 
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	from, _ := time.Parse(time.RFC3339, fromStr)
-	to, _ := time.Parse(time.RFC3339, toStr)
-	if to.IsZero() {
-		to = time.Now().UTC()
-	}
-	if from.IsZero() {
-		from = to.Add(-24 * time.Hour)
-	}
+	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 
 	res, err := h.metricsSvc.GetSQLServerTopBlockingQueries(r.Context(), id, from, to)
 	if err != nil {
@@ -167,16 +130,7 @@ func (h *SqlServerLockHandlers) GetMostBlockedDatabases(w http.ResponseWriter, r
 		return
 	}
 
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	from, _ := time.Parse(time.RFC3339, fromStr)
-	to, _ := time.Parse(time.RFC3339, toStr)
-	if to.IsZero() {
-		to = time.Now().UTC()
-	}
-	if from.IsZero() {
-		from = to.Add(-24 * time.Hour)
-	}
+	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 
 	res, err := h.metricsSvc.GetSQLServerMostBlockedDatabases(r.Context(), id, from, to)
 	if err != nil {
@@ -195,16 +149,7 @@ func (h *SqlServerLockHandlers) GetMostBlockedObjects(w http.ResponseWriter, r *
 		return
 	}
 
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	from, _ := time.Parse(time.RFC3339, fromStr)
-	to, _ := time.Parse(time.RFC3339, toStr)
-	if to.IsZero() {
-		to = time.Now().UTC()
-	}
-	if from.IsZero() {
-		from = to.Add(-24 * time.Hour)
-	}
+	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 
 	res, err := h.metricsSvc.GetSQLServerMostBlockedObjects(r.Context(), id, from, to)
 	if err != nil {

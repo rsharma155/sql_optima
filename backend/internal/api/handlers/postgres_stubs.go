@@ -1,10 +1,4 @@
-// SQL Optima — https://github.com/rsharma155/sql_optima
-//
-// Purpose: Stub implementations for PostgresHandlers methods pending full implementation.
-//
-// Author: Ravi Sharma
-// Copyright (c) 2026 Ravi Sharma
-// SPDX-License-Identifier: MIT
+// SQL Optima — remaining Postgres handler methods (see pg_stub_impl.go for wired routes).
 package handlers
 
 import (
@@ -13,40 +7,66 @@ import (
 	"time"
 )
 
-func stub(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{})
-}
-
-func (h *PostgresHandlers) Dashboard(w http.ResponseWriter, r *http.Request)                    { stub(w, r) }
-func (h *PostgresHandlers) DBObservation(w http.ResponseWriter, r *http.Request)                { stub(w, r) }
-func (h *PostgresHandlers) Config(w http.ResponseWriter, r *http.Request)                       { stub(w, r) }
-func (h *PostgresHandlers) ExportBestPracticesCSV(w http.ResponseWriter, r *http.Request)       { stub(w, r) }
-func (h *PostgresHandlers) DatabaseSize(w http.ResponseWriter, r *http.Request)                 { stub(w, r) }
-func (h *PostgresHandlers) SessionStateHistory(w http.ResponseWriter, r *http.Request)          { stub(w, r) }
-func (h *PostgresHandlers) TableMaintenanceLatest(w http.ResponseWriter, r *http.Request)       { stub(w, r) }
-func (h *PostgresHandlers) PoolerLatest(w http.ResponseWriter, r *http.Request)                 { stub(w, r) }
-func (h *PostgresHandlers) PoolerHistory(w http.ResponseWriter, r *http.Request)                { stub(w, r) }
-func (h *PostgresHandlers) BlockingTree(w http.ResponseWriter, r *http.Request)                 { stub(w, r) }
-func (h *PostgresHandlers) WaitSummary(w http.ResponseWriter, r *http.Request)                  { stub(w, r) }
 func (h *PostgresHandlers) TimeseriesMetrics(w http.ResponseWriter, r *http.Request) {
 	sid, ok := h.parseID(r)
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	pool := h.metricsSvc.GetTimescaleDBPool()
-	if pool == nil {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []interface{}{}})
-		return
-	}
 	metric := r.URL.Query().Get("metric")
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 
-	// Map each metric name to the corresponding column in postgres_control_center_stats.
-	// OS-level metrics (cpu_usage_pct, memory_usage_pct) require the OS Collector
-	// agent; return empty when unavailable.
+	type point struct {
+		Time  time.Time `json:"time"`
+		Value float64   `json:"value"`
+	}
+	writePoints := func(data []point) {
+		if data == nil {
+			data = []point{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": data})
+	}
+
+	tl := h.metricsSvc.GetTimescaleDBLogger()
+	if tl == nil {
+		writePoints(nil)
+		return
+	}
+
+	switch metric {
+	case "cpu_usage_pct":
+		rows, err := tl.GetHostCPUUsagePctSeries(r.Context(), sid, from, to, 300)
+		if err != nil {
+			writePoints(nil)
+			return
+		}
+		data := make([]point, 0, len(rows))
+		for _, row := range rows {
+			data = append(data, point{Time: row.Time, Value: row.Value})
+		}
+		writePoints(data)
+		return
+	case "memory_usage_pct":
+		rows, err := tl.GetHostMemoryUsagePctSeries(r.Context(), sid, from, to, 300)
+		if err != nil {
+			writePoints(nil)
+			return
+		}
+		data := make([]point, 0, len(rows))
+		for _, row := range rows {
+			data = append(data, point{Time: row.Time, Value: row.Value})
+		}
+		writePoints(data)
+		return
+	}
+
+	pool := h.metricsSvc.GetTimescaleDBPool()
+	if pool == nil {
+		writePoints(nil)
+		return
+	}
+
 	colMap := map[string]string{
 		"cpu_load":          "GREATEST(active_sessions - waiting_sessions - idle_in_txn_sessions, 0)",
 		"io_wait_load":      "waiting_sessions",
@@ -59,14 +79,10 @@ func (h *PostgresHandlers) TimeseriesMetrics(w http.ResponseWriter, r *http.Requ
 
 	col, ok := colMap[metric]
 	if !ok {
-		// OS-level or unknown metric — return empty rather than an error so
-		// callers can gracefully degrade (e.g. hide Host Resources section).
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []interface{}{}})
+		writePoints(nil)
 		return
 	}
 
-	// col values are hardcoded from the map above — no SQL injection risk.
 	q := `
 		SELECT capture_timestamp AS time, ` + col + ` AS value
 		FROM postgres_control_center_stats
@@ -77,16 +93,11 @@ func (h *PostgresHandlers) TimeseriesMetrics(w http.ResponseWriter, r *http.Requ
 
 	rows, err := pool.Query(r.Context(), q, sid, from, to)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []interface{}{}})
+		writePoints(nil)
 		return
 	}
 	defer rows.Close()
 
-	type point struct {
-		Time  time.Time `json:"time"`
-		Value float64   `json:"value"`
-	}
 	var data []point
 	for rows.Next() {
 		var t time.Time
@@ -96,15 +107,9 @@ func (h *PostgresHandlers) TimeseriesMetrics(w http.ResponseWriter, r *http.Requ
 		}
 		data = append(data, point{Time: t, Value: v})
 	}
-	if data == nil {
-		data = []point{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": data})
+	writePoints(data)
 }
-func (h *PostgresHandlers) Disk(w http.ResponseWriter, r *http.Request)                         { stub(w, r) }
-func (h *PostgresHandlers) ConnectionUtilizationHistory(w http.ResponseWriter, r *http.Request) { stub(w, r) }
-func (h *PostgresHandlers) BackupLatest(w http.ResponseWriter, r *http.Request)                 { stub(w, r) }
+
 func (h *PostgresHandlers) IdleInTransaction(w http.ResponseWriter, r *http.Request) {
 	sid, ok := h.parseID(r)
 	if !ok {
@@ -119,11 +124,3 @@ func (h *PostgresHandlers) IdleInTransaction(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(res)
 }
-func (h *PostgresHandlers) WALArchiverRisk(w http.ResponseWriter, r *http.Request)              { stub(w, r) }
-func (h *PostgresHandlers) ReplicationLagHistory(w http.ResponseWriter, r *http.Request)       { stub(w, r) }
-func (h *PostgresHandlers) ReplicationSlots(w http.ResponseWriter, r *http.Request)            { stub(w, r) }
-
-func (h *PostgresHandlers) KillSession(w http.ResponseWriter, r *http.Request) { stub(w, r) }
-func (h *PostgresHandlers) ResetQueries(w http.ResponseWriter, r *http.Request)                 { stub(w, r) }
-func (h *PostgresHandlers) BackupReport(w http.ResponseWriter, r *http.Request)                 { stub(w, r) }
-func (h *PostgresHandlers) LogsReport(w http.ResponseWriter, r *http.Request)                   { stub(w, r) }

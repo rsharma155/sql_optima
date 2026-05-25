@@ -1,44 +1,7 @@
-name: blocking_chains
-description: Blocking chains detected
-conditions:
-  - metric: blocking_sessions
-    operator: ">"
-    value: 5
-logic: AND
-severity: high
-message: "Extended blocking detected with {blocking_sessions} blocked sessions."
-recommendation:
-  - "Identify head blocker from long_running_queries"
-  - "Review wait_type for LCK_M waits"
-  - "Check waiting_tasks for blocked sessions"
-  - "Consider read committed snapshot isolation"
-
----
-name: tempdb_pressure
-description: TempDB pressure
-conditions:
-  - metric: tempdb_used_pct
-    operator: ">"
-    value: 80
-logic: AND
-severity: medium
-message: "TempDB usage is {tempdb_used_pct}% (exceeds 80%)."
-recommendation:
-  - "Add tempdb data files per CPU core"
-  - "Check for query spills (sort/hash warnings)"
-  - "Investigate long-running transactions"
-
----
-name: query_spills
-description: Query spills indicating memory pressure
-conditions:
-  - metric: sort_warnings_per_sec
-    operator: ">"
-    value: 1
-logic: OR
-severity: medium
-message: "Sort/hash warnings detected (sort: {sort_warnings_per_sec}/s)."
-recommendation:
-  - "Increase query memory grants"
-  - "Review MAXDOP and cost threshold for parallelism"
-  - "Check for missing indexes causing large sorts"
+# Query workload threshold rules are evaluated dynamically in analysis/engine.go
+# using blocking session p95, TempDB usage p95, and spill warning baselines.
+#
+# Removed fixed rules:
+#   - blocking_chains (was blocking_sessions > 5)
+#   - tempdb_pressure (was tempdb_used_pct > 80)
+#   - query_spills (was sort_warnings_per_sec > 1)

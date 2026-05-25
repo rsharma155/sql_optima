@@ -78,7 +78,8 @@ func (w *PostgresNewDashboardsWorker) runIteration(ctx context.Context) {
 			continue
 		}
 
-		go func(instance config.Instance) {
+		instance := inst
+		w.metricsSvc.EnqueueCollection(instance.ServerID, func() {
 			// 1. Snapshot Collection
 			if err := w.snapshotCollector.Collect(ctx, instance); err != nil {
 				slog.Error("[PostgresWorker] ERROR: Snapshot collection failed", "target", instance.Name, "err", err)
@@ -95,6 +96,6 @@ func (w *PostgresNewDashboardsWorker) runIteration(ctx context.Context) {
 			if err := w.queryRouter.Collect(ctx, instance, db); err != nil {
 				slog.Error("[PostgresWorker] ERROR: Query collection failed", "target", instance.Name, "err", err)
 			}
-		}(inst)
+		})
 	}
 }

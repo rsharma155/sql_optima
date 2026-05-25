@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -140,6 +141,10 @@ func (h *HAReplicationHandler) DashboardSummary(w http.ResponseWriter, r *http.R
 	}
 	ctx := r.Context()
 
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	from, to := parseTimeRange(r)
+
 	feat, _ := h.repo.GetFeatureDetection(ctx, serverID, "")
 	replicas, _ := h.repo.GetCurrentReplicaHealth(ctx, serverID)
 	dbStates, _ := h.repo.GetCurrentDatabaseSyncState(ctx, serverID)
@@ -155,15 +160,22 @@ func (h *HAReplicationHandler) DashboardSummary(w http.ResponseWriter, r *http.R
 	rto := domain.ComputeRTO(replicas)
 	readiness := domain.EvaluateFailoverReadiness(replicas, dbStates, longRunningCount, quorumState)
 
-	// Fetch latest failover for KPI cards
-	history, _ := h.repo.GetFailoverHistory(ctx, serverID, time.Now().Add(-365*24*time.Hour), time.Now())
+	// Fetch failover history for the selected range
+	history, _ := h.repo.GetFailoverHistory(ctx, serverID, from, to)
 	var lastFailover *domain.FailoverEvent
 	if len(history) > 0 {
 		lastFailover = &history[0]
 	}
 
-	rpoWorst24h := h.repo.GetRPOWorst24h(ctx, serverID)
-	kpis := buildKPICards(replicas, rpo, rto, readiness, lastFailover, rpoWorst24h)
+	rpoWorst := h.repo.GetRPOWorstRange(ctx, serverID, fromStr, toStr)
+
+	var repKPIs *domain.ReplicationKPIs
+	if feat.ReplicationEnabled {
+		rk, _ := h.repo.GetReplicationKPIs(ctx, serverID)
+		repKPIs = &rk
+	}
+
+	kpis := buildKPICards(replicas, rpo, rto, readiness, lastFailover, rpoWorst, repKPIs)
 	banner := buildBanner(feat, kpis, rpo)
 
 	summary := domain.DashboardSummary{
@@ -452,6 +464,7 @@ func buildKPICards(
 	readiness domain.FailoverReadiness,
 	lastFailover *domain.FailoverEvent,
 	rpoWorst24h int64,
+	repKPIs *domain.ReplicationKPIs,
 ) domain.KPICards {
 	kpis := domain.KPICards{
 		RPOSeconds:    rpo.Seconds,
@@ -460,6 +473,14 @@ func buildKPICards(
 		EstRTOSeconds: rto.EstimatedSeconds,
 		RTOThreshold:  rto.Threshold,
 		FailoverReady: readiness.Ready,
+	}
+
+	if repKPIs != nil && len(repKPIs.TypeBreakdown) > 0 {
+		var parts []string
+		for k, v := range repKPIs.TypeBreakdown {
+			parts = append(parts, fmt.Sprintf("%s: %d", k, v))
+		}
+		kpis.ReplicationSummary = strings.Join(parts, ", ")
 	}
 
 	if lastFailover != nil {

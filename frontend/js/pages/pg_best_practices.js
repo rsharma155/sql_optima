@@ -21,6 +21,11 @@ window.PgBestPracticesView = async function() {
     const subtitleEl = document.getElementById('pg-bp-subtitle');
     if (subtitleEl) subtitleEl.textContent = `Instance: ${inst.name} | PostgreSQL Refined Audit`;
 
+    const container = document.getElementById('pg-bp-sections');
+    if (container) {
+        container.innerHTML = `<div style="text-align:center; padding:2rem;"><div class="spinner"></div><p class="mt-2 text-muted">Running best-practice checks against PostgreSQL (may take 1–2 minutes)…</p></div>`;
+    }
+
     try {
         const response = await window.apiClient.authenticatedFetch(
             `/api/rules/best-practices?instance=${encodeURIComponent(inst.name)}&db_type=postgres`
@@ -219,13 +224,21 @@ function renderRuleRow(rule) {
 
     // Parse Context Tags
     let tagsHtml = '';
+    let osInformed = false;
     if (rule.context_tags) {
         try {
             const tags = typeof rule.context_tags === 'string' ? JSON.parse(rule.context_tags) : rule.context_tags;
+            if (tags.os_enriched === true || tags.os_enriched === 'true') {
+                osInformed = true;
+            }
             Object.entries(tags).forEach(([k, v]) => {
+                if (k === 'os_enriched') return;
                 tagsHtml += `<span class="badge" style="font-size:0.6rem; background:var(--bg-tertiary); color:var(--text-muted); border:1px solid var(--border-color);">${k}:${v}</span> `;
             });
         } catch (e) { /* ignore */ }
+    }
+    if (osInformed) {
+        tagsHtml += `<span class="badge badge-info" style="font-size:0.6rem;" title="Thresholds used host RAM from the OS collector">OS-informed</span> `;
     }
 
     const drawerId = 'rule-' + Math.random().toString(36).substr(2, 9);
@@ -312,6 +325,6 @@ async function renderPgFallbackAudit(inst) {
         
         renderPgRefinedBestPractices(inst, { best_practices: mappedRules });
     } catch (e) {
-        container.innerHTML = `<div class="alert alert-danger">Live audit failed: ${e.message}</div>`;
+        container.innerHTML = `<div class="alert alert-danger">Live audit failed: ${window.escapeHtml(e.message)}</div>`;
     }
 }

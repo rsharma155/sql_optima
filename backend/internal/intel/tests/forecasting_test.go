@@ -70,3 +70,27 @@ func TestForecastReturnType(t *testing.T) {
 		}
 	}
 }
+
+// DEFECT-10: low-confidence forecasts must have a reliability tier of "Unreliable".
+func TestForecastReliabilityTierUnreliable(t *testing.T) {
+	// Random-looking data produces low R² → "Unreliable"
+	values := []float64{10, 90, 5, 80, 15, 70, 20, 85, 8, 60}
+	result := forecasting.ForecastLinear(values, "noisy_metric", 30, 0.95)
+	if result.ReliabilityTier != "Unreliable" && result.ReliabilityTier != "Indicative" && result.ReliabilityTier != "Reliable" {
+		t.Errorf("expected ReliabilityTier to be Unreliable/Indicative/Reliable, got %q", result.ReliabilityTier)
+	}
+	// For highly noisy data, must be Unreliable
+	if result.Confidence < 0.5 && result.ReliabilityTier != "Unreliable" {
+		t.Errorf("low-confidence forecast (%.2f) should be Unreliable, got %q", result.Confidence, result.ReliabilityTier)
+	}
+}
+
+// DEFECT-10: high-confidence forecasts must have "Reliable" tier.
+func TestForecastReliabilityTierReliable(t *testing.T) {
+	// Perfectly linear data → R² = 1.0 → "Reliable"
+	values := []float64{10, 12, 14, 16, 18, 20, 22, 24, 26, 28}
+	result := forecasting.ForecastLinear(values, "linear_metric", 30, 0.95)
+	if result.ReliabilityTier != "Reliable" {
+		t.Errorf("perfect linear data should yield Reliable tier, got %q (confidence %.2f)", result.ReliabilityTier, result.Confidence)
+	}
+}

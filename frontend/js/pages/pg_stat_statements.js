@@ -26,7 +26,7 @@ window.pgssApplyTimeRange = function () {
 window._pgssState = {
     sort:           'total_time',
     page:           0,
-    pageSize:       50,
+    pageSize:       25,
     search:         '',
     dbName:         '',
     userName:       '',
@@ -81,6 +81,33 @@ window.PgStatStatementsView = async function () {
 };
 
 // ============================================================
+// Shared filter apply logic (used by both header and filter bar)
+// ============================================================
+function applyPgssFilters() {
+    window._pgssState.dbName   = document.getElementById('pgss-filter-db')?.value   || '';
+    window._pgssState.userName = document.getElementById('pgss-filter-user')?.value  || '';
+    window._pgssState.appName  = document.getElementById('pgss-filter-app')?.value   || '';
+    window._pgssState.qtype    = document.getElementById('pgss-filter-qtype')?.value || '';
+    window._pgssState.page     = 0;
+    loadPgssAll();
+}
+
+// Populate DB/User/App dropdowns from already-loaded row data when the
+// API returns nothing (no snapshot data collected yet).
+function refreshFilterDropdownsFromRows() {
+    const rows = window._pgssState.allRows || [];
+    if (!rows.length) return;
+    const fill = (id, vals, placeholder) => {
+        const el = document.getElementById(id);
+        if (!el || el.options.length > 1) return; // already populated by API
+        populateSelect(id, [...new Set(vals)].filter(Boolean).sort(), placeholder);
+    };
+    fill('pgss-filter-db',   rows.map(r => r.db_name),  'All databases');
+    fill('pgss-filter-user', rows.map(r => r.username),  'All users');
+    fill('pgss-filter-app',  rows.map(r => r.app_name),  'All apps');
+}
+
+// ============================================================
 // Event Binding
 // ============================================================
 function pgssBindEvents() {
@@ -131,14 +158,8 @@ function pgssBindEvents() {
     });
 
     // Filter apply/reset
-    document.getElementById('pgss-filter-apply')?.addEventListener('click', () => {
-        window._pgssState.dbName   = document.getElementById('pgss-filter-db')?.value   || '';
-        window._pgssState.userName = document.getElementById('pgss-filter-user')?.value  || '';
-        window._pgssState.appName  = document.getElementById('pgss-filter-app')?.value   || '';
-        window._pgssState.qtype    = document.getElementById('pgss-filter-qtype')?.value || '';
-        window._pgssState.page     = 0;
-        loadPgssAll();
-    });
+    document.getElementById('pgss-filter-apply')?.addEventListener('click', applyPgssFilters);
+    document.getElementById('pgss-header-apply')?.addEventListener('click', applyPgssFilters);
 
     document.getElementById('pgss-filter-reset')?.addEventListener('click', () => {
         ['pgss-filter-db','pgss-filter-user','pgss-filter-app','pgss-filter-qtype'].forEach(id => {
@@ -195,7 +216,9 @@ async function loadPgssFilters() {
         populateSelect('pgss-filter-db',   data.databases || [], 'All databases');
         populateSelect('pgss-filter-user', data.users     || [], 'All users');
         populateSelect('pgss-filter-app',  data.app_names || [], 'All apps');
-    } catch (_) { /* non-fatal */ }
+    } catch (e) {
+        console.error('[PGSS] Failed to load filter options', e);
+    }
 }
 
 function populateSelect(id, items, placeholder) {
@@ -234,12 +257,14 @@ async function loadPgssSummaryKPIs() {
 
         setKpi('pgss-kpi-qps-val',   fmtNum2(d.avg_qps ?? d.qps), d.avg_qps > 500 ? 'kpi-warn' : '');
         setKpi('pgss-kpi-p99-val',   fmtMs(d.p99_ms), d.p99_ms > 500 ? 'kpi-critical' : d.p99_ms > 100 ? 'kpi-warn' : 'kpi-good');
-        setKpi('pgss-kpi-cache-val', pct(d.cache_hit_ratio), d.cache_hit_ratio < 90 ? 'kpi-warn' : 'kpi-good');
+        setKpi('pgss-kpi-cache-val', pct(d.cache_hit_pct), d.cache_hit_pct < 90 ? 'kpi-warn' : 'kpi-good');
         setKpi('pgss-kpi-load-val',  fmtMs(d.total_exec_ms_sec ?? d.query_load_ms_sec), '');
-        setKpi('pgss-kpi-wal-val',   fmtNum2((d.wal_bytes_sec || 0) / (1024*1024)), '');
-        setKpi('pgss-kpi-temp-val',  fmtNum2((d.temp_blks_written_mb || 0)), d.temp_blks_written_mb > 10 ? 'kpi-warn' : '');
+        setKpi('pgss-kpi-wal-val',   fmtNum2(d.wal_mb_sec ?? 0), '');
+        setKpi('pgss-kpi-temp-val',  fmtNum2(d.temp_mb_sec ?? 0), d.temp_mb_sec > 10 ? 'kpi-warn' : '');
         setKpi('pgss-kpi-uq-val',    fmtNum(d.unique_query_count), '');
-    } catch (_) { /* non-fatal */ }
+    } catch (e) {
+        console.error('[PGSS] Failed to load summary KPIs', e);
+    }
 }
 
 function setKpi(id, value, cls) {
@@ -339,8 +364,12 @@ async function loadPgssTopQueries() {
         const data = await resp.json();
         window._pgssState.allRows = data.queries || [];
         window._pgssState.page    = 0;
+        refreshFilterDropdownsFromRows();
         renderTopQueriesPage();
-    } catch (_) { tbody.innerHTML = '<tr><td colspan="14">Error</td></tr>'; }
+    } catch (e) {
+        console.error('[PGSS] Failed to load top queries', e);
+        tbody.innerHTML = '<tr><td colspan="14">Error</td></tr>';
+    }
 }
 
 const SYSTEM_QUERY_RE = /^(VACUUM\b|ANALYZE\b|autovacuum:|CHECKPOINT\b|SELECT pg_sleep\b|SET\s|RESET\s|DEALLOCATE\s|DISCARD\s|UNLISTEN\b|LISTEN\s|SHOW\s|BEGIN\b|COMMIT\b|ROLLBACK\b|SAVEPOINT\b|RELEASE\sSAVEPOINT\b|SELECT\s+1\b|SELECT\s+pg_is_in_recovery\(\)|SELECT\s+pg_catalog\.|SELECT\s+.*\bFROM\s+pg_catalog\.|SELECT\s+.*\bFROM\s+information_schema\.|DECLARE\b|FETCH\b|MOVE\b|CLOSE\b)/i;
@@ -358,9 +387,23 @@ function renderTopQueriesPage() {
     const tbody  = document.getElementById('pgss-top-tbody');
     if (!tbody) return;
 
+    const inst = currentInst();
+    const monitoringUser = typeof window.getInstanceMonitoringUser === 'function'
+        ? window.getInstanceMonitoringUser(inst)
+        : (inst.monitoring_user || inst.user || '').toLowerCase();
+
     let rows = s.allRows;
 
-    // System query filter
+    // Client-side safety net: drop collector/monitoring rows (backend already excludes these).
+    rows = rows.filter(q => {
+        const text = (q.query || '').trim();
+        if (!text || text === '<insufficient privilege>') return false;
+        if (text.includes('/* SQL_OPTIMA')) return false;
+        if (monitoringUser && (q.username || '').toLowerCase() === monitoringUser) return false;
+        return true;
+    });
+
+    // Optional system query filter (hide-system toggle)
     if (s.hideSystem) rows = rows.filter(q => !isSystemQuery(q));
 
     // Inline search filter
@@ -387,13 +430,12 @@ function renderTopQueriesPage() {
     }
 
     tbody.innerHTML = page.map((q, i) => {
-        const flags   = (q.flags || []).map(f =>
-            `<span class="pgss-badge pgss-badge-${f.toLowerCase()}">${f}</span>`).join('');
+        const capturedTs  = fmtCapturedAt(q.captured_at);
         const qtBadge = `<span class="qtype-badge qtype-${escapeHtml(q.query_type || 'O')}">${qtLabel(q.query_type)}</span>`;
 
         return `<tr data-query="${escapeHtml(q.query)}" title="Click to view full SQL">
             <td class="c-rownum">${start + i + 1}</td>
-            <td class="ctr">${flags}</td>
+            <td class="c-captured-ts" title="${escapeHtml(q.captured_at || '')}">${capturedTs}</td>
             <td class="ctr">${qtBadge}</td>
             <td class="c-query">${escapeHtml(truncate(q.query, 160))}</td>
             <td class="c-dim">${escapeHtml(q.db_name   || '—')}</td>
@@ -419,15 +461,45 @@ function renderPagination(total, pageSize) {
     const pages = Math.ceil(total / pageSize);
     if (pages <= 1) { container.innerHTML = ''; return; }
 
-    container.innerHTML = Array.from({ length: pages }, (_, i) =>
-        `<button class="btn btn-sm ${i === s.page ? 'btn-primary' : 'btn-outline'}"
-                 data-action="pgss-page" data-page="${i}">${i + 1}</button>`
-    ).join('');
+    const cur = s.page;
+    const isFirst = cur === 0;
+    const isLast  = cur === pages - 1;
+
+    // Build page window: show up to 5 page numbers centred on current page
+    const windowSize = 5;
+    let winStart = Math.max(0, cur - Math.floor(windowSize / 2));
+    const winEnd = Math.min(pages, winStart + windowSize);
+    winStart = Math.max(0, winEnd - windowSize);
+
+    const pageNums = Array.from({ length: winEnd - winStart }, (_, i) => winStart + i)
+        .map(i => `<button class="pgss-pg-btn${i === cur ? ' active' : ''}" data-action="pgss-page" data-page="${i}" aria-label="Page ${i + 1}">${i + 1}</button>`)
+        .join('');
+
+    container.innerHTML = `
+        <button class="pgss-pg-nav" data-action="pgss-page" data-page="0" ${isFirst ? 'disabled' : ''} title="First page" aria-label="First page">
+            <i class="fa-solid fa-angles-left"></i>
+        </button>
+        <button class="pgss-pg-nav" data-action="pgss-page" data-page="${cur - 1}" ${isFirst ? 'disabled' : ''} title="Previous page" aria-label="Previous page">
+            <i class="fa-solid fa-angle-left"></i>
+        </button>
+        <span class="pgss-pg-nums">${pageNums}</span>
+        <button class="pgss-pg-nav" data-action="pgss-page" data-page="${cur + 1}" ${isLast ? 'disabled' : ''} title="Next page" aria-label="Next page">
+            <i class="fa-solid fa-angle-right"></i>
+        </button>
+        <button class="pgss-pg-nav" data-action="pgss-page" data-page="${pages - 1}" ${isLast ? 'disabled' : ''} title="Last page" aria-label="Last page">
+            <i class="fa-solid fa-angles-right"></i>
+        </button>`;
+
     if (!container.dataset.pgssBound) {
         container.dataset.pgssBound = '1';
         container.addEventListener('click', (e) => {
             const btn = e.target?.closest?.('[data-action="pgss-page"]');
-            if (btn) window._pgssGoPage(Number(btn.dataset.page));
+            if (btn && !btn.disabled) {
+                const p = Number(btn.dataset.page);
+                if (!isNaN(p) && p >= 0 && p < Math.ceil(window._pgssState.allRows.length / window._pgssState.pageSize)) {
+                    window._pgssGoPage(p);
+                }
+            }
         });
     }
 }
@@ -558,12 +630,12 @@ async function checkPgssStatus(instance) {
         if (!banner) return;
 
         if (!status.enabled) {
-            banner.style.display = 'block';
-            banner.className = 'alert alert-warning mt-2';
-            if (msg) msg.textContent = 'pg_stat_statements extension is not enabled on this instance. Enable it in shared_preload_libraries and restart PostgreSQL.';
+            banner.style.display = 'inline-flex';
+            banner.className = 'pgss-title-status pgss-title-status-warn';
+            if (msg) msg.textContent = status.message || 'pg_stat_statements is not enabled — add it to shared_preload_libraries and restart PostgreSQL.';
         } else if (!status.has_data) {
-            banner.style.display = 'block';
-            banner.className = 'alert alert-info mt-2';
+            banner.style.display = 'inline-flex';
+            banner.className = 'pgss-title-status pgss-title-status-info';
             if (msg) msg.textContent = status.message || 'pg_stat_statements is enabled. Query data collection is in progress — charts will appear within 2–3 minutes.';
         } else {
             banner.style.display = 'none';
@@ -578,18 +650,27 @@ function renderLineChart(canvasId, labels, datasets, dualAxis) {
     destroyChart(canvasId);
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
+    const baseTrend = window.chartTrendOptions ? window.chartTrendOptions({ xTitle: 'Time' }) : {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { tooltip: { enabled: true } },
+        scales: { x: { title: { display: true, text: 'Time' } }, y: {} },
+    };
     const cfg = {
         type: 'line',
-        data: { labels, datasets: datasets.map(ds => ({ tension: 0.3, pointRadius: 0, borderWidth: 1.5, fill: ds.fill || false, ...ds })) },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
-            scales: {
-                x: { ticks: { color: '#64748b', maxTicksLimit: 12 }, grid: { color: 'rgba(100,116,139,0.15)' } },
-                y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } }
-            }
-        }
+        data: {
+            labels,
+            datasets: datasets.map(ds => ({
+                tension: 0.3,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+                borderWidth: 1.5,
+                fill: ds.fill || false,
+                ...ds,
+            })),
+        },
+        options: window.mergeChartOptions ? window.mergeChartOptions(baseTrend, {}) : baseTrend,
     };
     if (dualAxis) {
         cfg.options.scales.y1 = { position: 'right', ticks: { color: '#64748b' }, grid: { drawOnChartArea: false } };
@@ -601,17 +682,38 @@ function renderStackedArea(canvasId, labels, datasets) {
     destroyChart(canvasId);
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
+    const timeX = window.chartTimeScaleX ? window.chartTimeScaleX('Time') : { title: { display: true, text: 'Time' } };
+    const options = window.mergeChartOptions && window.chartTrendOptions
+        ? window.mergeChartOptions(window.chartTrendOptions({ xTitle: 'Time' }), {
+            scales: {
+                x: { ...timeX, stacked: true },
+                y: { stacked: true, max: 100, ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } },
+            },
+        })
+        : {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { tooltip: { enabled: true } },
+            scales: {
+                x: { stacked: true, title: { display: true, text: 'Time' } },
+                y: { stacked: true, max: 100 },
+            },
+        };
     window.currentCharts[canvasId] = new Chart(ctx, {
         type: 'line',
-        data: { labels, datasets: datasets.map(ds => ({ fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1, ...ds })) },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
-            scales: {
-                x: { stacked: true, ticks: { color: '#64748b', maxTicksLimit: 12 }, grid: { color: 'rgba(100,116,139,0.15)' } },
-                y: { stacked: true, max: 100, ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } }
-            }
-        }
+        data: {
+            labels,
+            datasets: datasets.map(ds => ({
+                fill: true,
+                tension: 0.3,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+                borderWidth: 1,
+                ...ds,
+            })),
+        },
+        options,
     });
 }
 
@@ -647,6 +749,17 @@ function toLocalISOString(date) {
 function qtLabel(code) {
     const map = { S: 'SELECT', I: 'INSERT', U: 'UPDATE', D: 'DELETE', E: 'DDL', O: 'OTHER' };
     return map[code] || code || 'OTHER';
+}
+
+function fmtCapturedAt(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    if (isNaN(d)) return '—';
+    const mo  = d.toLocaleString('default', { month: 'short' });
+    const day = String(d.getDate()).padStart(2, '0');
+    const hh  = String(d.getHours()).padStart(2, '0');
+    const mm  = String(d.getMinutes()).padStart(2, '0');
+    return `${mo} ${day} ${hh}:${mm}`;
 }
 
 function escapeHtml(s) {
