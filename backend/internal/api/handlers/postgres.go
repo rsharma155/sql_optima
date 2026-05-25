@@ -1068,20 +1068,6 @@ func (h *PostgresHandlers) pgssResolve(w http.ResponseWriter, r *http.Request) (
 	return id, name, true
 }
 
-// lookupServerID returns the ServerID for the named instance, or uuid.Nil if not found.
-func lookupServerID(cfg *config.Config, name string) uuid.UUID {
-	if cfg == nil {
-		return uuid.Nil
-	}
-	up := strings.ToUpper(name)
-	for _, inst := range cfg.Instances {
-		if strings.ToUpper(inst.Name) == up {
-			return inst.ServerID
-		}
-	}
-	return uuid.Nil
-}
-
 func (h *PostgresHandlers) PgssStatus(w http.ResponseWriter, r *http.Request) {
 	id, _, ok := h.pgssResolve(w, r)
 	if !ok {
