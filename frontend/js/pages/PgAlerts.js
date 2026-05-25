@@ -40,11 +40,15 @@ window.PgAlertsView = async function() {
         if (alertsResp.status === 503 || countResp.status === 503) disconnected = true;
         if (alertsResp.ok) {
             const body = await alertsResp.json();
-            alerts = (body && (body.data && body.data.alerts || body.alerts)) ? (body.data && body.data.alerts || body.alerts) : [];
+            const list = body?.data?.list ?? body?.data?.alerts ?? body?.alerts ?? body?.list;
+            alerts = Array.isArray(list) ? list : [];
         }
         if (countResp.ok) {
             const body = await countResp.json();
-            openCount = (body && body.data && body.data.count != null) ? body.data.count : (body && body.count != null ? body.count : 0);
+            openCount = body?.data?.count ?? body?.count ?? 0;
+        }
+        if (alerts.length > 0) {
+            openCount = Math.max(openCount, alerts.length);
         }
     } catch (e) { console.error("Alert engine fetch failed:", e); }
 
@@ -83,7 +87,7 @@ window.PgAlertsView = async function() {
                 <td>${severityBadge(a.severity)}</td>
                 <td>${window.escapeHtml(a.category || '')}</td>
                 <td><strong>${window.escapeHtml(a.title)}</strong></td>
-                <td class="small" title="${window.escapeHtml(a.description || '')}">${window.escapeHtml((a.description || '').substring(0, 80))}</td>
+                <td class="small" title="${window.escapeHtml(String(a.description || ''))}">${window.escapeHtml(String(a.description || '').substring(0, 80))}</td>
                 <td class="text-center">${a.hit_count || 1}</td>
                 <td class="small text-muted">${a.last_seen_at ? new Date(a.last_seen_at).toLocaleString() : '--'}</td>
                 <td style="white-space:nowrap;">
@@ -154,7 +158,7 @@ window.PgAlertsView = async function() {
                                             <span class="text-${a.severity === 'critical' ? 'danger' : 'warning'}"><strong>${window.escapeHtml(a.title)}</strong></span>
                                             <span class="text-muted" style="font-size:0.65rem">${a.last_seen_at ? new Date(a.last_seen_at).toLocaleTimeString() : '--'}</span>
                                         </div>
-                                        <div class="mt-1 text-muted">${window.escapeHtml((a.description || '').substring(0, 100))}</div>
+                                        <div class="mt-1 text-muted">${window.escapeHtml(String(a.description || '').substring(0, 100))}</div>
                                     </li>
                                 `).join('')}
                             </ul>

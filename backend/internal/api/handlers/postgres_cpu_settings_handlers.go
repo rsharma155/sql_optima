@@ -12,10 +12,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/rsharma155/sql_optima/internal/config"
 )
 
 // pgssExcludedUsers are usernames excluded from user-query dashboards.
@@ -23,6 +27,37 @@ import (
 var pgssExcludedUsers = []string{
 	"dbmonitor_user", "dbmonitor", "sql_optima", "sqloptima",
 	"pgbouncer", "repmgr", "barman", "patroni", "pg_monitor", "streaming_replica",
+	"postgres",
+}
+
+// pgssExcludeUsersForInstance returns role names to omit from Query Performance (optima_servers.username + defaults).
+func pgssExcludeUsersForInstance(cfg *config.Config, instanceName string) []string {
+	seen := make(map[string]struct{})
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		seen[strings.ToLower(name)] = struct{}{}
+	}
+	for _, u := range pgssExcludedUsers {
+		add(u)
+	}
+	if cfg != nil {
+		for _, inst := range cfg.Instances {
+			if strings.EqualFold(inst.Name, instanceName) {
+				add(inst.MonitoringUser)
+				add(inst.User)
+				break
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // CPUTopQueries returns the top user queries by total execution time for the selected time window,
@@ -41,9 +76,11 @@ func (h *PostgresHandlers) CPUTopQueries(w http.ResponseWriter, r *http.Request)
 	}
 
 	includeSystem := r.URL.Query().Get("include_system") == "true"
+	instName := strings.TrimSpace(r.URL.Query().Get("instance"))
+	excludeUsers := pgssExcludeUsersForInstance(h.cfg, instName)
 
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	queries, err := queryTopQueriesByCPU(r.Context(), pool, sid, from, to, 20, includeSystem)
+	queries, err := queryTopQueriesByCPU(r.Context(), pool, sid, from, to, 20, includeSystem, excludeUsers)
 	if err != nil {
 		queries = []map[string]interface{}{}
 	}
@@ -144,13 +181,16 @@ func (h *PostgresHandlers) SettingsDrift(w http.ResponseWriter, r *http.Request)
 
 // queryTopQueriesByCPU returns user queries ranked by total execution time.
 // Excludes monitoring/infrastructure usernames and internal SQL_OPTIMA queries.
-func queryTopQueriesByCPU(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID, from, to time.Time, limit int, includeSystem bool) ([]map[string]interface{}, error) {
+func queryTopQueriesByCPU(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID, from, to time.Time, limit int, includeSystem bool, excludeUsers []string) ([]map[string]interface{}, error) {
 	where := "d.server_id = $1 AND d.capture_timestamp BETWEEN $2 AND $3"
 	args := []interface{}{serverID, from, to}
 
 	if !includeSystem {
-		args = append(args, pgssExcludedUsers)
-		where += fmt.Sprintf(" AND d.username != ALL($%d::text[])", len(args))
+		if len(excludeUsers) == 0 {
+			excludeUsers = pgssExcludedUsers
+		}
+		args = append(args, excludeUsers)
+		where += fmt.Sprintf(" AND NOT (d.username = ANY($%d::text[]))", len(args))
 		where += " AND COALESCE(q.query_text, '') NOT LIKE '%/* SQL_OPTIMA */%'"
 		where += " AND COALESCE(q.query_text, '') NOT LIKE '%pg_stat_statements%'"
 	}

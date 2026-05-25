@@ -36,6 +36,17 @@ func (c *PgRepository) FetchPgBestPractices(instanceName string) models.BestPrac
 	return c.FetchPgBestPracticesFromConfigs(instanceName, configs)
 }
 
+// FetchPgConfigSettings returns curated pg_settings rows for the configuration tracker UI.
+func (c *PgRepository) FetchPgConfigSettings(ctx context.Context, instanceName string) ([]PgConfigRow, error) {
+	c.mutex.RLock()
+	db, ok := c.conns[strings.ToUpper(instanceName)]
+	c.mutex.RUnlock()
+	if !ok || db == nil {
+		return nil, fmt.Errorf("connection not found for instance %s", instanceName)
+	}
+	return c.queryPgSettings(ctx, db)
+}
+
 // QueryPgBestPracticesConfigRows loads the curated pg_settings rows used for the DBA audit (live from PostgreSQL).
 func (c *PgRepository) QueryPgBestPracticesConfigRows(instanceName string) ([]PgConfigRow, error) {
 	c.mutex.RLock()

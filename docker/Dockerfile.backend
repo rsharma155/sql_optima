@@ -6,7 +6,11 @@ WORKDIR /build/backend
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
-COPY config.yaml ../
+# Refresh embedded OS collector assets from repo root (build context).
+COPY os_collector/sql-optima-os-collector.sh ./internal/oscollectorbundle/assets/sql-optima-os-collector.sh
+COPY os_collector/systemd/sql-optima-os-collector.service.example ./internal/oscollectorbundle/assets/systemd/sql-optima-os-collector.service
+# config.yaml is optional — instances come from server registry in Docker mode.
+RUN echo 'instances: []' > ../config.yaml
 COPY frontend/ ../frontend/
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /dbmonitor ./cmd/server

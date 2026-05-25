@@ -483,6 +483,7 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 	limit int,
 	dbName, userName, appName, queryType string,
 	hideSystem bool,
+	excludeUsers []string,
 ) ([]PgssTopQuery, error) {
 	if limit <= 0 {
 		limit = 50
@@ -533,6 +534,13 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 		extraWhere = "AND " + strings.Join(filterClauses, " AND ")
 	}
 
+	excludeIdx := argIdx
+	if len(excludeUsers) == 0 {
+		excludeUsers = []string{"postgres"}
+	}
+	args = append(args, excludeUsers)
+	argIdx++
+
 	hideSysIdx := argIdx
 	args = append(args, hideSystem)
 	argIdx++
@@ -559,8 +567,7 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 			FROM pgss_delta_1m d
 			WHERE d.server_id = $1
 			  AND d.capture_timestamp >= $2 AND d.capture_timestamp <= $3
-			  AND d.username != 'postgres'
-			  AND COALESCE(d.db_name, '') != 'postgres'
+			  AND NOT (d.username = ANY($%d::text[]))
 			  %s
 			GROUP BY d.query_id, d.db_name, d.username, d.app_name, d.query_type
 			HAVING SUM(d.calls) > 0
@@ -609,7 +616,7 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 			AND COALESCE(q.query_text, '') NOT ILIKE '%%%%pg_is_in_recovery%%%%'
 		))
 		ORDER BY %s DESC
-		LIMIT $%d`, extraWhere, hideSysIdx, orderCol, limitArg)
+		LIMIT $%d`, excludeIdx, extraWhere, hideSysIdx, orderCol, limitArg)
 
 	pgRows, err := tl.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -654,9 +661,9 @@ func (tl *TimescaleLogger) GetPgssFilterOptions(ctx context.Context, serverID uu
 	// pgss_delta_1m.app_name may be empty for older rows.
 	const q = `
 		SELECT
-			COALESCE(ARRAY_AGG(DISTINCT d.db_name  ORDER BY d.db_name)  FILTER (WHERE d.db_name  IS NOT NULL AND d.db_name  <> '' AND d.db_name  != 'postgres'), '{}'),
-			COALESCE(ARRAY_AGG(DISTINCT d.username ORDER BY d.username) FILTER (WHERE d.username IS NOT NULL AND d.username <> '' AND d.username != 'postgres'), '{}'),
-			COALESCE(ARRAY_AGG(DISTINCT COALESCE(NULLIF(qd.app_name,''), d.app_name) ORDER BY 1) FILTER (WHERE COALESCE(qd.app_name, d.app_name, '') <> ''), '{}')
+			COALESCE(ARRAY_AGG(DISTINCT d.db_name  ORDER BY d.db_name)  FILTER (WHERE d.db_name  IS NOT NULL AND d.db_name  <> ''), '{}'),
+			COALESCE(ARRAY_AGG(DISTINCT d.username ORDER BY d.username) FILTER (WHERE d.username IS NOT NULL AND d.username <> ''), '{}'),
+			COALESCE(ARRAY_AGG(DISTINCT COALESCE(NULLIF(qd.app_name,''), d.app_name)) FILTER (WHERE COALESCE(qd.app_name, d.app_name, '') <> ''), '{}')
 		FROM pgss_delta_1m d
 		LEFT JOIN pgss_query_dim qd ON qd.server_id = d.server_id AND qd.query_id = d.query_id
 		WHERE d.server_id = $1

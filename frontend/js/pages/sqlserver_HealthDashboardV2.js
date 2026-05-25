@@ -47,6 +47,10 @@ window.SqlServerHealthV2View = async function() {
             }
             @media (max-width: 1400px) {
                 #dash-v2-page-view { overflow-y: auto !important; height: auto !important; }
+                #dash-v2-page-view > .dash-header-stack-laptop {
+                    height: auto !important;
+                    overflow: visible;
+                }
                 .dash-v2-container {
                     height: auto;
                     min-height: unset;
@@ -246,25 +250,29 @@ window.SqlServerHealthV2View = async function() {
         </style>
 
         <div class="page-view active dashboard-sky-theme" style="padding:0; overflow:hidden; height:100%;" id="dash-v2-page-view">
-            <div class="page-title flex-between" style="padding: 10px 20px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); height: 65px;">
-                <div>
-                    <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;">
-                        <i class="fa-solid fa-heart-pulse text-accent"></i>
-                        SQL Server Dashboard
-                        <i class="fa-solid fa-circle-info text-accent info-icon-clickable" style="font-size: 0.9rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Instance Dashboard"></i>
-                    </h1>
-                    <div style="display:flex; gap:12px; align-items:center; margin-top:2px;">
-                        <span style="font-size:0.7rem; color:var(--text-secondary); font-weight:600;"><i class="fa-solid fa-server" style="font-size:0.6rem;"></i> ${window.escapeHtml(inst.name)}</span>
-                        <span style="font-size:0.7rem; color:var(--text-muted);"><i class="fa-solid fa-database" style="font-size:0.6rem;"></i> ${window.escapeHtml(window.appState.currentDatabase || inst.database || 'master')}</span>
-                        <span id="v2-header-edition" style="font-size:0.65rem; background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:4px; color:var(--text-muted);">--</span>
-                        <span id="v2-header-uptime" style="font-size:0.65rem; color:var(--success); font-weight:600;"><i class="fa-solid fa-clock" style="font-size:0.6rem;"></i> --</span>
-                        <span style="font-size:0.6rem; color:var(--accent); background:rgba(59, 130, 246, 0.1); padding:2px 6px; border-radius:4px;"><i class="fa-solid fa-magnifying-glass-plus"></i> Drag on charts to zoom</span>
+            <div class="page-title flex-between dash-header-stack-laptop dash-v2-page-header dashboard-page-title-compact" style="padding: 10px 20px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color);">
+                <div class="dash-v2-header-body">
+                    <div class="dash-v2-header-row-top dash-header-title-inline">
+                        <h1 class="dash-v2-h1" style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;">
+                            <i class="fa-solid fa-heart-pulse text-accent"></i>
+                            SQL Server Dashboard
+                            <i class="fa-solid fa-circle-info text-accent info-icon-clickable" style="font-size: 0.9rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Instance Dashboard"></i>
+                        </h1>
                     </div>
-                </div>
-                <div class="flex-between" style="align-items:center; gap:1rem;">
-                    <div id="time-picker-insertion-point"></div>
-                    <div class="text-muted" style="font-size:0.65rem; background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px;">
-                        Update: <span id="v2-last-update" class="text-accent">--:--:--</span>
+                    <div class="dash-v2-header-row-bottom">
+                        <span class="dash-v2-instance-name" style="font-size:0.7rem; color:var(--text-secondary); font-weight:600;"><i class="fa-solid fa-server" style="font-size:0.6rem;"></i> ${window.escapeHtml(inst.name)}</span>
+                        <div class="dash-v2-header-badges dash-header-meta">
+                            <span class="dash-v2-db" style="font-size:0.7rem; color:var(--text-muted);"><i class="fa-solid fa-database" style="font-size:0.6rem;"></i> ${window.escapeHtml(window.appState.currentDatabase || inst.database || 'master')}</span>
+                            <span id="v2-header-edition" style="font-size:0.65rem; background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:4px; color:var(--text-muted);">--</span>
+                            <span id="v2-header-uptime" style="font-size:0.65rem; color:var(--success); font-weight:600;"><i class="fa-solid fa-clock" style="font-size:0.6rem;"></i> --</span>
+                            <span class="dash-v2-drag-hint" style="font-size:0.6rem; color:var(--accent); background:rgba(59, 130, 246, 0.1); padding:2px 6px; border-radius:4px;"><i class="fa-solid fa-magnifying-glass-plus"></i> Drag on charts to zoom</span>
+                        </div>
+                        <div class="dash-v2-header-actions dash-header-actions dashboard-page-title-actions" style="align-items:center; gap:1rem;">
+                            <div id="time-picker-insertion-point"></div>
+                            <div class="text-muted" style="font-size:0.65rem; background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px;">
+                                Update: <span id="v2-last-update" class="text-accent">--:--:--</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -386,10 +394,12 @@ window.SqlServerHealthV2View = async function() {
             const inst = window.appState.config?.instances?.[instIdx];
             if (!inst) return;
 
-            // Convert picker values (local) to ISO strings (UTC) for backend
-            const from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : "";
-            const to = window.appState.toTs ? new Date(window.appState.toTs).toISOString() : "";
-            
+            const range = window.getAppTimeRangeISO
+                ? window.getAppTimeRangeISO()
+                : { from: new Date(Date.now() - 3600000).toISOString(), to: new Date().toISOString() };
+            const from = range.from;
+            const to = range.to;
+
             const url = `/api/sqlserver/health-v2?instance=${encodeURIComponent(inst.name)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
             const response = await window.apiClient.authenticatedFetch(url);
             if (response.ok) {
@@ -427,8 +437,11 @@ window.SqlServerHealthV2View = async function() {
     if (window.initPageTimePicker) window.initPageTimePicker();
 
     try {
-        const from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : "";
-        const to = window.appState.toTs ? new Date(window.appState.toTs).toISOString() : "";
+        const range = window.getAppTimeRangeISO
+            ? window.getAppTimeRangeISO()
+            : { from: new Date(Date.now() - 3600000).toISOString(), to: new Date().toISOString() };
+        const from = range.from;
+        const to = range.to;
         const url = `/api/sqlserver/health-v2?instance=${encodeURIComponent(inst.name)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
         const response = await window.apiClient.authenticatedFetch(url);
         if (!response.ok) throw new Error("API error: " + response.status);
@@ -442,38 +455,41 @@ window.SqlServerHealthV2View = async function() {
     }
 };
 
-/**
- * Common zoom/pan options for Chart.js
- */
-function getChartZoomOptions() {
+/** chartjs-plugin-zoom options (only when the plugin is registered). */
+function getChartZoomPluginOptions() {
+    if (typeof Chart === 'undefined' || !Chart.registry?.getPlugin('zoom')) {
+        return {};
+    }
     return {
         zoom: {
-            wheel: { enabled: true },
-            pinch: { enabled: true },
-            drag: { 
-                enabled: true, 
+            wheel: { enabled: false },
+            pinch: { enabled: false },
+            drag: {
+                enabled: true,
                 backgroundColor: 'rgba(59, 130, 246, 0.1)',
                 borderColor: 'rgba(59, 130, 246, 0.4)',
-                borderWidth: 1
+                borderWidth: 1,
             },
             mode: 'x',
-            onZoomComplete: ({chart}) => {
-                const {min, max} = chart.scales.x;
-                if (min && max && isFinite(min) && isFinite(max)) {
+            onZoomComplete: ({ chart }) => {
+                const min = chart?.scales?.x?.min;
+                const max = chart?.scales?.x?.max;
+                if (min != null && max != null && isFinite(min) && isFinite(max)) {
                     window.applyTimeRangeFromChart(min, max);
                 }
-            }
+            },
         },
         pan: {
             enabled: true,
             mode: 'x',
-            onPanComplete: ({chart}) => {
-                const {min, max} = chart.scales.x;
-                if (min && max && isFinite(min) && isFinite(max)) {
+            onPanComplete: ({ chart }) => {
+                const min = chart?.scales?.x?.min;
+                const max = chart?.scales?.x?.max;
+                if (min != null && max != null && isFinite(min) && isFinite(max)) {
                     window.applyTimeRangeFromChart(min, max);
                 }
-            }
-        }
+            },
+        },
     };
 }
 
@@ -518,7 +534,7 @@ function renderV2Dashboard(data) {
     
     if (data.kpis) {
         if (document.getElementById('v2-header-edition')) document.getElementById('v2-header-edition').textContent = data.kpis.edition || 'Unknown Edition';
-        if (document.getElementById('v2-header-uptime')) document.getElementById('v2-header-uptime').innerHTML = `<i class="fa-solid fa-clock" style="font-size:0.6rem;"></i> ${data.kpis.uptime || '--'}`;
+        if (document.getElementById('v2-header-uptime')) document.getElementById('v2-header-uptime').innerHTML = `<i class="fa-solid fa-clock" style="font-size:0.6rem;"></i> ${window.escapeHtml(data.kpis.uptime || '--')}`;
     }
 
     // Fallbacks
@@ -534,11 +550,11 @@ function renderV2Dashboard(data) {
     const tpData = data.throughput || [];
     const tdData = data.tempdb || { user_obj_mb: 0, internal_obj_mb: 0, version_store_mb: 0, free_mb: 0, contention_found: false };
 
-    renderKPIs(k, waitData, ioData, tpData);
-    initWaitChart(waitData);
-    initIOChart(ioData);
-    initThroughputChart(tpData);
-    initTempDBChart(tdData);
+    try { renderKPIs(k, waitData, ioData, tpData); } catch (e) { console.error('[V2] KPI charts failed', e); }
+    try { initWaitChart(waitData); } catch (e) { console.error('[V2] wait chart failed', e); }
+    try { initIOChart(ioData); } catch (e) { console.error('[V2] IO chart failed', e); }
+    try { initThroughputChart(tpData); } catch (e) { console.error('[V2] throughput chart failed', e); }
+    try { initTempDBChart(tdData); } catch (e) { console.error('[V2] tempdb chart failed', e); }
     renderProblems(data.problems, 'long-running', k);
 
     document.querySelectorAll('.v2-tab-mini-btn').forEach(btn => {
@@ -580,24 +596,38 @@ function renderKPIs(k, waits, ios, tps) {
 function initSparkline(id, data, color) {
     const canvas = document.getElementById(id);
     if (!canvas) return;
-    
-    // Destroy existing chart if it exists in window.v2Charts
+
+    window.destroyChartOnCanvas(canvas);
     if (window.v2Charts[id]) {
-        window.v2Charts[id].destroy();
+        try { window.v2Charts[id].destroy(); } catch (_) {}
+        window.v2Charts[id] = null;
     }
 
+    const series = Array.isArray(data) ? data.map(v => Number(v) || 0) : [];
     const ctx = canvas.getContext('2d');
-    window.v2Charts[id] = new Chart(ctx, {
+    const sparkConfig = {
         type: 'line',
-        data: { labels: data.map((_, i) => i), datasets: [{ data: data, borderColor: color, borderWidth: 1.5, fill: false, pointRadius: 0, tension: 0.4 }] },
-        options: { responsive: true, maintainAspectRatio: false, scales: { x: { display: false }, y: { display: false } }, plugins: { legend: { display: false }, tooltip: { enabled: false } } }
-    });
+        data: { labels: series.map((_, i) => i), datasets: [{ data: series, borderColor: color, borderWidth: 1.5, fill: false, pointRadius: 0, tension: 0.4 }] },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { x: { display: false }, y: { display: false } },
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        },
+    };
+    window.v2Charts[id] = (typeof window.createOptimaChart === 'function')
+        ? window.createOptimaChart(ctx, sparkConfig)
+        : new Chart(ctx, sparkConfig);
 }
 
 /**
  * Robust date parsing for cross-browser compatibility.
  */
 function safeParseDate(ts) {
+    if (window.parseChartTimestamp) {
+        const d = window.parseChartTimestamp(ts);
+        if (d && !isNaN(d.getTime())) return d;
+    }
     if (!ts) return new Date();
     if (ts instanceof Date) return ts;
     let s = String(ts);
@@ -618,11 +648,13 @@ function initWaitChart(trends) {
     const canvas = document.getElementById('v2-wait-chart');
     if (!canvas) return;
 
+    window.destroyChartOnCanvas(canvas);
     if (window.v2Charts['wait']) {
-        window.v2Charts['wait'].destroy();
+        try { window.v2Charts['wait'].destroy(); } catch (_) {}
     }
 
     const ctx = canvas.getContext('2d');
+    const zoomPlugin = getChartZoomPluginOptions();
     window.v2Charts['wait'] = new Chart(ctx, {
         type: 'line',
         data: {
@@ -639,23 +671,22 @@ function initWaitChart(trends) {
             layout: { padding: { bottom: 12 } },
             interaction: { mode: 'index', intersect: false },
             scales: {
-                x: { 
+                x: {
                     type: 'time',
                     time: { displayFormats: { minute: 'HH:mm', second: 'HH:mm:ss' } },
-                    stacked: false, 
-                    grid: { display: false }, 
-                    ticks: { font: { size: 9 }, maxRotation: 0, color: '#6c757d', autoSkip: true, maxTicksLimit: 8 } 
+                    grid: { display: false },
+                    ticks: { font: { size: 9 }, maxRotation: 0, color: '#6c757d', autoSkip: true, maxTicksLimit: 8 },
                 },
-                y: { stacked: true, beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { font: { size: 9 }, color: '#6c757d' } }
+                y: { stacked: true, beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { font: { size: 9 }, color: '#6c757d' } },
             },
-            plugins: { 
-                legend: { 
+            plugins: {
+                legend: {
                     display: true, position: 'top', align: 'end',
-                    labels: { boxWidth: 8, font: { size: 8 }, padding: 4, color: '#6c757d' } 
+                    labels: { boxWidth: 8, font: { size: 8 }, padding: 4, color: '#6c757d' },
                 },
-                tooltip: { backgroundColor: 'rgba(0,0,0,0.8)', titleFont: { size: 10 }, bodyFont: { size: 10 } },
-                zoom: getChartZoomOptions()
-            }
+                tooltip: { enabled: true, backgroundColor: 'rgba(0,0,0,0.8)', titleFont: { size: 10 }, bodyFont: { size: 10 } },
+                ...(Object.keys(zoomPlugin).length ? { zoom: zoomPlugin } : {}),
+            },
         }
     });
 }
@@ -668,11 +699,13 @@ function initIOChart(data) {
     const canvas = document.getElementById('v2-io-chart');
     if (!canvas) return;
 
+    window.destroyChartOnCanvas(canvas);
     if (window.v2Charts['io']) {
-        window.v2Charts['io'].destroy();
+        try { window.v2Charts['io'].destroy(); } catch (_) {}
     }
 
     const ctx = canvas.getContext('2d');
+    const zoomPlugin = getChartZoomPluginOptions();
     window.v2Charts['io'] = new Chart(ctx, {
         type: 'line',
         data: {
@@ -697,12 +730,12 @@ function initIOChart(data) {
                 y: { type: 'linear', display: true, position: 'left', grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { font: { size: 9 }, color: '#6c757d' }, title: { display: false } },
                 y1: { type: 'linear', display: true, position: 'right', grid: { display: false }, ticks: { font: { size: 9 }, color: '#6c757d' }, title: { display: false } }
             },
-            plugins: { 
+            plugins: {
                 legend: { position: 'top', align: 'end', labels: { boxWidth: 6, font: { size: 8 }, padding: 4 } },
-                tooltip: { backgroundColor: 'rgba(0,0,0,0.8)', titleFont: { size: 10 }, bodyFont: { size: 10 } },
-                zoom: getChartZoomOptions()
-            }
-        }
+                tooltip: { enabled: true, backgroundColor: 'rgba(0,0,0,0.8)', titleFont: { size: 10 }, bodyFont: { size: 10 } },
+                ...(Object.keys(zoomPlugin).length ? { zoom: zoomPlugin } : {}),
+            },
+        },
     });
 }
 
@@ -710,11 +743,13 @@ function initThroughputChart(data) {
     const canvas = document.getElementById('v2-throughput-chart');
     if (!canvas) return;
 
+    window.destroyChartOnCanvas(canvas);
     if (window.v2Charts['tp']) {
-        window.v2Charts['tp'].destroy();
+        try { window.v2Charts['tp'].destroy(); } catch (_) {}
     }
 
     const ctx = canvas.getContext('2d');
+    const zoomPlugin = getChartZoomPluginOptions();
     window.v2Charts['tp'] = new Chart(ctx, {
         type: 'line',
         data: {
@@ -737,11 +772,11 @@ function initThroughputChart(data) {
                 },
                 y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { font: { size: 9 } } }
             },
-            plugins: { 
+            plugins: {
                 legend: { position: 'top', align: 'end', labels: { boxWidth: 6, font: { size: 8 }, padding: 4 } },
-                zoom: getChartZoomOptions()
-            }
-        }
+                ...(Object.keys(zoomPlugin).length ? { zoom: zoomPlugin } : {}),
+            },
+        },
     });
 }
 

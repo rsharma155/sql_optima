@@ -337,7 +337,10 @@ async function fetchTimescaleMetrics(instanceName) {
         }
         if (topQueriesRes.ok) {
             const data = await topQueriesRes.json();
-            window.appState.timescaleMetrics.topQueries = data.top_queries || [];
+            const raw = data.top_queries || [];
+            window.appState.timescaleMetrics.topQueries = typeof window.dedupeSqlServerTopQueries === 'function'
+                ? window.dedupeSqlServerTopQueries(raw)
+                : raw;
         }
         if (longRunningRes.ok) {
             const data = await longRunningRes.json();
@@ -529,28 +532,17 @@ function updateCpuChart() {
         return;
     }
 
-    const sorted = [...cpuHist].sort((a, b) => {
-        let taStr = String(a.event_time || a.capture_timestamp || '').replace(' ', 'T');
-        let tbStr = String(b.event_time || b.capture_timestamp || '').replace(' ', 'T');
-        if (taStr && !taStr.includes('Z') && !taStr.includes('+')) taStr += 'Z';
-        if (tbStr && !tbStr.includes('Z') && !tbStr.includes('+')) tbStr += 'Z';
-        const ta = new Date(taStr).getTime();
-        const tb = new Date(tbStr).getTime();
-        if (isNaN(ta) || isNaN(tb)) return 0;
-        return ta - tb;
-    }).slice(-60);
+    const sorted = (window.sortByChartTime ? window.sortByChartTime(cpuHist) : [...cpuHist]).slice(-60);
 
     const sqlData = sorted.map(t => {
-        let tsStr = String(t.event_time || t.capture_timestamp || '').replace(' ', 'T');
-        if (tsStr && !tsStr.includes('Z') && !tsStr.includes('+')) tsStr += 'Z';
-        return { x: new Date(tsStr), y: typeof t.sql_process === 'number' ? t.sql_process : (t.avg_cpu_load || 0) };
-    });
+        const x = window.parseChartTimestamp ? window.parseChartTimestamp(t) : new Date();
+        return { x, y: typeof t.sql_process === 'number' ? t.sql_process : (t.avg_cpu_load || 0) };
+    }).filter(p => p.x && !isNaN(p.x.getTime()));
     const systemData = sorted.map(t => {
-        let tsStr = String(t.event_time || t.capture_timestamp || '').replace(' ', 'T');
-        if (tsStr && !tsStr.includes('Z') && !tsStr.includes('+')) tsStr += 'Z';
+        const x = window.parseChartTimestamp ? window.parseChartTimestamp(t) : new Date();
         const val = t.system_idle != null ? (100 - t.system_idle - (typeof t.sql_process === 'number' ? t.sql_process : (t.avg_cpu_load || 0))) : 0;
-        return { x: new Date(tsStr), y: val };
-    });
+        return { x, y: val };
+    }).filter(p => p.x && !isNaN(p.x.getTime()));
 
     if (window.currentCharts.dashRes) {
         window.currentCharts.dashRes.destroy();
@@ -1051,24 +1043,11 @@ function initDashboardCharts(metrics) {
     
     let cpuHist = metrics.cpu_history || [];
     cpuHist = cpuHist.filter(t => t.sql_process >= 0 && t.sql_process <= 100);
-    cpuHist.sort((a, b) => {
-        let taStr = String(a.event_time || a.capture_timestamp || '').replace(' ','T');
-        let tbStr = String(b.event_time || b.capture_timestamp || '').replace(' ','T');
-        if (taStr && !taStr.includes('Z') && !taStr.includes('+')) taStr += 'Z';
-        if (tbStr && !tbStr.includes('Z') && !tbStr.includes('+')) tbStr += 'Z';
-        const ta = new Date(taStr).getTime();
-        const tb = new Date(tbStr).getTime();
-        return ta - tb;
-    });
+    cpuHist = window.sortByChartTime ? window.sortByChartTime(cpuHist) : cpuHist;
     if(cpuHist.length > 60) cpuHist = cpuHist.slice(-60);
     const sqlArr = cpuHist.map(t => t.sql_process);
     const idleArr = cpuHist.map(t => t.system_idle);
-    const cAxis = cpuHist.map(t => { 
-        let tsStr = String(t.event_time || t.capture_timestamp || '').replace(' ','T');
-        if (tsStr && !tsStr.includes('Z') && !tsStr.includes('+')) tsStr += 'Z';
-        const d = new Date(tsStr);
-        return isNaN(d.getTime()) ? '-' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-    });
+    const cAxis = cpuHist.map(t => window.fmtChartTick ? window.fmtChartTick(t) || '-' : '-');
 
     const hasCpuData = cpuHist.length > 0 && sqlArr.some(v => v >= 0);
     const resChartContainer = document.getElementById('dashResourcesChart')?.parentElement;

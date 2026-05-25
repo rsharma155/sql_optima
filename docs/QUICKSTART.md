@@ -12,11 +12,27 @@ Get SQL Optima up and running in under 5 minutes using Docker Compose.
 Clone the repository and run the following commands:
 
 ```bash
-git clone https://github.com/your-repo/sql_monitoring_UI.git
-cd sql_monitoring_UI/docker
+git clone https://github.com/rsharma155/sql_optima.git
+cd sql_optima/docker
 cp .env.example .env
+```
+
+**Before first start (recommended):** edit `.env` and set a strong `JWT_SECRET` and `DB_PASSWORD`. Compose defaults to `AUTH_REQUIRED=1` (login required).
+
+```bash
 docker compose up --build -d
 ```
+
+Create a local admin password (first login):
+
+```bash
+cd ../backend
+NEW_ADMIN_PASSWORD="Admin123!ChangeMe" go run reset_password.go
+```
+
+Then sign in at the UI with that password.
+
+**Local dev only (open API, no login):** in `.env` set `AUTH_REQUIRED=0` and `DISABLE_PUBLIC_SETUP=0` — not for production.
 
 ## 3. Access the UI
 
@@ -27,19 +43,31 @@ The **Global Estate Overview** will load. Since you haven't added any servers ye
 
 ## 4. Add Your First Monitored Server
 
-1.  Navigate to the **Admin** panel (sidebar).
-2.  Click **Add New Server**.
-3.  Enter your database connection details (PostgreSQL or SQL Server).
-    - *Note:* Credentials are encrypted at rest using Vault Transit.
-4.  Click **Save**.
+1. Navigate to the **Admin** panel (sidebar).
+2. Click **Add New Server**.
+3. Enter your database connection details (PostgreSQL or SQL Server).
+   - *Note:* Credentials are encrypted at rest using Vault Transit (dev Compose includes a Vault container).
+4. Click **Save**.
 
-SQL Optima will immediately begin collecting real-time telemetry. Historical metrics (dashboards) will begin appearing after ~15 minutes of collection.
+SQL Optima will immediately begin collecting live telemetry. Historical metrics (dashboards) typically appear after **~15 minutes** (two or more collector cycles at the default cadence).
+
+### Optional: PostgreSQL host RAM (OS collector)
+
+Host memory and CPU are **not** available through a normal PostgreSQL monitoring connection. For **PostgreSQL on Linux**:
+
+1. Save the server in Admin first (so the bundle includes **server ID**).
+2. In the UI, use **Download bundle (.zip)** (Admin → Add server, or **PostgreSQL → Memory / CPU**).
+3. On the DB host: unzip and run `./quick-install.sh` (prompts once for your **admin JWT**).
+4. Enable ingest from the UI (**Enable ingest**) or set `OS_METRICS_INGEST_ENABLED=1` in `.env` and restart the API.
+
+Details: [`os_collector/README.md`](../os_collector/README.md), [`docs/os_collector.md`](os_collector.md).
 
 ## 5. Next Steps
 
-- **Initialize Target DBs:** Run the setup scripts found in `infrastructure/sql_scripts/` against your target databases to ensure the monitoring role has the correct permissions.
-- **Enable Auth:** For production, set `AUTH_REQUIRED=1` in your `.env` file and use `go run reset_password.go` in the `backend/` directory to create an admin password.
-- **Read the Architecture:** Learn how the system works in [ARCHITECTURE.md](../ARCHITECTURE.md).
+- **Initialize target DBs:** Run the setup scripts in `infrastructure/sql_scripts/` against your **monitored** databases (`pgsql_init.sql`, `sqlserver_init.sql`). Use **Admin → Check permissions** to validate grants.
+- **Production hardening:** Keep `AUTH_REQUIRED=1`, set a strong `JWT_SECRET`, follow [`docs/vault_production.md`](vault_production.md), and read [`SECURITY.md`](../SECURITY.md).
+- **Upgrading from 0.4.x:** Re-apply `01_timescale_schema.sql` (idempotent) or pending files under `infrastructure/sql_scripts/migrations/`. See [RELEASES.md § 0.5.0](../RELEASES.md).
+- **Read the architecture:** [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ---
 
@@ -135,9 +163,12 @@ Add each node separately to observe per-replica metrics and HA replication dashb
 
 Credentials for all nodes: username `sa`, password `S@L_2024_HADr_D0ck3r!`
 
-**dbmonitor_user is created with least privilege, which is the recommended user for both postgres and sqlserver
-user: dbmonitor_user
-password: Hello@123**
+**Recommended monitoring login (least privilege):**
+
+| Field | Value |
+|-------|-------|
+| User | `dbmonitor_user` |
+| Password | `Hello@123` |
 
 ### Step 4 — Generate Load with the CRUD Web App
 
@@ -180,8 +211,9 @@ This stops all containers and cleans up any generated `docker-compose.override.y
 
 | Symptom | Fix |
 |---------|-----|
-| Containers not starting | Run `docker logs patroni1` or `docker logs sql1` to see initialisation errors |
-| Port already in use | Edit the host port mappings in the relevant `docker-compose.yml` |
-| SQL Server ODBC driver missing | Follow the manual install steps in the [repo README](https://github.com/rsharma155/sqlserver_postgres_ha_cluster/blob/main/README.md#odbc-driver-not-found--install-failed) |
-| Web app not starting | `cd web_app && pip install -r requirements.txt && python app.py` |
-| SQL Optima shows no data | Wait ~15 minutes after adding the servers — the collector needs a few cycles to populate historical dashboards |
+| Cannot log in after compose up | Run `reset_password.go` in `backend/` (see §2) |
+| Containers not starting (HA test repo) | Run `docker logs patroni1` or `docker logs sql1` |
+| Port already in use | Edit host port mappings in the HA repo `docker-compose.yml` |
+| SQL Server ODBC driver missing | See [HA cluster README](https://github.com/rsharma155/sqlserver_postgres_ha_cluster/blob/main/README.md#odbc-driver-not-found--install-failed) |
+| SQL Optima shows no historical data | Wait ~15 minutes; check API logs for collector errors; use **Admin → SQL Server diagnostics** for empty charts |
+| OS Collector badge missing | Enable ingest in UI; verify cron/systemd on DB host; see [`docs/os_collector.md`](os_collector.md) |

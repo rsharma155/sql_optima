@@ -18,6 +18,12 @@ import (
 
 // perfCounterNames is the canonical list of all counters collected in one query.
 // Tests reference this slice to guard against accidental removal.
+// perfCounterSystemInstances are SQL Server system databases excluded from
+// per-database Transactions/sec storage (matches database_throughput reader).
+var perfCounterSystemInstances = map[string]struct{}{
+	"master": {}, "model": {}, "msdb": {}, "tempdb": {}, "mssqlsystemresource": {},
+}
+
 var perfCounterNames = []string{
 	"Page life expectancy",
 	"Buffer Pool Size (KB)",
@@ -88,7 +94,28 @@ func (c *PerfCountersCollector) Fetch(ctx context.Context, db *sql.DB) ([]PerfCo
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	return FilterPerfCounterRows(out), rows.Err()
+}
+
+// FilterPerfCounterRows drops system-database Transactions/sec instances.
+func FilterPerfCounterRows(rows []PerfCounterRow) []PerfCounterRow {
+	if len(rows) == 0 {
+		return rows
+	}
+	filtered := make([]PerfCounterRow, 0, len(rows))
+	for _, r := range rows {
+		if r.CounterName == "Transactions/sec" {
+			inst := strings.ToLower(strings.TrimSpace(r.InstanceName))
+			if inst == "" {
+				continue
+			}
+			if _, skip := perfCounterSystemInstances[inst]; skip {
+				continue
+			}
+		}
+		filtered = append(filtered, r)
+	}
+	return filtered
 }
 
 // ComputeRatePerSec returns (curr-prev)/intervalSecs for cumulative counters.

@@ -1,21 +1,49 @@
 # Releases
 
 ## Versioning
+
 Until 1.0, releases may include breaking changes. We still aim to keep changes documented and predictable.
 
-## Unreleased
+**Source of truth:** [`VERSION`](VERSION) at repo root. Tag releases as `v0.5.0` (with `v` prefix) to trigger GHCR publish.
+
+## 0.5.0 (2026-05-25)
+
+### Security & operations (v1.0 gate)
+- **Vault production guide** ([`docs/vault_production.md`](docs/vault_production.md)), hardened Docker defaults (`AUTH_REQUIRED=1`, public setup lockdown, OS metrics behind admin JWT).
+- **XSS sweep** on dashboard pages; **sanitized API errors** via `internal/apiresponse` on selected admin/ingest routes.
+- **Operations guide** ([`docs/operations.md`](docs/operations.md)): in-memory metric delta reset after API restart (P2-7), SQL Server collector diagnostics endpoint.
+- **Admin audit**: user CRUD events in `optima_audit_logs`.
+- **Release engineering**: [`CHANGELOG.md`](CHANGELOG.md), GHCR publish on `v*.*.*` tags ([`.github/workflows/release.yml`](.github/workflows/release.yml)).
 
 ### New features
-- **Cold Storage — Tiered Metric Archival**: Optional pipeline that archives aged-out TimescaleDB metrics to S3-compatible object storage (MinIO, AWS S3) in Apache Parquet format. Nightly archiver batch-exports rows, uploads to S3, and purges the hot tier. Supports Apache Iceberg REST catalog registration (e.g. Project Nessie) for cross-tool queryability. Controlled via `COLD_STORAGE_*` environment variables; disabled by default.
-- **Wait Stats Collector (SQL Server)**: New `sqlserver_wait_stats_collector.go` continuously captures per-category wait stats deltas, enabling the Wait Stats V2 dashboard to surface trend data over configurable time windows.
-- **PostgreSQL CPU Settings Handler**: New `postgres_cpu_settings_handlers.go` exposes CPU-related configuration and tuning recommendations for PostgreSQL instances.
-- **Admin Notification Handlers**: New `admin_notification_handlers.go` provides endpoints for configuring alert notification channels (e.g. webhook, email) from the Admin panel.
-- **Server Probe Endpoint**: New `admin_server_probe.go` adds a lightweight connectivity probe endpoint for validating monitored server credentials without a full collection cycle.
+- **SQL Server Backup & Recovery**: Per-database posture from `msdb`, backup history trends, RPO policy (`optima_server_dr_policy`), readiness chips, and UI dashboard. Collectors: `sqlserver_backup_posture` (5 min), `sqlserver_backup_history` (15 min).
+- **PostgreSQL Backup & DR**: DR policy API, readiness scoring, and refreshed backup UI (`pg_backups`).
+- **OS collector (bash)**: Replaces Go agent. UI zip bundle with pre-filled server ID; **Enable ingest** toggle stored in `optima_platform_settings` (no API restart). See [`docs/os_collector.md`](docs/os_collector.md) and [`os_collector/README.md`](os_collector/README.md).
+- **Admin SQL Server diagnostics**: `GET /api/admin/diagnostics/sqlserver/{instance}` — row counts per Timescale table, collector hints (admin role).
+- **OS-aware PostgreSQL rules**: `07_rule_engine_os_enriched.sql` + `oscontext` package for host-RAM-aware best-practice evaluation.
+- **SQL Server query analysis**: Statement fingerprint grouping, user-workload filter, extra Query V2 delta columns.
+- **Intelligence report**: Narrative enrichment, v4 HTML template, report cache.
+
+### Schema & collectors
+- Cold storage control tables merged into `01_timescale_schema.sql`; `07_cold_storage.sql` removed.
+- New hypertables: `monitor.sqlserver_backup_database_posture`, `monitor.sqlserver_backup_history`.
+- Retention policies added for several SQL Server hypertables; `optima_platform_settings` for UI-managed toggles.
+- Setup wizard step 7: `07_rule_engine_os_enriched.sql`.
+
+### Breaking / upgrade notes
+- **OS collector**: Remove any deployed Go `os_collector` binary; install the bash agent from the UI bundle or [`os_collector/sql-optima-os-collector.sh`](os_collector/sql-optima-os-collector.sh).
+- **Existing TimescaleDB**: Re-apply `01_timescale_schema.sql` (idempotent `IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) or run pending files under `infrastructure/sql_scripts/migrations/`. If you previously ran `07_cold_storage.sql`, the objects now live in `01` — no duplicate run needed.
+- **Docker `.env`**: New installs default `AUTH_REQUIRED=1` and `DISABLE_PUBLIC_SETUP=1`. Set a strong `JWT_SECRET` before first use.
+- **Query V2**: No env toggle; pipeline is always on.
+
+### Removed
+- Go `os_collector` (`main.go`, committed binary).
+- Standalone `07_cold_storage.sql`.
 
 ## 0.4.0 (2026-05-19)
 
 ### New features
-- **Query V2 Pipeline**: Hash-based delta tracking for SQL Server and PostgreSQL query metrics; computes per-query deltas between collection cycles for trend analysis. Enabled by default (`ENABLE_QUERY_V2_PIPELINE=true`).
+- **Query V2 Pipeline**: Hash-based delta tracking for SQL Server and PostgreSQL query metrics; computes per-query deltas between collection cycles for trend analysis. Always enabled (not configurable).
 - **SQL Server Locks & Blocking Dashboard**: Full-stack locks monitoring — new API endpoints, `sqlserver_blocking_logger`, and UI pages (`sqlserver_LocksDashboard.js`, `sqlserver_LocksDrilldown.js`, `sqlserver_LocksDrilldownDetailed.js`).
 - **PostgreSQL Incident Feed & Connectivity**: New `pg_incident_feed` handler and `pg_connection_utilization_handler` for advanced Postgres observability; incident feed route (`pg-incident`).
 - **Data Export (CSV)**: CSV export handlers for both engines (`csv_export.go`, `pg_export.go`, `sqlserver_export.go`).
@@ -34,6 +62,7 @@ Until 1.0, releases may include breaking changes. We still aim to keep changes d
 - Updated Go runtime to **1.26.1** (`go.mod`).
 - Updated Docker build image to `golang:1.26`.
 - Reordered Dockerfile `COPY` commands to support local module replacement.
+
 ## 0.3.0 (2026-04-22)
 
 - **SQL Server Micro-Architecture**: Massive refactor of the SQL Server repository. Split the monolithic `mssql_stats.go` into 14 domain-specific files (e.g., `sqlserver_query_store.go`, `sqlserver_ag_health.go`) following DDD principles.
@@ -44,24 +73,23 @@ Until 1.0, releases may include breaking changes. We still aim to keep changes d
 - **Tech Stack Updates**: Updated to Go 1.25.7 (bumped to 1.26.1 in 0.4.0); added `github.com/expr-lang/expr` for dynamic rule evaluation and `github.com/shirou/gopsutil` for host metrics.
 
 ## 0.2.1
+
 - **Bug fix — Alert Ack/Resolve 400 error**: `AcknowledgeAlert` and `ResolveAlert` handlers now treat the request body as optional; an empty POST body no longer returns `400 Bad Request`.
-- **Bug fix — "Invalid Date" in charts**: Chart time-series labels were emitted as `"HH:MM"` strings (e.g. `"14:32"`), which `new Date()` cannot parse. Labels are now RFC 3339 ISO timestamps; the existing `toLocalTime` helper formats them as `HH:MM` in the browser.
-- **Bug fix — `toLocalTime` ReferenceError in replication.js**: `toLocalTime` was scoped inside the `if (replCtx)` block but used in the sibling `if (checkCtx)` block. Moved to the enclosing scope and replaced the `try/catch` guard with an `isNaN` check so "Invalid Date" strings are never surfaced.
-- **Bug fix — Autovacuum & Bloat Risk UI mismatch**: Replaced Bootstrap-style `card dashboard-card` / `table table-sm table-hover` classes with the project design system (`table-card glass-panel` / `data-table`) and updated the page title to the standard `<h1>` + `<p class="subtitle">` pattern.
-- **Observability — Query Performance silent failure**: `collectPostgresQueryStatsSnapshotForInstance` previously swallowed errors (including `pg_stat_statements` not installed) without logging. Now emits a `log.Printf` for both the error path and the empty-result path so operators can diagnose why query captures are missing.
-- **Admin — Permission check endpoints**: Added `POST /api/admin/servers/check-permissions-draft` and `POST /api/admin/servers/{id}/check-permissions` to probe monitoring role permissions and return ready-to-run `GRANT` and `CREATE USER` SQL scripts.
+- **Bug fix — "Invalid Date" in charts**: Chart time-series labels are now RFC 3339 ISO timestamps.
+- **Bug fix — `toLocalTime` ReferenceError in replication.js**.
+- **Bug fix — Autovacuum & Bloat Risk UI mismatch**.
+- **Observability — Query Performance silent failure**: Now logs when `pg_stat_statements` is missing.
+- **Admin — Permission check endpoints**: `POST /api/admin/servers/check-permissions-draft` and `POST /api/admin/servers/{id}/check-permissions`.
 
 ## 0.2.0
-- **Alert engine** (Epic 1.1): cross-engine alert evaluation with fingerprint-based deduplication, maintenance windows, audit history, and 7 built-in evaluators (SQL Server: blocking, failed jobs, disk space; PostgreSQL: replication lag, blocking, backup freshness, disk space).
+
+- **Alert engine** (Epic 1.1): cross-engine alert evaluation with fingerprint-based deduplication, maintenance windows, audit history, and 7 built-in evaluators.
 - Alert evaluation loop uses `pg_try_advisory_xact_lock` for singleton execution in multi-replica deployments.
-- Alert mutation endpoints derive actor identity from JWT claims (no client-supplied actor field).
-- Alert HTTP handlers return proper status codes: 400 (invalid ID / malformed body), 404 (not found), 409 (already resolved).
-- Schema: new `optima_alerts`, `optima_alert_history`, `optima_maintenance_windows`, `optima_alert_rules` tables with partial unique index for dedup.
-- Docker: `schema-setup` now applies `04_alert_engine.sql` automatically.
-- Security: enforce read-only + row-limited execution for widget/rule/live helpers; reduce sensitive logging.
-- Docs: add OSS trust files (this document, contributing, security, architecture, roadmap, conduct).
+- Schema: new `optima_alerts`, `optima_alert_history`, `optima_maintenance_windows`, `optima_alert_rules` tables.
+- Security: enforce read-only + row-limited execution for widget/rule/live helpers.
 
 ## 0.1.0 (initial)
+
 - Go backend API + static SPA UI
 - SQL Server + PostgreSQL monitoring dashboards
 - Optional TimescaleDB-backed historical metrics

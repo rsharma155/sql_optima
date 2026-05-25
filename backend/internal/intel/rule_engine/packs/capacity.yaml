@@ -1,22 +1,5 @@
-# storage_exhaustion removed (DEFECT-7): delta_data_mb and free_disk_mb are already
-# covered by dynamic rules rapid_disk_growth and low_disk_space with hardware-tuned
-# thresholds. Keeping this rule caused a third duplicate entry for the same condition.
-
-# database_growth_acceleration removed (DEFECT-7): delta_data_mb > 1000 per interval
-# overlaps directly with dynamic rapid_disk_growth. Different rule name caused a
-# duplicate CurrentIssues entry pointing to the same root cause.
-
-name: backup_failure_risk
-description: Failed jobs indicate backup risk
-conditions:
-  - metric: failed_jobs_24h
-    operator: ">"
-    value: 0
-logic: AND
-severity: critical
-message: "{failed_jobs_24h} SQL Agent jobs failed in last 24 hours."
-recommendation:
-  - "Check job failures for error details"
-  - "Verify backup jobs"
-  - "Test restore process"
-  - "Configure alerting on job failure"
+# Capacity threshold rules are evaluated dynamically in analysis/engine.go.
+#
+# Removed fixed rules:
+#   - storage_exhaustion, database_growth_acceleration (disk growth duplicates)
+#   - backup_failure_risk (failed_jobs_24h > 0 — now dynamic)

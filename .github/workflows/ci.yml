@@ -70,6 +70,27 @@ jobs:
           sarif_file: backend/gosec-results.sarif
           category: gosec
 
+  # ── OS collector (Linux shell agent) ─────────────────────────────────────
+  os-collector:
+    name: OS Collector (shell)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+
+      - name: shellcheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: os_collector
+          severity: error
+
+      - name: Fixture tests
+        run: bash os_collector/test/run_tests.sh
+
   # ── Dependency vulnerability scan ─────────────────────────────────────────
   dependency-scan:
     name: Dependency Vulnerability Scan

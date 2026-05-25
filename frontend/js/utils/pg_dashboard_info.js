@@ -207,7 +207,7 @@
                     text: "**What it is:** Time-series chart of buffer writes split by source: `buffers_clean` (BGWriter proactive writes) vs. `buffers_backend` (backend forced writes) vs. `buffers_checkpoint` (checkpoint writes), from `pg_stat_bgwriter`.\n\n**Why it matters:** A healthy system has `buffers_clean` >> `buffers_backend`. If `buffers_backend` is growing rapidly, the BGWriter is not keeping pace with dirty page creation, and query latency is being directly impacted by synchronous I/O embedded within query execution."
                 },
                 "Memory Advisor": {
-                    title: "Memory Advisor (AI-Driven Insights)",
+                    title: "Memory Advisor (Rule-Based Insights)",
                     text: "**Buffer Management:** Reviews `shared_buffers` size relative to working dataset and cache hit ratio trends. Recommends increases when the hit ratio is declining.\n\n**Work Memory (Sorting):** Reviews temp file creation rates and mean query duration to assess whether `work_mem` is causing sort/hash spills.\n\n**Connection Overhead:** Estimates total memory consumed by connection process overhead. High connection overhead with low active session counts is a sign to reduce `max_connections` and deploy PgBouncer.\n\n**Guideline:** Start `work_mem` conservatively at 4–8MB and raise session-locally for known heavy analytical queries."
                 },
                 "Saturation Forecast": {
@@ -376,6 +376,14 @@
         "Backup & DR": {
             description: "Monitors the safety, durability, and high-availability status of the instance — specifically WAL archiving health, streaming replication status, and replication slot risk. The archive is the foundation of Point-In-Time Recovery (PITR); a single missing WAL file makes the entire subsequent archive useless for recovery.",
             metrics: {
+                "DR Readiness": {
+                    title: "DR Readiness pillars",
+                    text: "**What it is:** Four executive cards (recoverability, point-in-time, availability, WAL safety) scored green/amber/red against per-instance RPO/RTO targets configured in Admin → DR policy.\n\n**Why it matters:** Gives DBAs and business stakeholders a single glance at whether the instance can meet recovery and failover commitments."
+                },
+                "Base Backup": {
+                    title: "Base backup runs",
+                    text: "**What it is:** History of logical/physical backup jobs reported to SQL Optima (`postgres_backup_runs`), including tool, type, status, and size.\n\n**Why it matters:** WAL archiving alone does not replace base backups — both are required for full restore. Stale or missing runs trigger `PGBackupStale` alerts using your configured RPO backup hours."
+                },
                 "WAL Gen Rate": {
                     title: "WAL Generation Rate (MB/min)",
                     text: "**What it is:** Rate at which Write-Ahead Log records are being generated. On this dashboard, WAL rate is contextualized against archiving capacity.\n\n**Why it matters:** If WAL is being generated faster than the archive can consume it, the `pg_wal/` directory grows without bound. On a busy server, this can fill an entire disk in hours.\n\n**Signal:** A sudden 3–5× spike in WAL rate without a corresponding TPS increase often indicates a runaway UPDATE/DELETE loop or uncontrolled bulk load."

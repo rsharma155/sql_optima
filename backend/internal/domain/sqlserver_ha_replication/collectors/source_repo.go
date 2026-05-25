@@ -386,8 +386,8 @@ func (r *SourceQuerier) FetchReplicationTopology(ctx context.Context, instanceNa
 			        DB_NAME() AS publication_db,
 			        ISNULL(s.db_name, '') AS subscriber_db,
 			        CASE p.repl_freq
-			                WHEN 0 THEN 'Snapshot'
-			                WHEN 1 THEN 'Transactional'
+			                WHEN 0 THEN 'Transactional'
+			                WHEN 1 THEN 'Snapshot'
 			                ELSE 'Unknown'
 			        END AS replication_type,
 			        CASE s.subscription_type

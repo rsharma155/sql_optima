@@ -52,7 +52,7 @@ window.PgStorageView = async function() {
     };
 
     window.routerOutlet.innerHTML = `
-        <div class="page-view active dashboard-sky-theme">
+        <div class="page-view active dashboard-sky-theme pg-storage-page">
             <div class="page-title flex-between dashboard-page-title-compact">
                 <div class="dashboard-title-line">
                     <h1><i class="fa-solid fa-hard-drive"></i> Storage &amp; Maintenance</h1>
@@ -101,14 +101,15 @@ window.PgStorageView = async function() {
                     </div>
                 </div>
 
+                <div class="pg-storage-charts-laptop">
                 <div class="grid-container mt-3">
-                    <div class="col-4 col-laptop-4 col-tablet-6">
+                    <div class="col-4 col-laptop-4 col-tablet-6 pg-storage-bloat-col">
                         <div class="card glass-panel h-chart-md">
                             <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Bloat Estimation</h3></div>
                             <div class="chart-container" style="height:210px;"><canvas id="pgBloatChart"></canvas></div>
                         </div>
                     </div>
-                    <div class="col-8 col-laptop-8 col-tablet-6">
+                    <div class="col-8 col-laptop-8 col-tablet-6 pg-storage-autovac-col">
                         <div class="card glass-panel h-chart-md">
                             <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Autovacuum Activity Trend</h3></div>
                             <div class="chart-container" style="height:210px;"><canvas id="pgVacChart"></canvas></div>
@@ -117,13 +118,13 @@ window.PgStorageView = async function() {
                 </div>
                 
                 <div class="grid-container mt-3">
-                    <div class="col-7 col-laptop-8 col-tablet-6">
+                    <div class="col-7 col-laptop-8 col-tablet-6 pg-storage-growth-col">
                         <div class="card glass-panel h-chart-md">
                             <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Database Growth History</h3></div>
                             <div class="chart-container" style="height:230px;"><canvas id="pgGrowthTrendChart"></canvas></div>
                         </div>
                     </div>
-                    <div class="col-5 col-laptop-4 col-tablet-6">
+                    <div class="col-5 col-laptop-4 col-tablet-6 pg-storage-vac-col">
                         <div class="card glass-panel h-chart-md">
                             <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Live Vacuum Progress</h3></div>
                             <div class="table-container-compact" style="height:230px; overflow-y:auto;">
@@ -134,6 +135,7 @@ window.PgStorageView = async function() {
                             </div>
                         </div>
                     </div>
+                </div>
                 </div>
             </div>
 
@@ -254,14 +256,14 @@ window.PgStorageView = async function() {
                         </div>
                     </div>
                     <div class="col-12 mt-3">
-                        <div class="card glass-panel">
+                        <div class="card glass-panel" style="display:flex; flex-direction:column; min-height:520px;">
                             <div class="card-header"><h3 style="font-size:0.85rem;margin:0;">Index Bloat &amp; Inefficiency</h3></div>
-                            <div class="table-container-compact h-table-md">
-                                <table class="modern-table modern-table-compact">
+                            <div style="overflow-x:auto; flex:1;">
+                                <table class="modern-table modern-table-compact" style="width:100%;">
                                     <thead>
                                         <tr>
                                             <th class="sortable" data-col="database_name">DB</th>
-                                            <th class="sortable" data-col="table">Table</th>
+                                            <th class="sortable" data-col="table_name">Table</th>
                                             <th class="sortable" data-col="index_name">Index</th>
                                             <th class="sortable" data-col="index_bytes">Size</th>
                                             <th class="sortable" data-col="idx_scans">Scans</th>
@@ -270,6 +272,16 @@ window.PgStorageView = async function() {
                                     </thead>
                                     <tbody id="pgIdxBloatTbody"></tbody>
                                 </table>
+                            </div>
+                            <div id="pgIdxBloatPagination" style="display:flex; align-items:center; justify-content:space-between; padding:0.4rem 0.75rem; border-top:1px solid var(--border-color); font-size:0.72rem; flex-shrink:0;">
+                                <span id="pgIdxBloatPageInfo" class="text-muted"></span>
+                                <div style="display:flex; gap:0.25rem; align-items:center;">
+                                    <button id="pgIdxBloatFirst" class="btn btn-xs btn-outline" title="First page">«</button>
+                                    <button id="pgIdxBloatPrev" class="btn btn-xs btn-outline" title="Previous page">‹ Prev</button>
+                                    <span id="pgIdxBloatPageNum" class="text-muted" style="padding:0 0.4rem; white-space:nowrap;"></span>
+                                    <button id="pgIdxBloatNext" class="btn btn-xs btn-outline" title="Next page">Next ›</button>
+                                    <button id="pgIdxBloatLast" class="btn btn-xs btn-outline" title="Last page">»</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -326,7 +338,7 @@ window.PgStorageView = async function() {
             const sih = await sihResp.value.json();
             if (!isStillActive()) return;
             const k = sih.kpis || {};
-            setT('val-total-db-size', k.total_db_size_mb ? `${k.total_db_size_mb.toFixed(1)} MB` : '--');
+            setT('val-total-db-size', k.total_db_size_mb ? fmtBytes(k.total_db_size_mb * 1024 * 1024) : '--');
             setT('val-growth-7d', k.growth_7d_pct ? `${k.growth_7d_pct.toFixed(2)}%` : '0.0%');
             setT('val-unused-idx-count', k.unused_index_count || '0');
             setT('sub-unused-idx-size', k.unused_index_mb ? `${k.unused_index_mb.toFixed(1)} MB waste` : '0 MB');
@@ -633,6 +645,7 @@ window.PgStorageView = async function() {
             const data = await idxBloatResp.value.json();
             if (!isStillActive()) return;
             state.allIndexes = data.indexes || [];
+            state.idxPage = 0;
             renderIndexTable();
         }
 
@@ -670,6 +683,8 @@ window.PgStorageView = async function() {
         })();
     };
 
+    const IDX_PAGE_SIZE = 15;
+
     const renderIndexTable = () => {
         const elDb = document.getElementById('pgStorageDb');
         if (!elDb) return;
@@ -684,12 +699,19 @@ window.PgStorageView = async function() {
                 const va = a[state.idxSortCol];
                 const vb = b[state.idxSortCol];
                 const dir = state.idxSortDir === 'asc' ? 1 : -1;
-                if (typeof va === 'string') return va.localeCompare(vb) * dir;
-                return (va - vb) * dir;
+                if (typeof va === 'string') return (va || '').localeCompare(vb || '') * dir;
+                return ((Number(va) || 0) - (Number(vb) || 0)) * dir;
             });
         }
 
-        const html = idxs.map(ix => `
+        const totalCount = idxs.length;
+        const maxPage = Math.max(0, Math.ceil(totalCount / IDX_PAGE_SIZE) - 1);
+        if ((state.idxPage || 0) > maxPage) state.idxPage = maxPage;
+        const page = state.idxPage || 0;
+        const start = page * IDX_PAGE_SIZE;
+        const pageRows = idxs.slice(start, start + IDX_PAGE_SIZE);
+
+        const html = pageRows.map(ix => `
             <tr>
                 <td>${esc(ix.database_name)}</td>
                 <td>${esc(ix.table_name)}</td>
@@ -698,9 +720,24 @@ window.PgStorageView = async function() {
                 <td>${Number(ix.idx_scans).toLocaleString()}</td>
                 <td class="small">${esc(ix.recommendation)}</td>
             </tr>
-        `).join('') || '<tr><td colspan="6" class="text-center text-muted">No data</td></tr>';
+        `).join('') || '<tr><td colspan="6" class="text-center text-muted" style="padding:1.5rem;">No index data</td></tr>';
         const tbody = document.getElementById('pgIdxBloatTbody');
         if (tbody) tbody.innerHTML = html;
+
+        // Update pagination controls
+        const pageInfo = document.getElementById('pgIdxBloatPageInfo');
+        const pageNum = document.getElementById('pgIdxBloatPageNum');
+        const firstBtn = document.getElementById('pgIdxBloatFirst');
+        const prevBtn = document.getElementById('pgIdxBloatPrev');
+        const nextBtn = document.getElementById('pgIdxBloatNext');
+        const lastBtn = document.getElementById('pgIdxBloatLast');
+
+        if (pageInfo) pageInfo.textContent = totalCount > 0 ? `Rows ${start + 1}–${Math.min(start + IDX_PAGE_SIZE, totalCount)} of ${totalCount}` : 'No data';
+        if (pageNum) pageNum.textContent = totalCount > 0 ? `Page ${page + 1} of ${maxPage + 1}` : '';
+        if (firstBtn) firstBtn.disabled = page === 0;
+        if (prevBtn) prevBtn.disabled = page === 0;
+        if (nextBtn) nextBtn.disabled = page >= maxPage;
+        if (lastBtn) lastBtn.disabled = page >= maxPage;
     };
 
     // Load DB filters
@@ -711,7 +748,10 @@ window.PgStorageView = async function() {
                 const filters = await resp.json();
                 const dbSelect = document.getElementById('pgStorageDb');
                 if (dbSelect) {
-                    dbSelect.innerHTML = '<option value="all">All DBs</option>' + (filters.databases || []).map(d => `<option value="${d}" ${state.db === d ? 'selected' : ''}>${d}</option>`).join('');
+                    dbSelect.innerHTML = '<option value="all">All DBs</option>' + (filters.databases || []).map(d => {
+                        const v = window.escapeHtml(String(d));
+                        return `<option value="${v}" ${state.db === d ? 'selected' : ''}>${v}</option>`;
+                    }).join('');
                 }
             }
         } catch (e) { console.error('Failed to load filters', e); }
@@ -736,7 +776,7 @@ window.PgStorageView = async function() {
     document.getElementById('pgStorageRefreshBtn')?.addEventListener('click', handleApply);
     document.getElementById('pgStorageDb')?.addEventListener('change', handleApply);
 
-    // Sorting event listeners
+    // Sorting event listeners (reset to page 0 on sort change)
     document.querySelectorAll('#pgStorageTab-indices th.sortable').forEach(th => {
         th.style.cursor = 'pointer';
         th.addEventListener('click', () => {
@@ -747,8 +787,20 @@ window.PgStorageView = async function() {
                 state.idxSortCol = col;
                 state.idxSortDir = 'desc';
             }
+            state.idxPage = 0;
             renderIndexTable();
         });
+    });
+
+    // Pagination button event listeners
+    const wirePagBtn = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+    wirePagBtn('pgIdxBloatFirst', () => { state.idxPage = 0; renderIndexTable(); });
+    wirePagBtn('pgIdxBloatPrev',  () => { state.idxPage = Math.max(0, (state.idxPage || 0) - 1); renderIndexTable(); });
+    wirePagBtn('pgIdxBloatNext',  () => { state.idxPage = (state.idxPage || 0) + 1; renderIndexTable(); });
+    wirePagBtn('pgIdxBloatLast',  () => {
+        const total = (state.allIndexes || []).length;
+        state.idxPage = Math.max(0, Math.ceil(total / IDX_PAGE_SIZE) - 1);
+        renderIndexTable();
     });
 
     await loadFilters();

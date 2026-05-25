@@ -79,13 +79,9 @@ func checkSQLServerPermissions(ctx context.Context, db *sql.DB) error {
 	var hasMsdb int
 	_ = db.QueryRowContext(ctx, "SELECT CASE WHEN DB_ID('msdb') IS NOT NULL THEN 1 ELSE 0 END").Scan(&hasMsdb)
 	if hasMsdb == 1 {
-		// Just a smoke test for one table
 		var canSelect int
 		_ = db.QueryRowContext(ctx, "SELECT HAS_PERMS_BY_NAME('msdb.dbo.sysjobs', 'OBJECT', 'SELECT')").Scan(&canSelect)
-		if canSelect != 1 {
-			// We don't fail hard here as it might be optional, but we could log it.
-			// However, for this task, we want to be thorough.
-		}
+		_ = canSelect // msdb job visibility is optional for core monitoring
 	}
 
 	return nil
@@ -150,9 +146,7 @@ func checkPostgresPermissions(ctx context.Context, db *sql.DB) error {
 	if hasStatStatements {
 		var canReadStats bool
 		_ = db.QueryRowContext(ctx, "SELECT HAS_TABLE_PRIVILEGE(current_user, 'pg_stat_statements', 'SELECT')").Scan(&canReadStats)
-		if !canReadStats {
-			// Not a hard failure but good to know.
-		}
+		_ = canReadStats // extension present but SELECT may still be restricted
 	}
 
 	return nil

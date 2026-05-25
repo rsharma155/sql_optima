@@ -20,6 +20,7 @@ import (
 	"github.com/rsharma155/sql_optima/internal/collectors"
 	"github.com/rsharma155/sql_optima/internal/collectors/infrastructure/sqlserver"
 	"github.com/rsharma155/sql_optima/internal/collectors/postgres"
+	"github.com/rsharma155/sql_optima/internal/domain/postgres_backup_dr/domain/entities"
 	pg_backup_repo "github.com/rsharma155/sql_optima/internal/domain/postgres_backup_dr/domain/repositories"
 	pg_obs_repo "github.com/rsharma155/sql_optima/internal/domain/postgres_observability/domain/repositories"
 	pg_obs_coll "github.com/rsharma155/sql_optima/internal/domain/postgres_observability/collectors"
@@ -73,6 +74,7 @@ type MetricsService struct {
 	// Postgres Domain Repositories
 	PgObservabilityRepo *pg_obs_repo.PostgresObservabilityRepository
 	PgBackupRepo        *pg_backup_repo.PostgresBackupRepository
+	PgDRPolicyRepo      *pg_backup_repo.DRPolicyRepository
 	PgSecurityRepo      *pg_security_repo.PostgresSecurityRepository
 
 	tsMu             sync.Mutex
@@ -89,6 +91,11 @@ type MetricsService struct {
 	hwLastSlowCollect map[uuid.UUID]time.Time
 
 	PulseSvc      *PulseService
+
+	platformSettings *repository.PlatformSettingsRepository
+	osIngestMu       sync.RWMutex
+	osIngestEnabled  bool
+	osIngestLoaded   bool
 }
 
 func NewMetricsService(pg *repository.PgRepository, ms *repository.SqlServerRepository, cfg *config.Config, tsStorage *hot.HotStorage) *MetricsService {
@@ -128,9 +135,24 @@ func NewMetricsService(pg *repository.PgRepository, ms *repository.SqlServerRepo
 		svc.PgSecurityRepo = pg_security_repo.NewPostgresSecurityRepository(tsStorage.Pool())
 		svc.PgSecurityCollector = pg_security_coll.NewPostgresSecurityCollector(svc.PgSecurityRepo)
 		svc.PgBackupRepo = pg_backup_repo.NewPostgresBackupRepository(tsStorage.Pool())
+		svc.PgDRPolicyRepo = pg_backup_repo.NewDRPolicyRepository(tsStorage.Pool())
+		svc.platformSettings = repository.NewPlatformSettingsRepository(tsStorage.Pool())
+		_ = svc.ReloadOSMetricsIngest(context.Background())
 	}
 
 	return svc
+}
+
+// GetDRPolicy returns per-server DR targets or defaults when unset.
+func (s *MetricsService) GetDRPolicy(ctx context.Context, serverID uuid.UUID) entities.DRPolicy {
+	if s.PgDRPolicyRepo == nil {
+		return entities.DefaultDRPolicy(serverID)
+	}
+	p, err := s.PgDRPolicyRepo.Get(ctx, serverID)
+	if err != nil {
+		return entities.DefaultDRPolicy(serverID)
+	}
+	return p
 }
 
 // GetAllInstanceStatuses merges connection statuses from both Postgres and SQL Server repositories.
@@ -380,14 +402,7 @@ func (s *MetricsService) GetPostgresCPUHistory(ctx context.Context, serverID uui
 	if s.tsLogger == nil {
 		return []map[string]interface{}{}, nil
 	}
-	instanceName := ""
-	for _, inst := range s.Config.Instances {
-		if inst.ServerID == serverID {
-			instanceName = inst.Name
-			break
-		}
-	}
-	return s.tsLogger.GetPostgresCPUHistory(ctx, instanceName, from, to, limit)
+	return s.tsLogger.GetPostgresCPUHistory(ctx, serverID, from, to, limit)
 }
 
 func (s *MetricsService) GetPostgresMemoryHistory(ctx context.Context, serverID uuid.UUID, from, to time.Time) (interface{}, error) {
@@ -529,7 +544,14 @@ func (s *MetricsService) LogPostgresBackupRun(ctx context.Context, serverID uuid
 }
 
 func (s *MetricsService) GetLatestPostgresBackupRun(ctx context.Context, serverID uuid.UUID) (interface{}, error) {
-	return nil, nil
+	if s.tsLogger == nil {
+		return map[string]interface{}{"status": "no_data"}, nil
+	}
+	row, err := s.tsLogger.GetLatestPostgresBackupRun(ctx, serverID)
+	if err != nil {
+		return map[string]interface{}{"status": "no_data"}, nil
+	}
+	return row, nil
 }
 
 
@@ -538,15 +560,45 @@ func (s *MetricsService) FetchPgBestPracticesWithTimescale(ctx context.Context, 
 		return map[string]interface{}{"checks": []interface{}{}}, nil
 	}
 
+	// Align with ruleengine schema (rule_name, current_value, recommended) used by /api/rules/best-practices.
 	query := `
-		SELECT 
-			r.rule_id, r.name, r.category, r.severity,
-			res.status, COALESCE(res.finding_details, '') as details,
-			COALESCE(res.recommendation, '') as recommendation
-		FROM ruleengine.rule_results_evaluated res
-		JOIN ruleengine.rules r ON res.rule_id = r.rule_id
-		WHERE res.server_id = $1
-		ORDER BY res.status DESC, r.severity DESC`
+		SELECT
+			r.rule_id,
+			r.rule_name,
+			r.category,
+			r.severity,
+			UPPER(COALESCE(e.status, 'OK')) AS status,
+			COALESCE(
+				NULLIF(BTRIM(e.current_value), ''),
+				NULLIF(BTRIM(raw.current_value), ''),
+				''
+			) AS current_value,
+			COALESCE(NULLIF(BTRIM(e.recommended), ''), r.recommended_value, '') AS recommended_value,
+			COALESCE(r.description, '') AS description
+		FROM ruleengine.rules r
+		LEFT JOIN LATERAL (
+			SELECT status, current_value, recommended
+			FROM ruleengine.rule_results_evaluated
+			WHERE server_id = $1 AND rule_id = r.rule_id AND target_db_type = 'postgres'
+			ORDER BY capture_timestamp DESC
+			LIMIT 1
+		) e ON TRUE
+		LEFT JOIN LATERAL (
+			SELECT NULLIF(BTRIM(raw_payload->>'CurrentValue'), '') AS current_value
+			FROM ruleengine.rule_results_raw
+			WHERE server_id = $1 AND rule_id = r.rule_id
+			ORDER BY capture_timestamp DESC
+			LIMIT 1
+		) raw ON TRUE
+		WHERE r.is_enabled = true AND r.target_db_type = 'postgres'
+		ORDER BY
+			CASE UPPER(COALESCE(e.status, 'OK'))
+				WHEN 'CRITICAL' THEN 1
+				WHEN 'WARNING' THEN 2
+				ELSE 3
+			END,
+			r.category,
+			r.rule_name`
 
 	rows, err := s.tsHotStorage.Pool().Query(ctx, query, serverID)
 	if err != nil {
@@ -556,18 +608,22 @@ func (s *MetricsService) FetchPgBestPracticesWithTimescale(ctx context.Context, 
 
 	var checks []map[string]interface{}
 	for rows.Next() {
-		var id, name, cat, sev, status, details, rec string
-		if err := rows.Scan(&id, &name, &cat, &sev, &status, &details, &rec); err != nil {
+		var id, name, cat, sev, status, current, recommended, desc string
+		if err := rows.Scan(&id, &name, &cat, &sev, &status, &current, &recommended, &desc); err != nil {
 			continue
 		}
 		checks = append(checks, map[string]interface{}{
-			"id":             id,
-			"name":           name,
-			"category":       cat,
-			"severity":       sev,
-			"status":         status,
-			"details":        details,
-			"recommendation": rec,
+			"id":                id,
+			"rule_id":           id,
+			"name":              name,
+			"rule_name":         name,
+			"category":          cat,
+			"severity":          sev,
+			"status":            status,
+			"current_value":     current,
+			"recommended_value": recommended,
+			"recommendation":    recommended,
+			"description":       desc,
 		})
 	}
 
@@ -633,7 +689,11 @@ func (s *MetricsService) GetLatestPostgresXIDRisk(ctx context.Context, serverID 
 }
 
 func (s *MetricsService) GetLatestPostgresWALArchiverRisk(ctx context.Context, serverID uuid.UUID) (interface{}, error) {
-	return map[string]interface{}{"failed_count": 0}, nil
+	instanceName := s.instanceNameByServerID(serverID)
+	if instanceName == "" || s.PgRepo == nil {
+		return map[string]interface{}{"status": "no_data"}, nil
+	}
+	return s.PgRepo.GetWALArchiverRisk(ctx, instanceName)
 }
 
 func (s *MetricsService) GetPostgresReplicationLagDetail(ctx context.Context, serverID uuid.UUID, from, to string, limit int) (map[string]hot.PostgresReplicationLagSeries, error) {
@@ -842,6 +902,7 @@ func (s *MetricsService) bindPoolRepos(pool *pgxpool.Pool) {
 	s.PgTimescaleColl = postgres.NewPgTimescaleCollector(s.PgRepo, hot.NewTimescaleLogger(pool))
 	s.PgIndexDefCollector = collectors.NewPgIndexDefinitionCollector(s.PgRepo, hot.NewTimescaleLogger(pool))
 	s.PgBackupRepo = pg_backup_repo.NewPostgresBackupRepository(pool)
+	s.PgDRPolicyRepo = pg_backup_repo.NewDRPolicyRepository(pool)
 	s.PgSecurityRepo = pg_security_repo.NewPostgresSecurityRepository(pool)
 	s.PgSecurityCollector = pg_security_coll.NewPostgresSecurityCollector(s.PgSecurityRepo)
 }
@@ -865,11 +926,11 @@ func (s *MetricsService) GetSQLServerRiskHealthHistory(ctx context.Context, serv
 	return nil, nil
 }
 
-func (s *MetricsService) GetSqlServerQueryStatsTimeSeries(ctx context.Context, serverID uuid.UUID, metric, from, to, dbName string) ([]map[string]interface{}, error) {
+func (s *MetricsService) GetSqlServerQueryStatsTimeSeries(ctx context.Context, serverID uuid.UUID, metric, from, to, dbName string, excludeSystem bool, monitoringLogins []string) ([]map[string]interface{}, error) {
 	if s.tsLogger == nil {
 		return []map[string]interface{}{}, nil
 	}
-	return s.tsLogger.GetQueryStatsTimeSeries(ctx, serverID.String(), metric, from, to, dbName)
+	return s.tsLogger.GetQueryStatsTimeSeries(ctx, serverID.String(), metric, from, to, dbName, excludeSystem, monitoringLogins)
 }
 
 func (s *MetricsService) GetSqlServerWaitStatsTimeSeries(ctx context.Context, serverID uuid.UUID, from, to time.Time) (interface{}, error) {
@@ -1116,18 +1177,39 @@ func evaluateLogHealthFromCatalog(rows []hot.SQLServerDatabaseCatalogRow) []mode
 	return logs
 }
 
-func (s *MetricsService) GetSqlServerQueryAnalysisSummary(ctx context.Context, serverID uuid.UUID, hours int, excludeSys bool) (*hot.SqlServerQueryAnalysisSummaryRow, error) {
+func (s *MetricsService) GetSqlServerPrimaryAnalysisDatabase(ctx context.Context, serverID uuid.UUID, from, to time.Time) (string, error) {
+	if s.tsLogger == nil {
+		return "", nil
+	}
+	return s.tsLogger.GetSqlServerPrimaryAnalysisDatabase(ctx, serverID, from, to)
+}
+
+func (s *MetricsService) GetSqlServerPrimaryWorkloadDatabase(ctx context.Context, serverID uuid.UUID, from, to time.Time, filter domain.WorkloadQueryFilter) (string, error) {
+	if s.tsLogger == nil {
+		return "", nil
+	}
+	return s.tsLogger.GetSqlServerPrimaryWorkloadDatabase(ctx, serverID, from, to, filter)
+}
+
+func (s *MetricsService) GetSqlServerDatabasesInRange(ctx context.Context, serverID uuid.UUID, from, to time.Time, filter domain.WorkloadQueryFilter) ([]domain.SqlServerWorkloadDatabaseActivity, error) {
+	if s.tsLogger == nil {
+		return nil, nil
+	}
+	return s.tsLogger.GetSqlServerDatabasesInRange(ctx, serverID, from, to, filter)
+}
+
+func (s *MetricsService) GetSqlServerQueryAnalysisSummary(ctx context.Context, serverID uuid.UUID, from, to time.Time, database string, excludeSys bool, monitoringLogins []string) (*hot.SqlServerQueryAnalysisSummaryRow, error) {
 	if s.tsLogger == nil {
 		return &hot.SqlServerQueryAnalysisSummaryRow{}, nil
 	}
-	return s.tsLogger.GetSqlServerQueryAnalysisSummary(ctx, serverID, hours, excludeSys)
+	return s.tsLogger.GetSqlServerQueryAnalysisSummary(ctx, serverID, from, to, database, excludeSys, monitoringLogins)
 }
 
-func (s *MetricsService) GetSqlServerQueryRegressions(ctx context.Context, serverID uuid.UUID, limit int) ([]hot.SqlServerQueryRegressionRow, error) {
+func (s *MetricsService) GetSqlServerQueryRegressions(ctx context.Context, serverID uuid.UUID, limit int, monitoringLogins []string) ([]hot.SqlServerQueryRegressionRow, error) {
 	if s.tsLogger == nil {
 		return []hot.SqlServerQueryRegressionRow{}, nil
 	}
-	return s.tsLogger.GetSqlServerQueryRegressions(ctx, serverID, limit)
+	return s.tsLogger.GetSqlServerQueryRegressions(ctx, serverID, limit, monitoringLogins)
 }
 
 func (s *MetricsService) GetSqlServerPlanInstability(ctx context.Context, serverID uuid.UUID, limit int) ([]hot.SqlServerPlanInstabilityRow, error) {
@@ -1137,11 +1219,25 @@ func (s *MetricsService) GetSqlServerPlanInstability(ctx context.Context, server
 	return s.tsLogger.GetSqlServerPlanInstability(ctx, serverID, limit)
 }
 
-func (s *MetricsService) GetSqlServerTopQueriesAnalysis(ctx context.Context, serverID uuid.UUID, sortBy string, limit, hours int, excludeSys bool) ([]hot.SqlServerTopQueryIntervalRow, error) {
+func (s *MetricsService) GetSqlServerTopQueriesAnalysis(ctx context.Context, serverID uuid.UUID, sortBy string, limit int, from, to time.Time, database string, excludeSys bool, monitoringLogins []string) ([]hot.SqlServerTopQueryIntervalRow, error) {
 	if s.tsLogger == nil {
 		return []hot.SqlServerTopQueryIntervalRow{}, nil
 	}
-	return s.tsLogger.GetSqlServerTopQueriesFromInterval(ctx, serverID, sortBy, limit, hours, excludeSys)
+	return s.tsLogger.GetSqlServerTopQueriesFromInterval(ctx, serverID, sortBy, limit, from, to, database, excludeSys, monitoringLogins)
+}
+
+func (s *MetricsService) GetSqlServerPrimaryQueryAnalysisDatabase(ctx context.Context, serverID uuid.UUID, from, to time.Time, filter domain.WorkloadQueryFilter) (string, error) {
+	if s.tsLogger == nil {
+		return "", nil
+	}
+	return s.tsLogger.GetSqlServerPrimaryQueryAnalysisDatabase(ctx, serverID, from, to, filter)
+}
+
+func (s *MetricsService) GetSqlServerTopQueryTrends(ctx context.Context, serverID uuid.UUID, from, to time.Time, database string, excludeSys bool, monitoringLogins []string, limit int, fingerprints []string) (*hot.SqlServerTopQueryTrendsResponse, error) {
+	if s.tsLogger == nil {
+		return &hot.SqlServerTopQueryTrendsResponse{Series: []hot.SqlServerTopQueryTrendSeries{}}, nil
+	}
+	return s.tsLogger.GetSqlServerTopQueryTrends(ctx, serverID, from, to, database, excludeSys, monitoringLogins, limit, fingerprints)
 }
 
 func (s *MetricsService) ListSqlServerWatchedQueries(ctx context.Context, serverID uuid.UUID) ([]hot.SqlServerWatchedQueryRow, error) {
@@ -1201,53 +1297,60 @@ func (s *MetricsService) GetWatchedQuerySnapshot(ctx context.Context, watchedQue
 	return snaps[0], nil
 }
 
-func (s *MetricsService) GetSqlServerWorkloadSummary(ctx context.Context, serverID uuid.UUID, from, to time.Time) (*domain.SqlServerWorkloadSummary, error) {
+func (s *MetricsService) GetSqlServerWorkloadSummary(ctx context.Context, serverID uuid.UUID, from, to time.Time, filter domain.WorkloadQueryFilter) (*domain.SqlServerWorkloadSummary, error) {
 	if s.tsLogger == nil {
 		return &domain.SqlServerWorkloadSummary{}, nil
 	}
-	return s.tsLogger.GetSqlServerWorkloadSummary(ctx, serverID, from, to)
+	return s.tsLogger.GetSqlServerWorkloadSummary(ctx, serverID, from, to, filter)
 }
 
-func (s *MetricsService) GetSqlServerWorkloadTrends(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]domain.SqlServerWorkloadTrendPoint, error) {
+func (s *MetricsService) GetSqlServerWorkloadTrends(ctx context.Context, serverID uuid.UUID, from, to time.Time, filter domain.WorkloadQueryFilter) ([]domain.SqlServerWorkloadTrendPoint, error) {
 	if s.tsLogger == nil {
 		return []domain.SqlServerWorkloadTrendPoint{}, nil
 	}
-	return s.tsLogger.GetSqlServerWorkloadTrends(ctx, serverID, from, to)
+	trends, err := s.tsLogger.GetSqlServerWorkloadTrends(ctx, serverID, from, to, filter)
+	if err != nil {
+		return nil, err
+	}
+	if len(trends) == 0 && filter.Database == "" {
+		trends, err = s.tsLogger.GetSqlServerWorkloadTrendsFromPerfCounters(ctx, serverID, from, to)
+	}
+	return trends, err
 }
 
-func (s *MetricsService) GetSqlServerWorkloadTopOffenders(ctx context.Context, serverID uuid.UUID, from, to time.Time, limit int) ([]domain.SqlServerWorkloadTopQuery, error) {
+func (s *MetricsService) GetSqlServerWorkloadTopOffenders(ctx context.Context, serverID uuid.UUID, from, to time.Time, limit int, filter domain.WorkloadQueryFilter) ([]domain.SqlServerWorkloadTopQuery, error) {
 	if s.tsLogger == nil {
 		return []domain.SqlServerWorkloadTopQuery{}, nil
 	}
-	return s.tsLogger.GetSqlServerWorkloadTopOffenders(ctx, serverID, from, to, limit)
+	return s.tsLogger.GetSqlServerWorkloadTopOffenders(ctx, serverID, from, to, limit, filter)
 }
 
-func (s *MetricsService) GetSqlServerWorkloadAppLoadTimeline(ctx context.Context, serverID uuid.UUID, from, to time.Time) (interface{}, error) {
+func (s *MetricsService) GetSqlServerWorkloadAppLoadTimeline(ctx context.Context, serverID uuid.UUID, from, to time.Time, filter domain.WorkloadQueryFilter) (interface{}, error) {
 	if s.tsLogger == nil {
 		return []map[string]interface{}{}, nil
 	}
-	return s.tsLogger.GetSqlServerWorkloadAppLoadTimeline(ctx, serverID, from, to)
+	return s.tsLogger.GetSqlServerWorkloadAppLoadTimeline(ctx, serverID, from, to, filter)
 }
 
-func (s *MetricsService) GetSqlServerWorkloadLoginLoadTimeline(ctx context.Context, serverID uuid.UUID, from, to time.Time) (interface{}, error) {
+func (s *MetricsService) GetSqlServerWorkloadLoginLoadTimeline(ctx context.Context, serverID uuid.UUID, from, to time.Time, filter domain.WorkloadQueryFilter) (interface{}, error) {
 	if s.tsLogger == nil {
 		return []map[string]interface{}{}, nil
 	}
-	return s.tsLogger.GetSqlServerWorkloadLoginLoadTimeline(ctx, serverID, from, to)
+	return s.tsLogger.GetSqlServerWorkloadLoginLoadTimeline(ctx, serverID, from, to, filter)
 }
 
-func (s *MetricsService) GetSqlServerWorkloadTopApps(ctx context.Context, serverID uuid.UUID, from, to time.Time, limit int) (interface{}, error) {
+func (s *MetricsService) GetSqlServerWorkloadTopApps(ctx context.Context, serverID uuid.UUID, from, to time.Time, limit int, filter domain.WorkloadQueryFilter) (interface{}, error) {
 	if s.tsLogger == nil {
 		return []map[string]interface{}{}, nil
 	}
-	return s.tsLogger.GetSqlServerWorkloadTopApps(ctx, serverID, from, to, limit)
+	return s.tsLogger.GetSqlServerWorkloadTopApps(ctx, serverID, from, to, limit, filter)
 }
 
-func (s *MetricsService) GetSqlServerWorkloadTopLogins(ctx context.Context, serverID uuid.UUID, from, to time.Time, limit int) (interface{}, error) {
+func (s *MetricsService) GetSqlServerWorkloadTopLogins(ctx context.Context, serverID uuid.UUID, from, to time.Time, limit int, filter domain.WorkloadQueryFilter) (interface{}, error) {
 	if s.tsLogger == nil {
 		return []map[string]interface{}{}, nil
 	}
-	return s.tsLogger.GetSqlServerWorkloadTopLogins(ctx, serverID, from, to, limit)
+	return s.tsLogger.GetSqlServerWorkloadTopLogins(ctx, serverID, from, to, limit, filter)
 }
 
 func (s *MetricsService) GetSQLServerJobDetails(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {

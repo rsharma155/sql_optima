@@ -11,7 +11,10 @@ services:
     environment:
       PORT: ":8080"
       SQL_OPTIMA_DEPLOYMENT: ${SQL_OPTIMA_DEPLOYMENT:-docker}
-      AUTH_REQUIRED: ${AUTH_REQUIRED:-0}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-1}
+      DISABLE_PUBLIC_SETUP: ${DISABLE_PUBLIC_SETUP:-1}
+      # OS_METRICS_INGEST_ENABLED: set only in .env when forcing on (1) or off (0).
+      # If unset, ingest is controlled from the UI (optima_platform_settings).
       JWT_SECRET: ${JWT_SECRET:-change-me-to-32chars-minimum-for-prod}
       VAULT_ADDR: ${VAULT_ADDR:-http://vault:8200}
       VAULT_TOKEN: ${VAULT_TOKEN:-root}
@@ -46,8 +49,8 @@ services:
       POSTGRES_USER: ${DB_USER:-dbmonitor}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
       POSTGRES_DB: ${DB_NAME:-dbmonitor_metrics}
-    ports:
-      - "${DB_PORT:-5432}:5432"
+    # Not published to the host by default (metrics DB stays on the Docker network).
+    # For local psql access, add: ports: ["5432:5432"] in docker-compose.override.yml
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
     command:
@@ -176,7 +179,6 @@ services:
         echo "[6/6] Seeding initial data..."
         psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/06_seed_data.sql || true
         echo "[7/7] Applying cold storage schema..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/07_cold_storage.sql || true
         echo "Schema setup complete."
     depends_on:
       timescaledb:

@@ -388,18 +388,18 @@ function renderTopQueriesPage() {
     if (!tbody) return;
 
     const inst = currentInst();
-    const monitoringUser = (inst.user || 'dbsqlmonitor').toLowerCase();
+    const monitoringUser = typeof window.getInstanceMonitoringUser === 'function'
+        ? window.getInstanceMonitoringUser(inst)
+        : (inst.monitoring_user || inst.user || '').toLowerCase();
 
     let rows = s.allRows;
 
-    // Permanent always-on filters
+    // Client-side safety net: drop collector/monitoring rows (backend already excludes these).
     rows = rows.filter(q => {
         const text = (q.query || '').trim();
         if (!text || text === '<insufficient privilege>') return false;
         if (text.includes('/* SQL_OPTIMA')) return false;
-        if ((q.username || '').toLowerCase() === 'postgres') return false;
-        if ((q.db_name  || '').toLowerCase() === 'postgres') return false;
-        if ((q.username || '').toLowerCase() === monitoringUser) return false;
+        if (monitoringUser && (q.username || '').toLowerCase() === monitoringUser) return false;
         return true;
     });
 
@@ -650,18 +650,27 @@ function renderLineChart(canvasId, labels, datasets, dualAxis) {
     destroyChart(canvasId);
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
+    const baseTrend = window.chartTrendOptions ? window.chartTrendOptions({ xTitle: 'Time' }) : {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { tooltip: { enabled: true } },
+        scales: { x: { title: { display: true, text: 'Time' } }, y: {} },
+    };
     const cfg = {
         type: 'line',
-        data: { labels, datasets: datasets.map(ds => ({ tension: 0.3, pointRadius: 0, borderWidth: 1.5, fill: ds.fill || false, ...ds })) },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
-            scales: {
-                x: { ticks: { color: '#64748b', maxTicksLimit: 12 }, grid: { color: 'rgba(100,116,139,0.15)' } },
-                y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } }
-            }
-        }
+        data: {
+            labels,
+            datasets: datasets.map(ds => ({
+                tension: 0.3,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+                borderWidth: 1.5,
+                fill: ds.fill || false,
+                ...ds,
+            })),
+        },
+        options: window.mergeChartOptions ? window.mergeChartOptions(baseTrend, {}) : baseTrend,
     };
     if (dualAxis) {
         cfg.options.scales.y1 = { position: 'right', ticks: { color: '#64748b' }, grid: { drawOnChartArea: false } };
@@ -673,17 +682,38 @@ function renderStackedArea(canvasId, labels, datasets) {
     destroyChart(canvasId);
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
+    const timeX = window.chartTimeScaleX ? window.chartTimeScaleX('Time') : { title: { display: true, text: 'Time' } };
+    const options = window.mergeChartOptions && window.chartTrendOptions
+        ? window.mergeChartOptions(window.chartTrendOptions({ xTitle: 'Time' }), {
+            scales: {
+                x: { ...timeX, stacked: true },
+                y: { stacked: true, max: 100, ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } },
+            },
+        })
+        : {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { tooltip: { enabled: true } },
+            scales: {
+                x: { stacked: true, title: { display: true, text: 'Time' } },
+                y: { stacked: true, max: 100 },
+            },
+        };
     window.currentCharts[canvasId] = new Chart(ctx, {
         type: 'line',
-        data: { labels, datasets: datasets.map(ds => ({ fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1, ...ds })) },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
-            scales: {
-                x: { stacked: true, ticks: { color: '#64748b', maxTicksLimit: 12 }, grid: { color: 'rgba(100,116,139,0.15)' } },
-                y: { stacked: true, max: 100, ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } }
-            }
-        }
+        data: {
+            labels,
+            datasets: datasets.map(ds => ({
+                fill: true,
+                tension: 0.3,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+                borderWidth: 1,
+                ...ds,
+            })),
+        },
+        options,
     });
 }
 

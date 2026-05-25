@@ -78,7 +78,7 @@ async function initPgMemoryCockpit(instanceName) {
             throw new Error(errBody.error || `HTTP ${response.status}`);
         }
         const data = await response.json();
-        renderPgMemoryCockpit(data);
+        renderPgMemoryCockpit(data, instanceName);
     } catch (e) {
         console.error("PG Memory Cockpit fetch failed:", e);
         _showMemoryError(e.message);
@@ -89,16 +89,39 @@ function _showMemoryError(msg) {
     const notice = document.getElementById('memory-data-notice');
     if (notice) { notice.textContent = `Unable to load memory data: ${msg}`; notice.style.display = 'block'; }
     const tbody = document.getElementById('pg-memory-raw-tbody');
-    if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">${msg}</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">${window.escapeHtml(msg)}</td></tr>`;
 }
 
-function renderPgMemoryCockpit(data) {
+function updateOsCollectorSetupMount(instanceName, osConfigured) {
+    const mount = document.getElementById('os-collector-setup-mount');
+    if (!mount || !window.mountOsCollectorSetupPanel) return;
+    if (osConfigured || (window.isOsCollectorPromptDismissed && window.isOsCollectorPromptDismissed())) {
+        mount.style.display = 'none';
+        mount.innerHTML = '';
+        return;
+    }
+    mount.style.display = 'block';
+    if (!mount.querySelector('.os-collector-setup-panel')) {
+        window.mountOsCollectorSetupPanel(mount, {
+            instanceName,
+            statusId: 'os-collector-memory-status',
+            compact: true
+        });
+    } else if (window.refreshOsCollectorSetupStatus) {
+        const slot = document.getElementById('os-collector-memory-status');
+        window.refreshOsCollectorSetupStatus(slot, instanceName);
+    }
+}
+
+function renderPgMemoryCockpit(data, instanceName) {
     const series = data.time_series || [];
     const components = data.components || {};
     const osConfigured = !!data.os_collector_configured;
 
     const notice = document.getElementById('memory-data-notice');
     if (notice) notice.style.display = 'none';
+
+    updateOsCollectorSetupMount(instanceName, osConfigured);
 
     // Show/hide OS collector badge
     const osBadge = document.getElementById('os-collector-badge');
@@ -108,7 +131,7 @@ function renderPgMemoryCockpit(data) {
         const noDataMsg = 'No memory data collected yet. The collector runs on the next cycle (typically within 1 minute).';
         if (notice) { notice.textContent = noDataMsg; notice.style.display = 'block'; }
         const tbody = document.getElementById('pg-memory-raw-tbody');
-        if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">${noDataMsg}</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">${window.escapeHtml(noDataMsg)}</td></tr>`;
         renderPgComponentsChart(components);
         updateGucTable(components);
         return;
@@ -203,7 +226,7 @@ const _baseOpts = {
 };
 
 function _labels(series) {
-    return series.map(s => new Date(s.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+    return series.map(s => window.fmtChartTick ? window.fmtChartTick(s, { hour: '2-digit', minute: '2-digit' }) : '');
 }
 
 function _destroyAndCreate(key, ctx, config) {
@@ -649,3 +672,5 @@ function updateAdvisorContent(latest, components) {
         connAdvisor.innerHTML = html;
     }
 }
+
+window.initPgMemoryCockpit = initPgMemoryCockpit;

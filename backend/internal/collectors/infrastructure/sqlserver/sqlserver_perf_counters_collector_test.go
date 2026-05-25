@@ -33,10 +33,7 @@ func TestPerfCounterRowFields(t *testing.T) {
 // TestPerfCountersCollectorIsStateless verifies that PerfCountersCollector
 // can be zero-value constructed (stateless — state is held by the service).
 func TestPerfCountersCollectorIsStateless(t *testing.T) {
-	c := &PerfCountersCollector{}
-	if c == nil {
-		t.Error("PerfCountersCollector should be constructible as zero value")
-	}
+	var _ = (*PerfCountersCollector)(nil).Fetch
 }
 
 // TestAllRequiredCountersPresent checks that all 15 target counter names are
@@ -71,6 +68,23 @@ func TestAllRequiredCountersPresent(t *testing.T) {
 		if !found {
 			t.Errorf("missing required counter in perfCounterNames: %q", name)
 		}
+	}
+}
+
+func TestFilterPerfCounterRowsTransactionsSec(t *testing.T) {
+	rows := []PerfCounterRow{
+		{CounterName: "Batch Requests/sec", InstanceName: ""},
+		{CounterName: "Transactions/sec", InstanceName: "master"},
+		{CounterName: "Transactions/sec", InstanceName: "MyAppDB"},
+		{CounterName: "Transactions/sec", InstanceName: "  tempdb  "},
+		{CounterName: "Transactions/sec", InstanceName: ""},
+	}
+	got := FilterPerfCounterRows(rows)
+	if len(got) != 2 {
+		t.Fatalf("FilterPerfCounterRows len = %d; want 2", len(got))
+	}
+	if got[0].CounterName != "Batch Requests/sec" || got[1].InstanceName != "MyAppDB" {
+		t.Fatalf("unexpected filtered rows: %+v", got)
 	}
 }
 

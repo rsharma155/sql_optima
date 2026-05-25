@@ -91,7 +91,7 @@ export async function loadCollectorConfigs() {
             'SQL Server AG Health': 'Dashboard: SQL Server HA | Metric: AG replication health',
             'SQL Server Enterprise Metrics': 'Dashboard: SQL Server Enterprise | Metric: Enterprise KPIs',
             'SQL Server Agent Jobs': 'Dashboard: SQL Server Jobs | Metric: Job status',
-            'Query V2 Pipeline': 'System: V2 pipeline orchestrator | Governs: sqlserver_query_snapshot (60 s), sqlserver_session_enrichment (30 s), pg_queries_v2 (60 s) | Toggle: ENABLE_QUERY_V2_PIPELINE env var',
+            'Query V2 Pipeline': 'System: V2 pipeline orchestrator (always on) | Governs: sqlserver_query_snapshot (60 s), sqlserver_session_enrichment (30 s), pg_queries_v2 (60 s)',
             'sqlserver_query_snapshot': 'Dashboards: SQL Server Workload, Query Analysis, Health | Metric: Watermark-based DMV snapshot with restart detection → sqlserver_query_metrics_v2',
             'sqlserver_session_enrichment': 'Dashboard: SQL Server Workload (app/login timelines) | Metric: plan_handle → login_name/application_name enrichment, correlated by query_snapshot',
             'sqlserver_blocking': 'Dashboard: SQL Server Locks | Metric: Blocking chain',

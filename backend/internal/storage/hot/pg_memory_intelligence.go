@@ -11,12 +11,30 @@ import (
 	"log/slog"
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rsharma155/sql_optima/internal/models"
 )
+
+func pgMemoryEmptyResponse() map[string]interface{} {
+	return map[string]interface{}{
+		"time_series":             []interface{}{},
+		"components":              models.PgMemoryComponentsSnapshot{},
+		"os_collector_configured": false,
+	}
+}
+
+func isPgMemorySchemaMissing(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "42P01" // undefined_table
+	}
+	return err != nil && strings.Contains(err.Error(), "does not exist")
+}
 
 // LogPgHostMemory inserts a host memory snapshot into TimescaleDB.
 func (tl *TimescaleLogger) LogPgHostMemory(ctx context.Context, snap *models.PgHostMemorySnapshot) error {
@@ -137,15 +155,24 @@ func (tl *TimescaleLogger) ComputeAndLogPgMemoryDerived(ctx context.Context, ser
 }
 
 // GetPgMemoryTimeSeries returns time-series data for the memory intelligence dashboard.
+// Host RAM is driven by monitor.host_memory_samples (os_collector); PG internals join when present.
 func (tl *TimescaleLogger) GetPgMemoryTimeSeries(ctx context.Context, serverID uuid.UUID, from, to time.Time) (map[string]interface{}, error) {
 	query := `
 		SELECT
-			p.capture_timestamp,
+			h.capture_timestamp,
 			COALESCE(h.used_memory_mb, 0)                           AS used_mb,
 			COALESCE(h.free_memory_mb, 0)                           AS free_mb,
 			COALESCE(h.cached_memory_mb, 0)                         AS cached_mb,
 			COALESCE(h.swap_used_mb, 0)                             AS swap_mb,
-			COALESCE(p.postgres_rss_mb, 0)                          AS rss_mb,
+			COALESCE(p.postgres_rss_mb,
+				(SELECT (pm.postgres_rss_bytes / 1048576)::bigint
+				 FROM monitor.pg_os_process_memory pm
+				 JOIN monitor.pg_os_host_instance ohi ON pm.host_id = ohi.host_id
+				 WHERE ohi.server_id = h.server_id
+				   AND pm.capture_timestamp BETWEEN h.capture_timestamp - INTERVAL '2 minutes'
+				                                AND h.capture_timestamp + INTERVAL '2 minutes'
+				 ORDER BY ABS(EXTRACT(EPOCH FROM (pm.capture_timestamp - h.capture_timestamp))) ASC
+				 LIMIT 1), 0)                                          AS rss_mb,
 			COALESCE(d.pg_memory_percent, 0)                        AS pg_mem_pct,
 			COALESCE(d.cache_hit_ratio,
 				CASE WHEN (COALESCE(p.blks_hit,0) + COALESCE(p.blks_read,0)) > 0
@@ -169,30 +196,34 @@ func (tl *TimescaleLogger) GetPgMemoryTimeSeries(ctx context.Context, serverID u
 			COALESCE(p.buffers_checkpoint, 0)                       AS buf_checkpoint,
 			COALESCE(p.buffers_clean, 0)                            AS buf_clean,
 			COALESCE(p.buffers_backend, 0)                          AS buf_backend
-		FROM monitor.pg_memory_samples p
+		FROM monitor.host_memory_samples h
+		LEFT JOIN LATERAL (
+			SELECT * FROM monitor.pg_memory_samples p
+			WHERE p.server_id = h.server_id
+			  AND p.capture_timestamp BETWEEN h.capture_timestamp - INTERVAL '30 seconds'
+			                              AND h.capture_timestamp + INTERVAL '30 seconds'
+			ORDER BY ABS(EXTRACT(EPOCH FROM (p.capture_timestamp - h.capture_timestamp))) ASC
+			LIMIT 1
+		) p ON TRUE
 		LEFT JOIN LATERAL (
 			SELECT * FROM monitor.pg_memory_derived d2
-			WHERE d2.server_id = p.server_id
-			  AND d2.capture_timestamp BETWEEN p.capture_timestamp - INTERVAL '10 seconds'
-			                               AND p.capture_timestamp + INTERVAL '10 seconds'
-			ORDER BY ABS(EXTRACT(EPOCH FROM (d2.capture_timestamp - p.capture_timestamp))) ASC
+			WHERE d2.server_id = h.server_id
+			  AND d2.capture_timestamp BETWEEN h.capture_timestamp - INTERVAL '10 seconds'
+			                               AND h.capture_timestamp + INTERVAL '10 seconds'
+			ORDER BY ABS(EXTRACT(EPOCH FROM (d2.capture_timestamp - h.capture_timestamp))) ASC
 			LIMIT 1
 		) d ON TRUE
-		LEFT JOIN LATERAL (
-			SELECT * FROM monitor.host_memory_samples h2
-			WHERE h2.server_id = p.server_id
-			  AND h2.capture_timestamp BETWEEN p.capture_timestamp - INTERVAL '30 seconds'
-			                               AND p.capture_timestamp + INTERVAL '30 seconds'
-			ORDER BY ABS(EXTRACT(EPOCH FROM (h2.capture_timestamp - p.capture_timestamp))) ASC
-			LIMIT 1
-		) h ON TRUE
-		WHERE p.server_id = $1
-		  AND p.capture_timestamp >= $2
-		  AND p.capture_timestamp <= $3
-		ORDER BY p.capture_timestamp ASC`
+		WHERE h.server_id = $1
+		  AND h.capture_timestamp >= $2
+		  AND h.capture_timestamp <= $3
+		ORDER BY h.capture_timestamp ASC`
 
 	rows, err := tl.pool.Query(ctx, query, serverID, from, to)
 	if err != nil {
+		if isPgMemorySchemaMissing(err) {
+			slog.Warn("[TSLogger] GetPgMemoryTimeSeries: monitor memory tables missing — apply schema scripts 01 and 05", "target", serverID, "err", err)
+			return pgMemoryEmptyResponse(), nil
+		}
 		slog.Error("[TSLogger] GetPgMemoryTimeSeries query error", "target", serverID, "err", err)
 		return nil, err
 	}
@@ -219,7 +250,7 @@ func (tl *TimescaleLogger) GetPgMemoryTimeSeries(ctx context.Context, serverID u
 			continue
 		}
 
-		if total > 0 {
+		if total > 0 || rss > 0 {
 			osConfigured = true
 		}
 
@@ -247,6 +278,10 @@ func (tl *TimescaleLogger) GetPgMemoryTimeSeries(ctx context.Context, serverID u
 			"buffers_backend":         bufBackend,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		slog.Error("[TSLogger] GetPgMemoryTimeSeries rows error", "target", serverID, "err", err)
+		return nil, err
+	}
 
 	// Fetch latest memory components (GUC config).
 	var comp models.PgMemoryComponentsSnapshot
@@ -265,9 +300,48 @@ func (tl *TimescaleLogger) GetPgMemoryTimeSeries(ctx context.Context, serverID u
 		slog.Error("[TSLogger] GetPgMemoryTimeSeries components query error", "target", serverID, "err", err)
 	}
 
+	if !osConfigured {
+		if hasRecent, err := tl.HasRecentOSCollectorSamples(ctx, serverID, 20*time.Minute); err == nil && hasRecent {
+			osConfigured = true
+		}
+	}
+
 	return map[string]interface{}{
-		"time_series":          points,
-		"components":           comp,
+		"time_series":             points,
+		"components":              comp,
 		"os_collector_configured": osConfigured,
 	}, nil
+}
+
+// HasRecentHostMemorySamples returns true if host RAM was ingested from the OS collector within the lookback window.
+func (tl *TimescaleLogger) HasRecentHostMemorySamples(ctx context.Context, serverID uuid.UUID, within time.Duration) (bool, error) {
+	return tl.HasRecentOSCollectorSamples(ctx, serverID, within)
+}
+
+// HasRecentOSCollectorSamples returns true if os_collector pushed host RAM or OS CPU samples recently.
+func (tl *TimescaleLogger) HasRecentOSCollectorSamples(ctx context.Context, serverID uuid.UUID, within time.Duration) (bool, error) {
+	if tl == nil || tl.pool == nil || serverID == uuid.Nil {
+		return false, nil
+	}
+	if within <= 0 {
+		within = 20 * time.Minute
+	}
+	since := time.Now().UTC().Add(-within)
+	var ok bool
+	err := tl.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM monitor.host_memory_samples
+			WHERE server_id = $1 AND capture_timestamp >= $2
+		) OR EXISTS (
+			SELECT 1 FROM monitor.pg_os_cpu_samples c
+			JOIN monitor.pg_os_host_instance h ON c.host_id = h.host_id
+			WHERE h.server_id = $1 AND c.capture_timestamp >= $2
+		)`, serverID, since).Scan(&ok)
+	if err != nil {
+		if isPgMemorySchemaMissing(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return ok, nil
 }

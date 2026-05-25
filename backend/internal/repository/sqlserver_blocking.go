@@ -403,8 +403,10 @@ func (c *SqlServerRepository) discoverDeadlockXESession(ctx context.Context, db 
 	var targetPath string
 	ctx, cancel = WithQueryTimeout(ctx, 0)
 	defer cancel()
-	err = db.QueryRowContext(ctx, pathQuery, sessionName).Scan(&targetPath)
-	
+	if err := db.QueryRowContext(ctx, pathQuery, sessionName).Scan(&targetPath); err != nil {
+		targetPath = ""
+	}
+
 	if targetPath == "" {
 		targetPath = sessionName + "*.xel"
 	}

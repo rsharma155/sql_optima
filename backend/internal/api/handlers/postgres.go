@@ -8,6 +8,7 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"encoding/json"
 	"net/http"
@@ -703,21 +704,8 @@ func (h *PostgresHandlers) CPUSaturation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	instanceName := ""
-	for _, inst := range h.cfg.Instances {
-		if inst.ServerID == sid {
-			instanceName = inst.Name
-			break
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	if instanceName == "" {
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{})
-		return
-	}
-
-	data, err := h.metricsSvc.GetTimescaleDBLogger().GetLatestOSCPUSaturation(r.Context(), instanceName)
+	data, err := h.metricsSvc.GetTimescaleDBLogger().GetLatestOSCPUSaturation(r.Context(), sid)
 	if err != nil {
 		// Return empty map instead of 500 if no data found
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{})
@@ -743,10 +731,19 @@ func (h *PostgresHandlers) PgMemoryIntelligence(w http.ResponseWriter, r *http.R
 
 	data, err := h.metricsSvc.GetPostgresMemoryHistory(r.Context(), sid, from, to)
 	if err != nil {
+		slog.Error("[API] PgMemoryIntelligence error", "server_id", sid, "err", err)
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":                   "failed to load memory intelligence",
+			"time_series":             []interface{}{},
+			"components":              map[string]interface{}{},
+			"os_collector_configured": false,
+		})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(data)
 }
 
@@ -944,6 +941,48 @@ func (h *PostgresHandlers) BestPractices(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(data)
 }
 
+func (h *PostgresHandlers) ExportBestPracticesCSV(w http.ResponseWriter, r *http.Request) {
+	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
+	if err := validateInstanceName(instance); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	sid, ok := h.parseID(r)
+	if !ok {
+		http.Error(w, "invalid instance", http.StatusBadRequest)
+		return
+	}
+	h.runPgBestPracticesEvaluation(r.Context(), sid)
+	raw, err := h.metricsSvc.FetchPgBestPracticesWithTimescale(r.Context(), sid)
+	if err != nil {
+		http.Error(w, "failed to load best practices", http.StatusInternalServerError)
+		return
+	}
+	if m, ok := raw.(map[string]interface{}); ok {
+		writePgRuleChecksCSV(w, csvFilename("postgres_best_practices", instance), m)
+		return
+	}
+	result, ok := bestPracticesFromAny(raw)
+	if !ok {
+		http.Error(w, "unexpected response type", http.StatusInternalServerError)
+		return
+	}
+	writeBestPracticesCSV(w, csvFilename("postgres_best_practices", instance), result)
+}
+
+func (h *PostgresHandlers) runPgBestPracticesEvaluation(ctx context.Context, serverID uuid.UUID) {
+	pool := h.metricsSvc.GetTimescaleDBPool()
+	if pool == nil || h.cfg == nil || serverID == uuid.Nil {
+		return
+	}
+	rh := NewRulesHandler(pool, h.cfg, h.metricsSvc.IsOSMetricsIngestEnabled, h.metricsSvc.PgRepo)
+	evalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ruleEvalRunTimeout)
+	defer cancel()
+	if err := rh.EvaluateServer(evalCtx, serverID, "postgres"); err != nil {
+		slog.Warn("[ExportBestPracticesCSV] rule evaluation failed", "server_id", serverID, "err", err)
+	}
+}
+
 func (h *PostgresHandlers) Queries(w http.ResponseWriter, r *http.Request) {
 	sid, ok := h.parseID(r)
 	if !ok {
@@ -1058,7 +1097,7 @@ func (h *PostgresHandlers) PgssStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PostgresHandlers) PgssWorkload(w http.ResponseWriter, r *http.Request) {
-	_, name, ok := h.pgssResolve(w, r)
+	id, name, ok := h.pgssResolve(w, r)
 	if !ok {
 		return
 	}
@@ -1068,7 +1107,7 @@ func (h *PostgresHandlers) PgssWorkload(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	pts, err := h.metricsSvc.GetPgssWorkloadTrend(r.Context(), lookupServerID(h.cfg, name), from, to)
+	pts, err := h.metricsSvc.GetPgssWorkloadTrend(r.Context(), id, from, to)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -1094,7 +1133,7 @@ func (h *PostgresHandlers) PgssWorkload(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *PostgresHandlers) PgssLatency(w http.ResponseWriter, r *http.Request) {
-	_, name, ok := h.pgssResolve(w, r)
+	id, name, ok := h.pgssResolve(w, r)
 	if !ok {
 		return
 	}
@@ -1104,7 +1143,7 @@ func (h *PostgresHandlers) PgssLatency(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	pts, err := h.metricsSvc.GetPgssLatencyTrend(r.Context(), lookupServerID(h.cfg, name), from, to)
+	pts, err := h.metricsSvc.GetPgssLatencyTrend(r.Context(), id, from, to)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -1124,7 +1163,7 @@ var pgssAllowedSorts = map[string]bool{
 }
 
 func (h *PostgresHandlers) PgssTop(w http.ResponseWriter, r *http.Request) {
-	_, name, ok := h.pgssResolve(w, r)
+	id, name, ok := h.pgssResolve(w, r)
 	if !ok {
 		return
 	}
@@ -1147,7 +1186,8 @@ func (h *PostgresHandlers) PgssTop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	rows, err := h.metricsSvc.GetPgssTopQueries(r.Context(), lookupServerID(h.cfg, name), from, to, sortBy, limit, dbName, userName, appName, qType, hideSys)
+	excludeUsers := pgssExcludeUsersForInstance(h.cfg, name)
+	rows, err := h.metricsSvc.GetPgssTopQueries(r.Context(), id, from, to, sortBy, limit, dbName, userName, appName, qType, hideSys, excludeUsers)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -1167,7 +1207,7 @@ func (h *PostgresHandlers) PgssTop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PostgresHandlers) PgssRegressions(w http.ResponseWriter, r *http.Request) {
-	_, name, ok := h.pgssResolve(w, r)
+	id, name, ok := h.pgssResolve(w, r)
 	if !ok {
 		return
 	}
@@ -1176,7 +1216,7 @@ func (h *PostgresHandlers) PgssRegressions(w http.ResponseWriter, r *http.Reques
 		_ = json.NewEncoder(w).Encode(models.PgssRegressionsResponse{Instance: name, Regressions: []models.PgssRegression{}})
 		return
 	}
-	rows, err := h.metricsSvc.GetPgssRegressions(r.Context(), lookupServerID(h.cfg, name))
+	rows, err := h.metricsSvc.GetPgssRegressions(r.Context(), id)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -1192,13 +1232,13 @@ func (h *PostgresHandlers) PgssRegressions(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *PostgresHandlers) PgssSummary(w http.ResponseWriter, r *http.Request) {
-	_, name, ok := h.pgssResolve(w, r)
+	id, name, ok := h.pgssResolve(w, r)
 	if !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	summary, err := h.metricsSvc.GetPgssSummary(r.Context(), lookupServerID(h.cfg, name), from, to)
+	summary, err := h.metricsSvc.GetPgssSummary(r.Context(), id, from, to)
 	if err != nil || summary == nil {
 		_ = json.NewEncoder(w).Encode(models.PgssSummaryResponse{Instance: name})
 		return
@@ -1212,7 +1252,7 @@ func (h *PostgresHandlers) PgssSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PostgresHandlers) PgssFilters(w http.ResponseWriter, r *http.Request) {
-	_, name, ok := h.pgssResolve(w, r)
+	id, name, ok := h.pgssResolve(w, r)
 	if !ok {
 		return
 	}
@@ -1222,7 +1262,7 @@ func (h *PostgresHandlers) PgssFilters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	opts, err := h.metricsSvc.GetPgssFilterOptions(r.Context(), lookupServerID(h.cfg, name), from, to)
+	opts, err := h.metricsSvc.GetPgssFilterOptions(r.Context(), id, from, to)
 	if err != nil || opts == nil {
 		_ = json.NewEncoder(w).Encode(models.PgssFilterOptions{Instance: name})
 		return
@@ -1233,7 +1273,7 @@ func (h *PostgresHandlers) PgssFilters(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PostgresHandlers) PgssDbBreakdown(w http.ResponseWriter, r *http.Request) {
-	_, name, ok := h.pgssResolve(w, r)
+	id, name, ok := h.pgssResolve(w, r)
 	if !ok {
 		return
 	}
@@ -1243,7 +1283,7 @@ func (h *PostgresHandlers) PgssDbBreakdown(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	rows, err := h.metricsSvc.GetPgssDbBreakdown(r.Context(), lookupServerID(h.cfg, name), from, to)
+	rows, err := h.metricsSvc.GetPgssDbBreakdown(r.Context(), id, from, to)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -1260,7 +1300,7 @@ func (h *PostgresHandlers) PgssDbBreakdown(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *PostgresHandlers) PgssUserBreakdown(w http.ResponseWriter, r *http.Request) {
-	_, name, ok := h.pgssResolve(w, r)
+	id, name, ok := h.pgssResolve(w, r)
 	if !ok {
 		return
 	}
@@ -1270,7 +1310,7 @@ func (h *PostgresHandlers) PgssUserBreakdown(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	rows, err := h.metricsSvc.GetPgssUserBreakdown(r.Context(), lookupServerID(h.cfg, name), from, to)
+	rows, err := h.metricsSvc.GetPgssUserBreakdown(r.Context(), id, from, to)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

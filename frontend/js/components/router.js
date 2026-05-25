@@ -384,7 +384,10 @@ window.appNavigate = function(route, skipHistory = false) {
         case 'drilldown-deadlock': if(window.sqlserver_DeadlockDashboard) window.sqlserver_DeadlockDashboard(); break;
         case 'drilldown-bottlenecks': window.HistoricalBottlenecksView(); break;
         case 'drilldown-ha':
-            loadLazyView('HADashboardView', 'drilldown-ha', 'HA & Replication');
+            loadLazyView('HADashboardView', 'drilldown-ha', 'HA & DR');
+            break;
+        case 'sqlserver-backups':
+            loadLazyView('SqlServerBackupsView', 'sqlserver-backups', 'Backup & Recovery');
             break;
         case 'drilldown-pg-enterprise': window.PgEnterpriseDashboardView(); break;
         case 'enterprise-metrics': 
@@ -467,11 +470,17 @@ window.appNavigate = function(route, skipHistory = false) {
         case 'pg-queries': if (typeof window.PgStatStatementsView === 'function') window.PgStatStatementsView(); break;
         case 'pg-explain': if (typeof window.PgExplainView === 'function') window.PgExplainView(); break;
         case 'pg-storage': if (typeof window.PgStorageView === 'function') window.PgStorageView(); break;
-        case 'pg-replication': if (typeof window.PgReplicationView === 'function') window.PgReplicationView(); break;
+        case 'pg-replication':
+            window.appState.activeViewId = 'pg-backups';
+            if (typeof window.PgBackupsView === 'function') window.PgBackupsView();
+            break;
         case 'pg-logs': if (typeof window.PgLogsView === 'function') window.PgLogsView(); break;
         case 'pg-backups': if (typeof window.PgBackupsView === 'function') window.PgBackupsView(); break;
         case 'pg-waits': if (window.PgWaitsView) window.PgWaitsView(); break;
-        case 'pg-backup-dr': if (window.PgBackupDRView) window.PgBackupDRView(); break;
+        case 'pg-backup-dr':
+            window.appState.activeViewId = 'pg-backups';
+            if (typeof window.PgBackupsView === 'function') window.PgBackupsView();
+            break;
         case 'pg-security': if (window.PgSecurityView) window.PgSecurityView(); break;
         case 'pg-alerts': window.PgAlertsView(); break;
         case 'pg-autovacuum': window.PgStorageView(); break;
@@ -644,7 +653,6 @@ window.router = {
                 <li data-route="pg-explain"><i class="fa-solid fa-diagram-project"></i> EXPLAIN Analyzer</li>
                 <li data-route="pg-storage"><i class="fa-solid fa-hard-drive"></i> Storage & Vacuum</li>
                 <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Index and Table</li>
-                <li data-route="pg-replication" id="nav-pg-replication" style="display:none;"><i class="fa-solid fa-clone"></i> Replication & HA</li>
                 <li data-route="pg-backups"><i class="fa-solid fa-shield-heart"></i> Backup & DR</li>
                 <li data-route="pg-security"><i class="fa-solid fa-user-lock"></i> Security Monitor</li>
                 <li data-route="pg-best-practices"><i class="fa-solid fa-shield-halved"></i> Best Practices</li>
@@ -661,7 +669,8 @@ window.router = {
                 <li data-route="sqlserver-waits"><i class="fa-solid fa-clock-rotate-left"></i> Wait Statistics</li>
                 <li data-route="drilldown-memory"><i class="fa-solid fa-memory"></i> Memory Analyzer</li>
                 <li data-route="sqlserver-locks"><i class="fa-solid fa-link-slash"></i> Locks & Blocking</li>
-                <li data-route="drilldown-ha" style="display:none;"><i class="fa-solid fa-server"></i> HA & Replication</li>
+                <li data-route="drilldown-ha" style="display:none;"><i class="fa-solid fa-server"></i> HA & DR</li>
+                <li data-route="sqlserver-backups"><i class="fa-solid fa-shield-heart"></i> Backup & Recovery</li>
                 <li data-route="enterprise-metrics"><i class="fa-solid fa-chart-line"></i> Enterprise Metrics</li>
                 <li data-route="storage-index-health"><i class="fa-solid fa-boxes-stacked"></i> Index and Table</li>
                 <li data-route="performance-debt"><i class="fa-solid fa-screwdriver-wrench"></i> Performance Debt</li>
@@ -708,16 +717,7 @@ async function _refreshHALinkVisibility(inst, database) {
     try {
         const type = String(inst.type || '').toLowerCase();
         if (type === 'postgres') {
-            const r = await window.apiClient.authenticatedFetch(
-                `/api/postgres/replication?instance=${encodeURIComponent(inst.name)}`
-            );
-            if (r.ok) {
-                const d = await r.json();
-                const s = d.stats || {};
-                const hasRepl = s.is_primary === false || (Array.isArray(s.standbys) && s.standbys.length > 0);
-                const li = document.querySelector('li[data-route="pg-replication"]');
-                if (li) li.style.display = hasRepl ? 'block' : 'none';
-            }
+            return;
         } else if (type === 'sqlserver') {
             // Sidebar visibility is instance-wide. We don't pass the database param here
             // because the HA/Replication dashboard covers the entire instance. This
@@ -727,9 +727,14 @@ async function _refreshHALinkVisibility(inst, database) {
             );
             if (r.ok) {
                 const d = await r.json();
-                const hasHA = d.ha_enabled === true || d.replication_enabled === true;
+                // Show only when instance has AG, FCI, log shipping, mirroring, or replication (see FetchFeatureDetection).
+                const hasDR = d.ha_enabled === true || d.replication_enabled === true
+                    || d.log_shipping_enabled === true || d.ag_enabled === true;
                 const li = document.querySelector('li[data-route="drilldown-ha"]');
-                if (li) li.style.display = hasHA ? 'block' : 'none';
+                if (li) {
+                    if (hasDR) li.style.removeProperty('display');
+                    else li.style.display = 'none';
+                }
             }
         }
     } catch (e) {

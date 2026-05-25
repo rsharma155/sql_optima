@@ -30,26 +30,29 @@ func TestJobSchedulerService_GetJobsToRun(t *testing.T) {
 	mockRepo.On("GetActiveConfigs", ctx).Return(configs, nil).Once()
 
 	// 1. Initial run: all jobs should run
-	jobs, err := scheduler.GetJobsToRun(ctx)
+	jobs, err := scheduler.GetJobsToRun(ctx, "server-a")
 	assert.NoError(t, err)
 	assert.Len(t, jobs, 2)
 	assert.Equal(t, "Job1", jobs[0].Name)
 	assert.Equal(t, "Job2", jobs[1].Name)
 
-	// Mark Job1 as run
-	scheduler.MarkAsRun("Job1")
+	// Mark Job1 as run for server-a only
+	scheduler.MarkAsRun("Job1", "server-a")
 
-	// 2. Immediate second check: Job1 should NOT run, Job2 SHOULD run
+	// 2. Immediate second check: Job1 should NOT run, Job2 SHOULD run (same scope)
 	mockRepo.On("GetActiveConfigs", ctx).Return(configs, nil).Once()
-	jobs, err = scheduler.GetJobsToRun(ctx)
+	jobs, err = scheduler.GetJobsToRun(ctx, "server-a")
 	assert.NoError(t, err)
 	assert.Len(t, jobs, 1)
 	assert.Equal(t, "Job2", jobs[0].Name)
 
-	// 3. Fast forward time (conceptual): This is hard with real time.Now()
-	// but we can test the logic by setting a manual lastRun if we refactored scheduler
-	// For now, let's verify error handling
+	// Job1 still due for a different instance
+	mockRepo.On("GetActiveConfigs", ctx).Return(configs, nil).Once()
+	jobs, err = scheduler.GetJobsToRun(ctx, "server-b")
+	assert.NoError(t, err)
+	assert.Len(t, jobs, 2)
+
 	mockRepo.On("GetActiveConfigs", ctx).Return([]Config{}, assert.AnError).Once()
-	_, err = scheduler.GetJobsToRun(ctx)
+	_, err = scheduler.GetJobsToRun(ctx, "server-a")
 	assert.Error(t, err)
 }

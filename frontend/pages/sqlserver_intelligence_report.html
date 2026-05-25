@@ -1,7 +1,7 @@
 <!--
  * SQL Optima — https://github.com/rsharma155/sql_optima
  *
- * Purpose: SQL Server Health Intelligence Report (Autonomous Analysis).
+ * Purpose: SQL Server Health Intelligence Report (rule-based analysis).
  *
  * Author: Ravi Sharma
  * Copyright (c) 2026 Ravi Sharma
@@ -28,7 +28,10 @@
         flex: 1;
         border: 1px solid var(--border-color);
         border-radius: 8px;
-        background: var(--bg-surface);
+        background: var(--bg-base);
+    }
+    .intelligence-container {
+        background: var(--bg-base);
     }
     .loading-overlay {
         display: none;
@@ -54,7 +57,7 @@
         <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:8px;">
             <i class="fa-solid fa-brain text-accent"></i> SQL Server Intelligence Report
             <span id="ir-instance-name" style="font-size:0.75rem; color:var(--text-muted); font-weight:500; background:rgba(0,0,0,0.15); padding:2px 8px; border-radius:4px;"></span>
-            <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" title="Autonomous analysis using expert rules and time-series forecasting"></i>
+            <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" title="Expert rules, dynamic thresholds, and time-series forecasting on collected telemetry"></i>
         </h1>
     </div>
 
@@ -64,12 +67,18 @@
     </div>
 
     <div class="intelligence-container">
-        <div class="report-actions">
+        <div class="report-actions" style="flex-wrap: wrap;">
             <button id="generate-report-btn" class="btn btn-primary">
-                <i class="fa-solid fa-wand-magic-sparkles"></i> Generate New Health Analysis
+                <i class="fa-solid fa-chart-line"></i> Run Analysis
             </button>
-            <div id="report-status" class="text-secondary" style="font-size: 0.9rem;">
-                Click the button to start autonomous analysis based on recent telemetry.
+            <button id="refresh-report-btn" class="btn btn-secondary" type="button" title="Force fresh analysis and bypass cache">
+                <i class="fa-solid fa-rotate"></i> Refresh
+            </button>
+            <div style="flex: 1; min-width: 200px;">
+                <div id="report-status" class="text-secondary" style="font-size: 0.9rem;">
+                    Loads a cached report when one exists from the last 24 hours; otherwise runs analysis.
+                </div>
+                <div id="report-generated-at" class="text-muted" style="font-size: 0.78rem; margin-top: 2px;"></div>
             </div>
         </div>
 

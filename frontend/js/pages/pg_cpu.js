@@ -32,6 +32,37 @@ window.PgCpuView = async function() {
         initPgCpu();
     };
 
+    async function initPgCpuOsCollectorPanel(instName) {
+        const mount = document.getElementById('os-collector-setup-mount-cpu');
+        const fallback = document.getElementById('pg-cpu-os-notice-fallback');
+        if (!mount || !window.fetchOsCollectorStatus) return;
+        if (window.isOsCollectorPromptDismissed && window.isOsCollectorPromptDismissed()) {
+            mount.style.display = 'none';
+            mount.innerHTML = '';
+            if (fallback) fallback.style.display = 'none';
+            return;
+        }
+        try {
+            const st = await window.fetchOsCollectorStatus(instName);
+            if (st.os_collector_configured) {
+                mount.style.display = 'none';
+                mount.innerHTML = '';
+                if (fallback) fallback.style.display = 'none';
+                return;
+            }
+            if (fallback) fallback.style.display = 'none';
+            mount.style.display = 'block';
+            window.mountOsCollectorSetupPanel(mount, {
+                instanceName: instName,
+                statusId: 'os-collector-cpu-status',
+                compact: true
+            });
+        } catch (e) {
+            console.warn('OS collector status:', e);
+            if (fallback) fallback.style.display = 'block';
+        }
+    }
+
     function esc(s) {
         return window.escapeHtml ? window.escapeHtml(String(s ?? '')) : String(s ?? '');
     }
@@ -92,6 +123,7 @@ window.PgCpuView = async function() {
     async function initPgCpu() {
         window.currentCharts = window.currentCharts || {};
         const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || { name: '' };
+        if (inst.name) await initPgCpuOsCollectorPanel(inst.name);
         const q = encodeURIComponent(inst.name);
 
         let from = window.appState.fromTs;
@@ -196,6 +228,8 @@ window.PgCpuView = async function() {
             bucketBadge.textContent = mins === 1 ? '1 min buckets' : `${mins} min buckets`;
         }
 
+        const timeX = window.chartTimeScaleX ? window.chartTimeScaleX('Time') : { display: true, title: { display: true, text: 'Time' } };
+        const tooltip = window.chartTooltipPlugin ? window.chartTooltipPlugin() : { enabled: true };
         window.currentCharts.pgExecLoad = new Chart(canvas.getContext('2d'), {
             type: 'bar',
             data: {
@@ -209,6 +243,7 @@ window.PgCpuView = async function() {
                         borderWidth: 1,
                         yAxisID: 'y',
                         order: 2,
+                        tooltipUnit: 's',
                     },
                     {
                         label: 'Avg Latency (ms)',
@@ -216,28 +251,26 @@ window.PgCpuView = async function() {
                         type: 'line',
                         borderColor: '#f59e0b',
                         borderWidth: 1.5,
-                        pointRadius: 0,
+                        pointRadius: 2,
+                        pointHoverRadius: 5,
                         fill: false,
                         tension: 0.3,
                         yAxisID: 'y2',
                         order: 1,
+                        tooltipUnit: 'ms',
                     },
                 ],
             },
-            options: {
+            options: window.mergeChartOptions ? window.mergeChartOptions({
                 responsive: true,
                 maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
+                interaction: window.chartInteractionOptions ? window.chartInteractionOptions() : { mode: 'index', intersect: false },
                 plugins: {
                     legend: { display: true, position: 'top', labels: { boxWidth: 10, font: { size: 9 } } },
-                    tooltip: {
-                        callbacks: {
-                            label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y,
-                        },
-                    },
+                    tooltip,
                 },
                 scales: {
-                    x: { display: true, ticks: { maxTicksLimit: 8, font: { size: 9 } }, grid: { display: false } },
+                    x: timeX,
                     y: {
                         beginAtZero: true,
                         position: 'left',
@@ -252,7 +285,7 @@ window.PgCpuView = async function() {
                         grid: { drawOnChartArea: false },
                     },
                 },
-            },
+            }, {}) : {},
         });
     }
 
@@ -272,7 +305,19 @@ window.PgCpuView = async function() {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { position: 'right', labels: { boxWidth: 10, font: { size: 9 } } } },
+                plugins: {
+                    legend: { position: 'right', labels: { boxWidth: 10, font: { size: 9 } } },
+                    tooltip: window.chartTooltipPlugin ? window.chartTooltipPlugin({
+                        callbacks: {
+                            label: (ctx) => {
+                                const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                                const pct = total > 0 ? ((ctx.parsed / total) * 100).toFixed(1) : 0;
+                                const ms = ctx.parsed != null ? Number(ctx.parsed).toFixed(0) : '0';
+                                return `${ctx.label}: ${ms} ms (${pct}%)`;
+                            },
+                        },
+                    }) : { enabled: true },
+                },
                 cutout: '68%',
             },
         });
@@ -330,6 +375,7 @@ window.PgCpuView = async function() {
         // Color each point based on health threshold
         const pointColors = hitPcts.map(v => v >= 99 ? '#10b981' : v >= 95 ? '#f59e0b' : '#ef4444');
 
+        const timeX = window.chartTimeScaleX ? window.chartTimeScaleX('Time') : { display: true, title: { display: true, text: 'Time' } };
         window.currentCharts.cacheHitTrend = new Chart(canvas.getContext('2d'), {
             type: 'line',
             data: {
@@ -340,28 +386,30 @@ window.PgCpuView = async function() {
                         data: hitPcts,
                         borderColor: '#14b8a6',
                         borderWidth: 1.5,
-                        pointRadius: hitPcts.length <= 60 ? 2 : 0,
+                        pointRadius: hitPcts.length <= 60 ? 3 : 2,
+                        pointHoverRadius: 6,
                         pointBackgroundColor: pointColors,
                         fill: true,
                         backgroundColor: 'rgba(20,184,166,0.08)',
                         tension: 0.3,
+                        tooltipUnit: '%',
                     },
                 ],
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                interaction: window.chartInteractionOptions ? window.chartInteractionOptions() : { mode: 'index', intersect: false },
                 plugins: {
                     legend: { display: false },
-                    annotation: {
-                        // Requires chartjs-plugin-annotation if available; safe to omit
-                    },
+                    tooltip: window.chartTooltipPlugin ? window.chartTooltipPlugin() : { enabled: true },
                 },
                 scales: {
-                    x: { display: true, ticks: { maxTicksLimit: 8, font: { size: 9 } }, grid: { display: false } },
+                    x: timeX,
                     y: {
                         min: Math.max(0, Math.min(...hitPcts.filter(v => v > 0)) - 5),
                         max: 100,
+                        title: { display: true, text: 'Cache Hit %', font: { size: 9 } },
                         ticks: { font: { size: 9 }, callback: v => v + '%' },
                     },
                 },
@@ -434,4 +482,6 @@ window.PgCpuView = async function() {
         ctx.textAlign = 'center';
         ctx.fillText(msg, w / 2, h / 2);
     }
+
+    window.initPgCpu = initPgCpu;
 })();

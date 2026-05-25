@@ -26,13 +26,38 @@ type PerfCounterWriteRow struct {
 	RatePerSec   float64
 }
 
-// LogSqlServerPerfCountersV2 writes the full set of perf counter rows (one per
-// counter per collection cycle) to sqlserver_perf_counters using the extended
-// schema. ON CONFLICT DO NOTHING prevents duplicates on re-delivery.
+// LogSqlServerPerfCountersV2 writes perf counter rows to sqlserver_perf_counters.
+// Unchanged (cntr_value, rate) pairs are skipped in-memory; ON CONFLICT DO NOTHING
+// handles same-timestamp re-delivery.
 func (tl *TimescaleLogger) LogSqlServerPerfCountersV2(ctx context.Context, serverID uuid.UUID, capturedAt time.Time, rows []PerfCounterWriteRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
+
+	serverPrefix := serverID.String() + ":"
+	toInsert := make([]PerfCounterWriteRow, 0, len(rows))
+	for _, r := range rows {
+		key := serverPrefix + r.CounterName + ":" + r.InstanceName
+		newHash := perfCounterWriteHash(r.CntrValue, r.RatePerSec)
+
+		tl.mu.RLock()
+		prevHash, ok := tl.prevPerfCounterWriteHash[key]
+		tl.mu.RUnlock()
+
+		if ok && prevHash == newHash {
+			continue
+		}
+
+		tl.mu.Lock()
+		tl.prevPerfCounterWriteHash[key] = newHash
+		tl.mu.Unlock()
+
+		toInsert = append(toInsert, r)
+	}
+	if len(toInsert) == 0 {
+		return nil
+	}
+
 	const q = `
 		INSERT INTO sqlserver_perf_counters (
 			capture_timestamp, server_id, counter_name, instance_name,
@@ -41,7 +66,7 @@ func (tl *TimescaleLogger) LogSqlServerPerfCountersV2(ctx context.Context, serve
 		ON CONFLICT DO NOTHING`
 
 	b := &pgx.Batch{}
-	for _, r := range rows {
+	for _, r := range toInsert {
 		b.Queue(q,
 			capturedAt, serverID, r.CounterName, r.InstanceName,
 			r.CntrValue, r.CntrType, r.RatePerSec,
@@ -49,7 +74,7 @@ func (tl *TimescaleLogger) LogSqlServerPerfCountersV2(ctx context.Context, serve
 	}
 	br := tl.pool.SendBatch(ctx, b)
 	defer br.Close()
-	for range rows {
+	for range toInsert {
 		if _, err := br.Exec(); err != nil {
 			return fmt.Errorf("LogSqlServerPerfCountersV2 insert failed: %w", err)
 		}

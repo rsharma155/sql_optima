@@ -8,6 +8,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/config"
+	"github.com/rsharma155/sql_optima/internal/domain"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
@@ -58,6 +60,62 @@ func (h *SqlServerQueryAnalysisHandlers) requireSqlServer(w http.ResponseWriter,
 	return true
 }
 
+func parseQueryAnalysisParams(r *http.Request) (from, to time.Time, database string, excludeSystem bool) {
+	from, to, _ = parseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+	database = strings.TrimSpace(r.URL.Query().Get("database"))
+	if strings.EqualFold(database, "all") {
+		database = ""
+	}
+	excludeSystem = true
+	if es := r.URL.Query().Get("exclude_system"); es == "false" {
+		excludeSystem = false
+	}
+	return from, to, database, excludeSystem
+}
+
+func (h *SqlServerQueryAnalysisHandlers) instanceNameFromRequest(r *http.Request) string {
+	return strings.TrimSpace(r.URL.Query().Get("instance"))
+}
+
+func (h *SqlServerQueryAnalysisHandlers) monitoringLoginsForRequest(r *http.Request) []string {
+	return sqlServerExcludeLoginsForInstance(h.cfg, h.instanceNameFromRequest(r))
+}
+
+func (h *SqlServerQueryAnalysisHandlers) resolveAnalysisDatabase(ctx context.Context, serverID uuid.UUID, from, to time.Time, database string, partial domain.WorkloadQueryFilter) (string, error) {
+	database = strings.TrimSpace(database)
+	if database != "" && !strings.EqualFold(database, "all") {
+		return database, nil
+	}
+	if h.metricsSvc != nil {
+		if db, err := h.metricsSvc.GetSqlServerPrimaryQueryAnalysisDatabase(ctx, serverID, from, to, partial); err == nil && db != "" {
+			return db, nil
+		}
+	}
+	return "", nil
+}
+
+func (h *SqlServerQueryAnalysisHandlers) GetDefaultDatabase(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.resolve(w, r)
+	if !ok {
+		return
+	}
+	if !h.requireSqlServer(w, id) {
+		return
+	}
+	from, to, _, excludeSystem := parseQueryAnalysisParams(r)
+	partial := domain.WorkloadQueryFilter{
+		ExcludeSystem:    excludeSystem,
+		MonitoringLogins: h.monitoringLoginsForRequest(r),
+	}
+	db, err := h.resolveAnalysisDatabase(r.Context(), id, from, to, "", partial)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"database": db})
+}
+
 func (h *SqlServerQueryAnalysisHandlers) GetSummary(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.resolve(w, r)
 	if !ok {
@@ -67,28 +125,22 @@ func (h *SqlServerQueryAnalysisHandlers) GetSummary(w http.ResponseWriter, r *ht
 		return
 	}
 
-	hours := 24
-	if hStr := r.URL.Query().Get("hours"); hStr != "" {
-		if val, err := strconv.Atoi(hStr); err == nil {
-			hours = val
-		}
-	} else if fromStr, toStr := r.URL.Query().Get("from"), r.URL.Query().Get("to"); fromStr != "" {
-		from, to, _ := parseTimeRange(fromStr, toStr)
-		if h := int(to.Sub(from).Hours()); h > 0 {
-			hours = h
-		}
-	}
-	excludeSystem := true
-	if es := r.URL.Query().Get("exclude_system"); es == "false" {
-		excludeSystem = false
+	from, to, database, excludeSystem := parseQueryAnalysisParams(r)
+	logins := h.monitoringLoginsForRequest(r)
+	partial := domain.WorkloadQueryFilter{ExcludeSystem: excludeSystem, MonitoringLogins: logins}
+	database, err := h.resolveAnalysisDatabase(r.Context(), id, from, to, database, partial)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 
-	res, err := h.metricsSvc.GetSqlServerQueryAnalysisSummary(r.Context(), id, hours, excludeSystem)
+	res, err := h.metricsSvc.GetSqlServerQueryAnalysisSummary(r.Context(), id, from, to, database, excludeSystem, logins)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Data-Source", "timescale")
 	_ = json.NewEncoder(w).Encode(res)
 }
 
@@ -104,7 +156,8 @@ func (h *SqlServerQueryAnalysisHandlers) GetRegressions(w http.ResponseWriter, r
 		return
 	}
 
-	res, err := h.metricsSvc.GetSqlServerQueryRegressions(r.Context(), id, 50)
+	logins := h.monitoringLoginsForRequest(r)
+	res, err := h.metricsSvc.GetSqlServerQueryRegressions(r.Context(), id, 50, logins)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -137,23 +190,22 @@ func (h *SqlServerQueryAnalysisHandlers) GetTopQueries(w http.ResponseWriter, r 
 	}
 
 	sortBy := r.URL.Query().Get("sort")
-	hours := 24
-	if hStr := r.URL.Query().Get("hours"); hStr != "" {
-		if val, err := strconv.Atoi(hStr); err == nil {
-			hours = val
-		}
-	} else if fromStr, toStr := r.URL.Query().Get("from"), r.URL.Query().Get("to"); fromStr != "" {
-		from, to, _ := parseTimeRange(fromStr, toStr)
-		if h := int(to.Sub(from).Hours()); h > 0 {
-			hours = h
+	limit := 50
+	if lStr := r.URL.Query().Get("limit"); lStr != "" {
+		if val, err := strconv.Atoi(lStr); err == nil && val > 0 {
+			limit = val
 		}
 	}
-	excludeSystem := true
-	if es := r.URL.Query().Get("exclude_system"); es == "false" {
-		excludeSystem = false
+	from, to, database, excludeSystem := parseQueryAnalysisParams(r)
+	logins := h.monitoringLoginsForRequest(r)
+	partial := domain.WorkloadQueryFilter{ExcludeSystem: excludeSystem, MonitoringLogins: logins}
+	database, err := h.resolveAnalysisDatabase(r.Context(), id, from, to, database, partial)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 
-	res, err := h.metricsSvc.GetSqlServerTopQueriesAnalysis(r.Context(), id, sortBy, 50, hours, excludeSystem)
+	res, err := h.metricsSvc.GetSqlServerTopQueriesAnalysis(r.Context(), id, sortBy, limit, from, to, database, excludeSystem, logins)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -161,6 +213,47 @@ func (h *SqlServerQueryAnalysisHandlers) GetTopQueries(w http.ResponseWriter, r 
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Data-Source", "timescale")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (h *SqlServerQueryAnalysisHandlers) GetTopQueryTrends(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.resolve(w, r)
+	if !ok {
+		return
+	}
+	limit := 10
+	if lStr := r.URL.Query().Get("limit"); lStr != "" {
+		if val, err := strconv.Atoi(lStr); err == nil && val > 0 {
+			limit = val
+		}
+	}
+	from, to, database, excludeSystem := parseQueryAnalysisParams(r)
+	logins := h.monitoringLoginsForRequest(r)
+	partial := domain.WorkloadQueryFilter{ExcludeSystem: excludeSystem, MonitoringLogins: logins}
+	database, err := h.resolveAnalysisDatabase(r.Context(), id, from, to, database, partial)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	var fingerprints []string
+	if fpRaw := strings.TrimSpace(r.URL.Query().Get("fingerprints")); fpRaw != "" {
+		for _, fp := range strings.Split(fpRaw, ",") {
+			fp = strings.TrimSpace(fp)
+			if fp != "" {
+				fingerprints = append(fingerprints, fp)
+			}
+		}
+	}
+	res, err := h.metricsSvc.GetSqlServerTopQueryTrends(r.Context(), id, from, to, database, excludeSystem, logins, limit, fingerprints)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Data-Source", "timescale")
 	_ = json.NewEncoder(w).Encode(res)
 }
 

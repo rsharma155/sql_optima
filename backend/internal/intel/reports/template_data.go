@@ -503,7 +503,137 @@ func buildTemplateConfidenceDiagnostics(triggered []models.RuleTriggerResult, ra
 		"historical_coverage": historicalCoverage,
 		"rule_correlation":    ruleCorrelation,
 		"metric_coverage":     metricCoverage,
+		"missing_sources":     buildTemplateMissingTelemetry(rawData),
 	}
+}
+
+// RuleDrillRoute maps a fired rule to a SQL Optima SPA route for drill-down.
+func RuleDrillRoute(ruleName string) string {
+	routes := map[string]string{
+		"cpu_saturation":               "sqlserver-health-v2",
+		"cpu_burst":                    "sqlserver-health-v2",
+		"scheduler_starvation":         "sqlserver-health-v2",
+		"ple_collapse":                 "drilldown-memory",
+		"memory_grant_pressure":        "drilldown-memory",
+		"low_disk_space":               "sqlserver-health-v2",
+		"rapid_disk_growth":            "sqlserver-health-v2",
+		"io_latency_high":              "sqlserver-health-v2",
+		"blocking_chains":              "sqlserver-locks",
+		"replication_lag":              "sqlserver-ha-dashboard",
+		"ha_replication_lag":           "sqlserver-ha-dashboard",
+		"query_store_regressions":      "query-analysis",
+		"query_plan_instability":       "query-analysis",
+		"tempdb_pressure":              "sqlserver-health-v2",
+		"backup_failure_risk":          "sqlserver-best-practices",
+		"maxdop_misconfiguration":      "sqlserver-settings",
+	}
+	if r, ok := routes[ruleName]; ok {
+		return r
+	}
+	return "sqlserver-health-v2"
+}
+
+func buildTemplateMissingTelemetry(raw map[string]interface{}) []map[string]string {
+	type src struct {
+		key, label string
+	}
+	sources := []src{
+		{"avg_cpu_load_series", "CPU time series (sqlserver_metrics)"},
+		{"ple_seconds_series", "PLE history (sqlserver_memory_metrics)"},
+		{"blocking_sessions_series", "Blocking history (sqlserver_risk_health)"},
+		{"free_disk_mb_series", "Disk free space history"},
+		{"batch_requests_per_sec_series", "Batch requests history"},
+		{"read_latency_ms_series", "Read latency history (sqlserver_database_throughput)"},
+		{"wait_category_breakdown", "Wait stats (sqlserver_wait_stats)"},
+		{"ha_replica_states", "Always On replica state (monitor.sqlserver_ha_replica_state)"},
+		{"risk_history_snapshots", "Intel risk snapshots (intelreport.intel_snapshots)"},
+		{"performance_debt_count", "Performance debt findings"},
+	}
+	var missing []map[string]string
+	for _, s := range sources {
+		if !rawHasTelemetry(raw, s.key) {
+			missing = append(missing, map[string]string{"key": s.key, "label": s.label})
+		}
+	}
+	return missing
+}
+
+func rawHasTelemetry(raw map[string]interface{}, key string) bool {
+	v, ok := raw[key]
+	if !ok || v == nil {
+		return false
+	}
+	switch val := v.(type) {
+	case []float64:
+		return len(val) > 0
+	case []map[string]interface{}:
+		return len(val) > 0
+	case []interface{}:
+		return len(val) > 0
+	case float64:
+		return true
+	case bool:
+		return true
+	case string:
+		return val != ""
+	default:
+		return true
+	}
+}
+
+// buildTemplateTop3Actions surfaces the highest-priority remediation steps for executives.
+func buildTemplateTop3Actions(recs []map[string]string, rules []models.RuleTriggerResult) []map[string]string {
+	var out []map[string]string
+	seen := map[string]bool{}
+	add := func(title, urgency, route, reason string) {
+		if title == "" || seen[title] || len(out) >= 3 {
+			return
+		}
+		seen[title] = true
+		out = append(out, map[string]string{
+			"title":   title,
+			"urgency": urgency,
+			"route":   route,
+			"reason":  reason,
+		})
+	}
+	for _, r := range recs {
+		if r["urgency"] != "immediate" {
+			continue
+		}
+		add(r["action"], r["urgency"], "sqlserver-intelligence-report", r["reason"])
+	}
+	sevOrder := map[string]int{"critical": 0, "high": 1, "medium": 2}
+	sorted := make([]models.RuleTriggerResult, len(rules))
+	copy(sorted, rules)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sevOrder[sorted[i].Severity] < sevOrder[sorted[j].Severity]
+	})
+	for _, rule := range sorted {
+		if rule.Severity != "critical" && rule.Severity != "high" {
+			continue
+		}
+		title := cases.Title(language.Und).String(strings.ReplaceAll(rule.RuleName, "_", " "))
+		reason := rule.Message
+		if len(reason) > 120 {
+			reason = reason[:117] + "..."
+		}
+		if len(rule.Recommendation) > 0 {
+			add(rule.Recommendation[0], rule.Severity, RuleDrillRoute(rule.RuleName), reason)
+		} else {
+			add("Investigate "+title, rule.Severity, RuleDrillRoute(rule.RuleName), reason)
+		}
+	}
+	for _, r := range recs {
+		if len(out) >= 3 {
+			break
+		}
+		if r["urgency"] == "immediate" {
+			continue
+		}
+		add(r["action"], r["urgency"], RuleDrillRoute(""), r["reason"])
+	}
+	return out
 }
 
 // buildTemplateRootCauseProbabilities maps the top triggered rules to probability

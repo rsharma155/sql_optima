@@ -91,7 +91,10 @@ window.runPgStorageIndexHealthDashboard = async function(opts) {
         const syncSelect = (id, options, current) => {
             const el = $(id);
             if (!el) return;
-            el.innerHTML = '<option value="all">All</option>' + (options || []).map(o => `<option value="${o}" ${current===o?'selected':''}>${o}</option>`).join('');
+            el.innerHTML = '<option value="all">All</option>' + (options || []).map(o => {
+                const v = window.escapeHtml(String(o));
+                return `<option value="${v}" ${current===o?'selected':''}>${v}</option>`;
+            }).join('');
         };
         syncSelect('sihDb', filters.databases, state.db);
         syncSelect('sihSchema', filters.schemas, state.schema);
@@ -203,7 +206,7 @@ window.runPgStorageIndexHealthDashboard = async function(opts) {
         console.error('PostgreSQL SIH dashboard failed', e);
         if (container) {
             container.classList.remove('loading');
-            container.innerHTML = `<div class="alert alert-danger">Analytical load failed: ${e.message}</div>`;
+            container.innerHTML = `<div class="alert alert-danger">Analytical load failed: ${window.escapeHtml(e.message)}</div>`;
         }
     }
 };
@@ -225,7 +228,7 @@ async function showPgSihTableDrilldown(instance, db, schema, table) {
     modal.innerHTML = `
         <div class="glass-panel" style="background:var(--bg-surface); width:95%; max-width:1000px; max-height:90vh; overflow-y:auto; border-radius:12px; border:1px solid var(--border-color); display:flex; flex-direction:column;">
             <div class="modal-header flex-between" style="padding:1rem; border-bottom:1px solid var(--border-color);">
-                <h3 style="margin:0;"><i class="fa-solid fa-magnifying-glass-chart text-accent"></i> ${schema}.${table} <span class="text-muted" style="font-size:0.8rem;">(Index Usage Analysis)</span></h3>
+                <h3 style="margin:0;"><i class="fa-solid fa-magnifying-glass-chart text-accent"></i> ${window.escapeHtml(schema)}.${window.escapeHtml(table)} <span class="text-muted" style="font-size:0.8rem;">(Index Usage Analysis)</span></h3>
                 <button class="btn btn-icon" id="closeSihModal" style="background:transparent; border:none; color:var(--text); font-size:1.5rem; cursor:pointer;">&times;</button>
             </div>
             <div class="modal-body" style="padding:1.5rem; flex:1;">
@@ -268,6 +271,6 @@ async function showPgSihTableDrilldown(instance, db, schema, table) {
         `).join('') || '<tr><td colspan="5" class="text-center p-3">No index usage data found.</td></tr>';
         
     } catch (e) {
-        document.getElementById('sihModalLoading').innerHTML = `<div class="alert alert-danger">Drilldown failed: ${e.message}</div>`;
+        document.getElementById('sihModalLoading').innerHTML = `<div class="alert alert-danger">Drilldown failed: ${window.escapeHtml(e.message)}</div>`;
     }
 }

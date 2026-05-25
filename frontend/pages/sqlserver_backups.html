@@ -1,0 +1,127 @@
+<!--
+ * SQL Optima — https://github.com/rsharma155/sql_optima
+ *
+ * Purpose: SQL Server Backup & Recovery dashboard.
+ *
+ * Author: Ravi Sharma
+ * Copyright (c) 2026 Ravi Sharma
+ * SPDX-License-Identifier: MIT
+-->
+<div class="page-view active dashboard-sky-theme mssql-backups-page">
+    <div class="page-title flex-between dashboard-page-title-compact">
+        <div class="dashboard-title-line" style="flex:1; min-width:0;">
+            <h1>
+                <i class="fa-solid fa-shield-heart text-accent"></i> Backup &amp; Recovery
+            </h1>
+            <p class="subtitle">Backup posture, Agent jobs, and DR pipeline — <span class="text-accent">${inst.name}</span></p>
+        </div>
+        <div class="dashboard-page-title-actions dashboard-pg-header-actions">
+            <div class="glass-panel" style="padding:0.2rem 0.5rem; display:flex; align-items:center; gap:0.5rem; font-size:0.75rem;">
+                <input type="datetime-local" id="mssql-backup-from" class="bg-transparent border-none text-primary" style="width:12rem;" />
+                <span class="text-muted">→</span>
+                <input type="datetime-local" id="mssql-backup-to" class="bg-transparent border-none text-primary" style="width:12rem;" />
+                <button type="button" class="btn btn-xs btn-accent" id="mssql-backup-apply">Apply</button>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.75rem;">
+                <span class="text-muted" style="font-size:0.75rem;">Refreshed: <span id="mssql-backup-refresh-time">--</span></span>
+                <button type="button" class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="SqlServerBackupsView" title="Refresh">
+                    <i class="fa-solid fa-rotate"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="glass-panel mt-2" style="padding:0.65rem 0.85rem;">
+        <div class="flex-between" style="margin-bottom:0.5rem; flex-wrap:wrap; gap:0.5rem;">
+            <div>
+                <span class="section-heading" style="margin:0;"><i class="fa-solid fa-gauge-high text-accent"></i> Recovery readiness</span>
+                <span id="mssql-backup-overall" class="mssql-dr-overall text-muted" style="margin-left:0.5rem;">Loading…</span>
+            </div>
+            <button type="button" class="btn btn-xs btn-outline" id="mssql-goto-ha" style="display:none;">Open HA &amp; DR</button>
+        </div>
+        <div id="mssql-backup-readiness-row" class="mssql-backup-readiness-row"></div>
+    </div>
+
+    <div class="dashboard-grid-12 mt-2" id="mssql-backup-kpi-row">
+        <div class="glass-panel kpi-card col-span-2">
+            <div class="kpi-label">Databases</div>
+            <div class="kpi-value text-accent" id="mssql-kpi-databases">--</div>
+        </div>
+        <div class="glass-panel kpi-card col-span-2">
+            <div class="kpi-label">Stale full</div>
+            <div class="kpi-value" id="mssql-kpi-stale">--</div>
+        </div>
+        <div class="glass-panel kpi-card col-span-2">
+            <div class="kpi-label">Overdue log</div>
+            <div class="kpi-value" id="mssql-kpi-log">--</div>
+        </div>
+        <div class="glass-panel kpi-card col-span-2">
+            <div class="kpi-label">Failed jobs (24h)</div>
+            <div class="kpi-value" id="mssql-kpi-jobs">--</div>
+        </div>
+        <div class="glass-panel kpi-card col-span-2">
+            <div class="kpi-label">Backup GB (24h)</div>
+            <div class="kpi-value" id="mssql-kpi-gb">--</div>
+        </div>
+        <div class="glass-panel kpi-card col-span-2">
+            <div class="kpi-label">Avg duration</div>
+            <div class="kpi-value" id="mssql-kpi-duration">--</div>
+            <div class="kpi-unit">sec</div>
+        </div>
+    </div>
+
+    <p class="section-heading mt-2"><i class="fa-solid fa-table"></i> Database backup posture</p>
+    <div class="glass-panel mssql-table-card">
+        <div class="panel-header flex-between">
+            <h4><i class="fa-solid fa-database text-accent"></i> Per-database status</h4>
+            <span class="text-muted small" id="mssql-posture-count">—</span>
+        </div>
+        <div class="mssql-table-wrap" id="mssql-posture-table">
+            <p class="mssql-empty-cell"><i class="fa-solid fa-spinner fa-spin"></i> Loading posture…</p>
+        </div>
+    </div>
+
+    <p class="section-heading mt-2"><i class="fa-solid fa-chart-line"></i> Backup activity</p>
+    <div class="dashboard-grid-12">
+        <div class="glass-panel col-span-6 chart-container-sm">
+            <div class="panel-header"><h4><i class="fa-solid fa-chart-area text-accent"></i> Volume by type (MB/h)</h4></div>
+            <canvas id="mssql-backup-volume-chart"></canvas>
+        </div>
+        <div class="glass-panel col-span-6 chart-container-sm">
+            <div class="panel-header"><h4><i class="fa-solid fa-hashtag text-accent"></i> Backup count / hour</h4></div>
+            <canvas id="mssql-backup-count-chart"></canvas>
+        </div>
+    </div>
+
+    <div class="mssql-backup-tabs mt-2">
+        <button type="button" class="mssql-backup-tab active" data-tab="history">History</button>
+        <button type="button" class="mssql-backup-tab" data-tab="jobs">Agent jobs</button>
+        <button type="button" class="mssql-backup-tab" data-tab="logship">Log shipping</button>
+        <button type="button" class="mssql-backup-tab" data-tab="policy">RPO policy</button>
+    </div>
+
+    <div class="glass-panel mt-1 mssql-table-card mssql-tab-panel" id="mssql-tab-history">
+        <div class="panel-header"><h4><i class="fa-solid fa-clock-rotate-left text-accent"></i> Backup history</h4></div>
+        <div class="mssql-table-wrap" id="mssql-backup-history-table"></div>
+    </div>
+    <div class="glass-panel mt-1 mssql-table-card mssql-tab-panel" id="mssql-tab-jobs" style="display:none;">
+        <div class="panel-header"><h4><i class="fa-solid fa-briefcase text-accent"></i> Backup &amp; maintenance jobs</h4></div>
+        <div class="mssql-table-wrap" id="mssql-backup-jobs-table"></div>
+    </div>
+    <div class="glass-panel mt-1 mssql-table-card mssql-tab-panel" id="mssql-tab-logship" style="display:none;">
+        <div class="panel-header"><h4><i class="fa-solid fa-truck-fast text-accent"></i> Log shipping</h4></div>
+        <div class="mssql-table-wrap" id="mssql-logshipping-table"></div>
+    </div>
+    <div class="glass-panel mt-1 mssql-backup-panel mssql-tab-panel" id="mssql-tab-policy" style="display:none;">
+        <form id="mssql-backup-policy-form" class="mssql-policy-form">
+            <label>Full backup RPO (hours)
+                <input type="number" id="mssql-policy-full-hours" min="1" max="168" class="form-control" />
+            </label>
+            <label>Log backup RPO (minutes)
+                <input type="number" id="mssql-policy-log-minutes" min="5" max="1440" class="form-control" />
+            </label>
+            <button type="submit" class="btn btn-sm btn-accent mt-1">Save policy</button>
+            <span id="mssql-policy-status" class="text-muted small" style="margin-left:0.5rem;"></span>
+        </form>
+    </div>
+</div>

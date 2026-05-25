@@ -69,8 +69,9 @@ OUTER APPLY (
 ) pa
 WHERE ISNULL(pa.dbid, st.dbid) > 4
   AND qs.statement_sql_handle IS NOT NULL
-  AND qs.last_execution_time >= @last_watermark
-ORDER BY qs.total_worker_time DESC;
+  AND DATEADD(MINUTE, DATEDIFF(MINUTE, GETDATE(), GETUTCDATE()), qs.last_execution_time) >= @last_watermark
+ORDER BY DATEADD(MINUTE, DATEDIFF(MINUTE, GETDATE(), GETUTCDATE()), qs.last_execution_time) DESC,
+         qs.total_worker_time DESC;
 `
 
 func (r *SQLServerSnapshotRepository) GetSqlServerStartTime(ctx context.Context) (time.Time, error) {

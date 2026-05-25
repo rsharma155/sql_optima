@@ -196,6 +196,111 @@ function renderSqlserverRefinedBestPractices(inst, rules, isPartial = false) {
 }
 
 
+const SQL_MULTI_DB_BACKUP_RULES = {
+    BACKUP_RETENTION_013: {
+        healthyValues: ['All Recent'],
+        unit: 'd',
+        valueColLabel: 'Days Since Full Backup',
+        isOverdue: (v) => v > 7 || v === 0,
+        overdueLabel: (v) => (v === 0 ? '✗ Never' : '⚠ Overdue'),
+    },
+    BACKUP_LOG_010: {
+        healthyValues: ['All Healthy'],
+        unit: 'm',
+        valueColLabel: 'Minutes Since Log Backup',
+        isOverdue: (v) => v > 60 || v === 0,
+        overdueLabel: (v) => (v === 0 ? '✗ Never' : '⚠ Overdue'),
+    },
+};
+
+function sqlMultiDbBackupConfig(rule) {
+    if (rule.rule_id === 'BACKUP_LOG_010' || rule.rule_name === 'Log Backup Recent') {
+        return SQL_MULTI_DB_BACKUP_RULES.BACKUP_LOG_010;
+    }
+    if (rule.rule_id === 'BACKUP_RETENTION_013' || rule.rule_name === 'Full Backup Recency') {
+        return SQL_MULTI_DB_BACKUP_RULES.BACKUP_RETENTION_013;
+    }
+    return null;
+}
+
+function parseSqlBackupDbEntries(rawValue, unit) {
+    const re = new RegExp(`^(.+?)\\s*\\((\\d+)${unit}\\)$`);
+    return rawValue.split(/, ?(?=[^)]*\()/).map(entry => {
+        const m = entry.match(re);
+        return m ? { name: m[1].trim(), value: parseInt(m[2], 10) } : { name: entry.trim(), value: 0 };
+    });
+}
+
+function renderSqlMultiDbBackupTable(entries, config) {
+    const unit = config.unit;
+    return `
+        <table class="sql-bp-db-table" style="width:100%; font-size:0.65rem; border-collapse:collapse; margin-top:0.5rem; table-layout:fixed;">
+            <colgroup>
+                <col style="width:55%;">
+                <col style="width:30%;">
+                <col style="width:15%;">
+            </colgroup>
+            <thead>
+                <tr style="color:var(--text-muted); text-transform:uppercase; border-bottom:1px solid var(--border-color);">
+                    <th style="padding:4px 8px; text-align:left; font-weight:600;">Database</th>
+                    <th style="padding:4px 8px; text-align:right; font-weight:600;">${config.valueColLabel}</th>
+                    <th style="padding:4px 8px; text-align:right; font-weight:600;">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${entries.map(db => {
+                    const overdue = config.isOverdue(db.value);
+                    const clr = overdue ? 'var(--danger)' : 'var(--success)';
+                    const lbl = overdue ? config.overdueLabel(db.value) : '✓ OK';
+                    return `<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+                        <td style="padding:4px 8px; color:var(--text-main); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${window.escapeHtml(db.name)}">${window.escapeHtml(db.name)}</td>
+                        <td style="padding:4px 8px; text-align:right; font-variant-numeric:tabular-nums; color:${overdue ? 'var(--danger)' : 'var(--text-main)'};">${db.value}${unit}</td>
+                        <td style="padding:4px 8px; text-align:right; font-variant-numeric:tabular-nums; color:${clr}; font-weight:700;">${lbl}</td>
+                    </tr>`;
+                }).join('')}
+            </tbody>
+        </table>`;
+}
+
+function renderSqlMultiDbBackupRuleRow(rule, statusConfig, tagsHtml, drawerId, config) {
+    const rawValue = rule.current_value || '-';
+    const entries = parseSqlBackupDbEntries(rawValue, config.unit);
+    const dbTableHtml = renderSqlMultiDbBackupTable(entries, config);
+
+    return `
+        <div class="rule-row glass-panel" style="display:grid; grid-template-columns: 48px 1fr 80px; align-items:start; padding:0.75rem; background:${statusConfig.bg}; border:1px solid var(--border-color);">
+            <div style="text-align:center; font-size:1.2rem; color:${statusConfig.color}; padding-top:0.1rem;">
+                <i class="fa-solid ${statusConfig.icon}"></i>
+            </div>
+            <div>
+                <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                    <strong style="font-size:0.8rem; color:var(--text-main);">${window.escapeHtml(rule.rule_name)}</strong>
+                    <span class="badge ${confClassFromRule(rule)}" style="font-size:0.6rem; text-transform:uppercase;">${confLabelFromRule(rule)}</span>
+                    ${tagsHtml}
+                </div>
+                <div class="text-muted" style="font-size:0.7rem; margin-top:0.25rem;">${window.escapeHtml(rule.description)}</div>
+                ${dbTableHtml}
+            </div>
+            <div style="text-align:right; padding-top:0.1rem;">
+                <button class="btn btn-xs btn-outline" data-action="call" data-fn="showRuleDrawerById" data-arg="${drawerId}">
+                    <i class="fa-solid fa-circle-info"></i> Details
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function confClassFromRule(rule) {
+    const confidence = (rule.confidence || 'context_dependent').toLowerCase();
+    return confidence === 'definitive' ? 'badge-success' : confidence === 'informational' ? 'badge-info' : 'badge-warning';
+}
+
+function confLabelFromRule(rule) {
+    const confidence = (rule.confidence || 'context_dependent').toLowerCase();
+    const label = confidence.replace('_', '-');
+    return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 function renderSqlRuleRow(rule) {
     const status = (rule.status || 'OK').toUpperCase();
     let statusConfig = {
@@ -215,9 +320,8 @@ function renderSqlRuleRow(rule) {
         statusConfig = { icon: 'fa-circle-minus', color: 'var(--text-muted)', bg: 'rgba(107,114,128,0.05)', label: 'N/A' };
     }
 
-    const confidence = (rule.confidence || 'context_dependent').toLowerCase();
-    const confLabel = confidence.replace('_', '-').charAt(0).toUpperCase() + confidence.replace('_', '-').slice(1);
-    const confClass = confidence === 'definitive' ? 'badge-success' : confidence === 'informational' ? 'badge-info' : 'badge-warning';
+    const confLabel = confLabelFromRule(rule);
+    const confClass = confClassFromRule(rule);
 
     let tagsHtml = '';
     if (rule.context_tags) {
@@ -240,61 +344,16 @@ function renderSqlRuleRow(rule) {
         status: status
     };
 
-    // Full Backup Recency: render per-database table when multiple databases are listed
-    const isFullBackupRecency = rule.rule_id === 'BACKUP_RETENTION_013' || rule.rule_name === 'Full Backup Recency';
+    // Full / log backup recency: tabular layout when multiple databases are listed
+    const multiDbConfig = sqlMultiDbBackupConfig(rule);
     const rawValue = rule.current_value || '-';
-    const hasDbList = isFullBackupRecency && rawValue !== 'All Recent' && rawValue !== '-' && rawValue.includes('(');
+    const hasDbList = multiDbConfig
+        && !multiDbConfig.healthyValues.includes(rawValue)
+        && rawValue !== '-'
+        && rawValue.includes('(');
 
     if (hasDbList) {
-        const dbEntries = rawValue.split(/, ?(?=[^)]*\()/).map(entry => {
-            const m = entry.match(/^(.+?)\s*\((\d+)d\)$/);
-            return m ? { name: m[1].trim(), days: parseInt(m[2], 10) } : { name: entry.trim(), days: 0 };
-        });
-
-        const dbTableHtml = `
-            <table style="width:100%; font-size:0.65rem; border-collapse:collapse; margin-top:0.5rem;">
-                <thead>
-                    <tr style="color:var(--text-muted); text-transform:uppercase; border-bottom:1px solid var(--border-color);">
-                        <th style="padding:3px 6px; text-align:left; font-weight:600;">Database</th>
-                        <th style="padding:3px 6px; text-align:right; font-weight:600;">Days Since Full Backup</th>
-                        <th style="padding:3px 6px; text-align:right; font-weight:600;">Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${dbEntries.map(db => {
-                        const overdue = db.days > 7 || db.days === 0;
-                        const clr = overdue ? 'var(--danger)' : 'var(--success)';
-                        const lbl = overdue ? (db.days === 0 ? '✗ Never' : '⚠ Overdue') : '✓ OK';
-                        return `<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
-                            <td style="padding:3px 6px; color:var(--text-main);">${window.escapeHtml(db.name)}</td>
-                            <td style="padding:3px 6px; text-align:right; color:${overdue ? 'var(--danger)' : 'var(--text-main)'};">${db.days}d</td>
-                            <td style="padding:3px 6px; text-align:right; color:${clr}; font-weight:700;">${lbl}</td>
-                        </tr>`;
-                    }).join('')}
-                </tbody>
-            </table>`;
-
-        return `
-            <div class="rule-row glass-panel" style="display:grid; grid-template-columns: 48px 1fr 80px; align-items:start; padding:0.75rem; background:${statusConfig.bg}; border:1px solid var(--border-color);">
-                <div style="text-align:center; font-size:1.2rem; color:${statusConfig.color}; padding-top:0.1rem;">
-                    <i class="fa-solid ${statusConfig.icon}"></i>
-                </div>
-                <div>
-                    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
-                        <strong style="font-size:0.8rem; color:var(--text-main);">${window.escapeHtml(rule.rule_name)}</strong>
-                        <span class="badge ${confClass}" style="font-size:0.6rem; text-transform:uppercase;">${confLabel}</span>
-                        ${tagsHtml}
-                    </div>
-                    <div class="text-muted" style="font-size:0.7rem; margin-top:0.25rem;">${window.escapeHtml(rule.description)}</div>
-                    ${dbTableHtml}
-                </div>
-                <div style="text-align:right; padding-top:0.1rem;">
-                    <button class="btn btn-xs btn-outline" data-action="call" data-fn="showRuleDrawerById" data-arg="${drawerId}">
-                        <i class="fa-solid fa-circle-info"></i> Details
-                    </button>
-                </div>
-            </div>
-        `;
+        return renderSqlMultiDbBackupRuleRow(rule, statusConfig, tagsHtml, drawerId, multiDbConfig);
     }
 
     return `
@@ -352,5 +411,17 @@ function initSqlHealthRing(canvasId, score) {
 window.exportSqlServerBestPracticesCSV = function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
     if (!inst) return;
-    window.location.href = `/api/sqlserver/best-practices/export?instance=${encodeURIComponent(inst.name)}`;
+    const url = `/api/sqlserver/best-practices/export?instance=${encodeURIComponent(inst.name)}`;
+    window.downloadAuthenticatedCSV(url, `sqlserver_best_practices_${inst.name}.csv`).catch(err => {
+        alert(`Export failed: ${err.message}`);
+    });
+};
+
+window.exportPgBestPracticesCSV = function() {
+    const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
+    if (!inst) return;
+    const url = `/api/postgres/best-practices/export?instance=${encodeURIComponent(inst.name)}`;
+    window.downloadAuthenticatedCSV(url, `postgres_best_practices_${inst.name}.csv`).catch(err => {
+        alert(`Export failed: ${err.message}`);
+    });
 };

@@ -244,7 +244,12 @@ function renderSessionsTable(sessions) {
         const blockedBy = session.blocked_by || '-';
         const stateBadge = getStateBadge(session.state);
         const waitBadge = session.wait_event ? `<span class="badge badge-warning">${window.escapeHtml(session.wait_event)}</span>` : '<span class="text-muted">-</span>';
-        const querySnippet = session.query ? `<span class="code-snippet" title="${window.escapeHtml(session.query)}">${window.escapeHtml(session.query.substring(0, 50))}${session.query.length > 50 ? '...' : ''}</span>` : '<span class="text-muted">-</span>';
+        const queryText = session.query
+            ? (window.decodeQueryText ? window.decodeQueryText(session.query) : session.query)
+            : '';
+        const querySnippet = queryText
+            ? `<span class="code-snippet" title="${window.escapeHtml(queryText)}">${window.escapeHtml(queryText.substring(0, 50))}${queryText.length > 50 ? '...' : ''}</span>`
+            : '<span class="text-muted">-</span>';
 
         return `
             <tr>
@@ -258,7 +263,7 @@ function renderSessionsTable(sessions) {
                 <td>${querySnippet}</td>
                 <td>
                     <button class="btn btn-sm btn-outline" style="border-color:var(--danger); color:var(--danger)" data-action="call" data-fn="killPgSession" data-arg="${session.pid}">Kill</button>
-                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="showQueryModal" data-arg="${window.escapeHtml(session.query || '')}">Explain</button>
+                    <button class="btn btn-sm btn-outline" data-action="call" data-fn="showQueryModal" data-arg="${encodeURIComponent(queryText)}">Explain</button>
                 </td>
             </tr>
         `;

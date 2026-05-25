@@ -87,6 +87,9 @@ type DynamicThresholds struct {
 	MemoryPLEMinSeconds       float64 `json:"memory_ple_min_seconds"`
 	MemoryGrantsPendingMax    int     `json:"memory_grants_pending_max"`
 	MemoryUsedPctMax          float64 `json:"memory_used_pct_max"`
+	BufferCacheHitRatioMin    float64 `json:"buffer_cache_hit_ratio_min"`
+	SortWarningsPerSecMax     float64 `json:"sort_warnings_per_sec_max"`
+	HashWarningsPerSecMax     float64 `json:"hash_warnings_per_sec_max"`
 	DiskFreeMBMin             float64 `json:"disk_free_mb_min"`
 	DiskGrowthRateMaxMBPerDay float64 `json:"disk_growth_rate_max_mb_per_day"`
 	IOLatencyMaxMS            float64 `json:"io_latency_max_ms"`
@@ -108,6 +111,9 @@ func (t *DynamicThresholds) ToMap() map[string]interface{} {
 		"memory_ple_min_seconds":          t.MemoryPLEMinSeconds,
 		"memory_grants_pending_max":       t.MemoryGrantsPendingMax,
 		"memory_used_pct_max":             t.MemoryUsedPctMax,
+		"buffer_cache_hit_ratio_min":      t.BufferCacheHitRatioMin,
+		"sort_warnings_per_sec_max":       t.SortWarningsPerSecMax,
+		"hash_warnings_per_sec_max":       t.HashWarningsPerSecMax,
 		"disk_free_mb_min":                t.DiskFreeMBMin,
 		"disk_growth_rate_max_mb_per_day": t.DiskGrowthRateMaxMBPerDay,
 		"io_latency_max_ms":               t.IOLatencyMaxMS,
@@ -246,6 +252,46 @@ type IntelSnapshotEntry struct {
 	HighCount        int     `json:"rule_count_high"`
 }
 
+// QueryWorkloadSummary holds Query Store / workload signals for the intelligence report.
+type QueryWorkloadSummary struct {
+	Regressions24h           int     `json:"regressions_24h"`
+	PlanInstabilityQueries   int     `json:"plan_instability_queries"`
+	TopCPUQueryHash          string  `json:"top_cpu_query_hash,omitempty"`
+	TopCPUQueryText          string  `json:"top_cpu_query_text,omitempty"`
+	TopCPUMs                 float64 `json:"top_cpu_ms,omitempty"`
+}
+
+// PerformanceDebtFindingSummary is a row from sqlserver_performance_debt_findings for the report.
+type PerformanceDebtFindingSummary struct {
+	Section        string `json:"section"`
+	FindingType    string `json:"finding_type"`
+	Severity       string `json:"severity"`
+	Title          string `json:"title"`
+	DatabaseName   string `json:"database_name"`
+	ObjectName     string `json:"object_name"`
+	Recommendation string `json:"recommendation,omitempty"`
+}
+
+// IndexHealthEntry summarizes index fragmentation or missing-index findings.
+type IndexHealthEntry struct {
+	DatabaseName   string  `json:"database_name"`
+	SchemaName     string  `json:"schema_name,omitempty"`
+	TableName      string  `json:"table_name"`
+	IndexName      string  `json:"index_name,omitempty"`
+	FindingKind    string  `json:"finding_kind"` // fragmentation | missing_index
+	Severity       string  `json:"severity"`
+	MetricLabel    string  `json:"metric_label"`
+	MetricValue    float64 `json:"metric_value"`
+	Recommendation string  `json:"recommendation,omitempty"`
+}
+
+// ServerConfigurationSnapshot holds instance configuration values when available in telemetry.
+type ServerConfigurationSnapshot struct {
+	MaxDegreeOfParallelism     int `json:"max_degree_of_parallelism,omitempty"`
+	MaxServerMemoryMB          int `json:"max_server_memory_mb,omitempty"`
+	CostThresholdForParallelism int `json:"cost_threshold_for_parallelism,omitempty"`
+}
+
 // IntelligenceReportResponse represents the full health analysis result.
 type IntelligenceReportResponse struct {
 	RunID               string              `json:"run_id"`
@@ -272,6 +318,12 @@ type IntelligenceReportResponse struct {
 	WaitTrend          []WaitTrendPoint     `json:"wait_trend,omitempty"`
 	CapacityForecastV2 *CapacityForecastV2  `json:"capacity_forecast_v2,omitempty"`
 	HistoryTrend       []IntelSnapshotEntry `json:"history_trend,omitempty"`
+
+	// P1 — workload, maintenance debt, and index health from TimescaleDB collectors.
+	QueryWorkload         *QueryWorkloadSummary           `json:"query_workload,omitempty"`
+	PerformanceDebtItems  []PerformanceDebtFindingSummary `json:"performance_debt_items,omitempty"`
+	IndexHealth           []IndexHealthEntry              `json:"index_health,omitempty"`
+	ServerConfiguration   *ServerConfigurationSnapshot    `json:"server_configuration,omitempty"`
 }
 
 // ReportRequest represents the request to generate a specific report format.

@@ -14,6 +14,18 @@
     const fmtNum = (n) => (n == null || isNaN(n)) ? '--' : Number(n).toLocaleString(undefined, { maximumFractionDigits: 1 });
     const fmtMs = (n) => (n == null || isNaN(n)) ? '--' : `${Number(n).toLocaleString(undefined, { maximumFractionDigits: 1 })} ms`;
 
+    function wqSnapshotKey(s) {
+        const raw = s.timestamp ?? s.snapshot_time;
+        if (raw == null || raw === '') return '';
+        if (typeof raw === 'string') return raw;
+        const d = window.parseChartTimestamp ? window.parseChartTimestamp(raw) : new Date(raw);
+        return d && !isNaN(d.getTime()) ? d.toISOString() : String(raw);
+    }
+
+    function findSnapshot(snapshots, time) {
+        return (snapshots || []).find(s => wqSnapshotKey(s) === time);
+    }
+
     let _charts = {};
     function destroyCharts() {
         Object.values(_charts).forEach(c => { try { c.destroy(); } catch (_) {} });
@@ -37,7 +49,7 @@
             const html = await window.loadTemplate('pages/sqlserver_watched_queries.html?v=' + new Date().getTime());
             outlet.innerHTML = html;
         } catch (err) {
-            outlet.innerHTML = `<div class="alert alert-danger">Critical: Failed to load UI template. ${err.message}</div>`;
+            outlet.innerHTML = `<div class="alert alert-danger">Critical: Failed to load UI template. ${window.escapeHtml(err.message)}</div>`;
             return;
         }
 
@@ -85,7 +97,7 @@
                     });
                 });
             } catch (err) {
-                body.innerHTML = `<div class="text-danger p-4 text-center">Failed to load watched queries: ${err.message}</div>`;
+                body.innerHTML = `<div class="text-danger p-4 text-center">Failed to load watched queries: ${window.escapeHtml(err.message)}</div>`;
             }
         }
 
@@ -146,7 +158,7 @@
                     meta.innerHTML = `
                         <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-code"></i> Query:</span> ${esc(wq.name || '--')}</div>
                         <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-database"></i> Database:</span> <span class="qa-badge qa-badge--accent" style="border:none; background:rgba(56,189,248,0.1);">${esc(wq.database_name || 'master')}</span></div>
-                        <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-hashtag"></i> Hash:</span> <span class="text-mono" style="opacity:0.6; font-size:0.7rem;">${wq.query_hash}</span></div>
+                        <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-hashtag"></i> Hash:</span> <span class="text-mono" style="opacity:0.6; font-size:0.7rem;">${esc(wq.query_hash)}</span></div>
                         <div class="wq-detail-meta-item"><span class="wq-detail-meta-label"><i class="fa-solid fa-calendar-check"></i> Tracking Since:</span> ${wq.created_at ? new Date(wq.created_at).toLocaleString() : '--'}</div>
                     `;
                     if (wq.query_text) {
@@ -192,16 +204,21 @@
                         <th class="text-right">Executions</th>
                         <th class="text-center">Actions</th>
                     </tr></thead>
-                    <tbody>${distinct.map((s) => `<tr>
-                        <td>${new Date(s.snapshot_time).toLocaleString()}</td>
+                    <tbody>${distinct.map((s) => {
+                        const snapKey = wqSnapshotKey(s);
+                        const snapDt = window.parseChartTimestamp ? window.parseChartTimestamp(s) : null;
+                        const snapLabel = snapDt && !isNaN(snapDt.getTime()) ? snapDt.toLocaleString() : '--';
+                        return `<tr>
+                        <td>${snapLabel}</td>
                         <td class="text-right font-mono">${fmtMs(s.avg_duration_ms)}</td>
                         <td class="text-right">${fmtNum(s.executions)}</td>
                         <td class="text-center">
-                            <button class="btn btn-xs btn-outline wq-snap-view" data-id="${id}" data-time="${s.snapshot_time}" title="View XML"><i class="fa-solid fa-file-code"></i></button>
-                            <button class="btn btn-xs btn-outline ml-1 wq-snap-analyze" data-id="${id}" data-time="${s.snapshot_time}" title="Quick Analysis"><i class="fa-solid fa-magnifying-glass"></i></button>
-                            <button class="btn btn-xs btn-accent ml-1 wq-snap-advanced" data-id="${id}" data-time="${s.snapshot_time}" title="Advanced Plan Analyzer"><i class="fa-solid fa-diagram-project"></i> Advanced</button>
+                            <button class="btn btn-xs btn-outline wq-snap-view" data-id="${id}" data-time="${esc(snapKey)}" title="View XML"><i class="fa-solid fa-file-code"></i></button>
+                            <button class="btn btn-xs btn-outline ml-1 wq-snap-analyze" data-id="${id}" data-time="${esc(snapKey)}" title="Quick Analysis"><i class="fa-solid fa-magnifying-glass"></i></button>
+                            <button class="btn btn-xs btn-accent ml-1 wq-snap-advanced" data-id="${id}" data-time="${esc(snapKey)}" title="Advanced Plan Analyzer"><i class="fa-solid fa-diagram-project"></i> Advanced</button>
                         </td>
-                    </tr>`).join('')}</tbody></table></div>
+                    </tr>`;
+                    }).join('')}</tbody></table></div>
             `;
             
             let container = document.getElementById('wqCapturedPlans');
@@ -227,7 +244,7 @@
             try {
                 const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/watched-queries/detail?instance=${encodeURIComponent(instName)}&id=${id}`, { cache: 'no-store' });
                 const data = await resp.json();
-                const snapshot = (data.snapshots || []).find(s => s.snapshot_time === time);
+                const snapshot = findSnapshot(data.snapshots, time);
                 if (!snapshot || !snapshot.query_plan) {
                     alert('Plan XML not found for this snapshot.');
                     return;
@@ -243,7 +260,7 @@
             try {
                 const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/watched-queries/detail?instance=${encodeURIComponent(instName)}&id=${id}`, { cache: 'no-store' });
                 const data = await resp.json();
-                const snapshot = (data.snapshots || []).find(s => s.snapshot_time === time);
+                const snapshot = findSnapshot(data.snapshots, time);
                 if (!snapshot || !snapshot.query_plan) {
                     alert('Plan XML not found for this snapshot.');
                     return;
@@ -316,7 +333,7 @@
                     };
                 }
             } catch (err) {
-                body.innerHTML = `<div class="alert alert-danger">Analysis failed: ${err.message}</div>`;
+                body.innerHTML = `<div class="alert alert-danger">Analysis failed: ${window.escapeHtml(err.message)}</div>`;
             }
         };
 
@@ -325,15 +342,16 @@
             const ctx = document.getElementById('wqSnapshotChart')?.getContext('2d');
             if (!ctx || !snapshots.length) return;
 
-            const labels = snapshots.map(s => new Date(s.snapshot_time).toLocaleString());
+            const ordered = window.sortByChartTime ? window.sortByChartTime(snapshots) : snapshots;
+            const labels = ordered.map(s => window.fmtChartTick ? window.fmtChartTick(s) : '');
             _charts.snapshot = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels,
                     datasets: [
-                        { label: 'Avg Duration (ms)', data: snapshots.map(s => s.avg_duration_ms), borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.1)', tension: 0.3, fill: true, pointRadius: 2, borderWidth: 2 },
-                        { label: 'Avg CPU (ms)', data: snapshots.map(s => s.avg_cpu_ms), borderColor: '#f43f5e', tension: 0.3, fill: false, pointRadius: 2, borderWidth: 2 },
-                        { label: 'Avg Reads', data: snapshots.map(s => s.avg_reads), borderColor: '#10b981', tension: 0.3, fill: false, pointRadius: 2, yAxisID: 'y1', borderWidth: 2 }
+                        { label: 'Avg Duration (ms)', data: ordered.map(s => s.avg_duration_ms), borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.1)', tension: 0.3, fill: true, pointRadius: 2, borderWidth: 2 },
+                        { label: 'Avg CPU (ms)', data: ordered.map(s => s.avg_cpu_ms), borderColor: '#f43f5e', tension: 0.3, fill: false, pointRadius: 2, borderWidth: 2 },
+                        { label: 'Avg Reads', data: ordered.map(s => s.avg_reads), borderColor: '#10b981', tension: 0.3, fill: false, pointRadius: 2, yAxisID: 'y1', borderWidth: 2 }
                     ]
                 },
                 options: {
@@ -429,7 +447,7 @@
                     };
                 }
             } catch (err) {
-                body.innerHTML = `<div class="alert alert-danger">Analysis failed: ${err.message}</div>`;
+                body.innerHTML = `<div class="alert alert-danger">Analysis failed: ${window.escapeHtml(err.message)}</div>`;
             }
         };
 

@@ -23,7 +23,7 @@ window.PgStorageIndexHealthView = async function() {
         return;
     }
     if (typeof window.runPgStorageIndexHealthDashboard !== 'function') {
-        window.routerOutlet.innerHTML = `<div class="page-view active"><div class="alert alert-warning">Loading ${dashTitle} scripts…</div></div>`;
+        window.routerOutlet.innerHTML = `<div class="page-view active"><div class="alert alert-warning">Loading ${window.escapeHtml(dashTitle)} scripts…</div></div>`;
         setTimeout(() => window.appNavigate('storage-index-health'), 200);
         return;
     }

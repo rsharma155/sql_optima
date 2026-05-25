@@ -69,7 +69,7 @@ async function loadStatus() {
         loading.style.display = 'none';
         container.style.display = 'table';
     } catch (err) {
-        body.innerHTML = `<tr><td colspan="5" style="color:red; text-align:center;">Error: ${err.message}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="5" style="color:red; text-align:center;">Error: ${window.escapeHtml(err.message)}</td></tr>`;
         loading.style.display = 'none';
         container.style.display = 'table';
     }
@@ -111,7 +111,7 @@ async function loadRuns() {
         loading.style.display = 'none';
         container.style.display = 'table';
     } catch (err) {
-        body.innerHTML = `<tr><td colspan="7" style="color:red; text-align:center;">Error: ${err.message}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="7" style="color:red; text-align:center;">Error: ${window.escapeHtml(err.message)}</td></tr>`;
         loading.style.display = 'none';
         container.style.display = 'table';
     }

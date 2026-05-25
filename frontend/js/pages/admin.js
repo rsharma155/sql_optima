@@ -48,6 +48,7 @@ window.AdminPanelView = async function() {
                 <button type="button" class="btn btn-sm btn-outline admin-nav-btn" id="admin-tab-servers"><i class="fa-solid fa-server"></i> Monitoring servers</button>
                 <button type="button" class="btn btn-sm btn-outline admin-nav-btn" id="admin-tab-collectors"><i class="fa-solid fa-clock-rotate-left"></i> Collector frequencies</button>
                 <button type="button" class="btn btn-sm btn-outline admin-nav-btn" id="admin-tab-notifications"><i class="fa-solid fa-bell"></i> Notifications</button>
+                <button type="button" class="btn btn-sm btn-outline admin-nav-btn" id="admin-tab-diagnostics"><i class="fa-solid fa-stethoscope"></i> SQL diagnostics</button>
             </div>
             <div id="admin-content">
                 <div style="display:flex; justify-content:center; align-items:center; min-height:12rem;">
@@ -63,8 +64,14 @@ window.AdminPanelView = async function() {
     document.getElementById('admin-tab-servers').addEventListener('click', () => window.showAdminTab('servers'));
     document.getElementById('admin-tab-collectors').addEventListener('click', () => window.showAdminTab('collectors'));
     document.getElementById('admin-tab-notifications').addEventListener('click', () => window.showAdminTab('notifications'));
+    document.getElementById('admin-tab-diagnostics').addEventListener('click', () => window.showAdminTab('diagnostics'));
 
-    window.showAdminTab('users');
+    const initialTab = new URLSearchParams(window.location.search).get('tab');
+    if (initialTab === 'diagnostics' || initialTab === 'collectors' || initialTab === 'notifications' || initialTab === 'servers' || initialTab === 'users') {
+        window.showAdminTab(initialTab);
+    } else {
+        window.showAdminTab('users');
+    }
 };
 
 /**
@@ -182,6 +189,28 @@ window.showAdminTab = async function(tab) {
             `;
             document.getElementById('admin-notif-retry-btn')?.addEventListener('click', () => window.showAdminTab('notifications'));
         }
+    } else if (tab === 'diagnostics') {
+        try {
+            const { loadSqlServerDiagnostics } = await import('./admin_sqlserver_diagnostics.js');
+            if (typeof loadSqlServerDiagnostics === 'function') {
+                await loadSqlServerDiagnostics();
+            } else {
+                throw new Error('loadSqlServerDiagnostics is not a function');
+            }
+        } catch (err) {
+            console.error('Failed to load SQL Server diagnostics module:', err);
+            content.innerHTML = `
+                <div class="glass-panel" style="padding:2rem; border-radius:12px; text-align:center;">
+                    <i class="fa-solid fa-triangle-exclamation text-danger" style="font-size:2rem; margin-bottom:1rem;"></i>
+                    <h3 style="margin:0 0 0.5rem;">Failed to load SQL diagnostics</h3>
+                    <p class="text-muted">${window.escapeHtml(err.message)}</p>
+                    <button class="btn btn-sm btn-accent" id="admin-diag-retry-btn">
+                        <i class="fa-solid fa-rotate"></i> Retry
+                    </button>
+                </div>
+            `;
+            document.getElementById('admin-diag-retry-btn')?.addEventListener('click', () => window.showAdminTab('diagnostics'));
+        }
     }
 };
 
@@ -237,6 +266,14 @@ window.loadAdminServers = async function() {
                                 </td>
                                 <td style="padding:1rem; text-align:right; border-top-right-radius:8px; border-bottom-right-radius:8px;">
                                     <div style="display:flex; justify-content:flex-end; gap:0.4rem;">
+                                        ${String(s.db_type || '').toLowerCase() === 'postgres' ? `
+                                        <button class="btn btn-xs btn-outline" data-action="dr-policy" data-id="${s.id}" data-name="${window.escapeHtml(s.name || '')}" title="DR policy (RPO/RTO)">
+                                            <i class="fa-solid fa-shield-heart"></i>
+                                        </button>` : ''}
+                                        ${String(s.db_type || '').toLowerCase() === 'sqlserver' ? `
+                                        <button class="btn btn-xs btn-outline" data-action="sqlserver-diagnostics" data-name="${window.escapeHtml(s.name || '')}" title="Collector diagnostics">
+                                            <i class="fa-solid fa-stethoscope"></i>
+                                        </button>` : ''}
                                         <button class="btn btn-xs btn-outline" data-action="test-server" data-id="${s.id}" title="Test Connection">
                                             <i class="fa-solid fa-plug"></i>
                                         </button>
@@ -257,11 +294,22 @@ window.loadAdminServers = async function() {
         container.addEventListener('click', async (e) => {
             const btn = e.target.closest('button');
             if (!btn) return;
-            const { action, id, active } = btn.dataset;
-            if (!action || !id) return;
+            const { action, id, active, name } = btn.dataset;
+            if (!action) return;
+
+            if (action === 'sqlserver-diagnostics') {
+                const mod = await import('./admin_sqlserver_diagnostics.js');
+                if (typeof mod.openSqlServerDiagnosticsForInstance === 'function') {
+                    mod.openSqlServerDiagnosticsForInstance(name || '');
+                }
+                return;
+            }
+            if (!id) return;
 
             if (action === 'test-server') {
                 await window.testAdminServer(id);
+            } else if (action === 'dr-policy') {
+                await window.showAdminDRPolicy(id, btn.dataset.name || '');
             } else if (action === 'patch-server-active') {
                 try {
                     const resp = await window.apiClient.authenticatedFetch(`/api/admin/servers/${id}`, {
@@ -335,6 +383,7 @@ window.showAddServerForm = function() {
                     <div id="pg-extension-guide" style="grid-column:1/-1; font-size:0.7rem; line-height:1.4; padding:0.5rem 0.65rem; border-radius:6px; margin-top:0.1rem; display:none; border:1px solid rgba(var(--accent-rgb),0.2); background:rgba(var(--accent-rgb),0.03); color:var(--text-muted);">
                         <i class="fa-solid fa-circle-info text-accent"></i> Enable <code>pg_stat_statements</code> (required) and optionally <code>pg_stat_monitor</code> via <code>shared_preload_libraries</code> for advanced query metrics.
                     </div>
+                    <div id="pg-os-collector-add-slot" style="grid-column:1/-1; display:none; margin-top:0.25rem;"></div>
                 </div>
                 <div id="admin-add-server-err" class="alert alert-danger" style="display:none;margin-top:0.6rem;font-size:0.78rem;padding:0.4rem 0.75rem;"></div>
                 <div style="margin-top:0.75rem;display:flex;align-items:center;gap:0.6rem;">
@@ -355,14 +404,31 @@ window.showAddServerForm = function() {
     const pgGuide = document.getElementById('pg-extension-guide');
     const distNote = document.getElementById('admin-dist-note');
 
+    const pgOsSlot = document.getElementById('pg-os-collector-add-slot');
     const syncTrustUI = () => {
         if (!typeSel) return;
         const isSqlServer = typeSel.value === 'sqlserver';
+        const isPostgres = typeSel.value === 'postgres';
         if (trustWrap) trustWrap.style.display = isSqlServer ? 'block' : 'none';
-        if (pgGuide) pgGuide.style.display = typeSel.value === 'postgres' ? 'block' : 'none';
+        if (pgGuide) pgGuide.style.display = isPostgres ? 'block' : 'none';
         if (distNote) distNote.style.display = isSqlServer ? 'block' : 'none';
+        if (pgOsSlot) {
+            if (isPostgres && window.mountOsCollectorSetupPanel) {
+                pgOsSlot.style.display = 'block';
+                const name = document.getElementById('srv-name')?.value.trim() || '';
+                window.mountOsCollectorSetupPanel(pgOsSlot, {
+                    instanceName: name,
+                    statusId: 'os-collector-admin-add-status',
+                    compact: true
+                });
+            } else {
+                pgOsSlot.style.display = 'none';
+                pgOsSlot.innerHTML = '';
+            }
+        }
     };
     typeSel?.addEventListener('change', syncTrustUI);
+    document.getElementById('srv-name')?.addEventListener('input', syncTrustUI);
     syncTrustUI();
 
     // Disable save if any input changes
@@ -567,8 +633,78 @@ window.testAdminServer = async function(id) {
         if (!response.ok) throw new Error(j.error || 'Connection failed');
         if (msg) msg.innerHTML = `<div class="alert alert-success">Connection OK.</div>`;
     } catch (e) {
-        if (msg) msg.innerHTML = `<div class="alert alert-danger">Test failed: ${e.message}</div>`;
+        if (msg) msg.innerHTML = `<div class="alert alert-danger">Test failed: ${window.escapeHtml(e.message)}</div>`;
     }
+};
+
+window.showAdminDRPolicy = async function (serverId, instanceName) {
+    const name = instanceName || serverId;
+    let policy = {
+        rpo_backup_hours: 24,
+        rpo_archive_minutes: 5,
+        rpo_replay_seconds: 60,
+        max_slot_retention_gb: 10,
+        rto_failover_minutes: null
+    };
+    try {
+        const r = await window.apiClient.authenticatedFetch(
+            `/api/postgres/dr-policy?instance=${encodeURIComponent(name)}`
+        );
+        if (r.ok) policy = await r.json();
+    } catch (_) { /* defaults */ }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem;';
+    overlay.innerHTML = `
+        <div class="glass-panel" style="max-width:420px;width:100%;padding:1rem;">
+            <h3 style="margin:0 0 0.75rem;font-size:0.95rem;"><i class="fa-solid fa-shield-heart text-accent"></i> DR policy — ${window.escapeHtml(name)}</h3>
+            <form id="admin-dr-policy-form" style="display:grid;gap:0.5rem;font-size:0.8rem;">
+                <label>RPO backup (hours)<input type="number" min="1" class="custom-input" name="rpo_backup_hours" value="${policy.rpo_backup_hours ?? 24}" /></label>
+                <label>RPO archive (minutes)<input type="number" min="1" class="custom-input" name="rpo_archive_minutes" value="${policy.rpo_archive_minutes ?? 5}" /></label>
+                <label>RPO replay lag (seconds)<input type="number" min="1" class="custom-input" name="rpo_replay_seconds" value="${policy.rpo_replay_seconds ?? 60}" /></label>
+                <label>Max slot retention (GB)<input type="number" min="0.1" step="0.1" class="custom-input" name="max_slot_retention_gb" value="${policy.max_slot_retention_gb ?? 10}" /></label>
+                <label>RTO failover (minutes, optional)<input type="number" min="1" class="custom-input" name="rto_failover_minutes" value="${policy.rto_failover_minutes ?? ''}" placeholder="optional" /></label>
+            </form>
+            <div id="admin-dr-policy-err" class="alert alert-danger" style="display:none;margin-top:0.5rem;font-size:0.75rem;"></div>
+            <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.75rem;">
+                <button type="button" class="btn btn-sm btn-outline" id="admin-dr-policy-cancel">Cancel</button>
+                <button type="button" class="btn btn-sm btn-accent" id="admin-dr-policy-save">Save</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#admin-dr-policy-cancel')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.querySelector('#admin-dr-policy-save')?.addEventListener('click', async () => {
+        const form = overlay.querySelector('#admin-dr-policy-form');
+        const errEl = overlay.querySelector('#admin-dr-policy-err');
+        const body = {
+            rpo_backup_hours: parseInt(form.rpo_backup_hours.value, 10) || 24,
+            rpo_archive_minutes: parseInt(form.rpo_archive_minutes.value, 10) || 5,
+            rpo_replay_seconds: parseInt(form.rpo_replay_seconds.value, 10) || 60,
+            max_slot_retention_gb: parseFloat(form.max_slot_retention_gb.value) || 10,
+        };
+        const rto = form.rto_failover_minutes.value.trim();
+        if (rto) body.rto_failover_minutes = parseInt(rto, 10);
+        try {
+            const resp = await window.apiClient.authenticatedFetch(
+                `/api/postgres/dr-policy?instance=${encodeURIComponent(name)}`,
+                { method: 'PUT', body: JSON.stringify(body) }
+            );
+            if (!resp.ok) {
+                const j = await resp.json().catch(() => ({}));
+                throw new Error(j.error || 'Save failed');
+            }
+            overlay.remove();
+            const msg = document.getElementById('admin-server-msg');
+            if (msg) msg.innerHTML = '<div class="alert alert-success">DR policy saved.</div>';
+        } catch (e) {
+            if (errEl) {
+                errEl.style.display = 'block';
+                errEl.textContent = e.message;
+            }
+        }
+    });
 };
 
 window.deleteUser = async function(id) {

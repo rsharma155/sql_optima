@@ -440,11 +440,31 @@ func (s *MetricsService) collectPerformanceDebtForInstance(serverID uuid.UUID, i
 						DatabaseName: "master", Section: "Engine Config", FindingType: "config_risk",
 						Severity: chk.severity, Title: "Engine Config: " + chk.title, ObjectName: chk.name,
 						ObjectType: "server_config", FindingKey: "config." + chk.name, Recommendation: chk.rec,
+						Details:      fmt.Sprintf(`{"value_in_use":%v}`, val),
 					})
 				}
 			}
 		}
-		if len(configFindings) > 0 { _ = s.tsLogger.LogPerformanceDebtFindings(ctx, serverID, configFindings) }
+		// Snapshot current values for intelligence report (INFO rows, always written).
+		for _, name := range []string{
+			"max degree of parallelism",
+			"max server memory (MB)",
+			"cost threshold for parallelism",
+		} {
+			val, err := s.MsRepo.FetchConfigValueInUse(ctx, instanceName, name)
+			if err != nil {
+				continue
+			}
+			configFindings = append(configFindings, hot.PerformanceDebtFindingRow{
+				DatabaseName: "master", Section: "Engine Config", FindingType: "config_snapshot",
+				Severity: "INFO", Title: "Config snapshot: " + name, ObjectName: name,
+				ObjectType: "server_config", FindingKey: "config.snapshot." + name,
+				Details: fmt.Sprintf(`{"value_in_use":%v}`, val),
+			})
+		}
+		if len(configFindings) > 0 {
+			_ = s.tsLogger.LogPerformanceDebtFindings(ctx, serverID, configFindings)
+		}
 	}
 
 	// Phase 8-12: Enhanced evaluations

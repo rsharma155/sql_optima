@@ -12,9 +12,11 @@
 package tests
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rsharma155/sql_optima/internal/intel/analysis"
+	"github.com/rsharma155/sql_optima/internal/intel/rule_engine"
 	"github.com/rsharma155/sql_optima/internal/models"
 )
 
@@ -184,24 +186,60 @@ func TestDefect7DiskGrowthDynamicStillFires(t *testing.T) {
 	}
 }
 
-// ---- Verify unique YAML rules (buffer_cache_hit_ratio_low, latch_contention) still fire ----
+// ---- Buffer cache: dynamic threshold (no fixed 90% YAML) ----
 
-func TestDefect7UniqueYAMLRulesUnaffected(t *testing.T) {
-	// buffer_cache_hit_ratio_low has no dynamic equivalent — must still fire after fix.
+func TestDynamicBufferCacheHitRatioLow(t *testing.T) {
 	raw := map[string]interface{}{
-		"buffer_cache_hit_ratio": 82.0, // below 90 threshold
+		"buffer_cache_hit_ratio": 82.0,
+		"total_ram_gb":           32.0,
+		"cpu_count":              8.0,
 	}
 	engine := analysis.NewAnalysisEngine()
 	result := engine.Analyze(raw, nil, "")
 
-	found := false
+	found := 0
 	for _, r := range result.TriggeredRules {
 		if r.RuleName == "buffer_cache_hit_ratio_low" {
-			found = true
+			found++
+			if !strings.Contains(r.Message, "dynamic threshold") {
+				t.Errorf("expected dynamic threshold in message, got: %s", r.Message)
+			}
+			if thr, ok := r.MetricValues["bchr_threshold"]; !ok || thr <= 0 {
+				t.Error("expected bchr_threshold in metric values")
+			}
 		}
 	}
-	if !found {
-		t.Error("expected buffer_cache_hit_ratio_low (unique YAML rule) to still fire — must not be collateral damage of DEFECT-7 fix")
+	if found != 1 {
+		t.Errorf("expected exactly 1 buffer_cache_hit_ratio_low rule, got %d. Rules: %v", found, allRuleNames(result.TriggeredRules))
+	}
+}
+
+// ---- PLE: no fixed 300s YAML duplicate ----
+
+func TestPLECollapseUsesDynamicThresholdOnly(t *testing.T) {
+	raw := map[string]interface{}{
+		"ple_seconds":  250.0,
+		"total_ram_gb": 32.0,
+		"cpu_count":    8.0,
+	}
+	engine := analysis.NewAnalysisEngine()
+	result := engine.Analyze(raw, nil, "")
+
+	pleRules := 0
+	for _, r := range result.TriggeredRules {
+		if r.RuleName == "ple_collapse" {
+			pleRules++
+			if strings.Contains(r.Message, "300") {
+				t.Errorf("ple_collapse message must not reference fixed 300s YAML threshold: %s", r.Message)
+			}
+			thr, ok := r.MetricValues["ple_threshold"]
+			if !ok || thr < 300 {
+				t.Errorf("expected dynamic ple_threshold > 300 for 32GB server, got %.0f", thr)
+			}
+		}
+	}
+	if pleRules != 1 {
+		t.Errorf("expected exactly 1 ple_collapse rule, got %d. Rules: %v", pleRules, allRuleNames(result.TriggeredRules))
 	}
 }
 
@@ -221,6 +259,30 @@ func TestDefect7BackupFailureRiskPreserved(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected backup_failure_risk to fire — it was intentionally kept in YAML (deduped by name, not removed)")
+		t.Error("expected backup_failure_risk to fire from dynamic rules")
+	}
+}
+
+func TestRulePacksExcludeFixedThresholdDuplicates(t *testing.T) {
+	rules, err := rule_engine.LoadRulePacks()
+	if err != nil {
+		t.Fatalf("LoadRulePacks: %v", err)
+	}
+	excluded := map[string]bool{
+		"ple_collapse": true, "cpu_saturation": true, "blocking_chains": true,
+		"buffer_cache_hit_ratio_low": true, "low_disk_space": true,
+	}
+	for _, r := range rules {
+		if excluded[r.Name] {
+			t.Errorf("YAML pack must not define %q — use dynamic evaluateDynamicRules only", r.Name)
+		}
+		for _, c := range r.Conditions {
+			if c.Metric == "ple_seconds" && c.Value == 300 {
+				t.Errorf("rule %q still uses fixed PLE 300 threshold", r.Name)
+			}
+			if c.Metric == "buffer_cache_hit_ratio" && c.Value == 90 {
+				t.Errorf("rule %q still uses fixed BCHR 90 threshold", r.Name)
+			}
+		}
 	}
 }

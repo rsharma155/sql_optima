@@ -8,16 +8,18 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root[data-theme="dark"] {
-  --bg: #0f1117; --surface: #1a1d2e; --surface2: #232740; --border: #2d3154;
-  --text: #e2e8f0; --text2: #94a3b8; --text3: #64748b;
-  --green: #22c55e; --yellow: #eab308; --orange: #f97316; --red: #ef4444; --blue: #3b82f6;
-  --success: #22c55e22; --warning-bg: #eab30822; --danger-bg: #ef444422;
+  --bg: #0f111a; --surface: #121526; --surface2: rgba(25, 28, 41, 0.85); --surface3: rgba(35, 39, 56, 0.92); --border: rgba(255, 255, 255, 0.08);
+  --text: #f8f9fa; --text2: #adb5bd; --text3: #6c757d;
+  --green: #10b981; --yellow: #f59e0b; --orange: #f97316; --red: #ef4444; --blue: #3b82f6; --accent: #38bdf8;
+  --success: rgba(16, 185, 129, 0.15); --warning-bg: rgba(245, 158, 11, 0.15); --danger-bg: rgba(239, 68, 68, 0.15);
+  --chart-grid: rgba(255, 255, 255, 0.05); --tab-track: rgba(255, 255, 255, 0.04);
 }
 :root[data-theme="light"] {
-  --bg: #f8fafc; --surface: #ffffff; --surface2: #f1f5f9; --border: #e2e8f0;
-  --text: #0f172a; --text2: #475569; --text3: #94a3b8;
-  --green: #16a34a; --yellow: #ca8a04; --orange: #ea580c; --red: #dc2626; --blue: #2563eb;
-  --success: #16a34a22; --warning-bg: #ca8a0422; --danger-bg: #dc262622;
+  --bg: #f0f2f5; --surface: #ffffff; --surface2: #f8fafc; --surface3: #f1f5f9; --border: rgba(0, 0, 0, 0.08);
+  --text: #111827; --text2: #4b5563; --text3: #9ca3af;
+  --green: #059669; --yellow: #d97706; --orange: #ea580c; --red: #dc2626; --blue: #2563eb; --accent: #2563eb;
+  --success: rgba(5, 150, 105, 0.12); --warning-bg: rgba(217, 119, 6, 0.12); --danger-bg: rgba(220, 38, 38, 0.12);
+  --chart-grid: rgba(0, 0, 0, 0.06); --tab-track: rgba(0, 0, 0, 0.04);
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:Inter,sans-serif; background:var(--bg); color:var(--text); font-size:14px; line-height:1.5; transition:background .3s,color .3s; }
@@ -31,8 +33,7 @@ body { font-family:Inter,sans-serif; background:var(--bg); color:var(--text); fo
 .header-center .target { font-weight:600; font-size:14px; }
 .header-center .window { font-size:11px; color:var(--text2); }
 .header-right { display:flex; gap:6px; align-items:center; }
-.header-right button { padding:5px 12px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:11px; font-weight:500; transition:.2s; white-space:nowrap; }
-.header-right button:hover { background:var(--blue); border-color:var(--blue); color:#fff; }
+.header-right .action-btn:hover { background:var(--blue); border-color:var(--blue); color:#fff; }
 .theme-toggle { background:none; border:none; color:var(--text2); cursor:pointer; font-size:18px; padding:4px; line-height:1; }
 .theme-toggle:hover { color:var(--text); }
 @media (max-width:1024px) { .header-center .window { display:none; } }
@@ -49,14 +50,36 @@ body { font-family:Inter,sans-serif; background:var(--bg); color:var(--text); fo
 @media (max-width:640px) { .cards { grid-template-columns:repeat(2,1fr); gap:8px; } }
 .ribbon { background:var(--surface); border-radius:12px; padding:14px; margin-bottom:16px; border:1px solid var(--border); transition:background .3s; }
 .ribbon h3 { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-bottom:6px; }
-.tabs { display:flex; gap:2px; background:var(--surface); padding:4px; border-radius:8px; margin-bottom:16px; overflow-x:auto; border:1px solid var(--border); scrollbar-width:thin; }
-.tabs::-webkit-scrollbar { height:4px; }
-.tabs::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
-.tab-btn { padding:7px 14px; border:none; background:transparent; color:var(--text2); cursor:pointer; font-size:12px; font-weight:500; border-radius:6px; white-space:nowrap; transition:.2s; font-family:Inter,sans-serif; flex-shrink:0; }
-.tab-btn:hover { color:var(--text); background:var(--surface2); }
-.tab-btn.active { color:#fff; background:var(--blue); }
-.tab-content { display:none; }
+.report-nav { background:var(--surface); border:1px solid var(--border); border-radius:12px; margin-bottom:18px; box-shadow:0 2px 8px rgba(0,0,0,0.06); overflow:hidden; }
+.report-nav-hint { font-size:11px; color:var(--text3); padding:8px 14px 0; letter-spacing:.02em; }
+.section-tabs { display:flex; gap:4px; padding:8px 10px; background:var(--tab-track); border-bottom:1px solid var(--border); overflow-x:auto; scrollbar-width:thin; }
+.section-tab { flex:1; min-width:120px; padding:10px 14px; border:1px solid transparent; border-radius:8px; background:transparent; color:var(--text2); cursor:pointer; font-size:13px; font-weight:600; font-family:Inter,sans-serif; transition:color .18s,background .18s,border-color .18s,box-shadow .18s; white-space:nowrap; text-align:center; }
+.section-tab:hover:not(.active) { color:var(--text); background:var(--surface2); border-color:var(--border); }
+.section-tab.active { color:var(--accent); background:var(--surface); border-color:rgba(56,189,248,0.35); box-shadow:0 0 0 1px rgba(56,189,248,0.12) inset; }
+:root[data-theme="light"] .section-tab.active { border-color:rgba(37,99,235,0.35); box-shadow:0 0 0 1px rgba(37,99,235,0.1) inset; }
+.subsection-tabs { padding:10px 12px 12px; }
+.subsection-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.45px; color:var(--text3); margin-right:8px; flex:0 0 auto; align-self:center; }
+.subsection-panel { display:none; flex-wrap:wrap; gap:6px; align-items:center; width:100%; }
+.subsection-panel.active { display:flex; }
+.sub-tab { padding:6px 12px; border:1px solid var(--border); border-radius:7px; background:var(--surface2); color:var(--text2); cursor:pointer; font-size:12px; font-weight:500; font-family:Inter,sans-serif; transition:color .18s,background .18s,border-color .18s; white-space:nowrap; }
+.sub-tab:hover:not(.active) { color:var(--text); border-color:var(--border); background:var(--surface3); }
+.sub-tab.active { color:var(--accent); background:rgba(56,189,248,0.12); border-color:rgba(56,189,248,0.35); }
+:root[data-theme="light"] .sub-tab.active { background:rgba(37,99,235,0.1); border-color:rgba(37,99,235,0.3); color:var(--blue); }
+.drill-link { font-size:11px; padding:4px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--blue); cursor:pointer; margin-top:6px; font-weight:500; display:inline-flex; align-items:center; gap:4px; }
+.drill-link:hover { background:var(--blue); color:#fff; border-color:var(--blue); }
+.drill-link::after { content:'→'; font-size:10px; opacity:.8; }
+.top-action-card { padding:10px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface2); margin-bottom:8px; }
+.tab-content { display:none; animation:tabFadeIn .2s ease; }
 .tab-content.active { display:block; }
+@keyframes tabFadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+.report-content-area { margin-top:4px; }
+.clickable-card { cursor:pointer; transition:border-color .2s,box-shadow .2s,transform .15s; }
+.clickable-card:hover { border-color:rgba(56,189,248,0.45); box-shadow:0 4px 14px rgba(0,0,0,0.12); transform:translateY(-1px); }
+.clickable-card .card-link-hint { font-size:9px; color:var(--accent); margin-top:4px; text-align:right; font-weight:600; letter-spacing:.02em; }
+.action-btn { padding:6px 12px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:11px; font-weight:500; transition:.2s; white-space:nowrap; font-family:Inter,sans-serif; }
+.action-btn:hover { border-color:var(--blue); color:var(--blue); background:rgba(59,130,246,0.08); }
+.chart-block { margin-top:8px; }
+.chart-block-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.4px; color:var(--text3); margin-bottom:6px; }
 .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
 .grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
 .grid-4 { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
@@ -81,8 +104,10 @@ tr:hover td { background:var(--surface2); }
   .mobile-cards td:before { content:attr(data-label); font-weight:600; color:var(--text2); font-size:11px; text-transform:uppercase; }
 }
 .issue-list { display:flex; flex-direction:column; gap:6px; }
-.issue-row { display:flex; align-items:center; gap:10px; padding:10px; border-radius:6px; background:var(--surface2); cursor:pointer; transition:.2s; }
-.issue-row:hover { background:var(--border); }
+.issue-row { display:flex; align-items:center; gap:10px; padding:10px; border-radius:6px; background:var(--surface2); border:1px solid var(--border); cursor:pointer; transition:border-color .2s,background .2s,box-shadow .2s; }
+.issue-row:hover { background:var(--surface3); border-color:rgba(56,189,248,0.35); box-shadow:0 2px 8px rgba(0,0,0,0.08); }
+.issue-row::after { content:'View'; margin-left:auto; font-size:10px; font-weight:600; color:var(--accent); opacity:0; transition:opacity .15s; }
+.issue-row:hover::after { opacity:1; }
 .issue-row .sev { padding:2px 5px; border-radius:3px; font-size:9px; font-weight:700; text-transform:uppercase; width:16px; max-width:16px; text-align:center; flex-shrink:0; overflow:hidden; letter-spacing:0; }
 .sev.critical { background:var(--red); color:#fff; }
 .sev.high { background:var(--orange); color:#fff; }
@@ -105,10 +130,11 @@ tr:hover td { background:var(--surface2); }
 .fc-card .fc-value { font-size:32px; font-weight:700; }
 .fc-card .fc-label { font-size:11px; color:var(--text2); margin-top:2px; }
 .fc-card .fc-sub { font-size:12px; color:var(--text); margin-top:6px; }
-.nested-tabs { display:flex; gap:4px; margin-bottom:10px; flex-wrap:wrap; }
-.nested-tab { padding:3px 10px; border-radius:4px; border:none; background:transparent; color:var(--text2); cursor:pointer; font-size:11px; font-weight:500; font-family:Inter,sans-serif; transition:.2s; }
-.nested-tab:hover { color:var(--text); background:var(--surface2); }
-.nested-tab.active { color:#fff; background:var(--blue); }
+.nested-tabs { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; padding:6px 8px; background:var(--tab-track); border:1px solid var(--border); border-radius:8px; }
+.nested-tabs-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.4px; color:var(--text3); align-self:center; margin-right:4px; }
+.nested-tab { padding:5px 11px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text2); cursor:pointer; font-size:11px; font-weight:500; font-family:Inter,sans-serif; transition:.18s; }
+.nested-tab:hover:not(.active) { color:var(--text); background:var(--surface3); }
+.nested-tab.active { color:var(--accent); background:rgba(56,189,248,0.12); border-color:rgba(56,189,248,0.35); }
 .nested-content { display:none; }
 .nested-content.active { display:block; }
 .filter-bar { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
@@ -193,7 +219,7 @@ tr:hover td { background:var(--surface2); }
 @media print {
   .header { position:static; }
   .header-right button { display:none; }
-  .tabs { display:none !important; }
+  .report-nav { display:none !important; }
   .tab-content { display:block !important; page-break-inside:avoid; margin-bottom:24px; }
   .tab-content::before { content:attr(id); display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); border-bottom:1px solid var(--border); padding-bottom:4px; margin-bottom:12px; }
   .section { page-break-inside:avoid; }
@@ -207,7 +233,7 @@ tr:hover td { background:var(--surface2); }
   <div class="header-left">
     <div>
       <div class="brand">Intelligence Report Sqloptima</div>
-      <div class="sub">Autonomous Monitoring Intelligence v4</div>
+      <div class="sub">SQL Optima Health Intelligence Report</div>
     </div>
   </div>
   <div class="header-center">
@@ -216,9 +242,9 @@ tr:hover td { background:var(--surface2); }
   </div>
   <div class="header-right">
     <span style="display:flex;gap:6px;flex-wrap:wrap">
-    <button onclick="location.reload()">⟳ <span class="action-label">Refresh</span></button>
-    <button onclick="window.print()">⬇ <span class="action-label">PDF</span></button>
-    <button onclick="downloadJSON()">{ } <span class="action-label">JSON</span></button>
+    <button type="button" class="action-btn" onclick="location.reload()">⟳ <span class="action-label">Refresh</span></button>
+    <button type="button" class="action-btn" onclick="window.print()">⬇ <span class="action-label">PDF</span></button>
+    <button type="button" class="action-btn" onclick="downloadJSON()">{ } <span class="action-label">JSON</span></button>
     </span>
     <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙</button>
   </div>
@@ -227,10 +253,11 @@ tr:hover td { background:var(--surface2); }
 <div class="container">
 
 <div class="cards">
-  <div class="card" onclick="openDrawer()" style="cursor:pointer">
+  <div class="card clickable-card" onclick="openDrawer()" title="Click to open risk breakdown">
     <div class="label">Overall Health</div>
     <div id="healthGauge" style="width:100%;height:105px;"></div>
     <div style="text-align:center;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-top:1px">{{.OverallRisk.Category}}</div>
+    <div class="card-link-hint">Open risk breakdown</div>
   </div>
   <div class="card">
     <div class="label">Failure Forecast <span style="float:right;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:600;{{.FailureBadgeStyle}}">{{.FailureBadgeText}}</span></div>
@@ -242,8 +269,8 @@ tr:hover td { background:var(--surface2); }
     <div class="countdown-sub">No failure predicted</div>
     {{end}}
   </div>
-  <div class="card" style="cursor:pointer" onclick="document.querySelector('[data-tab=utilization]').click()" title="Click to view full utilization analysis">
-    <div class="label">Utilization Class <span style="float:right;font-size:9px;color:var(--blue)">→ Details</span></div>
+  <div class="card clickable-card" onclick="switchToTab('utilization')" title="Click to view full utilization analysis">
+    <div class="label">Utilization Class</div>
     {{if .UtilizationClass}}
     <div style="padding:6px 0 4px">
       <span class="util-badge {{if eq .UtilizationClass "Under-utilized"}}under{{else if eq .UtilizationClass "Optimal"}}optimal{{else if eq .UtilizationClass "Elevated"}}elevated{{else}}over{{end}}">{{.UtilizationClass}}</span>
@@ -259,12 +286,13 @@ tr:hover td { background:var(--surface2); }
     <div class="countdown" style="color:var(--text3)">—</div>
     <div class="countdown-sub">Insufficient 14-day data</div>
     {{end}}
+    <div class="card-link-hint">View utilization details</div>
   </div>
-  <div class="card" style="cursor:pointer" onclick="document.querySelector('[data-tab=issues]').click()" title="Click to see issue details">
+  <div class="card clickable-card" onclick="switchToTab('issues')" title="Click to see issue details">
     <div class="label">Critical Alerts <span style="float:right;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:600;{{if gt .CriticalCount 0}}background:var(--danger-bg);color:var(--red){{else}}background:var(--success);color:var(--green){{end}}">{{if gt .CriticalCount 0}}HIGH{{else}}OK{{end}}</span></div>
     <div><span style="font-size:20px;font-weight:700;color:var(--red)">{{.CriticalCount}}</span> <span style="font-size:11px;color:var(--text2)">Critical</span></div>
     <div><span style="font-size:15px;font-weight:700;color:var(--orange)">{{.HighCount}}</span> <span style="font-size:11px;color:var(--text2)">High</span></div>
-    <div style="font-size:9px;color:var(--blue);margin-top:4px;text-align:right">→ View all issues</div>
+    <div class="card-link-hint">View all issues</div>
   </div>
   <div class="card">
     <div class="label">Capacity Breach</div>
@@ -306,23 +334,46 @@ tr:hover td { background:var(--surface2); }
   </div>
 </div>
 
-<div class="tabs" id="mainTabs">
-  <button class="tab-btn active" data-tab="executive">Executive Summary</button>
-  <button class="tab-btn" data-tab="utilization">Utilization</button>
-  <button class="tab-btn" data-tab="wait-analysis">Wait Analysis</button>
-  <button class="tab-btn" data-tab="capacity">Capacity Planning</button>
-  <button class="tab-btn" data-tab="issues">Current Issues</button>
-  <button class="tab-btn" data-tab="rootcause">Root Cause</button>
-  <button class="tab-btn" data-tab="forecast">Forecast</button>
-  <button class="tab-btn" data-tab="performance">Performance</button>
-  <button class="tab-btn" data-tab="rules">Rule Triggers</button>
-  <button class="tab-btn" data-tab="recommendations">Recommendations</button>
-  <button class="tab-btn" data-tab="history-trend">History Trend</button>
-  <button class="tab-btn" data-tab="ha-replication">HA &amp; Replication</button>
-  <button class="tab-btn" data-tab="history">Historical Comparison</button>
-  <button class="tab-btn" data-tab="timeline">Incident Timeline</button>
-  <button class="tab-btn" data-tab="confidence-diag">Confidence</button>
-</div>
+<nav class="report-nav" id="reportNav" aria-label="Report navigation">
+  <p class="report-nav-hint">Choose a section, then a page within that section. Summary cards above are also clickable.</p>
+  <div class="section-tabs" role="tablist" aria-label="Report sections">
+    <button type="button" class="section-tab active" data-section="overview" role="tab" aria-selected="true">Overview</button>
+    <button type="button" class="section-tab" data-section="performance" role="tab" aria-selected="false">Performance</button>
+    <button type="button" class="section-tab" data-section="capacity" role="tab" aria-selected="false">Capacity &amp; HA</button>
+    <button type="button" class="section-tab" data-section="history" role="tab" aria-selected="false">History</button>
+  </div>
+  <div class="subsection-tabs" id="subsectionTabs">
+    <div class="subsection-panel active" data-section="overview" role="tablist" aria-label="Overview pages">
+      <span class="subsection-label">Pages</span>
+      <button type="button" class="sub-tab active" data-tab="executive" data-section="overview">Executive Summary</button>
+      <button type="button" class="sub-tab" data-tab="utilization" data-section="overview">Utilization</button>
+      <button type="button" class="sub-tab" data-tab="issues" data-section="overview">Current Issues</button>
+      <button type="button" class="sub-tab" data-tab="recommendations" data-section="overview">Recommendations</button>
+    </div>
+    <div class="subsection-panel" data-section="performance" role="tablist" aria-label="Performance pages">
+      <span class="subsection-label">Pages</span>
+      <button type="button" class="sub-tab" data-tab="wait-analysis" data-section="performance">Wait Analysis</button>
+      <button type="button" class="sub-tab" data-tab="performance" data-section="performance">Performance</button>
+      <button type="button" class="sub-tab" data-tab="rules" data-section="performance">Rule Triggers</button>
+      <button type="button" class="sub-tab" data-tab="rootcause" data-section="performance">Likely Factors</button>
+    </div>
+    <div class="subsection-panel" data-section="capacity" role="tablist" aria-label="Capacity and HA pages">
+      <span class="subsection-label">Pages</span>
+      <button type="button" class="sub-tab" data-tab="capacity" data-section="capacity">Capacity Planning</button>
+      <button type="button" class="sub-tab" data-tab="forecast" data-section="capacity">Forecast</button>
+      <button type="button" class="sub-tab" data-tab="ha-replication" data-section="capacity">HA &amp; Replication</button>
+    </div>
+    <div class="subsection-panel" data-section="history" role="tablist" aria-label="History pages">
+      <span class="subsection-label">Pages</span>
+      <button type="button" class="sub-tab" data-tab="history-trend" data-section="history">History Trend</button>
+      <button type="button" class="sub-tab" data-tab="history" data-section="history">Historical Comparison</button>
+      <button type="button" class="sub-tab" data-tab="timeline" data-section="history">Incident Timeline</button>
+      <button type="button" class="sub-tab" data-tab="confidence-diag" data-section="history">Confidence</button>
+    </div>
+  </div>
+</nav>
+
+<div class="report-content-area" id="reportContent">
 
 <!-- ── Executive Summary ── -->
 <div class="tab-content active" id="tab-executive">
@@ -334,7 +385,7 @@ tr:hover td { background:var(--surface2); }
         <p>System health is <strong style="color:{{.OverallRiskColor}}">{{.OverallRisk.Category}}</strong> with a risk score of {{.OverallRisk.OverallScore | printf "%.1f"}}/100.</p>
         <p>{{.NarrativeSummary}}</p>
         {{if .UtilizationProfile}}
-        <p style="margin-top:8px;font-size:13px;color:var(--text2)">14-day resource profile: CPU p95 {{.UtilizationProfile.CPUP95 | printf "%.1f"}}%, Memory p95 {{.UtilizationProfile.MemP95 | printf "%.1f"}}%. Classification: <strong>{{.UtilizationClass}}</strong>.</p>
+        <p style="margin-top:8px;font-size:13px;color:var(--text2)">14-day resource profile: CPU p95 {{.UtilizationProfile.CPUP95 | printf "%.1f"}}%, SQL target memory p95 {{.UtilizationProfile.MemP95 | printf "%.1f"}}% (Total/Target from Memory Manager counters). Classification: <strong>{{.UtilizationClass}}</strong>.</p>
         {{end}}
       </div>
     </div>
@@ -363,7 +414,7 @@ tr:hover td { background:var(--surface2); }
             {{$cr2 := .OverallRisk.CapacityRisk}}<tr><td>Capacity</td><td style="font-weight:600">{{$cr2 | printf "%.0f"}}</td><td style="color:{{if gt $cr2 75.0}}var(--red){{else if gt $cr2 50.0}}var(--orange){{else if gt $cr2 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $cr2 75.0}}Critical{{else if gt $cr2 50.0}}High{{else if gt $cr2 25.0}}Medium{{else}}Low{{end}}</td></tr>
             {{$pr2 := .OverallRisk.PerformanceRisk}}<tr><td>Performance</td><td style="font-weight:600">{{$pr2 | printf "%.0f"}}</td><td style="color:{{if gt $pr2 75.0}}var(--red){{else if gt $pr2 50.0}}var(--orange){{else if gt $pr2 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $pr2 75.0}}Critical{{else if gt $pr2 50.0}}High{{else if gt $pr2 25.0}}Medium{{else}}Low{{end}}</td></tr>
             {{$ar2 := .OverallRisk.AvailabilityRisk}}<tr><td>Availability</td><td style="font-weight:600">{{$ar2 | printf "%.0f"}}</td><td style="color:{{if gt $ar2 75.0}}var(--red){{else if gt $ar2 50.0}}var(--orange){{else if gt $ar2 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $ar2 75.0}}Critical{{else if gt $ar2 50.0}}High{{else if gt $ar2 25.0}}Medium{{else}}Low{{end}}</td></tr>
-            {{$rr2 := .OverallRisk.ReplicationRisk}}<tr><td>Replication</td><td style="font-weight:600">{{$rr2 | printf "%.0f"}}</td><td style="color:{{if gt $rr2 75.0}}var(--red){{else if gt $rr2 50.0}}var(--orange){{else if gt $rr2 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $rr2 75.0}}Critical{{else if gt $rr2 50.0}}High{{else if gt $rr2 25.0}}Medium{{else}}Low{{end}}</td></tr>
+            {{if .HANotConfigured}}<tr><td>Replication</td><td style="font-weight:600;color:var(--text3)">N/A</td><td style="color:var(--text3)">Not monitored (no AG)</td></tr>{{else}}{{$rr2 := .OverallRisk.ReplicationRisk}}<tr><td>Replication</td><td style="font-weight:600">{{$rr2 | printf "%.0f"}}</td><td style="color:{{if gt $rr2 75.0}}var(--red){{else if gt $rr2 50.0}}var(--orange){{else if gt $rr2 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $rr2 75.0}}Critical{{else if gt $rr2 50.0}}High{{else if gt $rr2 25.0}}Medium{{else}}Low{{end}}</td></tr>{{end}}
             {{$mr2 := .OverallRisk.MaintenanceRisk}}<tr><td>Maintenance</td><td style="font-weight:600">{{$mr2 | printf "%.0f"}}</td><td style="color:{{if gt $mr2 75.0}}var(--red){{else if gt $mr2 50.0}}var(--orange){{else if gt $mr2 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $mr2 75.0}}Critical{{else if gt $mr2 50.0}}High{{else if gt $mr2 25.0}}Medium{{else}}Low{{end}}</td></tr>
             {{$qr2 := .OverallRisk.QueryRisk}}<tr><td>Query</td><td style="font-weight:600">{{$qr2 | printf "%.0f"}}</td><td style="color:{{if gt $qr2 75.0}}var(--red){{else if gt $qr2 50.0}}var(--orange){{else if gt $qr2 25.0}}var(--yellow){{else}}var(--green){{end}}">{{if gt $qr2 75.0}}Critical{{else if gt $qr2 50.0}}High{{else if gt $qr2 25.0}}Medium{{else}}Low{{end}}</td></tr>
           </tbody>
@@ -371,6 +422,63 @@ tr:hover td { background:var(--surface2); }
       </div>
     </div>
   </div>
+  {{if .Top3Actions}}
+  <div class="section" style="margin-top:14px">
+    <h2>Top 3 Actions <small style="font-weight:400;font-size:11px;color:var(--text3)">(prioritized for this instance)</small></h2>
+    {{range .Top3Actions}}
+    <div class="top-action-card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <strong style="font-size:13px">{{.title}}</strong>
+        <span class="sev {{.urgency}}" style="font-size:10px">{{.urgency}}</span>
+      </div>
+      <p style="font-size:12px;color:var(--text2);margin:6px 0 0">{{.reason}}</p>
+      <button type="button" class="drill-link" onclick="drillToMonitor('{{.route}}')">Open related dashboard →</button>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+  {{if .QueryWorkload}}
+  <div class="section" style="margin-top:14px">
+    <h2>Query Workload <small style="font-weight:400;font-size:11px;color:var(--text3)">(Query Store telemetry, 24h)</small></h2>
+    <div class="stat-grid">
+      <div class="stat-box"><div class="sv" style="color:var(--orange)">{{.QueryWorkload.Regressions24h}}</div><div class="sl">Regressions (24h)</div></div>
+      <div class="stat-box"><div class="sv" style="color:var(--yellow)">{{.QueryWorkload.PlanInstabilityQueries}}</div><div class="sl">Multi-plan queries</div></div>
+      {{if .QueryWorkload.TopCPUQueryHash}}
+      <div class="stat-box" style="grid-column:span 2"><div class="sl">Top CPU consumer</div><div style="font-size:11px;font-family:monospace;color:var(--text2)">{{.QueryWorkload.TopCPUQueryHash}} · {{.QueryWorkload.TopCPUMs | printf "%.0f"}} ms total</div><div style="font-size:11px;color:var(--text3);margin-top:4px">{{.QueryWorkload.TopCPUQueryText}}</div></div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+  {{if .ServerConfiguration}}
+  <div class="section" style="margin-top:14px">
+    <h2>Instance Configuration</h2>
+    <table><tbody>
+      {{if .ServerConfiguration.MaxDegreeOfParallelism}}<tr><td>MAXDOP</td><td>{{.ServerConfiguration.MaxDegreeOfParallelism}}</td></tr>{{end}}
+      {{if .ServerConfiguration.MaxServerMemoryMB}}<tr><td>max server memory (MB)</td><td>{{.ServerConfiguration.MaxServerMemoryMB}}</td></tr>{{end}}
+      {{if .ServerConfiguration.CostThresholdForParallelism}}<tr><td>cost threshold for parallelism</td><td>{{.ServerConfiguration.CostThresholdForParallelism}}</td></tr>{{end}}
+    </tbody></table>
+    <p style="font-size:11px;color:var(--text3);margin-top:6px">From performance-debt Engine Config snapshots when <code>value_in_use</code> is stored in collector details.</p>
+  </div>
+  {{end}}
+  {{if .IndexHealth}}
+  <div class="section" style="margin-top:14px">
+    <h2>Index Health Highlights</h2>
+    <table>
+      <thead><tr><th>Kind</th><th>Database</th><th>Object</th><th>Metric</th><th>Severity</th></tr></thead>
+      <tbody>
+        {{range .IndexHealth}}
+        <tr>
+          <td>{{.FindingKind}}</td>
+          <td>{{.DatabaseName}}</td>
+          <td>{{.SchemaName}}.{{.TableName}}{{if .IndexName}} · {{.IndexName}}{{end}}</td>
+          <td>{{.MetricLabel}} {{.MetricValue | printf "%.1f"}}</td>
+          <td>{{.Severity}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
 </div>
 
 <!-- ── Utilization (NEW v4) ── -->
@@ -386,7 +494,7 @@ tr:hover td { background:var(--surface2); }
       <div class="stat-grid">
         <div class="stat-box"><div class="sv" style="color:var(--orange)">{{.UtilizationProfile.CPUP50 | printf "%.1f"}}%</div><div class="sl">CPU p50</div></div>
         <div class="stat-box"><div class="sv" style="color:var(--orange)">{{.UtilizationProfile.CPUP95 | printf "%.1f"}}%</div><div class="sl">CPU p95</div></div>
-        <div class="stat-box"><div class="sv" style="color:var(--blue)">{{.UtilizationProfile.MemP95 | printf "%.1f"}}%</div><div class="sl">Memory p95</div></div>
+        <div class="stat-box"><div class="sv" style="color:var(--blue)">{{.UtilizationProfile.MemP95 | printf "%.1f"}}%</div><div class="sl">SQL target mem p95</div></div>
         <div class="stat-box"><div class="sv" style="color:var(--text2)">{{.UtilizationProfile.CPUAvg | printf "%.1f"}}%</div><div class="sl">CPU avg</div></div>
       </div>
       <div id="utilizationChart" class="chart-wrap" style="margin-top:14px"></div>
@@ -554,11 +662,11 @@ tr:hover td { background:var(--surface2); }
   </div>
 </div>
 
-<!-- ── Root Cause ── -->
+<!-- ── Likely Factors ── -->
 <div class="tab-content" id="tab-rootcause">
   <div class="grid-2">
     <div class="section">
-      <h2>Root Cause Dependency Chain</h2>
+      <h2>Likely Factor Dependency Chain</h2>
       <div class="tree">
         {{if .RootCauseHypotheses}}
           {{range $i, $h := .RootCauseHypotheses}}
@@ -571,8 +679,8 @@ tr:hover td { background:var(--surface2); }
       </div>
     </div>
     <div class="section">
-      <h2>Root Cause Probability <small style="font-weight:400;font-size:11px;color:var(--text3)">(derived from rule severity, metric signal strength, and domain correlation)</small></h2>
-      <table><thead><tr><th>Candidate Root Cause</th><th>Probability</th><th>Signal Strength</th><th>Supporting Evidence</th></tr></thead><tbody>
+      <h2>Likely Factor Probability <small style="font-weight:400;font-size:11px;color:var(--text3)">(derived from rule severity, metric signal strength, and domain correlation — not a definitive root-cause verdict)</small></h2>
+      <table><thead><tr><th>Candidate factor</th><th>Probability</th><th>Signal Strength</th><th>Supporting Evidence</th></tr></thead><tbody>
         {{range .RootCauseProbabilities}}
         <tr>
           <td style="font-weight:600">{{.candidate}}</td>
@@ -597,6 +705,7 @@ tr:hover td { background:var(--surface2); }
 
 <!-- ── Forecast ── -->
 <div class="tab-content" id="tab-forecast">
+  <p style="font-size:11px;color:var(--text3);margin-bottom:10px">Failure windows use linear regression on recent telemetry. Projections with R² below 0.3 (Unreliable tier) are omitted. Treat Indicative-tier dates as directional only.</p>
   <div class="grid-3" style="margin-bottom:14px">
     {{if .FailureForecast}}
     {{range $i, $ff := .FailureForecast}}{{if lt $i 6}}
@@ -615,8 +724,9 @@ tr:hover td { background:var(--surface2); }
   </div>
   <div class="section">
     <div class="nested-tabs">
-      <button class="nested-tab active" data-nested="cap-forecast">Capacity</button>
-      <button class="nested-tab" data-nested="perf-forecast">Performance</button>
+      <span class="nested-tabs-label">Chart view</span>
+      <button type="button" class="nested-tab active" data-nested="cap-forecast">Capacity</button>
+      <button type="button" class="nested-tab" data-nested="perf-forecast">Performance</button>
     </div>
     <div class="nested-content active" id="nested-cap-forecast"><div id="capacityForecastChart" class="chart-wrap"></div></div>
     <div class="nested-content" id="nested-perf-forecast"><div id="perfForecastChart" class="chart-wrap"></div></div>
@@ -626,11 +736,12 @@ tr:hover td { background:var(--surface2); }
 <!-- ── Performance ── -->
 <div class="tab-content" id="tab-performance">
   <div class="nested-tabs">
-    <button class="nested-tab active" data-nested="perf-cpu">CPU</button>
-    <button class="nested-tab" data-nested="perf-memory">Memory</button>
-    <button class="nested-tab" data-nested="perf-io">IO</button>
-    <button class="nested-tab" data-nested="perf-waits">Waits</button>
-    <button class="nested-tab" data-nested="perf-blocking">Blocking</button>
+    <span class="nested-tabs-label">Metric group</span>
+    <button type="button" class="nested-tab active" data-nested="perf-cpu">CPU</button>
+    <button type="button" class="nested-tab" data-nested="perf-memory">Memory</button>
+    <button type="button" class="nested-tab" data-nested="perf-io">IO</button>
+    <button type="button" class="nested-tab" data-nested="perf-waits">Waits</button>
+    <button type="button" class="nested-tab" data-nested="perf-blocking">Blocking</button>
   </div>
   <div class="nested-content active" id="nested-perf-cpu">
     <div class="grid-2"><div class="section"><h3>CPU Utilization Timeline</h3><div id="cpuTimelineChart" class="chart-wrap-sm"></div></div><div class="section"><h3>Runnable Queue</h3><div id="runnableChart" class="chart-wrap-sm"></div></div></div>
@@ -671,7 +782,8 @@ tr:hover td { background:var(--surface2); }
       </tr>
       <tr style="display:none"><td colspan="3" style="padding:12px;background:var(--surface2)">
         <strong>Detail:</strong> {{.Message}}<br>
-        <strong>Signals:</strong> {{range $k, $v := .MetricValues}}{{$k | replaceAll "_" " " | titleStr}}: {{$v | round0}} &nbsp;{{end}}
+        <strong>Signals:</strong> {{range $k, $v := .MetricValues}}{{$k | replaceAll "_" " " | titleStr}}: {{$v | round0}} &nbsp;{{end}}<br>
+        <button type="button" class="drill-link" onclick="event.stopPropagation();drillToMonitor('{{drillRoute .RuleName}}')">Open related dashboard →</button>
       </tr>
       {{end}}
     </tbody></table></div>
@@ -930,8 +1042,21 @@ tr:hover td { background:var(--surface2); }
       </tbody></table>
     </div>
     {{end}}
+    {{with .ConfidenceDiagnostics}}
+    {{if .missing_sources}}
+    <div class="section" style="margin-top:14px">
+      <h2>Missing telemetry sources</h2>
+      <p style="font-size:12px;color:var(--text2);margin-bottom:10px">These hypertables or metric keys were not populated for this server in the analysis window. Run the collector longer or verify the instance is registered.</p>
+      <table><thead><tr><th>Source</th></tr></thead><tbody>
+        {{range .missing_sources}}<tr><td>{{.label}}</td></tr>{{end}}
+      </tbody></table>
+    </div>
+    {{end}}
+    {{end}}
   </div>
 </div>
+
+</div><!-- /reportContent -->
 
 </div><!-- /container -->
 
@@ -959,8 +1084,12 @@ tr:hover td { background:var(--surface2); }
 <script>
 var _storage={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 (function(){
+  var urlParams=new URLSearchParams(window.location.search);
+  var themeParam=urlParams.get('theme');
   var saved=_storage.get('mm-theme');
-  var theme=saved||(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  var prefersDark=window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var theme=themeParam||saved||(prefersDark?'dark':'light');
+  if(theme!=='light'&&theme!=='dark')theme=prefersDark?'dark':'light';
   document.documentElement.setAttribute('data-theme',theme);
   document.getElementById('themeBtn').textContent=theme==='dark'?'🌙':'☀️';
 })();
@@ -970,11 +1099,62 @@ function toggleTheme(){
   r.setAttribute('data-theme',next); _storage.set('mm-theme',next);
   document.getElementById('themeBtn').textContent=next==='dark'?'🌙':'☀️';
 }
-document.querySelectorAll('#mainTabs .tab-btn').forEach(function(b){b.addEventListener('click',function(){
-  document.querySelectorAll('#mainTabs .tab-btn').forEach(function(x){x.classList.remove('active')});
-  document.querySelectorAll('.tab-content').forEach(function(x){x.classList.remove('active')});
-  b.classList.add('active'); document.getElementById('tab-'+b.dataset.tab).classList.add('active');
-})});
+function drillToMonitor(route){
+  if(!route)return;
+  try{window.parent.postMessage({type:'sql-optima-navigate',route:route},'*');}catch(e){}
+}
+var TAB_SECTIONS={
+  executive:'overview',utilization:'overview',issues:'overview',recommendations:'overview',
+  'wait-analysis':'performance',performance:'performance',rules:'performance',rootcause:'performance',
+  capacity:'capacity',forecast:'capacity','ha-replication':'capacity',
+  'history-trend':'history',history:'history',timeline:'history','confidence-diag':'history'
+};
+function activateSection(sectionId,preferTab){
+  document.querySelectorAll('.section-tab').forEach(function(t){
+    var on=t.dataset.section===sectionId;
+    t.classList.toggle('active',on);
+    t.setAttribute('aria-selected',on?'true':'false');
+  });
+  document.querySelectorAll('.subsection-panel').forEach(function(p){
+    p.classList.toggle('active',p.dataset.section===sectionId);
+  });
+  var panel=document.querySelector('.subsection-panel[data-section="'+sectionId+'"]');
+  if(!panel)return;
+  var target=preferTab?panel.querySelector('.sub-tab[data-tab="'+preferTab+'"]'):panel.querySelector('.sub-tab.active')||panel.querySelector('.sub-tab');
+  if(target)activateSubTab(target);
+}
+function activateSubTab(btn){
+  if(!btn||!btn.dataset.tab)return;
+  var sectionId=btn.dataset.section||TAB_SECTIONS[btn.dataset.tab]||'overview';
+  document.querySelectorAll('.section-tab').forEach(function(t){
+    var on=t.dataset.section===sectionId;
+    t.classList.toggle('active',on);
+    t.setAttribute('aria-selected',on?'true':'false');
+  });
+  document.querySelectorAll('.subsection-panel').forEach(function(p){
+    p.classList.toggle('active',p.dataset.section===sectionId);
+  });
+  document.querySelectorAll('.sub-tab').forEach(function(x){x.classList.remove('active');x.setAttribute('aria-selected','false');});
+  document.querySelectorAll('.tab-content').forEach(function(x){x.classList.remove('active');});
+  btn.classList.add('active');
+  btn.setAttribute('aria-selected','true');
+  var pane=document.getElementById('tab-'+btn.dataset.tab);
+  if(pane)pane.classList.add('active');
+}
+function switchToTab(tabId){
+  var sectionId=TAB_SECTIONS[tabId]||'overview';
+  activateSection(sectionId,tabId);
+}
+document.querySelectorAll('.section-tab').forEach(function(b){
+  b.addEventListener('click',function(){
+    var panel=document.querySelector('.subsection-panel[data-section="'+b.dataset.section+'"]');
+    var first=panel&&panel.querySelector('.sub-tab');
+    activateSection(b.dataset.section,first&&first.dataset.tab);
+  });
+});
+document.querySelectorAll('.sub-tab').forEach(function(b){
+  b.addEventListener('click',function(){activateSubTab(b);});
+});
 document.querySelectorAll('.nested-tabs').forEach(function(g){g.querySelectorAll('.nested-tab').forEach(function(b){b.addEventListener('click',function(){
   g.querySelectorAll('.nested-tab').forEach(function(x){x.classList.remove('active')}); b.classList.add('active');
   var p=b.closest('.tab-content')||b.closest('.section')||document;
@@ -993,8 +1173,12 @@ function filterIssues(q){document.querySelectorAll('#issueList .issue-row').forE
 var opts={responsive:true,displayModeBar:false};
 var noData='<div style="display:flex;align-items:center;justify-content:center;height:100%;min-height:120px;color:var(--text3);font-size:13px">No data collected yet — ensure the collector is running.</div>';
 function noChart(id,msg){var e=document.getElementById(id);if(e)e.innerHTML=msg||noData;}
-var bl={margin:{t:10,b:30,l:50,r:10},paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#94a3b8',size:11},hovermode:'x unified'};
-function lay(xt,yt,yr){var l=JSON.parse(JSON.stringify(bl));l.xaxis={gridcolor:'#2d3154',zeroline:false,title:xt};l.yaxis={gridcolor:'#2d3154',zeroline:false,title:yt};if(yr)l.yaxis.range=yr;return l;}
+function chartTheme(){
+  var s=getComputedStyle(document.documentElement);
+  return {grid:(s.getPropertyValue('--chart-grid')||'').trim()||'rgba(128,128,128,0.15)',font:(s.getPropertyValue('--text2')||'').trim()||'#94a3b8'};
+}
+function baseLayout(){var c=chartTheme();return{margin:{t:10,b:30,l:50,r:10},paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:c.font,size:11},hovermode:'x unified'};}
+function lay(xt,yt,yr){var c=chartTheme();var l=baseLayout();l.xaxis={gridcolor:c.grid,zeroline:false,title:xt};l.yaxis={gridcolor:c.grid,zeroline:false,title:yt};if(yr)l.yaxis.range=yr;return l;}
 
 // Health gauge
 Plotly.newPlot('healthGauge',[{type:'indicator',mode:'gauge+number',value:{{.OverallRisk.OverallScore}},

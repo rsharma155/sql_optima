@@ -87,6 +87,7 @@ func LoadInstancesFromServerRegistry(ctx context.Context, pool *pgxpool.Pool, km
 			Host:                   s2.Host,
 			Port:                   s2.Port,
 			User:                   s2.Username,
+			MonitoringUser:         s2.Username,
 			Password:               cred.Password,
 			SSLMode:                strings.TrimSpace(string(s2.SSLMode)),
 			Database:               database,

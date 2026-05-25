@@ -59,6 +59,19 @@ func NewSetupHandlers(deps *SetupDeps) *SetupHandlers {
 	}
 }
 
+func (h *SetupHandlers) rejectPublicSetupDisabled(w http.ResponseWriter) bool {
+	if !h.disablePublicSetup {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": false,
+		"error":   "Public setup is disabled. Set DISABLE_PUBLIC_SETUP=0 only during first-run bootstrap, or use admin tools.",
+	})
+	return true
+}
+
 // Status returns the current setup state so the frontend knows whether to show
 // the setup wizard or proceed to the main app.
 func (h *SetupHandlers) Status(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +120,9 @@ func (h *SetupHandlers) Status(w http.ResponseWriter, r *http.Request) {
 // returns {"success":true} or {"success":false,"error":"..."}.
 func (h *SetupHandlers) PostTestTimescale(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if h.rejectPublicSetupDisabled(w) {
+		return
+	}
 
 	var body struct {
 		Host            string `json:"host"`
@@ -156,6 +172,18 @@ func (h *SetupHandlers) PostTestTimescale(w http.ResponseWriter, r *http.Request
 // user is immediately logged in.
 func (h *SetupHandlers) PostBootstrapAdmin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	// Allow first admin creation even when public setup is disabled (no admin in DB yet).
+	if h.disablePublicSetup && h.metricsSvc != nil && h.metricsSvc.IsTimescaleConnected() {
+		pool := h.metricsSvc.GetTimescaleDBPool()
+		var adminCount int
+		if err := pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM optima_users WHERE role = 'admin'`).Scan(&adminCount); err == nil && adminCount > 0 {
+			if h.rejectPublicSetupDisabled(w) {
+				return
+			}
+		}
+	} else if h.rejectPublicSetupDisabled(w) {
+		return
+	}
 
 	var body struct {
 		Username       string `json:"username"`
@@ -239,6 +267,9 @@ func (h *SetupHandlers) PostBootstrapAdmin(w http.ResponseWriter, r *http.Reques
 // Called by the setup wizard after all migration steps succeed.
 func (h *SetupHandlers) PostTimescale(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if h.rejectPublicSetupDisabled(w) {
+		return
+	}
 
 	var body struct {
 		Host            string `json:"host"`
@@ -306,6 +337,9 @@ func (h *SetupHandlers) PostTimescale(w http.ResponseWriter, r *http.Request) {
 // the TimescaleDB instance supplied in the request body.
 func (h *SetupHandlers) PostTimescaleMigrateStep(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if h.rejectPublicSetupDisabled(w) {
+		return
+	}
 
 	var body struct {
 		Host            string `json:"host"`

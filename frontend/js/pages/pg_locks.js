@@ -779,12 +779,14 @@ function renderPgBlockingIncidentTimeline(points, incidents) {
     const canvas = document.getElementById('pgBlockingIncidentTimelineChart');
     if (!canvas) return;
     const rows   = Array.isArray(points) ? points : [];
-    const labels = rows.map(p => { try { return new Date(p?.bucket).toLocaleTimeString(); } catch { return ''; } });
-    const data   = rows.map(p => Number(p?.blocked_sessions??0)||0);
+    const labels = rows.map(p => (typeof window.fmtChartTick === 'function' ? window.fmtChartTick(p) : ''));
+    const data   = rows.map(p => Number(p?.blocked_sessions ?? 0) || 0);
 
     const windows = (Array.isArray(incidents) ? incidents : []).map(w => ({
-        startMs: w?.started_at ? Date.parse(w.started_at) : NaN,
-        endMs:   w?.ended_at   ? Date.parse(w.ended_at)   : Date.now(),
+        startMs: typeof window.tsMs === 'function' ? (window.tsMs(w.started_at) ?? NaN) : (w?.started_at ? Date.parse(w.started_at) : NaN),
+        endMs:   w?.ended_at
+            ? (typeof window.tsMs === 'function' ? (window.tsMs(w.ended_at) ?? Date.now()) : Date.parse(w.ended_at))
+            : Date.now(),
     })).filter(w => isFinite(w.startMs));
 
     const shadePlugin = {
@@ -793,7 +795,10 @@ function renderPgBlockingIncidentTimeline(points, incidents) {
             if (!windows.length) return;
             const ctx = chart.ctx, xScale = chart.scales.x, area = chart.chartArea;
             if (!xScale || !area) return;
-            const xs = rows.map(p => { const ms = p?.bucket ? Date.parse(p.bucket) : NaN; return isFinite(ms) ? ms : NaN; });
+            const xs = rows.map(p => {
+                const ms = typeof window.tsMs === 'function' ? window.tsMs(p) : null;
+                return ms != null ? ms : NaN;
+            });
             ctx.save();
             ctx.fillStyle = 'rgba(239,68,68,0.10)';
             windows.forEach(w => {

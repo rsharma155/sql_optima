@@ -1859,6 +1859,7 @@ ALTER TABLE postgres_backup_runs SET (
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
 SELECT add_compression_policy('postgres_backup_runs', INTERVAL '60 days', if_not_exists => TRUE);
+SELECT add_retention_policy('postgres_backup_runs', INTERVAL '365 days', if_not_exists => TRUE);
 COMMENT ON TABLE postgres_backup_runs IS 'Backup run results (reported by external tools) for DBA daily checks and RPO posture.';
 
 -- PostgreSQL log events reported by external shippers/agents (webhook-style ingestion).
@@ -2718,6 +2719,76 @@ ALTER TABLE sqlserver_log_shipping_health SET (
 SELECT add_compression_policy('sqlserver_log_shipping_health', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- ============================================================================
+-- SQL Server Backup & Recovery (Backup & Recovery dashboard)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS monitor.sqlserver_backup_database_posture (
+    capture_timestamp           TIMESTAMPTZ NOT NULL,
+    server_id                   UUID        NOT NULL,
+    database_name               TEXT        NOT NULL DEFAULT '',
+    recovery_model_desc         TEXT        NOT NULL DEFAULT '',
+    last_full_finish            TIMESTAMPTZ,
+    last_diff_finish            TIMESTAMPTZ,
+    last_log_finish             TIMESTAMPTZ,
+    minutes_since_full          INT         NOT NULL DEFAULT 0,
+    minutes_since_log           INT         NOT NULL DEFAULT 0,
+    last_full_size_mb           DOUBLE PRECISION NOT NULL DEFAULT 0,
+    last_log_size_mb            DOUBLE PRECISION NOT NULL DEFAULT 0,
+    full_fresh_ok               BOOLEAN     NOT NULL DEFAULT false,
+    log_fresh_ok                BOOLEAN     NOT NULL DEFAULT false,
+    has_full_backup             BOOLEAN     NOT NULL DEFAULT false,
+    backup_compression_default  BOOLEAN     NOT NULL DEFAULT false,
+    PRIMARY KEY (server_id, capture_timestamp, database_name)
+);
+
+SELECT create_hypertable('monitor.sqlserver_backup_database_posture', 'capture_timestamp', if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_backup_posture_server
+    ON monitor.sqlserver_backup_database_posture (server_id, capture_timestamp DESC);
+ALTER TABLE monitor.sqlserver_backup_database_posture SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'server_id,database_name',
+    timescaledb.compress_orderby   = 'capture_timestamp DESC'
+);
+SELECT add_compression_policy('monitor.sqlserver_backup_database_posture', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_retention_policy('monitor.sqlserver_backup_database_posture', INTERVAL '90 days', if_not_exists => TRUE);
+
+CREATE TABLE IF NOT EXISTS monitor.sqlserver_backup_history (
+    capture_timestamp           TIMESTAMPTZ NOT NULL,
+    server_id                   UUID        NOT NULL,
+    backup_set_uuid             UUID        NOT NULL,
+    database_name               TEXT        NOT NULL DEFAULT '',
+    backup_type                 CHAR(1)     NOT NULL DEFAULT '',
+    backup_start_date           TIMESTAMPTZ,
+    backup_finish_date          TIMESTAMPTZ,
+    backup_size_mb              DOUBLE PRECISION NOT NULL DEFAULT 0,
+    compressed_backup_size_mb   DOUBLE PRECISION NOT NULL DEFAULT 0,
+    duration_seconds            INT         NOT NULL DEFAULT 0,
+    is_copy_only                BOOLEAN     NOT NULL DEFAULT false,
+    has_checksum                BOOLEAN     NOT NULL DEFAULT false,
+    is_compressed               BOOLEAN     NOT NULL DEFAULT false,
+    first_lsn                   VARCHAR(64) NOT NULL DEFAULT '',
+    last_lsn                    VARCHAR(64) NOT NULL DEFAULT '',
+    user_name                   TEXT        NOT NULL DEFAULT '',
+    physical_device             TEXT        NOT NULL DEFAULT '',
+    PRIMARY KEY (server_id, capture_timestamp, backup_set_uuid)
+);
+
+SELECT create_hypertable('monitor.sqlserver_backup_history', 'capture_timestamp', if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_backup_hist_server
+    ON monitor.sqlserver_backup_history (server_id, backup_finish_date DESC);
+ALTER TABLE monitor.sqlserver_backup_history SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'server_id,database_name',
+    timescaledb.compress_orderby   = 'capture_timestamp DESC'
+);
+SELECT add_compression_policy('monitor.sqlserver_backup_history', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_retention_policy('monitor.sqlserver_backup_history', INTERVAL '365 days', if_not_exists => TRUE);
+
+COMMENT ON TABLE monitor.sqlserver_backup_database_posture IS
+    'Per-database backup posture snapshot for SQL Server Backup & Recovery dashboard.';
+COMMENT ON TABLE monitor.sqlserver_backup_history IS
+    'Recent msdb.dbo.backupset operations collected for backup history and trend charts.';
+
+-- ============================================================================
 -- DBA War Room: Continuous Aggregates for Baselines
 -- ============================================================================
 
@@ -2988,6 +3059,19 @@ INSERT INTO optima_notification_config (channel, url, is_enabled)
 VALUES ('webhook', '', false), ('slack', '', false)
 ON CONFLICT (channel) DO NOTHING;
 
+-- Platform settings (UI-managed toggles; e.g. os_metrics_ingest_enabled from OS Collector UI)
+CREATE TABLE IF NOT EXISTS optima_platform_settings (
+    setting_key   VARCHAR(100) PRIMARY KEY,
+    setting_value TEXT NOT NULL DEFAULT '',
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by    VARCHAR(100)
+);
+GRANT SELECT, INSERT, UPDATE ON optima_platform_settings TO sql_optima_app;
+-- Default off; enable from UI (Enable ingest) or download OS collector bundle.
+INSERT INTO optima_platform_settings (setting_key, setting_value, updated_by)
+VALUES ('os_metrics_ingest_enabled', 'false', 'schema')
+ON CONFLICT (setting_key) DO NOTHING;
+
 -- SQLSERVER Query Store Deltas
 CREATE TABLE IF NOT EXISTS monitor.sqlserver_query_store_staging (
     server_id UUID NOT NULL,
@@ -3085,8 +3169,13 @@ CREATE UNLOGGED TABLE IF NOT EXISTS sqlserver_query_stats_staging_v2 (
     max_dop              INT,
     max_grant_kb         BIGINT,
     max_rows             BIGINT,
-    last_execution_time  TIMESTAMPTZ
+    last_execution_time  TIMESTAMPTZ,
+    total_elapsed_ms     BIGINT DEFAULT 0,
+    total_physical_reads BIGINT DEFAULT 0
 );
+
+ALTER TABLE sqlserver_query_stats_staging_v2 ADD COLUMN IF NOT EXISTS total_elapsed_ms BIGINT DEFAULT 0;
+ALTER TABLE sqlserver_query_stats_staging_v2 ADD COLUMN IF NOT EXISTS total_physical_reads BIGINT DEFAULT 0;
 
 -- Snapshot state table for delta calculation
 CREATE TABLE IF NOT EXISTS sqlserver_query_stats_snapshot_v2 (
@@ -3110,8 +3199,13 @@ CREATE TABLE IF NOT EXISTS sqlserver_query_stats_snapshot_v2 (
     max_rows                   BIGINT,
     last_execution_time        TIMESTAMPTZ,
     last_seen_poll_time        TIMESTAMPTZ,
+    last_total_elapsed_ms      BIGINT DEFAULT 0,
+    last_total_physical_reads  BIGINT DEFAULT 0,
     CONSTRAINT uq_sqlserver_query_stats_snapshot_v2 UNIQUE (server_id, db_id, query_hash, plan_handle)
 );
+
+ALTER TABLE sqlserver_query_stats_snapshot_v2 ADD COLUMN IF NOT EXISTS last_total_elapsed_ms BIGINT DEFAULT 0;
+ALTER TABLE sqlserver_query_stats_snapshot_v2 ADD COLUMN IF NOT EXISTS last_total_physical_reads BIGINT DEFAULT 0;
 
 -- History hypertable for persistent metrics
 CREATE TABLE IF NOT EXISTS sqlserver_query_stats_history (
@@ -3300,6 +3394,9 @@ ALTER TABLE sqlserver_query_metrics_v2 SET (
 );
 SELECT add_compression_policy('sqlserver_query_metrics_v2', INTERVAL '7 days', if_not_exists => TRUE);
 SELECT add_retention_policy('sqlserver_query_metrics_v2', INTERVAL '90 days', if_not_exists => TRUE);
+ALTER TABLE sqlserver_query_metrics_v2 ADD COLUMN IF NOT EXISTS total_elapsed_ms BIGINT DEFAULT 0;
+ALTER TABLE sqlserver_query_metrics_v2 ADD COLUMN IF NOT EXISTS total_physical_reads BIGINT DEFAULT 0;
+ALTER TABLE sqlserver_query_metrics_v2 ADD COLUMN IF NOT EXISTS is_user_workload INT DEFAULT 1;
 
 -- SQL Server Plan Enrichment (Identity mapping for plan_handle)
 CREATE TABLE IF NOT EXISTS sqlserver_plan_enrichment (
@@ -4115,6 +4212,7 @@ ALTER TABLE sqlserver_perf_counters SET (
     timescaledb.compress_orderby = 'capture_timestamp DESC'
 );
 SELECT add_compression_policy('sqlserver_perf_counters', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_retention_policy('sqlserver_perf_counters', INTERVAL '90 days', if_not_exists => TRUE);
 
 ALTER TABLE sqlserver_file_io SET (
     timescaledb.compress = true,
@@ -4485,7 +4583,21 @@ CREATE TABLE IF NOT EXISTS snapshot.pg_backup_dr_timeseries (
 );
 
 -- Convert to hypertable
-SELECT create_hypertable('snapshot.pg_backup_dr_timeseries', 'capture_timestamp', if_not_exists => TRUE);
+SELECT create_hypertable('snapshot.pg_backup_dr_timeseries', 'capture_timestamp',
+    chunk_time_interval => INTERVAL '1 day',
+    if_not_exists => TRUE,
+    migrate_data => FALSE);
+
+CREATE INDEX IF NOT EXISTS idx_pg_backup_dr_ts_server_time
+    ON snapshot.pg_backup_dr_timeseries (server_id, capture_timestamp DESC);
+
+ALTER TABLE snapshot.pg_backup_dr_timeseries SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'server_id',
+    timescaledb.compress_orderby = 'capture_timestamp DESC'
+);
+SELECT add_compression_policy('snapshot.pg_backup_dr_timeseries', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_retention_policy('snapshot.pg_backup_dr_timeseries', INTERVAL '90 days', if_not_exists => TRUE);
 
 -- Replication node time-series
 CREATE TABLE IF NOT EXISTS snapshot.pg_replication_timeseries (
@@ -4503,7 +4615,15 @@ CREATE TABLE IF NOT EXISTS snapshot.pg_replication_timeseries (
 );
 
 -- Convert to hypertable
-SELECT create_hypertable('snapshot.pg_replication_timeseries', 'capture_timestamp', if_not_exists => TRUE);
+SELECT create_hypertable('snapshot.pg_replication_timeseries', 'capture_timestamp',
+    chunk_time_interval => INTERVAL '1 day',
+    if_not_exists => TRUE,
+    migrate_data => FALSE);
+
+CREATE INDEX IF NOT EXISTS idx_pg_repl_ts_server_time
+    ON snapshot.pg_replication_timeseries (server_id, capture_timestamp DESC);
+
+SELECT add_retention_policy('snapshot.pg_replication_timeseries', INTERVAL '90 days', if_not_exists => TRUE);
 
 -- Archiver error audit (Additional table from requirement)
 CREATE TABLE IF NOT EXISTS snapshot.pg_archive_error_log (
@@ -4514,9 +4634,17 @@ CREATE TABLE IF NOT EXISTS snapshot.pg_archive_error_log (
 );
 
 -- Convert to hypertable
-SELECT create_hypertable('snapshot.pg_archive_error_log', 'capture_timestamp', if_not_exists => TRUE);
+SELECT create_hypertable('snapshot.pg_archive_error_log', 'capture_timestamp',
+    chunk_time_interval => INTERVAL '1 day',
+    if_not_exists => TRUE,
+    migrate_data => FALSE);
 
--- 3. Indexes
+CREATE INDEX IF NOT EXISTS idx_pg_archive_err_server_time
+    ON snapshot.pg_archive_error_log (server_id, capture_timestamp DESC);
+
+SELECT add_retention_policy('snapshot.pg_archive_error_log', INTERVAL '90 days', if_not_exists => TRUE);
+
+-- 3. Indexes (time-only; server+time indexes above)
 CREATE INDEX IF NOT EXISTS idx_pg_backup_dr_ts_coll_at ON snapshot.pg_backup_dr_timeseries (capture_timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_pg_repl_ts_coll_at ON snapshot.pg_replication_timeseries (capture_timestamp DESC);
 
@@ -4729,6 +4857,29 @@ CREATE INDEX idx_pg_disk_server_time ON postgres_disk_stats (server_id, capture_
 
 DROP INDEX IF EXISTS idx_pg_backup_runs_server_time;
 CREATE INDEX idx_pg_backup_runs_server_time ON postgres_backup_runs (server_id, capture_timestamp DESC);
+
+-- Per-instance PostgreSQL DR policy (current-state config; one row per server — not a hypertable).
+CREATE TABLE IF NOT EXISTS optima_server_dr_policy (
+    server_id UUID PRIMARY KEY REFERENCES optima_servers(id) ON DELETE CASCADE,
+    rpo_backup_hours      INT NOT NULL DEFAULT 24,
+    rpo_archive_minutes   INT NOT NULL DEFAULT 5,
+    rpo_replay_seconds    INT NOT NULL DEFAULT 60,
+    max_slot_retention_gb NUMERIC(10, 2) NOT NULL DEFAULT 10,
+    rto_failover_minutes  INT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by TEXT
+);
+
+ALTER TABLE optima_server_dr_policy ADD COLUMN IF NOT EXISTS rpo_log_backup_minutes INT NOT NULL DEFAULT 15;
+COMMENT ON COLUMN optima_server_dr_policy.rpo_log_backup_minutes IS
+    'SQL Server: max minutes since last log backup for FULL/BULK_LOGGED databases (Backup & Recovery dashboard).';
+
+COMMENT ON TABLE optima_server_dr_policy IS
+    'Current RPO/RTO thresholds per monitored server for Backup & DR readiness and alerts. '
+    'Dimension table (not time-series); use postgres_backup_runs and snapshot.pg_backup_dr_timeseries for history.';
+
+CREATE INDEX IF NOT EXISTS idx_optima_server_dr_policy_updated
+    ON optima_server_dr_policy (updated_at DESC);
 
 DROP INDEX IF EXISTS idx_pg_log_events_server_time;
 CREATE INDEX idx_pg_log_events_server_time ON postgres_log_events (server_id, capture_timestamp DESC);
@@ -5280,7 +5431,92 @@ BEGIN
     END IF;
 END $$;
 
+-- ============================================================================
+-- Cold storage archival control (merged from 07_cold_storage.sql)
+-- ============================================================================
+-- Purpose: Schema for tracking export progress (watermarks) and audit logging
+--          for the cold storage archival pipeline.
+-- Author: Ravi Sharma
+-- Copyright (c) 2026 Ravi Sharma
+-- SPDX-License-Identifier: MIT
 
+CREATE SCHEMA IF NOT EXISTS coldstorage;
+
+COMMENT ON SCHEMA coldstorage IS 'Control and metadata for the cold storage archival pipeline.';
+
+-- Control table: one row per (table_name, server_id) — not a hypertable.
+CREATE TABLE IF NOT EXISTS coldstorage.watermarks (
+    table_name       TEXT        NOT NULL,
+    server_id        UUID        NOT NULL,
+    last_exported_at TIMESTAMPTZ NOT NULL,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    export_rows_last INTEGER,
+    export_bytes_last BIGINT,
+    CONSTRAINT cold_export_watermarks_pkey PRIMARY KEY (table_name, server_id)
+);
+
+COMMENT ON TABLE coldstorage.watermarks IS
+    'Tracks the high-water mark for cold storage exports per table and server. '
+    'The exporter reads from last_exported_at and writes up to the cutoff '
+    '(NOW() - lag_days). On failure the watermark is not advanced, ensuring '
+    'at-least-once delivery to cold storage.';
+
+CREATE INDEX IF NOT EXISTS idx_cold_watermarks_server
+    ON coldstorage.watermarks (server_id);
+
+CREATE INDEX IF NOT EXISTS idx_cold_watermarks_updated
+    ON coldstorage.watermarks (updated_at DESC);
+
+-- Append-only audit log of export cycles (hypertable on run_started).
+CREATE TABLE IF NOT EXISTS coldstorage.runs (
+    run_started        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    cold_export_run_id BIGSERIAL NOT NULL,
+    run_finished       TIMESTAMPTZ,
+    status             TEXT        NOT NULL DEFAULT 'running',
+    tables_ok          INTEGER,
+    tables_failed      INTEGER,
+    total_rows         BIGINT,
+    total_bytes        BIGINT,
+    error_detail       TEXT,
+    PRIMARY KEY (run_started, cold_export_run_id)
+);
+
+SELECT create_hypertable('coldstorage.runs', 'run_started',
+    chunk_time_interval => INTERVAL '7 days',
+    if_not_exists => TRUE,
+    migrate_data => FALSE);
+
+CREATE INDEX IF NOT EXISTS idx_cold_export_runs_started
+    ON coldstorage.runs (run_started DESC);
+
+CREATE INDEX IF NOT EXISTS idx_cold_export_runs_status_time
+    ON coldstorage.runs (status, run_started DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cold_export_runs_id
+    ON coldstorage.runs (cold_export_run_id, run_started);
+
+ALTER TABLE coldstorage.runs SET (
+    timescaledb.compress = true,
+    timescaledb.compress_orderby = 'run_started DESC'
+);
+
+SELECT add_compression_policy('coldstorage.runs', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_retention_policy('coldstorage.runs', INTERVAL '180 days', if_not_exists => TRUE);
+
+COMMENT ON TABLE coldstorage.runs IS
+    'Audit log of each cold storage export cycle (hypertable; 180-day retention).';
+
+CREATE OR REPLACE VIEW coldstorage.status_view AS
+SELECT
+    cew.table_name,
+    cew.server_id,
+    os.name AS server_name,
+    cew.last_exported_at,
+    NOW() - cew.last_exported_at AS age,
+    cew.updated_at               AS watermark_updated_at
+FROM coldstorage.watermarks cew
+LEFT JOIN optima_servers os ON os.id = cew.server_id
+ORDER BY age DESC NULLS FIRST;
 
 
 

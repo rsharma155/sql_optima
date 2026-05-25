@@ -272,6 +272,7 @@ window.onbShowAddForm = function() {
                             <input type="checkbox" id="onb-trust-cert" style="width:1.1rem; height:1.1rem;" /> Trust server certificate (Required for some Azure/AWS instances)
                         </label>
                     </div>
+                    <div id="onb-pg-os-collector-slot" class="onb-fld" style="grid-column:1/-1; display:none;"></div>
                 </div>
                 <style>
                     #onb-add-form .onb-fld label { display:block; font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); margin-bottom:0.4rem; }
@@ -297,13 +298,30 @@ window.onbShowAddForm = function() {
 
     const typeSel = document.getElementById('onb-type');
     const trustWrap = document.getElementById('onb-trust-wrap');
+    const pgOsSlot = document.getElementById('onb-pg-os-collector-slot');
     const syncOnbTrust = () => {
-        if (!trustWrap || !typeSel) return;
+        if (!typeSel) return;
         const isSqlServer = typeSel.value === 'sqlserver';
-        trustWrap.style.display = isSqlServer ? 'block' : 'none';
+        const isPostgres = typeSel.value === 'postgres';
+        if (trustWrap) trustWrap.style.display = isSqlServer ? 'block' : 'none';
         if (distNote) distNote.style.display = isSqlServer ? 'block' : 'none';
+        if (pgOsSlot) {
+            if (isPostgres && window.mountOsCollectorSetupPanel) {
+                pgOsSlot.style.display = 'block';
+                const name = document.getElementById('onb-name')?.value.trim() || '';
+                window.mountOsCollectorSetupPanel(pgOsSlot, {
+                    instanceName: name,
+                    statusId: 'os-collector-onb-status',
+                    compact: true
+                });
+            } else {
+                pgOsSlot.style.display = 'none';
+                pgOsSlot.innerHTML = '';
+            }
+        }
     };
     typeSel?.addEventListener('change', syncOnbTrust);
+    document.getElementById('onb-name')?.addEventListener('input', syncOnbTrust);
     syncOnbTrust();
 };
 

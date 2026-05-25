@@ -16,6 +16,7 @@ import (
 	pg_obs_api "github.com/rsharma155/sql_optima/internal/domain/postgres_observability/api"
 	pg_security_api "github.com/rsharma155/sql_optima/internal/domain/postgres_security/api"
 	ha_api "github.com/rsharma155/sql_optima/internal/domain/sqlserver_ha_replication/api"
+	sqlbackup_api "github.com/rsharma155/sql_optima/internal/domain/sqlserver_backup_recovery/api"
 )
 
 // monitoringHandlers groups HTTP handlers registered for dashboard and live APIs.
@@ -45,6 +46,9 @@ Timescale              *handlers.TimescaleHandlers
 
 	// SQL Server HA & Replication Domain Handler
 	SQLServerHA *ha_api.HAReplicationHandler
+
+	// SQL Server Backup & Recovery
+	SQLServerBackup *sqlbackup_api.SQLServerBackupHandler
 }
 
 // registerMonitoringReadRoutes attaches read-only monitoring endpoints (viewer, dba, or admin).
@@ -81,6 +85,8 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/sqlserver/performance-debt/refresh", m.TriggerPerformanceDebtScan).Methods("POST")
 	sr.HandleFunc("/sqlserver/server-vitals", m.GetServerVitals).Methods("GET")
 	sr.HandleFunc("/sqlserver/volume-stats/live", m.GetLiveVolumeStats).Methods("GET")
+	sr.HandleFunc("/sqlserver/workload/default-database", wld.GetDefaultDatabase).Methods("GET")
+	sr.HandleFunc("/sqlserver/workload/databases", wld.GetDatabases).Methods("GET")
 	sr.HandleFunc("/sqlserver/workload/summary", wld.GetSummary).Methods("GET")
 	sr.HandleFunc("/sqlserver/workload/trends", wld.GetTrends).Methods("GET")
 	sr.HandleFunc("/sqlserver/workload/top-queries", wld.GetTopOffenders).Methods("GET")
@@ -161,11 +167,15 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	// New Postgres Domain Routes
 	sr.HandleFunc("/pg/observability/dashboard", h.PgObservability.GetDashboardData).Methods("GET")
 	sr.HandleFunc("/pg/backup/dashboard", h.PgBackup.GetDashboardData).Methods("GET")
+	sr.HandleFunc("/postgres/dr-policy", h.PgBackup.GetDRPolicy).Methods("GET")
 	sr.HandleFunc("/pg/security/dashboard", h.PgSecurity.GetDashboardData).Methods("GET")
 
 	// SQL Server HA & Replication Domain Routes
 	if h.SQLServerHA != nil {
 		ha_api.RegisterHARoutes(sr, h.SQLServerHA)
+	}
+	if h.SQLServerBackup != nil {
+		sqlbackup_api.RegisterSQLServerBackupRoutes(sr, h.SQLServerBackup)
 	}
 
 	sr.HandleFunc("/postgres/backups/latest", p.BackupLatest).Methods("GET")
@@ -266,10 +276,12 @@ sr.HandleFunc("/health/score", he.Score).Methods("GET")
 
 	// SQL Server Query Analysis Dashboard
 	if qa := h.SqlServerQueryAnalysis; qa != nil {
+		sr.HandleFunc("/sqlserver/query-analysis/default-database", qa.GetDefaultDatabase).Methods("GET")
 		sr.HandleFunc("/sqlserver/query-analysis/summary", qa.GetSummary).Methods("GET")
 		sr.HandleFunc("/sqlserver/query-analysis/regressions", qa.GetRegressions).Methods("GET")
 		sr.HandleFunc("/sqlserver/query-analysis/plan-instability", qa.GetPlanInstability).Methods("GET")
 		sr.HandleFunc("/sqlserver/query-analysis/top-queries", qa.GetTopQueries).Methods("GET")
+		sr.HandleFunc("/sqlserver/query-analysis/top-queries-trends", qa.GetTopQueryTrends).Methods("GET")
 		sr.HandleFunc("/sqlserver/query-analysis/query-plans", qa.GetQueryPlans).Methods("GET")
 		sr.HandleFunc("/sqlserver/query-analysis/query-wait-stats", qa.GetQueryWaitStats).Methods("GET")
 	}
@@ -290,6 +302,7 @@ sr.HandleFunc("/health/score", he.Score).Methods("GET")
 
 	// SQL Server Intelligence Report
 	sr.HandleFunc("/sqlserver/intelligence-report/status", ir.Status).Methods("GET")
+	sr.HandleFunc("/sqlserver/intelligence-report/latest", ir.Latest).Methods("GET")
 	sr.HandleFunc("/sqlserver/intelligence-report/analyze", ir.Analyze).Methods("POST")
 	sr.HandleFunc("/sqlserver/intelligence-report/report/{run_id}", ir.GetReport).Methods("GET")
 

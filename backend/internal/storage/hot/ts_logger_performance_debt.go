@@ -9,11 +9,29 @@ package hot
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
+
+// normalizePerformanceDebtDetails ensures values satisfy the JSONB column (empty string is invalid).
+func normalizePerformanceDebtDetails(details string) string {
+	details = strings.TrimSpace(details)
+	if details == "" {
+		return "{}"
+	}
+	if json.Valid([]byte(details)) {
+		return details
+	}
+	b, err := json.Marshal(map[string]string{"message": details})
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
 
 func (tl *TimescaleLogger) LogPerformanceDebtFindings(ctx context.Context, serverID uuid.UUID, findings []PerformanceDebtFindingRow) error {
 	if len(findings) == 0 {
@@ -66,7 +84,7 @@ func (tl *TimescaleLogger) LogPerformanceDebtFindings(ctx context.Context, serve
 		batch.Queue(q,
 			now, serverID, f.DatabaseName, f.Section, f.FindingType,
 			f.Severity, f.Title, f.ObjectName, f.ObjectType, f.FindingKey,
-			f.ImpactScore, f.Details, f.Recommendation, f.FixScript,
+			f.ImpactScore, normalizePerformanceDebtDetails(f.Details), f.Recommendation, f.FixScript,
 		)
 	}
 

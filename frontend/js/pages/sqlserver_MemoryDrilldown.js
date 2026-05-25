@@ -3,19 +3,11 @@
  */
 
 window._memoryDrilldownSortPoints = function(arr) {
-    if (!Array.isArray(arr)) return [];
-    return [...arr].sort((a, b) => {
-        const ta = new Date(a.event_time || a.capture_timestamp || 0).getTime();
-        const tb = new Date(b.event_time || b.capture_timestamp || 0).getTime();
-        return ta - tb;
-    });
+    return window.sortByChartTime ? window.sortByChartTime(arr) : (Array.isArray(arr) ? [...arr] : []);
 };
 
 window._memoryDrilldownLabels = function(arr) {
-    return arr.map(r => {
-        const t = new Date(r.event_time || r.capture_timestamp || 0);
-        return t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    });
+    return (arr || []).map(r => window.fmtChartTick ? window.fmtChartTick(r) : '');
 };
 
 window.CpuDrilldownLocalToRFC3339 = function(localDt) {
@@ -30,22 +22,26 @@ window.MemoryDrilldown = async function() {
     
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">
-            <div class="page-title flex-between" style="padding: 10px 20px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); height: 65px;">
-                <div>
-                    <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;">
-                        <i class="fa-solid fa-memory text-accent"></i>
-                        SQL Server Memory Intelligence
-                        <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Memory Analyzer" title="Learn more about this dashboard"></i>
-                    </h1>
-                    <div style="display:flex; gap:12px; align-items:center; margin-top:2px;">
-                        <span style="font-size:0.7rem; color:var(--text-secondary); font-weight:600;"><i class="fa-solid fa-server" style="font-size:0.6rem;"></i> ${window.escapeHtml(inst.name)}</span>
-                        <span style="font-size:0.7rem; color:var(--text-muted);"><i class="fa-solid fa-database" style="font-size:0.6rem;"></i> Detailed Memory Pressure &amp; Buffer Pool Analytics</span>
+            <div class="page-title flex-between dash-header-stack-laptop dash-v2-page-header dashboard-page-title-compact" style="padding: 10px 20px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color);">
+                <div class="dash-v2-header-body">
+                    <div class="dash-v2-header-row-top dash-header-title-inline">
+                        <h1 class="dash-v2-h1" style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:10px;">
+                            <i class="fa-solid fa-memory text-accent"></i>
+                            SQL Server Memory Intelligence
+                            <i class="fa-solid fa-circle-info text-accent cursor-pointer" style="font-size: 0.9rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Memory Analyzer" title="Learn more about this dashboard"></i>
+                        </h1>
                     </div>
-                </div>
-                <div class="flex-between" style="align-items:center; gap:1rem;">
-                    <div id="time-picker-insertion-point"></div>
-                    <div class="text-muted" style="font-size:0.65rem; background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px;">
-                        Update: <span id="mem-last-update" class="text-accent">--:--:--</span>
+                    <div class="dash-v2-header-row-bottom">
+                        <span class="dash-v2-instance-name" style="font-size:0.7rem; color:var(--text-secondary); font-weight:600;"><i class="fa-solid fa-server" style="font-size:0.6rem;"></i> ${window.escapeHtml(inst.name)}</span>
+                        <div class="dash-v2-header-badges dash-header-meta">
+                            <span style="font-size:0.7rem; color:var(--text-muted);"><i class="fa-solid fa-database" style="font-size:0.6rem;"></i> Detailed Memory Pressure &amp; Buffer Pool Analytics</span>
+                        </div>
+                        <div class="dash-v2-header-actions dash-header-actions dashboard-page-title-actions" style="align-items:center; gap:1rem;">
+                            <div id="time-picker-insertion-point"></div>
+                            <div class="text-muted" style="font-size:0.65rem; background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px;">
+                                Update: <span id="mem-last-update" class="text-accent">--:--:--</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -148,11 +144,19 @@ window.MemoryDrilldown = async function() {
 
     if (window.initPageTimePicker) window.initPageTimePicker();
 
-    await window.loadMemoryDrilldownData(inst.name, window.appState.fromTs, window.appState.toTs);
+    const range = window.getAppTimeRangeISO
+        ? window.getAppTimeRangeISO({ sync: true, fallbackHours: 1 })
+        : { fromLocal: window.appState.fromTs, toLocal: window.appState.toTs };
+    await window.loadMemoryDrilldownData(inst.name, range.fromLocal, range.toLocal);
 };
 
 window.loadMemoryDrilldownData = async function(instanceName, fromLocal, toLocal) {
-    if (!fromLocal || !toLocal) return;
+    if (!fromLocal || !toLocal) {
+        const range = window.getAppTimeRangeISO ? window.getAppTimeRangeISO({ fallbackHours: 1 }) : null;
+        if (!range) return;
+        fromLocal = range.fromLocal;
+        toLocal = range.toLocal;
+    }
     const fromISO = new Date(fromLocal).toISOString();
     const toISO = new Date(toLocal).toISOString();
     try {
@@ -166,18 +170,40 @@ window.loadMemoryDrilldownData = async function(instanceName, fromLocal, toLocal
 };
 
 const _memDrillChartIds = ['memCorrelationChart','memPressureChart','memOsFreePctChart','memWorkspaceChart','memBufferPoolDbChart','memClerksChart'];
-window._destroyMemoryDrillCharts = function() {
+window._clearMemoryDrillNoDataOverlays = function() {
     _memDrillChartIds.forEach(id => {
         const el = document.getElementById(id);
-        if (el) {
-            const existing = Chart.getChart(el);
-            if (existing) existing.destroy();
+        if (!el) return;
+        el.style.display = '';
+        const p = el.parentElement;
+        if (p) p.querySelectorAll('.mem-nodata').forEach(n => n.remove());
+    });
+};
+
+window._destroyMemoryDrillCharts = function() {
+    _memDrillChartIds.forEach(id => {
+        if (window.destroyChartOnCanvas) window.destroyChartOnCanvas(id);
+        else {
+            const el = document.getElementById(id);
+            if (el) {
+                const existing = Chart.getChart(el);
+                if (existing) existing.destroy();
+            }
         }
     });
 };
 
+window._memoryDrillNewChart = function(canvas, config) {
+    if (!canvas) return null;
+    if (window.destroyChartOnCanvas) window.destroyChartOnCanvas(canvas);
+    return (typeof window.createOptimaChart === 'function')
+        ? window.createOptimaChart(canvas, config)
+        : new Chart(canvas, config);
+};
+
 window.renderMemoryDrilldownCharts = function(data) {
     window._destroyMemoryDrillCharts();
+    window._clearMemoryDrillNoDataOverlays();
     const mem = window._memoryDrilldownSortPoints(data.memory_metrics || []);
     const sched = window._memoryDrilldownSortPoints(data.scheduler_memory || []);
     const bpdb = window._memoryDrilldownSortPoints(data.buffer_pool_by_db || []).filter(r => !['master','model','msdb','tempdb','resource'].includes(String(r.database_name || r.database || '').toLowerCase()));
@@ -242,7 +268,7 @@ window.renderMemoryDrilldownCharts = function(data) {
     if (mem.length) {
         const ctxCorrelation = document.getElementById('memCorrelationChart')?.getContext('2d');
         if (ctxCorrelation) {
-            new Chart(ctxCorrelation, {
+            window._memoryDrillNewChart(ctxCorrelation.canvas, {
                 type: 'line', data: { labels, datasets: [
                     { label: 'PLE (s)', data: mem.map(m => Number(m.ple_seconds) || 0), borderColor: '#22c55e', yAxisID: 'y', tension: 0.3, pointRadius: 0 },
                     { label: 'Pending Grants', data: mem.map(m => Number(m.memory_grants_pending) || 0), borderColor: '#eab308', yAxisID: 'y1', tension: 0.3, pointRadius: 0 }
@@ -255,7 +281,7 @@ window.renderMemoryDrilldownCharts = function(data) {
 
         const ctxPressure = document.getElementById('memPressureChart')?.getContext('2d');
         if (ctxPressure) {
-            new Chart(ctxPressure, {
+            window._memoryDrillNewChart(ctxPressure.canvas, {
                 type: 'line', data: { labels, datasets: [{ label: 'Pressure %', data: mem.map(m => 100 - (Number(m.os_available_memory_mb)/Number(m.os_total_memory_mb)*100)), borderColor: '#3b82f6', fill: true, backgroundColor: 'rgba(59, 130, 246, 0.1)', tension: 0.3, pointRadius: 0 }] },
                 options: axisOpts('Time', '% Used')
             });
@@ -263,7 +289,7 @@ window.renderMemoryDrilldownCharts = function(data) {
 
         const ctxOsFree = document.getElementById('memOsFreePctChart')?.getContext('2d');
         if (ctxOsFree) {
-            new Chart(ctxOsFree, {
+            window._memoryDrillNewChart(ctxOsFree.canvas, {
                 type: 'line', data: { labels, datasets: [{ label: 'OS Free %', data: mem.map(m => Number(m.os_total_memory_mb) ? (Number(m.os_available_memory_mb)/Number(m.os_total_memory_mb)*100) : 0), borderColor: '#22c55e', fill: true, backgroundColor: 'rgba(34,197,94,0.1)', tension: 0.3, pointRadius: 0 }] },
                 options: axisOpts('Time', '% Free')
             });
@@ -271,7 +297,7 @@ window.renderMemoryDrilldownCharts = function(data) {
 
         const ctxWorkspace = document.getElementById('memWorkspaceChart')?.getContext('2d');
         if (ctxWorkspace) {
-            new Chart(ctxWorkspace, {
+            window._memoryDrillNewChart(ctxWorkspace.canvas, {
                 type: 'line', data: { labels, datasets: [
                     { label: 'Granted MB', data: mem.map(m => Number(m.granted_workspace_mb) || 0), borderColor: '#22c55e', pointRadius: 0 },
                     { label: 'Requested MB', data: mem.map(m => Number(m.requested_workspace_mb) || 0), borderColor: '#ef4444', pointRadius: 0 }
@@ -283,17 +309,20 @@ window.renderMemoryDrilldownCharts = function(data) {
     if (data.memory_clerks && data.memory_clerks.length) {
         // Find the most-recent snapshot timestamp and filter to it
         const latestTs = data.memory_clerks.reduce((max, c) => {
-            const t = new Date(c.capture_timestamp).getTime();
-            return t > max ? t : max;
+            const t = window.tsMs(c);
+            return t != null && t > max ? t : max;
         }, 0);
         const latestClerks = data.memory_clerks
-            .filter(c => Math.abs(new Date(c.capture_timestamp).getTime() - latestTs) < 1000)
+            .filter(c => {
+                const t = window.tsMs(c);
+                return t != null && Math.abs(t - latestTs) < 1000;
+            })
             .sort((a, b) => (Number(b.pages_mb)||0) - (Number(a.pages_mb)||0))
             .slice(0, 8);
         
         const ctxClerks = document.getElementById('memClerksChart')?.getContext('2d');
         if (ctxClerks) {
-            new Chart(ctxClerks, {
+            window._memoryDrillNewChart(ctxClerks.canvas, {
                 type: 'doughnut',
                 data: {
                     labels: latestClerks.map(c => c.clerk_name.replace('MEMORYCLERK_','')),
@@ -319,31 +348,54 @@ window.renderMemoryDrilldownCharts = function(data) {
     }
 
     if (bpdb.length) {
-        // Filter out rows without a valid database name (server-side 'undefined' or empty values)
         const validBpdb = bpdb.filter(r => {
             const n = r.database_name || r.database;
             return n && n !== 'undefined' && n !== 'null' && String(n).trim() !== '';
         });
         const topNames = [...new Set(validBpdb.map(r => r.database_name || r.database))].slice(0, 5);
+        const bpTimes = [...new Set(validBpdb.map(r => window.tsMs(r)).filter(t => t != null))].sort((a, b) => a - b);
+        const bpLabels = bpTimes.map(ms => window.fmtChartTick(ms));
         const ctxBp = document.getElementById('memBufferPoolDbChart')?.getContext('2d');
-        if (ctxBp && topNames.length > 0) {
-            new Chart(ctxBp, {
+        if (ctxBp && topNames.length > 0 && bpLabels.length > 0) {
+            window._memoryDrillNewChart(ctxBp.canvas, {
                 type: 'line',
                 data: {
-                    labels,
-                    datasets: topNames.map((n, i) => ({
-                        label: n,
-                        data: labels.map(l => validBpdb.find(r => (r.database_name || r.database) === n && window._memoryDrilldownLabels([r])[0] === l)?.buffer_mb || 0),
-                        borderColor: ['#3b82f6','#22c55e','#f59e0b','#ef4444','#a855f7'][i],
-                        pointRadius: 0,
-                        tension: 0.3
-                    }))
+                    labels: bpLabels,
+                    datasets: topNames.map((n, i) => {
+                        const byTime = new Map();
+                        validBpdb.filter(r => (r.database_name || r.database) === n).forEach(r => {
+                            const ms = window.tsMs(r);
+                            if (ms != null) byTime.set(ms, Number(r.buffer_mb) || 0);
+                        });
+                        return {
+                            label: n,
+                            data: bpTimes.map(ms => byTime.get(ms) ?? null),
+                            borderColor: ['#3b82f6','#22c55e','#f59e0b','#ef4444','#a855f7'][i],
+                            pointRadius: 0,
+                            tension: 0.3
+                        };
+                    })
                 },
                 options: axisOpts('Time', 'Buffer Pool (MB)')
             });
         } else if (ctxBp) {
             const p = ctxBp.canvas.parentElement;
             if (p) { ctxBp.canvas.style.display = 'none'; const d = document.createElement('div'); d.style.cssText = 'height:100%;display:flex;align-items:center;justify-content:center;font-size:0.72rem;color:var(--text-muted);'; d.textContent = 'No user database buffer pool data available.'; p.appendChild(d); }
+        }
+    } else {
+        const ctxBp = document.getElementById('memBufferPoolDbChart')?.getContext('2d');
+        if (ctxBp) {
+            const p = ctxBp.canvas.parentElement;
+            if (p) {
+                ctxBp.canvas.style.display = 'none';
+                if (!p.querySelector('.mem-nodata')) {
+                    const d = document.createElement('div');
+                    d.className = 'mem-nodata';
+                    d.style.cssText = 'height:100%;display:flex;align-items:center;justify-content:center;font-size:0.72rem;color:var(--text-muted);';
+                    d.textContent = 'Buffer pool by database appears after the Memory Intelligence collector runs (default ~60s).';
+                    p.appendChild(d);
+                }
+            }
         }
     }
 };
@@ -352,8 +404,8 @@ window.applyMemoryDrilldownRange = async function() { await window.refreshMemory
 window.refreshMemoryDrilldown = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
     if (!inst) return;
-    const fromEl = document.getElementById('memDrillFrom');
-    const toEl = document.getElementById('memDrillTo');
-    if (!fromEl || !toEl) return;
-    await window.loadMemoryDrilldownData(inst.name, fromEl.value, toEl.value);
+    const range = window.getAppTimeRangeISO
+        ? window.getAppTimeRangeISO({ sync: true, fallbackHours: 1 })
+        : { fromLocal: window.appState.fromTs, toLocal: window.appState.toTs };
+    await window.loadMemoryDrilldownData(inst.name, range.fromLocal, range.toLocal);
 };

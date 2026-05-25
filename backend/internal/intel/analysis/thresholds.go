@@ -109,6 +109,34 @@ func (c *DynamicThresholdCalculator) computeMemoryThresholds(t *models.DynamicTh
 	} else {
 		t.MemoryUsedPctMax = 85.0
 	}
+
+	bchrData := hist["buffer_cache_hit_ratio"]
+	if len(bchrData) > 0 {
+		// Alert when hit ratio falls below the historical p10 or 5 points under p50, floored at 90%.
+		p10 := utils.Percentile(bchrData, 10)
+		p50 := utils.Percentile(bchrData, 50)
+		t.BufferCacheHitRatioMin = math.Max(90, math.Min(99, math.Min(p10, p50-5)))
+	} else {
+		t.BufferCacheHitRatioMin = 95.0
+	}
+
+	sortWarnData := hist["sort_warnings_per_sec"]
+	if len(sortWarnData) > 0 {
+		avg := utils.Mean(sortWarnData)
+		std := utils.StdDev(sortWarnData)
+		t.SortWarningsPerSecMax = math.Max(0.5, avg+2*std)
+	} else {
+		t.SortWarningsPerSecMax = 1.0
+	}
+
+	hashWarnData := hist["hash_warnings_per_sec"]
+	if len(hashWarnData) > 0 {
+		avg := utils.Mean(hashWarnData)
+		std := utils.StdDev(hashWarnData)
+		t.HashWarningsPerSecMax = math.Max(0.5, avg+2*std)
+	} else {
+		t.HashWarningsPerSecMax = 1.0
+	}
 }
 
 func (c *DynamicThresholdCalculator) computeDiskThresholds(t *models.DynamicThresholds, config models.ServerConfig, hist map[string][]float64) {

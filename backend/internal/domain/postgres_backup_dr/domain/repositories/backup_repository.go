@@ -82,9 +82,13 @@ func (r *PostgresBackupRepository) GetKPIData(ctx context.Context, serverID uuid
 
 	var slotsRiskGB float64
 	_ = r.pool.QueryRow(ctx, `
-		SELECT COALESCE(sum(lag_mb)/1024.0, 0)
-		FROM postgres_replication_lag_detail
-		WHERE server_id = $1 AND capture_timestamp = (SELECT max(capture_timestamp) FROM postgres_replication_lag_detail WHERE server_id = $1)`, serverID).Scan(&slotsRiskGB)
+		SELECT COALESCE(sum(retained_wal_mb) / 1024.0, 0)
+		FROM (
+			SELECT DISTINCT ON (slot_name) retained_wal_mb
+			FROM postgres_replication_slot_stats
+			WHERE server_id = $1
+			ORDER BY slot_name, capture_timestamp DESC
+		) latest_slots`, serverID).Scan(&slotsRiskGB)
 
 	var isInRecovery bool
 	_ = r.pool.QueryRow(ctx, `
@@ -137,6 +141,47 @@ func (r *PostgresBackupRepository) GetKPIData(ctx context.Context, serverID uuid
 		"is_in_recovery":             isInRecovery,
 		"node_role":                  nodeRole,
 	}, nil
+}
+
+func (r *PostgresBackupRepository) GetReplicationSlots(ctx context.Context, serverID uuid.UUID) ([]map[string]interface{}, error) {
+	q := `
+		SELECT DISTINCT ON (slot_name)
+			slot_name, COALESCE(slot_type,''), active, temporary,
+			retained_wal_mb, COALESCE(restart_lsn,''), COALESCE(confirmed_flush_lsn,''),
+			xmin_txid, catalog_xmin_txid, capture_timestamp
+		FROM postgres_replication_slot_stats
+		WHERE server_id = $1
+		ORDER BY slot_name, capture_timestamp DESC`
+	rows, err := r.pool.Query(ctx, q, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var name, slotType, restartLSN, confirmedFlush string
+		var active, temporary bool
+		var retainedMB float64
+		var xmin, catalogXmin *int64
+		var captured time.Time
+		if err := rows.Scan(&name, &slotType, &active, &temporary, &retainedMB, &restartLSN, &confirmedFlush, &xmin, &catalogXmin, &captured); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"slot_name":            name,
+			"slot_type":            slotType,
+			"active":               active,
+			"temporary":            temporary,
+			"retained_wal_mb":      retainedMB,
+			"restart_lsn":          restartLSN,
+			"confirmed_flush_lsn":  confirmedFlush,
+			"xmin":                 xmin,
+			"catalog_xmin":         catalogXmin,
+			"capture_timestamp":    captured,
+		})
+	}
+	return results, nil
 }
 
 func (r *PostgresBackupRepository) GetWALTrend(ctx context.Context, serverID uuid.UUID, from, to string) ([]map[string]interface{}, error) {

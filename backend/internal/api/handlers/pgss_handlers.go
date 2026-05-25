@@ -88,7 +88,7 @@ func (h *PgssHandlers) GetTopQueries(w http.ResponseWriter, r *http.Request) {
 	qType := r.URL.Query().Get("type")
 	hideSys := r.URL.Query().Get("hide_system") == "true"
 
-	res, err := h.metricsSvc.GetPgssTopQueries(r.Context(), id, from, to, sortBy, limit, dbName, userName, appName, qType, hideSys)
+	res, err := h.metricsSvc.GetPgssTopQueries(r.Context(), id, from, to, sortBy, limit, dbName, userName, appName, qType, hideSys, pgssExcludeUsersForInstance(nil, ""))
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

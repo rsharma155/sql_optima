@@ -159,8 +159,8 @@ window.SqlServerDashboardGuideView = function () {
         {
             id: 'intel-report', route: 'sqlserver-intelligence-report',
             icon: 'fa-brain', color: '#7c3aed',
-            name: 'Intelligence Report', tagline: 'AI-driven instance health narrative and anomaly detection',
-            description: 'AI-generated natural language analysis of cross-metric correlations and behavioral anomalies. Surfaces insights that single-metric monitoring misses — patterns only visible by reading multiple dashboards simultaneously.',
+            name: 'Intelligence Report', tagline: 'Rule-based health narrative with statistical forecasting',
+            description: 'Automated analysis of cross-metric correlations using expert rules, dynamic thresholds, and time-series forecasting. Surfaces patterns that single-metric monitoring can miss — useful as a periodic executive summary before drilling into live dashboards.',
             metrics: [
                 { name: 'Overall instance risk',    h: 'Low',       w: 'Medium',        c: 'High / Critical' },
                 { name: 'Anomaly detection',        h: 'No anomalies', w: 'Behavioral deviation', c: 'Multiple correlated anomalies' },
@@ -250,7 +250,7 @@ window.SqlServerDashboardGuideView = function () {
             tips: [
                 'A Warning alert for "CPU trending upward over 3 hours" means the system is heading for a crisis — act on trends, not just threshold crossings.',
                 'Anomaly detection fires when rate-of-change or deviation from baseline is abnormal — CPU at 60% that was 20% yesterday is a Warning even though 60% is fine in isolation.',
-                'Cross-metric AI insights bridge "something is wrong" and "here\'s why" — read them as leads for which specialized dashboard to open next.',
+                'Cross-metric narrative and rule triggers bridge "something is wrong" and "here\'s why" — read them as leads for which specialized dashboard to open next.',
             ]
         },
         {

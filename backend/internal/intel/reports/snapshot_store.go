@@ -173,3 +173,56 @@ func (s *SnapshotStore) LoadHistoryTrend(ctx context.Context, serverID uuid.UUID
 	}
 	return entries, rows.Err()
 }
+
+// LatestSnapshot holds the most recent persisted intelligence report for a server.
+type LatestSnapshot struct {
+	RunID        string
+	GeneratedAt  time.Time
+	ReportHTML   string
+	OverallScore float64
+	Category     string
+	DataStatus   string
+}
+
+// LoadLatest returns the newest snapshot within maxAge, if any.
+func (s *SnapshotStore) LoadLatest(ctx context.Context, serverID uuid.UUID, maxAge time.Duration) (*LatestSnapshot, error) {
+	if s.pool == nil {
+		return nil, nil
+	}
+	if maxAge <= 0 {
+		maxAge = 24 * time.Hour
+	}
+
+	var snap LatestSnapshot
+	var reportJSON []byte
+	cutoff := time.Now().UTC().Add(-maxAge)
+	err := s.pool.QueryRow(ctx, `
+		SELECT run_id::text, capture_timestamp, COALESCE(report_html, ''),
+		       overall_risk, report_json
+		FROM intelreport.intel_snapshots
+		WHERE server_id = $1
+		  AND capture_timestamp >= $2
+		  AND report_html IS NOT NULL
+		  AND length(report_html) > 100
+		ORDER BY capture_timestamp DESC
+		LIMIT 1
+	`, serverID, cutoff).Scan(
+		&snap.RunID, &snap.GeneratedAt, &snap.ReportHTML,
+		&snap.OverallScore, &reportJSON,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(reportJSON) > 0 {
+		var report models.IntelligenceReportResponse
+		if json.Unmarshal(reportJSON, &report) == nil {
+			snap.Category = report.OverallRisk.Category
+			snap.DataStatus = report.DataStatus
+			if snap.DataStatus == "" {
+				snap.DataStatus = "Full"
+			}
+		}
+	}
+	return &snap, nil
+}

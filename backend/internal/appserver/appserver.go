@@ -259,6 +259,7 @@ func Main() {
 	go metricsSvc.StartPostgresEnterpriseCollector(ctx)
 	go metricsSvc.StartSqlServerHealthCollector(ctx)
 	go metricsSvc.StartSqlServerHAReplicationCollector(ctx)
+	go metricsSvc.StartSqlServerBackupCollector(ctx)
 	go metricsSvc.StartSqlServerDatabaseCatalogCollector(ctx)
 	go metricsSvc.StartPerfCountersCollector(ctx)
 	go metricsSvc.StartSessionCollector(ctx)
@@ -416,8 +417,9 @@ func Main() {
 
 	server := &http.Server{
 		Handler:      httpHandler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		ReadTimeout:  2 * time.Minute,
+		// Best-practices evaluation can run many detection queries sequentially (up to ~6 min).
+		WriteTimeout: 8 * time.Minute,
 		IdleTimeout:  120 * time.Second,
 	}
 
@@ -478,10 +480,7 @@ func Main() {
 }
 
 func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, msRepo *repository.SqlServerRepository, pgRepo *repository.PgRepository) {
-	if os.Getenv("ENABLE_QUERY_V2_PIPELINE") == "false" {
-		return
-	}
-
+	// Query V2 pipeline is always enabled (hash-based query deltas for SQL Server and PostgreSQL).
 	slog.Info("[collector-v2] starting lightweight query metrics pipeline")
 
 	// Repositories

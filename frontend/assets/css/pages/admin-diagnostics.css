@@ -1,0 +1,287 @@
+/* SQL Server admin diagnostics tab */
+
+.admin-diag-shell {
+    --diag-ok: var(--success, #22c55e);
+    --diag-warn: var(--warning, #f59e0b);
+    --diag-bad: var(--danger, #ef4444);
+    --diag-muted: var(--text-muted, #94a3b8);
+    --diag-surface: rgba(255, 255, 255, 0.03);
+    --diag-border: var(--border-color, rgba(148, 163, 184, 0.2));
+}
+
+.admin-diag-hero {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.25rem 1.35rem;
+    margin-bottom: 1.25rem;
+    border-radius: 14px;
+    border: 1px solid var(--diag-border);
+    background: linear-gradient(135deg, rgba(var(--accent-rgb, 59, 130, 246), 0.12) 0%, var(--diag-surface) 55%);
+}
+
+.admin-diag-hero h2 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+}
+
+.admin-diag-hero p {
+    margin: 0.4rem 0 0;
+    font-size: 0.84rem;
+    line-height: 1.5;
+    color: var(--diag-muted);
+    max-width: 36rem;
+}
+
+.admin-diag-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: flex-end;
+    padding: 1rem 1.1rem;
+    margin-bottom: 1.25rem;
+    border-radius: 12px;
+    border: 1px solid var(--diag-border);
+    background: var(--diag-surface);
+}
+
+.admin-diag-toolbar label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.78rem;
+}
+
+.admin-diag-toolbar .form-control {
+    min-height: 2.1rem;
+}
+
+.admin-diag-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.65rem;
+    margin-bottom: 1.25rem;
+}
+
+.admin-diag-kpi {
+    padding: 0.85rem 1rem;
+    border-radius: 11px;
+    border: 1px solid var(--diag-border);
+    background: var(--diag-surface);
+}
+
+.admin-diag-kpi .kpi-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--diag-muted);
+}
+
+.admin-diag-kpi .kpi-value {
+    margin-top: 0.3rem;
+    font-size: 1.05rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.admin-diag-kpi .kpi-sub {
+    margin-top: 0.2rem;
+    font-size: 0.72rem;
+    color: var(--diag-muted);
+}
+
+.admin-diag-health {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.admin-diag-health--ok {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--diag-ok);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.admin-diag-health--warn {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--diag-warn);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.admin-diag-health--bad {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--diag-bad);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.admin-diag-section {
+    margin-bottom: 1.25rem;
+    border-radius: 12px;
+    border: 1px solid var(--diag-border);
+    background: var(--diag-surface);
+    overflow: hidden;
+}
+
+.admin-diag-section__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.85rem 1.1rem;
+    border-bottom: 1px solid var(--diag-border);
+    background: rgba(0, 0, 0, 0.12);
+}
+
+.admin-diag-section__head h3 {
+    margin: 0;
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.admin-diag-section__body {
+    padding: 0.5rem 0;
+}
+
+.admin-diag-table {
+    width: 100%;
+    font-size: 0.8rem;
+    border-collapse: collapse;
+}
+
+.admin-diag-table th {
+    padding: 0.55rem 1rem;
+    text-align: left;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--diag-muted);
+    font-weight: 600;
+    border-bottom: 1px solid var(--diag-border);
+}
+
+.admin-diag-table td {
+    padding: 0.65rem 1rem;
+    vertical-align: middle;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.admin-diag-table tr:last-child td {
+    border-bottom: none;
+}
+
+.admin-diag-table tr:hover td {
+    background: rgba(var(--accent-rgb, 59, 130, 246), 0.04);
+}
+
+.admin-diag-table code {
+    font-size: 0.72rem;
+    word-break: break-all;
+}
+
+.admin-diag-cat {
+    display: inline-block;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: rgba(var(--accent-rgb, 59, 130, 246), 0.12);
+    color: var(--accent, #3b82f6);
+}
+
+.admin-diag-bar-wrap {
+    min-width: 5rem;
+    max-width: 8rem;
+}
+
+.admin-diag-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(148, 163, 184, 0.2);
+    overflow: hidden;
+}
+
+.admin-diag-bar > span {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent, #3b82f6), rgba(var(--accent-rgb, 59, 130, 246), 0.5));
+}
+
+.admin-diag-bar--empty > span {
+    width: 0 !important;
+    background: var(--diag-warn);
+}
+
+.admin-diag-bar--ok > span {
+    background: var(--diag-ok);
+}
+
+.admin-diag-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+@media (max-width: 900px) {
+    .admin-diag-split {
+        grid-template-columns: 1fr;
+    }
+}
+
+.admin-diag-hints {
+    padding: 1rem 1.1rem;
+}
+
+.admin-diag-hints ul {
+    margin: 0;
+    padding-left: 1.15rem;
+    font-size: 0.84rem;
+    line-height: 1.55;
+}
+
+.admin-diag-hints li {
+    margin-bottom: 0.4rem;
+}
+
+.admin-diag-hints li:last-child {
+    margin-bottom: 0;
+}
+
+.admin-diag-state-dl {
+    margin: 0;
+    padding: 1rem 1.1rem;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.35rem 1rem;
+    font-size: 0.82rem;
+}
+
+.admin-diag-state-dl dt {
+    color: var(--diag-muted);
+}
+
+.admin-diag-state-dl dd {
+    margin: 0;
+    font-family: ui-monospace, monospace;
+    font-size: 0.78rem;
+}
+
+.admin-diag-empty {
+    padding: 2rem;
+    text-align: center;
+    color: var(--diag-muted);
+}

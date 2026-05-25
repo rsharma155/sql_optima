@@ -141,8 +141,11 @@ window.refreshMsLocksDashboard = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
     if (!inst) return;
 
-    const from = window.appState.fromTs ? new Date(window.appState.fromTs).toISOString() : '';
-    const to = window.appState.toTs ? new Date(window.appState.toTs).toISOString() : '';
+    const range = window.getAppTimeRangeISO
+        ? window.getAppTimeRangeISO()
+        : { from: new Date(Date.now() - 3600000).toISOString(), to: new Date().toISOString() };
+    const from = range.from;
+    const to = range.to;
     const queryParams = `?instance=${encodeURIComponent(inst.name)}&from=${from}&to=${to}`;
 
     try {
@@ -234,7 +237,7 @@ function updateMsLocksTimeline(data) {
         values = data.map(d => d.blocked_sessions || 0);
         color  = '#ef4444'; label = 'Blocked Sessions';
     } else {
-        values = data.map(d => ((d.total_wait_ms || 0) / 1000).toFixed(1));
+        values = data.map(d => Number(d.total_wait_ms || 0) / 1000);
         color  = '#3b82f6'; label = 'Total Wait (s)';
     }
 
@@ -498,11 +501,11 @@ function showMsTreeDetails(node) {
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:3px;">
                 <div style="background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:3px; padding:3px 5px;">
                     <div style="font-size:0.4rem; color:var(--text-muted); text-transform:uppercase;">Login</div>
-                    <div style="font-size:0.58rem; font-weight:700; overflow:hidden; text-overflow:ellipsis;" title="${node.login_name}">${node.login_name || '—'}</div>
+                    <div style="font-size:0.58rem; font-weight:700; overflow:hidden; text-overflow:ellipsis;" title="${window.escapeHtml(node.login_name || '')}">${window.escapeHtml(node.login_name || '—')}</div>
                 </div>
                 <div style="background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:3px; padding:3px 5px;">
                     <div style="font-size:0.4rem; color:var(--text-muted); text-transform:uppercase;">Host</div>
-                    <div style="font-size:0.58rem; font-weight:700; overflow:hidden; text-overflow:ellipsis;" title="${node.host_name}">${node.host_name || '—'}</div>
+                    <div style="font-size:0.58rem; font-weight:700; overflow:hidden; text-overflow:ellipsis;" title="${window.escapeHtml(node.host_name || '')}">${window.escapeHtml(node.host_name || '—')}</div>
                 </div>
             </div>
             <div>
@@ -534,14 +537,14 @@ function updateMsDeadlockHistory(events, enabled, statusMsg) {
     if (!tbody) return;
 
     if (enabled === false) {
-        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-warning" style="font-size:0.7rem; padding:1rem;">${statusMsg}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-warning" style="font-size:0.7rem; padding:1rem;">${window.escapeHtml(statusMsg || '')}</td></tr>`;
         return;
     }
 
     tbody.innerHTML = (events || []).slice(0, 10).map(e => `
         <tr>
             <td class="text-muted" style="white-space:nowrap;">${new Date(e.capture_timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
-            <td title="${e.database_name}">${(e.database_name||'').substring(0,12)}</td>
+            <td title="${window.escapeHtml(e.database_name || '')}">${window.escapeHtml((e.database_name||'').substring(0,12))}</td>
             <td><span class="badge badge-danger">#${e.victim_session_id}</span></td>
             <td><span class="code-snippet js-view-query" data-query="${window.escapeHtml(e.victim_sql_text || e.victim_sql_hash || 'N/A')}" title="Click to view full SQL">${window.escapeHtml((e.victim_sql_text || e.victim_sql_hash || 'N/A').substring(0,24))}</span></td>
             <td class="text-center"><button class="btn btn-xs btn-outline-accent js-view-query" data-query="${window.escapeHtml(e.deadlock_graph)}" title="View XML Graph" style="font-size:0.5rem; padding:1px 4px;">XML</button></td>

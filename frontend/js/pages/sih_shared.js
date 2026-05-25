@@ -30,10 +30,13 @@ window.sihShared = (function() {
     function renderSparkline(canvasId, data, color) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
-        const existing = Chart.getChart(canvas);
-        if (existing) existing.destroy();
+        if (window.destroyChartOnCanvas) window.destroyChartOnCanvas(canvas);
+        else {
+            const existing = Chart.getChart(canvas);
+            if (existing) existing.destroy();
+        }
         if (!data || !data.length) return;
-        new Chart(canvas, {
+        const cfg = {
             type: 'line',
             data: {
                 labels: data.map((_, i) => i),
@@ -50,26 +53,34 @@ window.sihShared = (function() {
                         }
                     } 
                 },
-                scales: { x: { display: false }, y: { display: false } }
+                scales: { x: { display: false }, y: { display: false }                 }
             }
-        });
+        };
+        if (typeof window.createOptimaChart === 'function') window.createOptimaChart(canvas, cfg);
+        else new Chart(canvas, cfg);
     }
 
     function renderGrowthChart(canvasId, growth, engine) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
-        const existing = Chart.getChart(canvas);
-        if (existing) existing.destroy();
+        if (window.destroyChartOnCanvas) window.destroyChartOnCanvas(canvas);
+        else {
+            const existing = Chart.getChart(canvas);
+            if (existing) existing.destroy();
+        }
         if (!growth || !growth.length) {
-            canvas.parentElement.innerHTML = '<p class="text-center text-muted p-5" style="font-size:0.8rem;"><i class="fa-solid fa-chart-line mb-2 d-block" style="font-size:1.5rem; opacity:0.3;"></i>No growth history data available for this window.</p>';
+            if (window.setChartOverlayState) {
+                window.setChartOverlayState(canvasId, 'empty', 'No growth history data for this window');
+            }
             return;
         }
+        if (window.clearChartOverlay) window.clearChartOverlay(canvasId);
         const labels = growth.map(p => new Date(p.bucket).toLocaleDateString());
         const datasets = [
             { label: 'Table Data', data: growth.map(p => p.table_size_mb), borderColor: '#3b82f6', backgroundColor: '#3b82f622', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 5 },
             { label: 'Indexes',    data: growth.map(p => p.index_size_mb), borderColor: '#10b981', backgroundColor: '#10b98122', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 5 }
         ];
-        new Chart(canvas, {
+        const growthCfg = {
             type: 'line',
             data: { labels, datasets },
             options: {
@@ -100,18 +111,26 @@ window.sihShared = (function() {
                     }
                 }
             }
-        });
+        };
+        if (typeof window.createOptimaChart === 'function') window.createOptimaChart(canvas, growthCfg);
+        else new Chart(canvas, growthCfg);
     }
 
     function renderTopGrowthChart(canvasId, topTables, mode) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
-        const existing = Chart.getChart(canvas);
-        if (existing) existing.destroy();
+        if (window.destroyChartOnCanvas) window.destroyChartOnCanvas(canvas);
+        else {
+            const existing = Chart.getChart(canvas);
+            if (existing) existing.destroy();
+        }
         if (!topTables || !topTables.length) {
-            canvas.parentElement.innerHTML = '<p class="text-center text-muted p-5" style="font-size:0.8rem;"><i class="fa-solid fa-arrow-up-right-dots mb-2 d-block" style="font-size:1.5rem; opacity:0.3;"></i>No significant growth detected in the last 7 days.</p>';
+            if (window.setChartOverlayState) {
+                window.setChartOverlayState(canvasId, 'empty', 'No significant growth in the last 7 days');
+            }
             return;
         }
+        if (window.clearChartOverlay) window.clearChartOverlay(canvasId);
         const labels = topTables.map(t => `${t.schema_name}.${t.table_name}`);
         const data   = topTables.map(t => {
             const growth = Number(t.value) || 0;
@@ -122,7 +141,7 @@ window.sihShared = (function() {
             return growth;
         });
         const label  = mode === 'pct' ? 'Growth (%)' : 'Growth (MB)';
-        new Chart(canvas, {
+        const topGrowthCfg = {
             type: 'bar',
             data: { labels, datasets: [{ label, data, backgroundColor: '#f43f5e', borderRadius: 3 }] },
             options: {
@@ -148,21 +167,29 @@ window.sihShared = (function() {
                     }
                 }
             }
-        });
+        };
+        if (typeof window.createOptimaChart === 'function') window.createOptimaChart(canvas, topGrowthCfg);
+        else new Chart(canvas, topGrowthCfg);
     }
 
     function renderSeekScanLookupChart(canvasId, data, engine) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
-        const existing = Chart.getChart(canvas);
-        if (existing) existing.destroy();
+        if (window.destroyChartOnCanvas) window.destroyChartOnCanvas(canvas);
+        else {
+            const existing = Chart.getChart(canvas);
+            if (existing) existing.destroy();
+        }
         if (!data || !data.length) {
-            canvas.parentElement.innerHTML = '<p class="text-center text-muted p-3" style="font-size:0.8rem;">No access pattern data for selected window.</p>';
+            if (window.setChartOverlayState) {
+                window.setChartOverlayState(canvasId, 'empty', 'No access pattern data for selected window');
+            }
             return;
         }
+        if (window.clearChartOverlay) window.clearChartOverlay(canvasId);
         const labels = data.map(r => `${r.schema_name}.${r.table_name}`);
         const isPg   = engine === 'postgres';
-        new Chart(canvas, {
+        const seekCfg = {
             type: 'bar',
             data: {
                 labels,
@@ -200,7 +227,9 @@ window.sihShared = (function() {
                     }
                 }
             }
-        });
+        };
+        if (typeof window.createOptimaChart === 'function') window.createOptimaChart(canvas, seekCfg);
+        else new Chart(canvas, seekCfg);
     }
 
     function buildHealthScore(kpis) {

@@ -178,16 +178,168 @@
 .badge-info { background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2); }
 .badge-success { background: rgba(34, 197, 94, 0.15); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.2); }
 
-/* Breakpoints */
-@media (max-width: 1400px) {
-    .security-grid { grid-template-columns: repeat(8, 1fr); }
-    .col-span-1, .col-span-2, .col-span-3, .col-span-4, .col-span-5, .col-span-6, .col-span-7, .col-span-8, .col-span-9, .col-span-10, .col-span-11, .col-span-12 {
-        grid-column: span 8;
+/* Page header */
+.pg-security-page-title {
+    min-height: 64px;
+    margin-bottom: 0.75rem;
+    gap: 0.5rem;
+}
+
+.pg-security-title-actions {
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.pg-security-card-header {
+    padding: 0.4rem 0.6rem;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+
+.pg-security-card-title {
+    font-size: 0.75rem;
+    margin: 0;
+}
+
+.pg-security-card-hint {
+    font-size: 0.65rem;
+    line-height: 1.3;
+}
+
+.pg-security-chart-card {
+    min-height: 220px;
+}
+
+.pg-security-chart-wrap {
+    height: 170px;
+    position: relative;
+}
+
+.pg-security-role-chart-wrap {
+    min-height: 200px;
+}
+
+.pg-security-access-table-wrap {
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.pg-security-table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.pg-security-table-scroll .compact-security-table {
+    min-width: 520px;
+}
+
+.pg-security-origins-card .compact-security-table {
+    min-width: 280px;
+}
+
+/* Tablet */
+@media (max-width: 1023px) {
+    .pg-security-page-title {
+        flex-wrap: wrap;
+        align-items: flex-start;
+    }
+
+    .pg-security-title-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .pg-security-card-hint {
+        flex: 1 1 100%;
+    }
+
+    .pg-security-chart-card {
+        min-height: 200px;
+    }
+
+    .pg-security-chart-wrap {
+        height: 160px;
+    }
+
+    .pg-security-role-chart-card .row-height-table {
+        height: 220px;
+    }
+}
+
+/* Mobile */
+@media (max-width: 767px) {
+    .pg-security-page .security-grid {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+    }
+
+    .pg-security-page .security-grid > div {
+        grid-column: span 1 !important;
+    }
+
+    .pg-security-page-title {
+        flex-direction: column;
+        align-items: flex-start !important;
+        min-height: auto;
+        margin-bottom: 0.5rem;
+    }
+
+    .pg-security-subtitle {
+        display: none;
+    }
+
+    .pg-security-kpi-row .risk-card {
+        height: auto;
+        min-height: 72px;
+        padding: 0.65rem 0.85rem;
+    }
+
+    .pg-security-kpi-row .security-kpi-card {
+        height: auto;
+        min-height: 72px;
+    }
+
+    .pg-security-card-title {
+        font-size: 0.7rem;
+    }
+
+    .pg-security-card-hint {
+        font-size: 0.6rem;
+    }
+
+    .pg-security-access-table-wrap {
+        max-height: 240px;
+    }
+
+    .pg-security-chart-card {
+        min-height: 190px;
+    }
+
+    .pg-security-chart-wrap {
+        height: 150px;
+    }
+
+    .pg-security-role-chart-card .row-height-table,
+    .pg-security-origins-card .row-height-table {
+        height: 200px;
+    }
+
+    .pg-security-origins-card .compact-security-table {
+        min-width: 0;
+    }
+
+    .compact-security-table {
+        font-size: 0.68rem !important;
+    }
+
+    .compact-security-table th,
+    .compact-security-table td {
+        padding: 0.3rem 0.35rem !important;
     }
 }
 
 @media (max-width: 768px) {
     .security-grid { grid-template-columns: 1fr; }
     .security-grid > div { grid-column: span 1 !important; }
-    .risk-card { height: auto; padding: 1.5rem; }
+    .risk-card { height: auto; padding: 1rem 0.85rem; }
 }

@@ -26,6 +26,29 @@ import (
 )
 
 
+// dynamicOnlyRuleNames are evaluated exclusively in evaluateDynamicRules with
+// hardware- and history-tuned thresholds. YAML copies are ignored even if reintroduced.
+var dynamicOnlyRuleNames = map[string]bool{
+	"cpu_saturation":              true,
+	"scheduler_starvation":        true,
+	"ple_collapse":                true,
+	"memory_grant_pressure":       true,
+	"buffer_cache_hit_ratio_low":  true,
+	"low_disk_space":              true,
+	"rapid_disk_growth":           true,
+	"io_latency_high":             true,
+	"replication_lag":             true,
+	"ha_replication_lag":          true,
+	"ha_replication_lag_critical": true,
+	"blocking_chains":             true,
+	"tempdb_pressure":             true,
+	"query_spills":                true,
+	"backup_failure_risk":         true,
+	"storage_exhaustion":          true,
+	"database_growth_acceleration": true,
+	"cpu_burst":                   true,
+}
+
 type AnalysisEngine struct {
 	thresholdCalc     *DynamicThresholdCalculator
 	riskScorer        *risk.RiskScorer
@@ -71,12 +94,17 @@ func (e *AnalysisEngine) Analyze(rawData map[string]interface{}, serverConfig *m
 	//
 	// Dedup by rule name: if a dynamic rule with the same name already fired, the YAML rule
 	// is skipped. Dynamic rules take precedence because they use hardware-tuned thresholds.
+	// dynamicOnlyRuleNames lists rules that must NEVER be evaluated from YAML packs (fixed
+	// thresholds like PLE < 300 were removed — see packs/*.yaml headers).
 	dynamicNames := make(map[string]bool, len(triggeredRules))
 	for _, r := range triggeredRules {
 		dynamicNames[r.RuleName] = true
 	}
 	yamlRules := rule_engine.EvaluateRulesFromRaw(e.rules, rawData)
 	for _, yr := range yamlRules {
+		if dynamicOnlyRuleNames[yr.RuleName] {
+			continue
+		}
 		if !dynamicNames[yr.RuleName] {
 			triggeredRules = append(triggeredRules, yr)
 		}
@@ -189,11 +217,42 @@ func (e *AnalysisEngine) evaluateConfigChecks(raw map[string]interface{}, thresh
 
 	optimalMAXDOP := computeOptimalMAXDOP(config)
 
-	// MAXDOP check: if max_workers_count was fetched, the raw map has "max_workers_count".
-	// We don't have the current MAXDOP *setting* (that requires sys.configurations query
-	// not yet in the collector), so we infer from worker exhaustion warnings and core count.
-	// If worker thread exhaustion fired AND cores > 8, MAXDOP=0 is very likely the culprit.
-	if getBool(raw, "worker_thread_exhaustion_warning") && config.CPUCount > 8 {
+	// MAXDOP from telemetry (performance_debt Engine Config details) when available.
+	if maxdop := getFloat(raw, "max_degree_of_parallelism", "", -1); maxdop >= 0 && config.CPUCount > 8 {
+		switch {
+		case maxdop == 0:
+			triggered = append(triggered, models.RuleTriggerResult{
+				RuleName: "maxdop_misconfiguration",
+				Severity: "high",
+				Message: fmt.Sprintf(
+					"MAXDOP is 0 (unrestricted) on a %d-core server. Recommended MAXDOP: %d.",
+					config.CPUCount, optimalMAXDOP),
+				MetricValues: map[string]float64{
+					"max_degree_of_parallelism": maxdop,
+					"optimal_maxdop":            float64(optimalMAXDOP),
+				},
+				Recommendation: []string{
+					fmt.Sprintf("EXEC sp_configure 'max degree of parallelism', %d; RECONFIGURE", optimalMAXDOP),
+				},
+			})
+		case maxdop > float64(optimalMAXDOP) && maxdop > 8:
+			triggered = append(triggered, models.RuleTriggerResult{
+				RuleName: "maxdop_above_recommended",
+				Severity: "medium",
+				Message: fmt.Sprintf(
+					"MAXDOP is %.0f on a %d-core server (recommended ≤%d for this NUMA layout).",
+					maxdop, config.CPUCount, optimalMAXDOP),
+				MetricValues: map[string]float64{
+					"max_degree_of_parallelism": maxdop,
+					"optimal_maxdop":            float64(optimalMAXDOP),
+				},
+			})
+		}
+	}
+
+	// Infer MAXDOP=0 from worker exhaustion when setting is not in telemetry.
+	if getBool(raw, "worker_thread_exhaustion_warning") && config.CPUCount > 8 &&
+		getFloat(raw, "max_degree_of_parallelism", "", -1) < 0 {
 		triggered = append(triggered, models.RuleTriggerResult{
 			RuleName: "maxdop_misconfiguration",
 			Severity: "high",
@@ -476,6 +535,12 @@ func computeBaseAvailabilityRisk(raw map[string]interface{}, t *models.DynamicTh
 }
 
 func computeBaseReplicationRisk(raw map[string]interface{}, t *models.DynamicThresholds) float64 {
+	if v, ok := raw["ha_not_configured"].(bool); ok && v {
+		return 0
+	}
+	if _, ok := raw["ha_replica_states"]; !ok && !hasAnyKey(raw, "secondary_lag_seconds") {
+		return 0
+	}
 	lag := getFloat(raw, "secondary_lag_seconds", "", 0)
 	if lag == 0 {
 		return 0
@@ -665,6 +730,27 @@ func (e *AnalysisEngine) evaluateDynamicRules(raw map[string]interface{}, thresh
 		})
 	}
 
+	hit := getFloat(raw, "buffer_cache_hit_ratio", "", 0)
+	if hit > 0 && hit < thresholds.BufferCacheHitRatioMin {
+		sev := "high"
+		if hit < thresholds.BufferCacheHitRatioMin-5 {
+			sev = "critical"
+		}
+		triggered = append(triggered, models.RuleTriggerResult{
+			RuleName: "buffer_cache_hit_ratio_low",
+			Severity: sev,
+			Message:  fmt.Sprintf("Buffer cache hit ratio at %.1f%% (dynamic threshold: %.1f%%).", hit, thresholds.BufferCacheHitRatioMin),
+			MetricValues: map[string]float64{
+				"buffer_cache_hit_ratio": hit,
+				"bchr_threshold":         thresholds.BufferCacheHitRatioMin,
+			},
+			Recommendation: []string{
+				"Correlate with PLE and memory grants",
+				"Identify large scans or data loads evicting the buffer pool",
+			},
+		})
+	}
+
 	if memPct > thresholds.MemoryUsedPctMax {
 		osMem := getFloat(raw, "os_available_memory_mb", "", 0)
 		msg := fmt.Sprintf("Memory at %.1f%% (threshold: %.0f%%).", memPct, thresholds.MemoryUsedPctMax)
@@ -844,14 +930,19 @@ func (e *AnalysisEngine) evaluateDynamicRules(raw map[string]interface{}, thresh
 		})
 	}
 
-	if sortWarn > 1 || hashWarn > 1 {
+	if sortWarn > thresholds.SortWarningsPerSecMax || hashWarn > thresholds.HashWarningsPerSecMax {
 		triggered = append(triggered, models.RuleTriggerResult{
 			RuleName: "query_spills",
 			Severity: "medium",
-			Message:  fmt.Sprintf("Query spills detected: sort warnings %.1f/s, hash warnings %.1f/s. Queries spilling to tempdb impact performance.", sortWarn, hashWarn),
+			Message: fmt.Sprintf(
+				"Query spills detected: sort warnings %.1f/s (threshold %.1f/s), hash warnings %.1f/s (threshold %.1f/s).",
+				sortWarn, thresholds.SortWarningsPerSecMax, hashWarn, thresholds.HashWarningsPerSecMax,
+			),
 			MetricValues: map[string]float64{
-				"sort_warnings_per_sec": sortWarn,
-				"hash_warnings_per_sec": hashWarn,
+				"sort_warnings_per_sec":      sortWarn,
+				"hash_warnings_per_sec":      hashWarn,
+				"sort_warnings_threshold":    thresholds.SortWarningsPerSecMax,
+				"hash_warnings_threshold":    thresholds.HashWarningsPerSecMax,
 			},
 		})
 	}
@@ -896,6 +987,7 @@ func (e *AnalysisEngine) generateForecasts(raw map[string]interface{}, histories
 				PredictedTimestamps:  timestamps,
 				Confidence:           fc.Confidence,
 				PredictedFailureDays: fc.PredictedFailureDays,
+				ReliabilityTier:      fc.ReliabilityTier,
 			})
 		}
 	}
@@ -906,20 +998,40 @@ func (e *AnalysisEngine) generateForecasts(raw map[string]interface{}, histories
 func (e *AnalysisEngine) buildFailureForecast(forecasts []models.ForecastResult) []models.FailurePrediction {
 	var failures []models.FailurePrediction
 	for _, f := range forecasts {
-		if f.PredictedFailureDays != nil {
-			conf := "Low"
+		if f.PredictedFailureDays == nil {
+			continue
+		}
+		// Do not surface failure windows from statistically unreliable linear fits.
+		if f.ReliabilityTier == "Unreliable" {
+			continue
+		}
+		conf := "Low"
+		switch f.ReliabilityTier {
+		case "Reliable":
+			if f.Confidence > 0.8 {
+				conf = "High"
+			} else {
+				conf = "Medium"
+			}
+		case "Indicative":
+			conf = "Medium"
+		default:
 			if f.Confidence > 0.8 {
 				conf = "High"
 			} else if f.Confidence > 0.5 {
 				conf = "Medium"
 			}
-			failures = append(failures, models.FailurePrediction{
-				Component:              f.MetricName,
-				PredictedFailureWindow: fmt.Sprintf("%d days", *f.PredictedFailureDays),
-				Confidence:             conf,
-				RiskType:               "capacity",
-			})
 		}
+		window := fmt.Sprintf("%d days", *f.PredictedFailureDays)
+		if f.ReliabilityTier == "Indicative" {
+			window += " (indicative)"
+		}
+		failures = append(failures, models.FailurePrediction{
+			Component:              f.MetricName,
+			PredictedFailureWindow: window,
+			Confidence:             conf,
+			RiskType:               "capacity",
+		})
 	}
 	return failures
 }
@@ -946,10 +1058,12 @@ func (e *AnalysisEngine) buildWorkingWell(raw map[string]interface{}, thresholds
 		working = append(working, fmt.Sprintf("Buffer cache hit ratio at %.1f%% indicates efficient memory utilization", hit))
 	}
 
-	// Only report "stable replication" when we actually have replication data.
-	if !triggeredNames["replication_lag"] && hasAnyKey(raw, "secondary_lag_seconds") {
-		lag := getFloat(raw, "secondary_lag_seconds", "", 0)
-		working = append(working, fmt.Sprintf("Replication stable with %.0fs lag (threshold: %.0fs)", lag, thresholds.ReplicationLagMaxSeconds))
+	// Only report replication health when Always On / mirroring telemetry is present.
+	if haNA, _ := raw["ha_not_configured"].(bool); !triggeredNames["replication_lag"] && !haNA {
+		if haConfigured, _ := raw["ha_configured"].(bool); haConfigured || hasAnyKey(raw, "ha_replica_states") {
+			lag := getFloat(raw, "secondary_lag_seconds", "", 0)
+			working = append(working, fmt.Sprintf("Replication stable with %.0fs lag (threshold: %.0fs)", lag, thresholds.ReplicationLagMaxSeconds))
+		}
 	}
 
 	freeMB := getFloat(raw, "free_disk_mb", "free_mb", 0)

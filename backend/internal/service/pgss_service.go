@@ -193,11 +193,11 @@ func (s *MetricsService) GetPgssWorkloadTrend(ctx context.Context, serverID uuid
 	return s.tsLogger.GetPgssWorkloadTimeSeries(ctx, serverID, from, to)
 }
 
-func (s *MetricsService) GetPgssTopQueries(ctx context.Context, serverID uuid.UUID, from, to time.Time, sortBy string, limit int, db, user, app, qType string, hideSys bool) ([]hot.PgssTopQuery, error) {
+func (s *MetricsService) GetPgssTopQueries(ctx context.Context, serverID uuid.UUID, from, to time.Time, sortBy string, limit int, db, user, app, qType string, hideSys bool, excludeUsers []string) ([]hot.PgssTopQuery, error) {
 	if s.tsLogger == nil {
 		return nil, nil
 	}
-	return s.tsLogger.GetPgssTopQueries(ctx, serverID, from, to, sortBy, limit, db, user, app, qType, hideSys)
+	return s.tsLogger.GetPgssTopQueries(ctx, serverID, from, to, sortBy, limit, db, user, app, qType, hideSys, excludeUsers)
 }
 
 func (s *MetricsService) GetPgssLatencyTrend(ctx context.Context, serverID uuid.UUID, from, to time.Time) ([]hot.PgssLatencyPoint, error) {

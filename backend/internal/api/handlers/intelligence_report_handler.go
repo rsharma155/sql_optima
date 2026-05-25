@@ -65,6 +65,32 @@ func (h *IntelligenceReportHandlers) Status(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(map[string]bool{"active": active})
 }
 
+// Latest returns metadata for the most recent persisted intelligence snapshot (24h window).
+func (h *IntelligenceReportHandlers) Latest(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "intelligence report engine is not available"})
+		return
+	}
+	serverID, ok := ParseServerID(r, h.cfg)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "server_id or instance name required"})
+		return
+	}
+
+	meta, err := h.svc.GetLatestMeta(r.Context(), serverID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(meta)
+}
+
 // GetReport fetches the generated report (HTML, JSON, PDF).
 func (h *IntelligenceReportHandlers) GetReport(w http.ResponseWriter, r *http.Request) {
 	if h.svc == nil {
@@ -81,7 +107,7 @@ func (h *IntelligenceReportHandlers) GetReport(w http.ResponseWriter, r *http.Re
 	}
 	instanceName := r.URL.Query().Get("instance_name")
 
-	content, err := h.svc.GetReport(r.Context(), runID, format, instanceName)
+	content, err := h.svc.GetReport(r.Context(), runID, format, instanceName, r.URL.Query())
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

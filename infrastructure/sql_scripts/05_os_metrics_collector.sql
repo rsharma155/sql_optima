@@ -14,12 +14,20 @@ CREATE SCHEMA IF NOT EXISTS monitor;
 CREATE TABLE IF NOT EXISTS monitor.pg_os_host_instance (
     host_id        UUID PRIMARY KEY,
     hostname       TEXT NOT NULL UNIQUE,
+    server_id      UUID,
     ip_address     INET,
     environment    TEXT,
     cpu_cores      INT,
     total_memory_bytes BIGINT,
     created_at     TIMESTAMPTZ DEFAULT now()
 );
+
+ALTER TABLE monitor.pg_os_host_instance
+    ADD COLUMN IF NOT EXISTS server_id UUID;
+
+CREATE INDEX IF NOT EXISTS idx_pg_os_host_server_id
+    ON monitor.pg_os_host_instance (server_id)
+    WHERE server_id IS NOT NULL;
 
 -- 2. OS memory snapshot hypertable
 CREATE TABLE IF NOT EXISTS monitor.pg_os_memory_samples (

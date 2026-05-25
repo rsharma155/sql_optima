@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rsharma155/sql_optima/internal/collectors/infrastructure/sqlserver"
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
@@ -128,6 +129,13 @@ func (s *MetricsService) collectPerfCountersForInstance(
 	}
 
 	rows, err := collector.Fetch(ctx, db)
+	if err != nil && repository.IsMSSQLConnError(err) {
+		if s.MsRepo.ReconnectInstance(ctx, instanceName) {
+			if db2, ok2 := s.MsRepo.GetConn(instanceName); ok2 {
+				rows, err = collector.Fetch(ctx, db2)
+			}
+		}
+	}
 	if err != nil {
 		slog.Error("[PerfCounters] fetch failed", "instance", instanceName, "err", err)
 		return

@@ -61,7 +61,7 @@ type PostgresControlCenterRow struct {
 
 func pgControlCenterHash(r PostgresControlCenterRow) uint64 {
 	h := xxhash.New()
-	fmt.Fprintf(h, "%v|%f|%f|%f|%f|%f|%d|%f|%f|%d|%d|%d|%d|%d|%f|%d|%s|%d|%d|%d|%d|%f|%f|%f",
+	_, _ = fmt.Fprintf(h, "%v|%f|%f|%f|%f|%f|%d|%f|%f|%d|%d|%d|%d|%d|%f|%d|%s|%d|%d|%d|%d|%f|%f|%f",
 		r.ServerID, r.WALMBPerMin, r.WALSizeMB, r.ReplicaLagMB, r.ReplicaLagSec,
 		r.CheckpointReqRatio, r.XIDAge, r.XIDWraparoundPct,
 		r.TPS, r.ActiveSessions, r.WaitingSessions, r.SlowQueriesCount,

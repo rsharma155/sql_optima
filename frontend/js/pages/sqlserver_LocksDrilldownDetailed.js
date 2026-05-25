@@ -183,7 +183,7 @@ function render() {
 
     const totalWaitMs = victims.reduce((s, d) => s + (d.wait_duration_ms || 0), 0);
     const maxWaitMs   = victims.length ? Math.max(...victims.map(d => d.wait_duration_ms || 0)) : 0;
-    const refTs       = victim ? new Date(victim.ts) : new Date();
+    const refTs       = victim ? (window.parseChartTimestampOrNow ? window.parseChartTimestampOrNow(victim) : new Date()) : new Date();
 
     let txnAgeSec = 0;
     if (root?.transaction_start_time) {
@@ -226,7 +226,7 @@ function render() {
     setText('ddMemory',       (root.memory_usage || 0).toLocaleString() + ' pages');
     setText('ddReads',        (root.reads        || 0).toLocaleString());
     setText('ddWrites',       (root.writes       || 0).toLocaleString());
-    setText('ddLastRequest',  root.ts ? new Date(root.ts).toLocaleTimeString() : '--');
+    setText('ddLastRequest',  window.fmtChartTick ? window.fmtChartTick(root) || '--' : '--');
     setText('ddOpenTran',     root.open_transaction_count ?? 0);
     setText('ddIso',          root.transaction_isolation_level || 'N/A');
     setText('ddWaitType',     root.wait_type || 'N/A');
@@ -405,9 +405,9 @@ function renderWaitAccumulationChart(occurrences) {
     const canvas = document.getElementById('ddWaitAccumulationChart');
     if (!canvas || !occurrences.length) return;
 
-    const sorted = [...occurrences].sort((a,b) => new Date(a.ts)-new Date(b.ts));
+    const sorted = window.sortByChartTime ? window.sortByChartTime(occurrences) : [...occurrences];
     let sum = 0;
-    const labels = sorted.map(d => new Date(d.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }));
+    const labels = sorted.map(d => window.fmtChartTick(d, { hour: '2-digit', minute: '2-digit' }));
     const values = sorted.map(d => { sum += (d.wait_duration_ms||0)/1000; return parseFloat(sum.toFixed(2)); });
 
     msDrilldownState.charts.accumulation = new Chart(canvas.getContext('2d'), {
@@ -432,11 +432,11 @@ function renderRecurrenceChart() {
     const data   = msDrilldownState.recurrenceData || [];
     if (!canvas || !data.length) return;
 
-    const sorted = [...data].sort((a,b) => new Date(a.ts)-new Date(b.ts));
+    const sorted = window.sortByChartTime ? window.sortByChartTime(data) : [...data];
     msDrilldownState.charts.recurrence = new Chart(canvas.getContext('2d'), {
         type: 'bar',
         data: {
-            labels: sorted.map(d => new Date(d.ts).toLocaleDateString([], { month:'short', day:'numeric' })),
+            labels: sorted.map(d => window.fmtChartTick(d, { dateStyle: 'short' })),
             datasets: [{ data: sorted.map(d => d.incident_count||0), backgroundColor: '#10b981', borderRadius: 2, barPercentage: 0.6 }]
         },
         options: {

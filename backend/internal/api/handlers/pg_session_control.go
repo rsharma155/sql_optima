@@ -8,10 +8,12 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
-	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 type sessionControlRequest struct {
@@ -72,4 +74,88 @@ func (h *PostgresHandlers) runSessionControl(w http.ResponseWriter, r *http.Requ
 
 	slog.Info(fmt.Sprintf("[SessionControl] %s pid=%d instance=%s result=%v", action, req.PID, req.Instance, result))
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, action + "d": result})
+}
+
+// KillSession terminates a backend by PID (query params: instance, pid).
+// Used by the sessions dashboard; returns {success: true} for UI compatibility.
+func (h *PostgresHandlers) KillSession(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
+	pidStr := strings.TrimSpace(r.URL.Query().Get("pid"))
+	if instance == "" || pidStr == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "instance and pid are required"})
+		return
+	}
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil || pid <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid pid"})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "postgres instance not found"})
+		return
+	}
+
+	db, ok := h.metricsSvc.PgRepo.GetConn(instance)
+	if !ok || db == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "no active connection to instance"})
+		return
+	}
+
+	var terminated bool
+	if err := db.QueryRowContext(r.Context(), "SELECT pg_terminate_backend($1)", pid).Scan(&terminated); err != nil {
+		slog.Error("[SessionControl] kill-session failed", "instance", instance, "pid", pid, "err", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error": "pg_signal_backend may not be granted; GRANT pg_signal_backend TO <monitoring_user>",
+		})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "terminated": terminated})
+}
+
+// ResetQueries clears pg_stat_statements counters on the monitored instance.
+func (h *PostgresHandlers) ResetQueries(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
+	if instance == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "instance is required"})
+		return
+	}
+	if err := validateInstanceName(instance); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) || !instanceTypeFromDB(r.Context(), h.cfg, h.metricsSvc, instance, "postgres") {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "postgres instance not found"})
+		return
+	}
+	if h.metricsSvc == nil || h.metricsSvc.PgRepo == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "postgres repository unavailable"})
+		return
+	}
+
+	if err := h.metricsSvc.PgRepo.ResetQueryStats(r.Context(), instance); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }

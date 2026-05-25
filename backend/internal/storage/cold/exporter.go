@@ -354,7 +354,7 @@ func WriteTypedParquet[T any](path string, rows []T) (int, error) {
 	writer := parquet.NewGenericWriter[T](f, parquet.Compression(&parquet.Snappy))
 	n, err := writer.Write(rows)
 	if err != nil {
-		writer.Close()
+		_ = writer.Close()
 		return 0, err
 	}
 	if err := writer.Close(); err != nil {

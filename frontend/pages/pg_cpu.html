@@ -1,7 +1,7 @@
 <!--
  * SQL Optima — PostgreSQL CPU utilization template
 -->
-<div class="page-view active dashboard-sky-theme">
+<div class="page-view active dashboard-sky-theme pg-cpu-page">
     <!-- ROW 0: HEADER -->
     <div class="page-title flex-between dashboard-page-title-compact">
         <div class="dashboard-title-line">
@@ -19,14 +19,13 @@
         <i class="fa-solid fa-circle-info"></i> <span id="pgss-status-msg"></span>
     </div>
 
-    <!-- OS COLLECTOR NOTICE -->
-    <div class="pg-cpu-os-notice">
+    <!-- OS collector setup (dynamic; replaces static notice when agent not configured) -->
+    <div id="os-collector-setup-mount-cpu" style="display:none; margin-bottom:0.75rem;"></div>
+    <div class="pg-cpu-os-notice" id="pg-cpu-os-notice-fallback">
         <i class="fa-solid fa-circle-info"></i>
         <span>
             <strong>System CPU metrics not available</strong> — the OS Collector agent is not deployed on this host.
-            This dashboard shows <strong>PostgreSQL query execution metrics</strong> as a CPU load proxy:
-            execution time, query throughput, and buffer cache efficiency.
-            Host-level CPU%, memory, and process metrics will appear here automatically once the OS agent is configured.
+            This dashboard shows <strong>PostgreSQL query execution metrics</strong> as a CPU load proxy.
         </span>
     </div>
 
@@ -62,9 +61,10 @@
         </div>
     </div>
 
+    <div class="pg-cpu-charts-laptop">
     <!-- ROW 2: PG EXECUTION LOAD + DB SHARE -->
     <div class="grid-container mt-3">
-        <div class="col-8 col-laptop-8 col-tablet-12">
+        <div class="col-8 col-laptop-8 col-tablet-12 pg-cpu-exec-col">
             <div class="card glass-panel h-chart-md">
                 <div class="card-header flex-between">
                     <div>
@@ -78,7 +78,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-4 col-laptop-4 col-tablet-12">
+        <div class="col-4 col-laptop-4 col-tablet-6 pg-cpu-db-share-col">
             <div class="card glass-panel h-chart-md">
                 <div class="card-header"><h3 style="font-size:0.8rem; margin:0;">Database Load Share <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="CPU Health" data-metric="Database Share"></i></h3></div>
                 <div class="chart-container" style="height: 220px;">
@@ -90,7 +90,7 @@
 
     <!-- ROW 3: QUERY TYPE + CACHE HIT TREND -->
     <div class="grid-container mt-3">
-        <div class="col-4 col-laptop-4 col-tablet-12">
+        <div class="col-4 col-laptop-4 col-tablet-6 pg-cpu-query-type-col">
             <div class="card glass-panel h-chart-md">
                 <div class="card-header">
                     <h3 style="font-size:0.8rem; margin:0;">Query Type Breakdown <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="CPU Health" data-metric="Query Type"></i></h3>
@@ -101,7 +101,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-8 col-laptop-8 col-tablet-12">
+        <div class="col-8 col-laptop-8 col-tablet-12 pg-cpu-cache-col">
             <div class="card glass-panel h-chart-md">
                 <div class="card-header flex-between">
                     <div>
@@ -115,6 +115,7 @@
                 </div>
             </div>
         </div>
+    </div>
     </div>
 
     <!-- ROW 4: TOP USER QUERIES -->

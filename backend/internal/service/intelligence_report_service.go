@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ type IntelligenceReportService struct {
 	analysisEngine *intelanalysis.AnalysisEngine
 	snapshotStore  *reports.SnapshotStore
 	reportGen      *reports.ReportGenerator
+	cache          *intelReportCache
 }
 
 // DBPool is an interface that matches the parts of *pgxpool.Pool we use.
@@ -56,6 +58,7 @@ func NewIntelligenceReportService(pool DBPool) *IntelligenceReportService {
 		analysisEngine: intelanalysis.NewAnalysisEngine(),
 		snapshotStore:  reports.NewSnapshotStore(pool),
 		reportGen:      reports.NewReportGenerator(templateDir),
+		cache:          newIntelReportCache(),
 	}
 }
 
@@ -172,16 +175,19 @@ func (s *IntelligenceReportService) GetRawDataSnapshot(ctx context.Context, serv
 
 	// 7. HA Replica State (Replication) — reads from canonical monitor schema
 	var secondaryLagSec, logSendQueueKB, redoQueueKB float64
+	var longRunningTxCount int
 	err = s.pool.QueryRow(ctx, `
-		SELECT MAX(secondary_lag_seconds), MAX(log_send_queue_kb), MAX(redo_queue_kb)
+		SELECT MAX(secondary_lag_seconds), MAX(log_send_queue_kb), MAX(redo_queue_kb),
+		       COALESCE(MAX(long_running_tx_count), 0)
 		FROM monitor.sqlserver_ha_replica_state
 		WHERE server_id = $1
 		  AND capture_timestamp >= now() - INTERVAL '5 minutes'
-	`, serverID).Scan(&secondaryLagSec, &logSendQueueKB, &redoQueueKB)
+	`, serverID).Scan(&secondaryLagSec, &logSendQueueKB, &redoQueueKB, &longRunningTxCount)
 	if err == nil {
 		raw["secondary_lag_seconds"] = secondaryLagSec
 		raw["log_send_queue_kb"] = logSendQueueKB
 		raw["redo_queue_kb"] = redoQueueKB
+		raw["long_running_tx_count"] = float64(longRunningTxCount)
 	}
 
 	// 8. sqlserver_database_throughput (IO Latency)
@@ -224,16 +230,20 @@ func (s *IntelligenceReportService) GetRawDataSnapshot(ctx context.Context, serv
 	// were fetched, leaving MaxWorkers=1024, NumaNodes=2, etc. at wrong defaults.
 	var cpuCount, totalRAMGB, hyperthreadRatio, socketCount, coresPerSocket, numaNodes, maxWorkersCount int
 	var hyperthreadEnabled bool
+	var virtualMemoryGB float64
+	var cpuType string
 	err = s.pool.QueryRow(ctx, `
 		SELECT cpu_count, physical_memory_gb,
 		       hyperthread_ratio, socket_count, cores_per_socket,
-		       numa_nodes, max_workers_count, hyperthread_enabled
+		       numa_nodes, max_workers_count, hyperthread_enabled,
+		       COALESCE(virtual_memory_gb, 0), COALESCE(cpu_type, '')
 		FROM sqlserver_server_properties
 		WHERE server_id = $1 ORDER BY capture_timestamp DESC LIMIT 1
 	`, serverID).Scan(
 		&cpuCount, &totalRAMGB,
 		&hyperthreadRatio, &socketCount, &coresPerSocket,
 		&numaNodes, &maxWorkersCount, &hyperthreadEnabled,
+		&virtualMemoryGB, &cpuType,
 	)
 	if err == nil {
 		raw["cpu_count"] = float64(cpuCount)
@@ -253,7 +263,13 @@ func (s *IntelligenceReportService) GetRawDataSnapshot(ctx context.Context, serv
 		if maxWorkersCount > 0 {
 			raw["max_workers_count"] = float64(maxWorkersCount)
 		}
-		raw["is_virtual"] = !hyperthreadEnabled // hyperthread_enabled=false is a common indicator of physical bare metal
+		if virtualMemoryGB > 0 {
+			raw["virtual_memory_gb"] = virtualMemoryGB
+		}
+		if cpuType != "" {
+			raw["cpu_type"] = cpuType
+		}
+		raw["is_virtual"] = inferIsVirtualHost(cpuType, virtualMemoryGB, float64(totalRAMGB), hyperthreadEnabled)
 	}
 
 	// 12b. Wait category breakdown from latest sqlserver_wait_history snapshot.
@@ -279,37 +295,8 @@ func (s *IntelligenceReportService) GetRawDataSnapshot(ctx context.Context, serv
 		raw["wait_other_ms_per_sec"]       = waitOther
 	}
 
-	// 12c. First-breach timestamps for the incident timeline.
-	// Uses a single conditional-aggregation query to find when each key metric
-	// first crossed its threshold within the last 24 hours — giving the timeline
-	// real timestamps instead of synthetic T-N*15min values.
-	var firstBlocking, firstPLE, firstTempDB, firstCPU *time.Time
-	breachErr := s.pool.QueryRow(ctx, `
-		SELECT
-			MIN(capture_timestamp) FILTER (WHERE blocking_sessions > 5)       AS first_blocking,
-			MIN(capture_timestamp) FILTER (WHERE ple < 300)                   AS first_ple_collapse,
-			MIN(capture_timestamp) FILTER (WHERE tempdb_used_percent > 80)    AS first_tempdb_pressure,
-			MIN(capture_timestamp) FILTER (WHERE batch_requests_per_sec > 5000) AS first_high_load
-		FROM sqlserver_risk_health
-		WHERE server_id = $1
-		  AND capture_timestamp >= NOW() - INTERVAL '24 hours'
-	`, serverID).Scan(&firstBlocking, &firstPLE, &firstTempDB, &firstCPU)
-	if breachErr == nil {
-		breachTimestamps := map[string]interface{}{}
-		if firstBlocking != nil {
-			breachTimestamps["blocking_chains"] = firstBlocking.Format(time.RFC3339)
-		}
-		if firstPLE != nil {
-			breachTimestamps["ple_collapse"] = firstPLE.Format(time.RFC3339)
-		}
-		if firstTempDB != nil {
-			breachTimestamps["tempdb_pressure"] = firstTempDB.Format(time.RFC3339)
-		}
-		if firstCPU != nil {
-			breachTimestamps["cpu_saturation"] = firstCPU.Format(time.RFC3339)
-		}
-		raw["first_breach_timestamps"] = breachTimestamps
-	}
+	// 12c. First-breach timestamps are applied via applyDynamicBreachTimestamps after
+	// dynamic thresholds are computed (Analyze / GetReport) so the timeline matches the engine.
 
 	// 13. Fetch historical series (for forecasting & trend charts)
 	raw["avg_cpu_load_series"], _ = s.querySeries(ctx, serverID, "sqlserver_metrics", "avg_cpu_load", 60)
@@ -476,7 +463,11 @@ func (s *IntelligenceReportService) GetRawDataSnapshot(ctx context.Context, serv
 		}
 		if len(replicas) > 0 {
 			raw["ha_replica_states"] = replicas
+			raw["ha_configured"] = true
 		}
+	}
+	if _, ok := raw["ha_configured"].(bool); !ok {
+		raw["ha_not_configured"] = true
 	}
 
 	// 16. RPO lag trend — 24h from monitor.sqlserver_rpo_1min cagg.
@@ -933,6 +924,32 @@ func (s *IntelligenceReportService) enrichWithV2Analysis(ctx context.Context, se
 		}
 		result.RiskTrend = riskTrend
 	}
+
+	// P1: Query Store workload, performance debt detail, index health, configuration snapshot.
+	if qw, err := s.loadQueryWorkloadSummary(ctx, serverID); err == nil {
+		result.QueryWorkload = qw
+		attachQueryWorkloadRules(result, qw)
+	}
+	if debt, err := s.loadPerformanceDebtFindings(ctx, serverID, 15); err == nil && len(debt) > 0 {
+		result.PerformanceDebtItems = debt
+		mergePerformanceDebtIntoIssues(result, debt)
+	}
+	if idx, err := s.loadIndexHealthTopN(ctx, serverID, 10); err == nil && len(idx) > 0 {
+		result.IndexHealth = idx
+	}
+	if cfgSnap, _ := s.loadServerConfigurationSnapshot(ctx, serverID); cfgSnap != nil {
+		result.ServerConfiguration = cfgSnap
+	}
+}
+
+// finalizeReportPresentation applies post-analysis enrichments that depend on v2 modules.
+func (s *IntelligenceReportService) finalizeReportPresentation(raw map[string]interface{}, result *models.IntelligenceReportResponse) {
+	if result.QueryWorkload != nil {
+		raw["query_regressions_24h"] = float64(result.QueryWorkload.Regressions24h)
+		raw["plan_instability_queries"] = float64(result.QueryWorkload.PlanInstabilityQueries)
+	}
+	result.NarrativeSummary = intelanalysis.AppendWaitAndMetricContext(
+		result.NarrativeSummary, raw, result.TopWaitTypes)
 }
 
 // snapshotRiskCategory maps an overall risk score to its category label.
@@ -949,17 +966,57 @@ func snapshotRiskCategory(score float64) string {
 	}
 }
 
-// Analyze triggers the health analysis using the internal engine.
-func (s *IntelligenceReportService) Analyze(ctx context.Context, serverID uuid.UUID) (*models.IntelligenceReportResponse, error) {
+// IntelligenceReportLatestMeta describes the newest persisted snapshot for auto-run UX.
+type IntelligenceReportLatestMeta struct {
+	HasSnapshot  bool    `json:"has_snapshot"`
+	GeneratedAt  string  `json:"generated_at,omitempty"`
+	OverallScore float64 `json:"overall_score,omitempty"`
+	Category     string  `json:"category,omitempty"`
+	DataStatus   string  `json:"data_status,omitempty"`
+	AgeHours     float64 `json:"age_hours,omitempty"`
+}
+
+// GetLatestMeta returns metadata for the newest snapshot within 24h, if any.
+func (s *IntelligenceReportService) GetLatestMeta(ctx context.Context, serverID uuid.UUID) (*IntelligenceReportLatestMeta, error) {
+	meta := &IntelligenceReportLatestMeta{}
+	snap, err := s.snapshotStore.LoadLatest(ctx, serverID, 24*time.Hour)
+	if err != nil || snap == nil || snap.ReportHTML == "" {
+		return meta, nil
+	}
+	meta.HasSnapshot = true
+	meta.GeneratedAt = snap.GeneratedAt.UTC().Format(time.RFC3339)
+	meta.OverallScore = snap.OverallScore
+	meta.Category = snap.Category
+	meta.DataStatus = snap.DataStatus
+	meta.AgeHours = time.Since(snap.GeneratedAt).Hours()
+	return meta, nil
+}
+
+func (s *IntelligenceReportService) runFullAnalysis(ctx context.Context, serverID uuid.UUID, runID string) (*models.IntelligenceReportResponse, map[string]interface{}, error) {
 	rawData, err := s.GetRawDataSnapshot(ctx, serverID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to gather raw data: %w", err)
+		return nil, nil, fmt.Errorf("failed to gather raw data: %w", err)
+	}
+	if _, cfgRaw := s.loadServerConfigurationSnapshot(ctx, serverID); len(cfgRaw) > 0 {
+		for k, v := range cfgRaw {
+			rawData[k] = v
+		}
 	}
 
-	// Perform analysis
-	result := s.analysisEngine.Analyze(rawData, nil, "")
+	result := s.analysisEngine.Analyze(rawData, nil, runID)
+	s.applyDataStatus(result, rawData)
+	if runID == "" {
+		result.RunID = serverID.String()
+	}
 
-	// Set DataStatus based on telemetry coverage
+	s.applyDynamicBreachTimestamps(ctx, serverID, rawData)
+	s.enrichWithV2Analysis(ctx, serverID, result)
+	s.finalizeReportPresentation(rawData, result)
+
+	return result, rawData, nil
+}
+
+func (s *IntelligenceReportService) applyDataStatus(result *models.IntelligenceReportResponse, rawData map[string]interface{}) {
 	populated := countPopulated(rawData)
 	switch {
 	case populated >= 15:
@@ -971,69 +1028,101 @@ func (s *IntelligenceReportService) Analyze(ctx context.Context, serverID uuid.U
 		result.DataStatus = "Insufficient"
 		result.DataNote = "Insufficient telemetry data. Run the collector for at least 10 minutes first."
 	}
+}
 
-	// Overwrite RunID with serverID to allow stateless report retrieval
-	result.RunID = serverID.String()
+func (s *IntelligenceReportService) buildReportHTML(result *models.IntelligenceReportResponse, rawData map[string]interface{}, instanceName string) (string, error) {
+	thresholds := intelanalysis.NewDynamicThresholdCalculator().Compute(
+		intelanalysis.DefaultServerConfig(rawData),
+		intelanalysis.ExtractHistoriesFromRaw(rawData),
+	)
+	serverCfg := intelanalysis.DefaultServerConfig(rawData)
+	return s.reportGen.GenerateHTML(result, "executive", rawData, thresholds.ToMap(), structToMap(serverCfg), instanceName)
+}
 
-	// Enrich with v2 analysis modules (non-fatal)
-	s.enrichWithV2Analysis(ctx, serverID, result)
+// Analyze triggers the health analysis using the internal engine and caches HTML for GetReport.
+func (s *IntelligenceReportService) Analyze(ctx context.Context, serverID uuid.UUID) (*models.IntelligenceReportResponse, error) {
+	result, rawData, err := s.runFullAnalysis(ctx, serverID, serverID.String())
+	if err != nil {
+		return nil, err
+	}
 
-	// Persist snapshot for historical trend (non-fatal)
-	_, _ = s.snapshotStore.Save(ctx, serverID, result, "")
+	html, htmlErr := s.buildReportHTML(result, rawData, "")
+	if htmlErr == nil && html != "" {
+		s.cache.set(serverID, result, rawData, html)
+		_, _ = s.snapshotStore.Save(ctx, serverID, result, html)
+	} else {
+		_, _ = s.snapshotStore.Save(ctx, serverID, result, "")
+	}
 
 	return result, nil
 }
 
-// GetReport fetches the generated report in the specified format by performing a fresh analysis.
-// It uses the runID as the serverID for stateless execution.
-func (s *IntelligenceReportService) GetReport(ctx context.Context, runID string, format string, instanceName string) ([]byte, error) {
+// GetReport returns HTML/JSON/PDF using in-memory cache or persisted snapshot when possible.
+func (s *IntelligenceReportService) GetReport(ctx context.Context, runID string, format string, instanceName string, q url.Values) ([]byte, error) {
 	serverID, err := uuid.Parse(runID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid run_id (expected server uuid): %w", err)
 	}
+	if q == nil {
+		q = url.Values{}
+	}
+	refresh := q.Get("refresh") == "1"
+	fromSnapshot := q.Get("from_snapshot") == "1"
 
-	rawData, err := s.GetRawDataSnapshot(ctx, serverID)
+	if !refresh {
+		if fromSnapshot && format == "html" {
+			if snap, snapErr := s.snapshotStore.LoadLatest(ctx, serverID, 24*time.Hour); snapErr == nil && snap != nil && snap.ReportHTML != "" {
+				return []byte(snap.ReportHTML), nil
+			}
+		}
+		if cached := s.cache.get(serverID); cached != nil {
+			switch format {
+			case "html":
+				if cached.html != "" {
+					return []byte(cached.html), nil
+				}
+			case "json":
+				if cached.result != nil {
+					content, genErr := s.reportGen.GenerateJSON(cached.result)
+					if genErr != nil {
+						return nil, genErr
+					}
+					return []byte(content), nil
+				}
+			}
+		}
+	}
+
+	result, rawData, err := s.runFullAnalysis(ctx, serverID, runID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to gather raw data: %w", err)
+		return nil, err
 	}
 
-	// 1. Run analysis
-	result := s.analysisEngine.Analyze(rawData, nil, runID)
+	thresholds := intelanalysis.NewDynamicThresholdCalculator().Compute(
+		intelanalysis.DefaultServerConfig(rawData),
+		intelanalysis.ExtractHistoriesFromRaw(rawData),
+	)
+	serverCfg := intelanalysis.DefaultServerConfig(rawData)
 
-	// Set DataStatus
-	populated := countPopulated(rawData)
-	switch {
-	case populated >= 15:
-		result.DataStatus = "Full"
-	case populated >= 8:
-		result.DataStatus = "Partial"
-		result.DataNote = fmt.Sprintf("Only %d of 20 metric sources available. Some rules may not fire.", populated)
-	default:
-		result.DataStatus = "Insufficient"
-		result.DataNote = "Insufficient telemetry data. Run the collector for at least 10 minutes first."
-	}
-
-	// 1b. Enrich with v2 analysis modules (non-fatal)
-	s.enrichWithV2Analysis(ctx, serverID, result)
-
-	// 2. Generate report
 	switch format {
 	case "json":
-		content, err := s.reportGen.GenerateJSON(result)
-		if err != nil {
-			return nil, err
+		content, genErr := s.reportGen.GenerateJSON(result)
+		if genErr != nil {
+			return nil, genErr
 		}
 		return []byte(content), nil
-	case "html":
-		// Get dynamic thresholds and server config for the template
-		thresholds := intelanalysis.NewDynamicThresholdCalculator().Compute(intelanalysis.DefaultServerConfig(rawData), intelanalysis.ExtractHistoriesFromRaw(rawData))
-		serverCfg := intelanalysis.DefaultServerConfig(rawData)
-
-		content, err := s.reportGen.GenerateHTML(result, "executive", rawData, thresholds.ToMap(), structToMap(serverCfg), instanceName)
-		if err != nil {
-			return nil, err
+	case "pdf":
+		pdf, pdfErr := s.reportGen.GeneratePDF(result, "executive", rawData, thresholds.ToMap(), structToMap(serverCfg))
+		if pdfErr != nil {
+			return nil, pdfErr
 		}
-		// Persist snapshot with HTML for trend chart accuracy (non-fatal)
+		return pdf, nil
+	case "html":
+		content, genErr := s.buildReportHTML(result, rawData, instanceName)
+		if genErr != nil {
+			return nil, genErr
+		}
+		s.cache.set(serverID, result, rawData, content)
 		_, _ = s.snapshotStore.Save(ctx, serverID, result, content)
 		return []byte(content), nil
 	default:
@@ -1051,6 +1140,75 @@ func structToMap(obj interface{}) map[string]interface{} {
 	var m map[string]interface{}
 	_ = json.Unmarshal(data, &m)
 	return m
+}
+
+// inferIsVirtualHost classifies the host for I/O threshold defaults.
+// Prefer VM signatures (cpu_type, virtual vs physical RAM) over hyperthread_enabled alone.
+func inferIsVirtualHost(cpuType string, virtualMemoryGB, physicalMemoryGB float64, hyperthreadEnabled bool) bool {
+	if physicalMemoryGB > 0 && virtualMemoryGB >= physicalMemoryGB*1.25 {
+		return true
+	}
+	lower := strings.ToLower(cpuType)
+	if strings.Contains(lower, "virtual") || strings.Contains(lower, "vmware") ||
+		strings.Contains(lower, "hyper-v") || strings.Contains(lower, "kvm") ||
+		strings.Contains(lower, "xen") || strings.Contains(lower, "microsoft corporation virtual") {
+		return true
+	}
+	if hyperthreadEnabled && physicalMemoryGB > 0 && virtualMemoryGB > 0 && virtualMemoryGB <= physicalMemoryGB*1.1 {
+		return false
+	}
+	return true
+}
+
+// applyDynamicBreachTimestamps populates first_breach_timestamps using the same thresholds as the analysis engine.
+func (s *IntelligenceReportService) applyDynamicBreachTimestamps(ctx context.Context, serverID uuid.UUID, raw map[string]interface{}) {
+	cfg := intelanalysis.DefaultServerConfig(raw)
+	hist := intelanalysis.ExtractHistoriesFromRaw(raw)
+	thresholds := intelanalysis.NewDynamicThresholdCalculator().Compute(cfg, hist)
+
+	var firstBlocking, firstPLE, firstTempDB *time.Time
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			MIN(capture_timestamp) FILTER (WHERE blocking_sessions > $2),
+			MIN(capture_timestamp) FILTER (WHERE ple < $3),
+			MIN(capture_timestamp) FILTER (WHERE tempdb_used_percent > $4)
+		FROM sqlserver_risk_health
+		WHERE server_id = $1
+		  AND capture_timestamp >= NOW() - INTERVAL '24 hours'
+	`, serverID,
+		float64(thresholds.BlockingSessionMax),
+		thresholds.MemoryPLEMinSeconds,
+		thresholds.TempDBUsedPctMax,
+	).Scan(&firstBlocking, &firstPLE, &firstTempDB)
+	if err != nil {
+		return
+	}
+
+	var firstCPU *time.Time
+	_ = s.pool.QueryRow(ctx, `
+		SELECT MIN(capture_timestamp)
+		FROM sqlserver_metrics
+		WHERE server_id = $1
+		  AND capture_timestamp >= NOW() - INTERVAL '24 hours'
+		  AND avg_cpu_load > $2
+	`, serverID, thresholds.CPUSustainedThreshold).Scan(&firstCPU)
+
+	breachTimestamps := map[string]interface{}{}
+	if firstBlocking != nil {
+		breachTimestamps["blocking_chains"] = firstBlocking.Format(time.RFC3339)
+	}
+	if firstPLE != nil {
+		breachTimestamps["ple_collapse"] = firstPLE.Format(time.RFC3339)
+	}
+	if firstTempDB != nil {
+		breachTimestamps["tempdb_pressure"] = firstTempDB.Format(time.RFC3339)
+	}
+	if firstCPU != nil {
+		breachTimestamps["cpu_saturation"] = firstCPU.Format(time.RFC3339)
+	}
+	if len(breachTimestamps) > 0 {
+		raw["first_breach_timestamps"] = breachTimestamps
+	}
 }
 
 func countPopulated(raw map[string]interface{}) int {

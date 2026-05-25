@@ -24,6 +24,7 @@ import (
 	pg_obs_api "github.com/rsharma155/sql_optima/internal/domain/postgres_observability/api"
 	pg_security_api "github.com/rsharma155/sql_optima/internal/domain/postgres_security/api"
 	ha_api "github.com/rsharma155/sql_optima/internal/domain/sqlserver_ha_replication/api"
+	sqlbackup_api "github.com/rsharma155/sql_optima/internal/domain/sqlserver_backup_recovery/api"
 	"github.com/rsharma155/sql_optima/internal/middleware"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/service"
@@ -81,6 +82,7 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	adminH := handlers.NewAdminHandlers(metricsSvc)
 	adminServersH := handlers.NewAdminServerHandlers(metricsSvc)
 	adminCollectorH := handlers.NewAdminCollectorHandlers(metricsSvc)
+	adminSqlServerDiagH := handlers.NewAdminSqlServerDiagnosticsHandlers(metricsSvc, cfg)
 	widgetAdminH := handlers.NewWidgetAdminHandlers(metricsSvc)
 	sqlserverH := handlers.NewSqlServerHandlers(metricsSvc, cfg)
 	postgresH := handlers.NewPostgresHandlers(metricsSvc, cfg)
@@ -96,6 +98,7 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 	sqlserverWLH := handlers.NewSqlServerWorkloadHandlers(metricsSvc, cfg)
 	sqlserverPAH := handlers.NewSqlServerPlanHandlers(metricsSvc, cfg)
 	osMetricsH := handlers.NewOSMetricsHandlers(metricsSvc)
+	osCollectorH := handlers.NewOSCollectorHandlers(metricsSvc)
 	sqlserverLockH := handlers.NewSqlServerLockHandlers(metricsSvc, cfg)
 	sqlserverWaitStatsH := handlers.NewSqlServerWaitStatsHandlers(metricsSvc, cfg)
 
@@ -117,6 +120,7 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 
 	// SQL Server HA & Replication Domain Handler
 	sqlServerHAH := ha_api.NewHAReplicationHandler(metricsSvc)
+	sqlServerBackupH := sqlbackup_api.NewSQLServerBackupHandler(metricsSvc)
 
 	mon := &monitoringHandlers{
 		SqlServer: sqlserverH, Postgres: postgresH, Timescale: timescaleH,
@@ -128,7 +132,7 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 		IntelligenceReport: irH,
 		ColdStorage: coldStorageH,
 		PgObservability: pgObsH, PgBackup: pgBackupH, PgSecurity: pgSecurityH,
-		SQLServerHA: sqlServerHAH,
+		SQLServerHA: sqlServerHAH, SQLServerBackup: sqlServerBackupH,
 		}
 
 	// ── Shared notifier (config loaded from DB at startup, hot-reloadable via admin panel) ──
@@ -182,7 +186,15 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 			if metricsSvc != nil {
 				pool = metricsSvc.GetTimescaleDBPool()
 			}
-			rulesH = handlers.NewRulesHandler(pool, cfg)
+			var osIngest func(context.Context) bool
+			if metricsSvc != nil {
+				osIngest = metricsSvc.IsOSMetricsIngestEnabled
+			}
+			var pgRepo *repository.PgRepository
+			if metricsSvc != nil {
+				pgRepo = metricsSvc.PgRepo
+			}
+			rulesH = handlers.NewRulesHandler(pool, cfg, osIngest, pgRepo)
 		}
 		if rulesH != nil {
 			rulesH.BestPractices(w, req)
@@ -205,18 +217,18 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 	}
 	openAPI.HandleFunc("/logout", authH.Logout).Methods("POST")
 	openAPI.HandleFunc("/auth/logout", authH.Logout).Methods("POST")
-	openAPI.HandleFunc("/os/metrics", osMetricsH.ReceiveMetrics).Methods("POST")
 
 	if sec.AuthRequired {
 		// Strict: only auth endpoints stay public; config is moved behind JWT below.
 	} else {
 		registerMonitoringReadRoutes(openAPI, mon, rulesBP)
 		registerMonitoringElevatedRoutes(openAPI, sqlserverH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
-
-		// Always register alert routes to prevent 404s; handlers will check if engine is available.
 		registerAlertReadRoutes(openAPI, getAlertH)
-		registerAlertMutationRoutes(openAPI, getAlertH)
-		// Legacy: explain was public when auth is not required.
+		openAPI.HandleFunc("/os-collector/status", osCollectorH.Status).Methods("GET")
+		openAPI.HandleFunc("/os-collector/bundle", osCollectorH.DownloadBundle).Methods("GET")
+		openAPI.HandleFunc("/os-collector/ingest", osCollectorH.GetIngestConfig).Methods("GET")
+		openAPI.HandleFunc("/os-collector/ingest", osCollectorH.SetIngestConfig).Methods("PUT")
+		// Alert mutations and destructive PG actions require JWT even in legacy dev mode (see legacyAuthed below).
 	}
 
 	// --- Any authenticated user (JWT or OIDC)
@@ -224,6 +236,14 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 	authed.Use(middleware.RequireAuth(""))
 	authed.Use(middleware.CSRFProtect)
 	authed.HandleFunc("/auth/me", authH.Me).Methods("GET")
+
+	// OS collector ingest toggle at /api/os-collector/ingest (DBA/Admin when AUTH_REQUIRED=1).
+	osCollectorIngestAPI := r.PathPrefix("/api").Subrouter()
+	osCollectorIngestAPI.Use(middleware.RequireAuth(""))
+	osCollectorIngestAPI.Use(middleware.RequireAnyRole("dba", "admin"))
+	osCollectorIngestAPI.Use(middleware.CSRFProtect)
+	osCollectorIngestAPI.HandleFunc("/os-collector/ingest", osCollectorH.GetIngestConfig).Methods("GET")
+	osCollectorIngestAPI.HandleFunc("/os-collector/ingest", osCollectorH.SetIngestConfig).Methods("PUT")
 
 	if sec.AuthRequired {
 		configProtected := r.PathPrefix("/api").Subrouter()
@@ -267,12 +287,15 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 		readAPI.Use(middleware.RequireAnyRole("viewer", "dba", "admin"))
 		registerMonitoringReadRoutes(readAPI, mon, rulesBP)
 		registerAlertReadRoutes(readAPI, getAlertH)
+		readAPI.HandleFunc("/os-collector/status", osCollectorH.Status).Methods("GET")
 
 		dbaAPI := r.PathPrefix("/api").Subrouter()
 		dbaAPI.Use(middleware.RequireAuth(""))
 		dbaAPI.Use(middleware.RequireAnyRole("dba", "admin"))
 		dbaAPI.Use(middleware.CSRFProtect)
 		registerMonitoringElevatedRoutes(dbaAPI, sqlserverH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
+		dbaAPI.HandleFunc("/os-collector/bundle", osCollectorH.DownloadBundle).Methods("GET")
+		dbaAPI.HandleFunc("/postgres/dr-policy", pgBackupH.PutDRPolicy).Methods("PUT")
 		registerPostgresDBAMutations(dbaAPI, postgresH)
 		registerDashboardWidgetRoutes(dbaAPI, dashboardH)
 		registerAlertMutationRoutes(dbaAPI, getAlertH)
@@ -282,15 +305,22 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 		legacyAuthed := r.PathPrefix("/api").Subrouter()
 		legacyAuthed.Use(middleware.RequireAuth(""))
 		legacyAuthed.Use(middleware.CSRFProtect)
+		legacyAuthed.HandleFunc("/os-collector/ingest", osCollectorH.GetIngestConfig).Methods("GET")
+		legacyAuthed.HandleFunc("/os-collector/ingest", osCollectorH.SetIngestConfig).Methods("PUT")
 		legacyAuthed.HandleFunc("/sqlserver/xevents", sqlserverH.XEvents).Methods("GET")
 		registerPostgresDBAMutations(legacyAuthed, postgresH)
 		registerDashboardWidgetRoutes(legacyAuthed, dashboardH)
+		registerAlertMutationRoutes(legacyAuthed, getAlertH)
 	}
 
 	// --- Admin-only
 	adminAPI := r.PathPrefix("/api/admin").Subrouter()
 	adminAPI.Use(middleware.RequireAuth("admin"))
 	adminAPI.Use(middleware.CSRFProtect)
+	osMetricsAPI := r.PathPrefix("/api").Subrouter()
+	osMetricsAPI.Use(middleware.RequireAuth(""))
+	osMetricsAPI.Use(middleware.RequireAnyRole("dba", "admin"))
+	osMetricsAPI.HandleFunc("/os/metrics", osMetricsH.ReceiveMetrics).Methods("POST")
 	adminAPI.HandleFunc("/users", adminH.CreateUser).Methods("POST")
 	adminAPI.HandleFunc("/users", adminH.ListUsers).Methods("GET")
 	adminAPI.HandleFunc("/users/{id}", adminH.DeleteUser).Methods("DELETE")
@@ -306,12 +336,17 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 	adminAPI.HandleFunc("/servers/{id}", adminServersH.UpdateServer).Methods("PUT")
 	adminAPI.HandleFunc("/servers/{id}", adminServersH.PatchServer).Methods("PATCH")
 	adminAPI.HandleFunc("/servers/{id}", adminServersH.DeleteServer).Methods("DELETE")
+	adminAPI.HandleFunc("/os-collector/bundle", osCollectorH.DownloadBundle).Methods("GET")
+	adminAPI.HandleFunc("/os-collector/ingest", osCollectorH.GetIngestConfig).Methods("GET")
+	adminAPI.HandleFunc("/os-collector/ingest", osCollectorH.SetIngestConfig).Methods("PUT")
 	adminAPI.HandleFunc("/widgets/{id}", widgetAdminH.UpdateWidget).Methods("PUT")
 	adminAPI.HandleFunc("/widgets/{id}/restore", widgetAdminH.RestoreWidget).Methods("POST")
 	adminAPI.HandleFunc("/widgets/{id}", widgetAdminH.GetWidget).Methods("GET")
 	adminAPI.HandleFunc("/widgets", widgetAdminH.ListWidgets).Methods("GET")
 	adminAPI.HandleFunc("/collector-configs", adminCollectorH.ListConfigs).Methods("GET")
 	adminAPI.HandleFunc("/collector-configs/{id}", adminCollectorH.UpdateConfig).Methods("PUT")
+	adminAPI.HandleFunc("/diagnostics/sqlserver", adminSqlServerDiagH.GetSqlServerDiagnostics).Methods("GET")
+	adminAPI.HandleFunc("/diagnostics/sqlserver/{instance}", adminSqlServerDiagH.GetSqlServerDiagnostics).Methods("GET")
 	if adminNotifH != nil {
 		adminAPI.HandleFunc("/notifications/config", adminNotifH.GetConfig).Methods("GET")
 		adminAPI.HandleFunc("/notifications/config", adminNotifH.UpdateConfig).Methods("PUT")

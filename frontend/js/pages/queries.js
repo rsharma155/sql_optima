@@ -202,6 +202,10 @@ async function loadPgQueriesPageData() {
             if (contentType.includes('application/json')) {
                 const data = await response.json();
                 queries = data.queries || [];
+                const instCfg = window.appState.config.instances[window.appState.currentInstanceIdx];
+                if (typeof window.filterOutMonitoringPgQueries === 'function') {
+                    queries = window.filterOutMonitoringPgQueries(queries, instCfg);
+                }
                 window._pgQueriesMeta = {
                     end_capture: data.end_capture || '',
                     window_from: data.window_from || '',
@@ -527,9 +531,21 @@ window.resetPgQueries = function() {
         const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
         if (!inst) return;
         window.apiClient.authenticatedFetch(`/api/postgres/reset-queries?instance=${encodeURIComponent(inst.name)}`, { method: 'POST' })
-            .then(() => {
-                alert('Query statistics reset successfully.');
-                window.PgQueriesView();
+            .then(res => {
+                if (!res.ok) {
+                    return res.json().then(body => {
+                        throw new Error(body.error || `Request failed (${res.status})`);
+                    });
+                }
+                return res.json();
+            })
+            .then(data => {
+                if (data && data.success) {
+                    alert('Query statistics reset successfully.');
+                    window.PgQueriesView();
+                } else {
+                    alert(`Failed to reset query statistics: ${(data && data.error) || 'Unknown error'}`);
+                }
             })
             .catch(err => alert(`Error: ${err.message}`));
     }
@@ -821,7 +837,10 @@ async function loadPgssTopQueries() {
             return; 
         }
         const data = await resp.json();
-        const queries = data.queries || [];
+        let queries = data.queries || [];
+        if (typeof window.filterOutMonitoringPgQueries === 'function') {
+            queries = window.filterOutMonitoringPgQueries(queries, inst);
+        }
 
         // Show time range on the table header
         const rangeEl = document.getElementById('pgss-top-time-range');
@@ -939,22 +958,27 @@ function pgssRenderLineChart(canvasId, labels, datasets, dualAxis) {
     pgssDestroyChart(canvasId);
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
+    const baseTrend = window.chartTrendOptions ? window.chartTrendOptions({ xTitle: 'Time' }) : {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } }, tooltip: { enabled: true } },
+        scales: { x: { title: { display: true, text: 'Time' } }, y: {} },
+    };
     const cfg = {
         type: 'line',
-        data: { labels, datasets: datasets.map(ds => ({ tension: 0.3, pointRadius: 0, borderWidth: 1.5, fill: ds.fill || false, ...ds })) },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
-            scales: {
-                x: { 
-                    title: { display: true, text: 'Time (Last 60 Minutes)', color: '#64748b', font: { size: 10 } },
-                    ticks: { color: '#64748b', maxTicksLimit: 12 }, 
-                    grid: { color: 'rgba(100,116,139,0.15)' } 
-                },
-                y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } }
-            }
-        }
+        data: {
+            labels,
+            datasets: datasets.map(ds => ({
+                tension: 0.3,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+                borderWidth: 1.5,
+                fill: ds.fill || false,
+                ...ds,
+            })),
+        },
+        options: window.mergeChartOptions ? window.mergeChartOptions(baseTrend, {}) : baseTrend,
     };
     if (dualAxis) {
         cfg.options.scales.y1 = { position: 'right', ticks: { color: '#64748b' }, grid: { drawOnChartArea: false } };
@@ -966,22 +990,38 @@ function pgssRenderStackedArea(canvasId, labels, datasets) {
     pgssDestroyChart(canvasId);
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
+    const timeX = window.chartTimeScaleX ? window.chartTimeScaleX('Time') : { title: { display: true, text: 'Time' } };
+    const options = window.mergeChartOptions && window.chartTrendOptions
+        ? window.mergeChartOptions(window.chartTrendOptions({ xTitle: 'Time' }), {
+            scales: {
+                x: { ...timeX, stacked: true },
+                y: { stacked: true, max: 100, ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } },
+            },
+        })
+        : {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } }, tooltip: { enabled: true } },
+            scales: {
+                x: { title: { display: true, text: 'Time' }, stacked: true, ticks: { color: '#64748b' } },
+                y: { stacked: true, max: 100, ticks: { color: '#64748b' } },
+            },
+        };
     window.currentCharts[canvasId] = new Chart(ctx, {
         type: 'line',
-        data: { labels, datasets: datasets.map(ds => ({ fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1, ...ds })) },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
-            scales: {
-                x: { 
-                    title: { display: true, text: 'Time (Last 60 Minutes)', color: '#64748b', font: { size: 10 } },
-                    stacked: true, 
-                    ticks: { color: '#64748b', maxTicksLimit: 12 }, 
-                    grid: { color: 'rgba(100,116,139,0.15)' } 
-                },
-                y: { stacked: true, max: 100, ticks: { color: '#64748b' }, grid: { color: 'rgba(100,116,139,0.15)' } }
-            }
-        }
+        data: {
+            labels,
+            datasets: datasets.map(ds => ({
+                fill: true,
+                tension: 0.3,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+                borderWidth: 1,
+                ...ds,
+            })),
+        },
+        options,
     });
 }
 

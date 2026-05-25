@@ -19,8 +19,7 @@ import (
 // TestFetchUnusedIndexesSignature is a compile-time check that FetchUnusedIndexes
 // accepts serverID so it can read from the local TimescaleDB cache.
 func TestFetchUnusedIndexesSignature(t *testing.T) {
-	var _ func(context.Context, uuid.UUID, string, string, int64, int) ([]PerformanceDebtUnusedIndex, error) =
-		(*SqlServerRepository)(nil).FetchUnusedIndexes
+	var _ = (*SqlServerRepository)(nil).FetchUnusedIndexes
 }
 
 // TestFetchUnusedIndexesNilPoolNoConn verifies that when LocalPool is nil and

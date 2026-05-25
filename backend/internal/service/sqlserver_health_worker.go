@@ -399,6 +399,7 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 
 		// 1. CPU History
 		cpuQuery := `
+			/* SQL_OPTIMA */
 			DECLARE @ts_now bigint = (SELECT cpu_tick/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)); 
 			SELECT TOP(30)
 				SQLProcessUtilization AS sql_process, 
@@ -439,6 +440,7 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 
 		// 2. Connection stats
 		connQuery := `
+			/* SQL_OPTIMA */
 			SELECT 
 				ISNULL(s.login_name, 'Unknown'),
 				ISNULL(DB_NAME(s.database_id), 'Unknown'),
@@ -472,6 +474,7 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 
 		// 3. Disk usage
 		diskQuery := `
+			/* SQL_OPTIMA */
 			SELECT 
 				ISNULL(DB_NAME(database_id), 'Unknown'),
 				SUM(CASE WHEN type=0 THEN size * 8.0/1024.0 ELSE 0 END) as Data,
@@ -700,15 +703,8 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 			}
 		}
 
-		// 8. Perf counters — log the rates already computed above
-		if pr > 0 || br > 0 || sc > 0 || ls > 0 {
-			_ = s.tsLogger.LogSqlServerPerfCounters(ctx, serverID, map[string]float64{
-				"Page Reads/sec":       pr,
-				"Batch Requests/sec":   br,
-				"SQL Compilations/sec": sc,
-				"Logins/sec":           ls,
-			})
-		}
+		// 8. Perf counters are written by StartPerfCountersCollector (LogSqlServerPerfCountersV2).
+		// Health KPIs above read from that cache; do not duplicate inserts here.
 
 		// 9. File IO latency is handled by the dedicated StartFileIOLatencyCollector (60s interval,
 		// hash-based dedup, zero-row skipping). Do not duplicate it here.

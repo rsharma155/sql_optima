@@ -66,37 +66,25 @@
         border-radius: 3px 0 0 3px;
     }
 
-    /* Pin the enterprise metrics page to viewport height so all 6 charts fit without scrolling.
-       The views-container has padding: 2rem on all sides, so the page height budget is 100vh - 4rem.
-       The page itself is a flex column: title → KPI row → charts-grid (flex: 1, takes remaining space).
-       charts-grid uses grid-template-rows: repeat(3, 1fr) so each of the 3 chart rows gets
-       exactly one-third of whatever space the grid has — no manual height arithmetic needed. */
+    /* Scrollable by default so charts keep readable height on laptops; only large viewports
+       pin to viewport and divide remaining space evenly between chart rows. */
     .em-page-root {
-        height: calc(100vh - 4rem);
         display: flex;
         flex-direction: column;
-        overflow: hidden;
+        min-height: 0;
     }
 
     .charts-grid {
-        flex: 1;
-        min-height: 0;
         display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        grid-template-rows: repeat(3, 1fr);
-        gap: 0.5rem;
-    }
-    @media (max-width: 900px) {
-        .charts-grid {
-            grid-template-columns: 1fr;
-            grid-template-rows: repeat(6, minmax(120px, 1fr));
-            overflow-y: auto;
-        }
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-auto-rows: minmax(240px, auto);
+        gap: 0.65rem;
+        align-content: start;
     }
 
-    /* Chart cards are flex columns so the canvas / table expands to fill remaining card space */
+    /* Chart cards: consistent minimum height; canvas fills the card body */
     .charts-grid .chart-card {
-        min-height: 0;
+        min-height: 240px;
         display: flex;
         flex-direction: column;
         padding: 0.5rem;
@@ -104,16 +92,98 @@
     .charts-grid .chart-card .card-header {
         flex-shrink: 0;
     }
-    .chart-container-large {
-        flex: 1;
-        min-height: 0;
+    .charts-grid .chart-container.chart-container-large {
+        flex: 1 1 auto;
+        min-height: 200px;
+        height: 220px;
         position: relative;
+        width: 100%;
     }
 
     .tempdb-table-container {
-        flex: 1;
-        min-height: 0;
+        flex: 1 1 auto;
+        min-height: 200px;
+        max-height: 220px;
         overflow-y: auto;
+    }
+
+    /* KPI row: fewer columns on narrow widths so labels are not crushed */
+    @media (max-width: 1280px) {
+        .enterprise-kpi-grid {
+            grid-template-columns: repeat(3, minmax(120px, 1fr));
+        }
+    }
+    @media (max-width: 768px) {
+        .enterprise-kpi-grid {
+            grid-template-columns: repeat(2, minmax(100px, 1fr));
+        }
+    }
+
+    @media (max-width: 900px) {
+        .charts-grid {
+            grid-template-columns: 1fr;
+            grid-auto-rows: minmax(260px, auto);
+        }
+        .charts-grid .chart-card {
+            min-height: 260px;
+        }
+        .charts-grid .chart-container.chart-container-large {
+            min-height: 220px;
+            height: 240px;
+        }
+        .tempdb-table-container {
+            min-height: 220px;
+            max-height: 240px;
+        }
+    }
+
+    /* Large monitors: fit six charts in viewport without page scroll */
+    @media (min-width: 1200px) and (min-height: 900px) {
+        .em-page-root {
+            height: calc(100vh - 4rem);
+            overflow: hidden;
+        }
+        .em-page-root .charts-grid {
+            flex: 1;
+            min-height: 0;
+            grid-auto-rows: unset;
+            grid-template-rows: repeat(3, minmax(0, 1fr));
+        }
+        .em-page-root .charts-grid .chart-card {
+            min-height: 0;
+        }
+        .em-page-root .charts-grid .chart-container.chart-container-large {
+            height: auto;
+            min-height: 0;
+        }
+        .em-page-root .tempdb-table-container {
+            min-height: 0;
+            max-height: none;
+        }
+    }
+
+    /* Short viewports (typical laptop): never squeeze charts — scroll instead */
+    @media (max-height: 820px) {
+        .em-page-root {
+            height: auto !important;
+            overflow: visible !important;
+        }
+        .em-page-root .charts-grid {
+            flex: none;
+            grid-template-rows: unset;
+            grid-auto-rows: minmax(240px, auto);
+        }
+        .em-page-root .charts-grid .chart-card {
+            min-height: 240px;
+        }
+        .em-page-root .charts-grid .chart-container.chart-container-large {
+            min-height: 200px;
+            height: 220px;
+        }
+        .em-page-root .tempdb-table-container {
+            min-height: 200px;
+            max-height: 220px;
+        }
     }
 
     /* Indicator colors for the left border (matching other pages) */
@@ -142,12 +212,12 @@
 </style>
 
 <div class="page-view active dashboard-sky-theme em-page-root">
-    <div class="page-title flex-between dashboard-page-title-compact">
-        <div class="dashboard-title-line" style="flex:1; min-width:0;">
+    <div class="page-title flex-between dash-header-stack-laptop dashboard-page-title-compact">
+        <div class="dashboard-title-line dash-header-title-area dash-header-title-inline" style="flex:1; min-width:0;">
             <h1 style="font-size:1.1rem; margin:0; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-chart-line text-accent"></i> SQL Server Enterprise Metrics <i class="fa-solid fa-circle-info text-accent info-icon-clickable cursor-pointer" style="font-size: 0.9rem;" data-action="show-sqlserver-dashboard-detail" data-dashboard="Enterprise Metrics" title="Learn more about this dashboard"></i></h1>
             <p class="subtitle">Instance: <span id="emInstanceName">--</span> | Standardized Time-Series Observability</p>
         </div>
-        <div class="dashboard-page-title-actions" style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
+        <div class="dash-header-actions dashboard-page-title-actions" style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
             <div id="time-picker-insertion-point"></div>
             <!-- Standard date picker injected here by JS, but keeping the helper buttons below -->
             <div class="flex-between" style="gap:0.35rem;">

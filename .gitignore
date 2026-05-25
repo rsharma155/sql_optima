@@ -25,9 +25,12 @@ timescaledb_data/
 *.dylib
 dbmonitor
 dbmonitor.exe
+/backend/main
 /backend/server
 /backend/migrate
 /backend/sql_optima
+os_collector/os_collector
+os_collector/os-collector
 
 # Go build artifacts
 bin/
@@ -105,9 +108,19 @@ run/
 **/*_report.json
 **/*_test_report.json
 **/*_final_report.json
+js_error.txt
+**/*_error.txt
+
+# Local instance config (use config.yaml.example as template)
+config.yaml
 
 # Local planning docs
+HA_DR_Analysis.md
+Intelligence_Report_enhance_May24.md
+oc_collector_review.md
+backup_dr_merge.md
 cold_storage_initial_roadmap.md
+docs/os_collector.md
 docs/pg_explain_analyze_integration_plan.md
 docs/pg_query_monitor_enhancement_plan.md
 docs/postgres_dashboard_details.md
@@ -116,6 +129,7 @@ docs/sql_server_dashboard_details.md
 postgre_main_control_center.md
 project_backlog.md
 project_details.md
+cursor_project_details.md
 CLAUDE.md
 .clauderc
 .claude/

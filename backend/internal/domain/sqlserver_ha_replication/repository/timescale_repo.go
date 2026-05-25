@@ -485,8 +485,9 @@ func (r *HAReplicationRepository) GetDatabaseCoverage(ctx context.Context, serve
 		case c.InReplication:
 			c.ProtectionLevel = domain.ProtectionBronze
 		default:
-			c.ProtectionLevel = domain.ProtectionNone
+			c.ProtectionLevel = domain.ProtectionNone // Red — no AG or replication
 		}
+		// backup_fresh_ok is shown per row in the UI (stale backup warning on Gold/Silver/Bronze).
 		result = append(result, c)
 	}
 	return result, rows.Err()

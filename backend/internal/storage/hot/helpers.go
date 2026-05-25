@@ -148,6 +148,14 @@ func fileIOHash(readLat, writeLat, readBPS, writeBPS float64) uint64 {
 	return h.Sum64()
 }
 
+// perfCounterWriteHash fingerprints a perf counter row for unchanged-value skip.
+func perfCounterWriteHash(cntrValue int64, ratePerSec float64) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(normalizeMapValue(cntrValue)))
+	_, _ = h.Write([]byte(normalizeMapValue(ratePerSec)))
+	return h.Sum64()
+}
+
 func cpuSchedulerSnapshotHash(m map[string]interface{}) uint64 {
 	h := fnv.New64a()
 	// Stabilize by hashing key fields

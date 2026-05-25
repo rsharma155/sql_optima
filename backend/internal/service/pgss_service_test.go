@@ -53,7 +53,7 @@ func TestGetPgssLatency_NilTsLogger(t *testing.T) {
 
 func TestGetPgssTopQueries_NilTsLogger(t *testing.T) {
 	s := newBareService()
-	q, err := s.GetPgssTopQueries(context.Background(), uuid.New(), time.Now().Add(-time.Hour), time.Now(), "total_time", 50, "", "", "", "", true)
+	q, err := s.GetPgssTopQueries(context.Background(), uuid.New(), time.Now().Add(-time.Hour), time.Now(), "total_time", 50, "", "", "", "", true, []string{"postgres"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

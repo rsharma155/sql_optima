@@ -134,6 +134,8 @@ func (g *ReportGenerator) GenerateHTML(analysis *models.IntelligenceReportRespon
 	historyRows := buildTemplateHistoricalComparison(rawData)
 	confidenceDiag := buildTemplateConfidenceDiagnostics(analysis.TriggeredRules, rawData, populated)
 	rootCauseProbs := buildTemplateRootCauseProbabilities(analysis.TriggeredRules)
+	top3Actions := buildTemplateTop3Actions(analysis.RecommendedActions, analysis.TriggeredRules)
+	haNotConfigured, _ := rawData["ha_not_configured"].(bool)
 
 	// Series data for Performance Analysis charts (null when not collected)
 	cpuSeriesJSON     := rawSeriesJSON(rawData, "avg_cpu_load_series")
@@ -246,6 +248,7 @@ func (g *ReportGenerator) GenerateHTML(analysis *models.IntelligenceReportRespon
 			return a / b
 		},
 		"absf": math.Abs,
+		"drillRoute": RuleDrillRoute,
 	}
 
 	tmpl := template.Must(template.New("report").Funcs(funcMap).Parse(string(tmplContent)))
@@ -329,6 +332,8 @@ func (g *ReportGenerator) GenerateHTML(analysis *models.IntelligenceReportRespon
 		"HistoricalComparisonRows": historyRows,
 		"ConfidenceDiagnostics":    confidenceDiag,
 		"RootCauseProbabilities":   rootCauseProbs,
+		"Top3Actions":              top3Actions,
+		"HANotConfigured":          haNotConfigured,
 		// Performance Analysis chart series
 		"CPUSeriesJSON":            cpuSeriesJSON,
 		"PLESeriesJSON":            pleSeriesJSON,
@@ -360,6 +365,10 @@ func (g *ReportGenerator) GenerateHTML(analysis *models.IntelligenceReportRespon
 		"HistoryTrendJSON":         historyTrendJSON,
 		"CapacityForecastV2":       analysis.CapacityForecastV2,
 		"UtilizationProfile":       analysis.UtilizationProfile,
+		"QueryWorkload":            analysis.QueryWorkload,
+		"IndexHealth":              analysis.IndexHealth,
+		"ServerConfiguration":    analysis.ServerConfiguration,
+		"PerformanceDebtItems":   analysis.PerformanceDebtItems,
 		"AppName":                  "Intelligence Report Sqloptima",
 	}
 

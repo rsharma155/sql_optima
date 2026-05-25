@@ -29,6 +29,9 @@ func (s *MetricsService) StartMemoryIntelligenceCollector(ctx context.Context) {
 	slog.Info("[MemoryCollector] Starting memory intelligence collector (interval: %v)", "val", interval)
 
 	go func() {
+		// First scrape immediately so dashboards populate within one cycle (ticker waits interval first).
+		s.collectMemoryIntelligence(ctx)
+
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {

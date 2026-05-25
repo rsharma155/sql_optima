@@ -32,7 +32,7 @@ func (e *PgBackupFreshnessEvaluator) Evaluate(ctx context.Context, serverID uuid
 	q := `
 		SELECT capture_timestamp, status, finished_at, backup_type
 		FROM postgres_backup_runs
-		WHERE server_id = $1 AND status = 'completed'
+		WHERE server_id = $1 AND lower(status) IN ('completed', 'success', 'succeeded', 'ok')
 		ORDER BY capture_timestamp DESC
 		LIMIT 1
 	`
@@ -61,11 +61,19 @@ func (e *PgBackupFreshnessEvaluator) Evaluate(ctx context.Context, serverID uuid
 		return results, nil
 	}
 
-	// 2. Check age
+	maxAgeHours := 24
+	var policyHours int
+	if err := e.tsPool.QueryRow(ctx, `
+		SELECT rpo_backup_hours FROM optima_server_dr_policy WHERE server_id = $1`, serverID).Scan(&policyHours); err == nil && policyHours > 0 {
+		maxAgeHours = policyHours
+	}
+	limit := time.Duration(maxAgeHours) * time.Hour
+
+	// 2. Check age against per-instance DR policy
 	age := time.Since(lastTs)
-	if age > 24*time.Hour {
+	if age > limit {
 		sev := alerts.SeverityWarning
-		if age > 48*time.Hour {
+		if age > limit*2 {
 			sev = alerts.SeverityCritical
 		}
 

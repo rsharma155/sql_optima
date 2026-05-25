@@ -136,7 +136,7 @@ window.setChartOverlayState = function(canvasId, kind, message) {
     const div = document.createElement('div');
     div.className = 'chart-overlay-state';
     div.setAttribute('role', 'status');
-    div.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0.5rem;background:rgba(15,23,42,0.55);z-index:3;font-size:0.82rem;color:var(--text-muted);text-align:center;padding:0.5rem;';
+    div.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0.5rem;background:rgba(15,23,42,0.55);z-index:3;font-size:0.82rem;color:var(--text-muted);text-align:center;padding:0.5rem;pointer-events:none;';
     if (kind === 'loading') {
         div.innerHTML = '<div class="spinner"></div><span>' + _escOverlay(message || 'Loading…') + '</span>';
     } else {

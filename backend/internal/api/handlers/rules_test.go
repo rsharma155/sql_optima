@@ -17,7 +17,7 @@ func TestBuildRawRulePayloadAndEvidence(t *testing.T) {
 			"failing_jobs_24h": 2,
 			"sample_jobs":      "Nightly Backups, IndexOptimize",
 		},
-	}, "2", "0", "WARNING")
+	}, "2", "0", "WARNING", false)
 
 	evidence := buildRuleEvidence(payload)
 	if !strings.Contains(evidence, "Failing Jobs 24h: 2") {
@@ -25,6 +25,13 @@ func TestBuildRawRulePayloadAndEvidence(t *testing.T) {
 	}
 	if !strings.Contains(evidence, "Sample Jobs: Nightly Backups, IndexOptimize") {
 		t.Fatalf("expected sample job evidence, got %q", evidence)
+	}
+}
+
+func TestCoerceDisplayValue_ByteSlice(t *testing.T) {
+	s, ok := coerceDisplayValue([]byte("262144"))
+	if !ok || s != "262144" {
+		t.Fatalf("got %q ok=%v", s, ok)
 	}
 }
 
@@ -40,7 +47,7 @@ func TestBuildRuleEvidence_Empty(t *testing.T) {
 func TestBuildRuleEvidence_UsesEvidenceSummaryField(t *testing.T) {
 	payload := buildRawRulePayload([]map[string]interface{}{
 		{"disabled_count": float64(5), "sample_jobs": "JobA, JobB"},
-	}, "5", "0", "WARNING")
+	}, "5", "0", "WARNING", false)
 
 	got := buildRuleEvidence(payload)
 	if !strings.Contains(got, "Disabled Count: 5") {

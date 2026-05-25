@@ -1,11 +1,8 @@
-// SQL Optima — https://github.com/rsharma155/sql_optima
-//
-// File: backend/internal/api/handlers/cold_storage.go
-// Purpose: REST API handlers for monitoring the status and audit logs of the cold storage archival pipeline.
-//
-// Author: Gemini CLI (AI Agent)
-// Date: May 2026
+// Author: Ravi Sharma
+// Copyright (c) 2026 Ravi Sharma
 // SPDX-License-Identifier: MIT
+//
+// Purpose: REST API handlers for monitoring cold storage archival status and run history.
 
 package handlers
 
@@ -14,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
 )
 
 type ColdStorageHandlers struct {
@@ -36,7 +34,7 @@ func (h *ColdStorageHandlers) GetStatus(w http.ResponseWriter, r *http.Request) 
 
 	rows, err := h.pool.Query(r.Context(), q)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load cold storage status", err)
 		return
 	}
 	defer rows.Close()
@@ -79,7 +77,7 @@ func (h *ColdStorageHandlers) GetRuns(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.pool.Query(r.Context(), q)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load cold storage runs", err)
 		return
 	}
 	defer rows.Close()

@@ -78,7 +78,7 @@ func (r *PGSnapshotRepository) resolvePGSS(ctx context.Context) (string, error) 
 			// Determine which database this connection targets for a clearer error.
 			var dbName string
 			_ = r.db.QueryRowContext(ctx, "SELECT current_database()").Scan(&dbName)
-			return "", fmt.Errorf("pg_stat_statements not found in database %q. Run 'CREATE EXTENSION pg_stat_statements;' in that database.", dbName)
+			return "", fmt.Errorf("pg_stat_statements not found in database %q: run CREATE EXTENSION pg_stat_statements in that database", dbName)
 		}
 		schema = fallbackSchema
 	}

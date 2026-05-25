@@ -169,8 +169,11 @@ func (h *SqlServerHandlers) EnterpriseDashboardV2(w http.ResponseWriter, r *http
 		res["snapshot"] = map[string]interface{}{}
 	}
 
-	// 9. TempDB Top Consumers
+	// 9. TempDB Top Consumers (time range, then latest snapshot if range is empty)
 	consumers, _ := h.metricsSvc.GetSqlServerTempdbConsumers(ctx, serverID, fromT.Format(time.RFC3339), toT.Format(time.RFC3339))
+	if len(consumers) == 0 && h.metricsSvc.GetTimescaleDBLogger() != nil {
+		consumers, _ = h.metricsSvc.GetTimescaleDBLogger().GetTempdbTopConsumers(ctx, serverID, 50)
+	}
 	if consumers == nil {
 		consumers = []map[string]interface{}{}
 	}
@@ -282,24 +285,42 @@ func (h *SqlServerHandlers) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !h.metricsSvc.IsTimescaleConnected() {
-		w.Header().Set("X-Data-Source", "timescale_unavailable")
-		json.NewEncoder(w).Encode(cached)
+		w.Header().Set("X-Data-Source", "no_data")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "no_data",
+			"message": "TimescaleDB is not connected. Historical dashboard data is unavailable.",
+		})
 		return
 	}
 
 	tsData, err := h.metricsSvc.GetDashboardFromTimescale(serverID)
 	if err != nil {
 		slog.Error("[Router] TimescaleDB fetch failed", "target", instance, "err", err)
-		w.Header().Set("X-Data-Source", "live_cache_fallback")
-		json.NewEncoder(w).Encode(cached)
+		w.Header().Set("X-Data-Source", "no_data")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "no_data",
+			"message": "Collector data not yet available for this instance.",
+		})
+		return
+	}
+
+	if len(tsData) == 0 {
+		w.Header().Set("X-Data-Source", "no_data")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "no_data",
+			"message": "Collector data not yet available for this instance.",
+		})
 		return
 	}
 
 	merged, err := mergeDashboardCacheWithTimescale(cached, tsData)
 	if err != nil {
 		slog.Error("[Router] Failed to merge Timescale dashboard data", "target", instance, "err", err)
-		w.Header().Set("X-Data-Source", "live_cache_fallback")
-		json.NewEncoder(w).Encode(cached)
+		w.Header().Set("X-Data-Source", "no_data")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "no_data",
+			"message": "Failed to load historical dashboard data.",
+		})
 		return
 	}
 
@@ -1316,11 +1337,63 @@ func (h *SqlServerHandlers) HealthV2(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SqlServerHandlers) ExportBestPracticesCSV(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
+		http.Error(w, "instance not found", http.StatusNotFound)
+		return
+	}
+	serverID, ok := h.parseID(r)
+	if !ok {
+		http.Error(w, "invalid instance", http.StatusBadRequest)
+		return
+	}
+	raw, err := h.metricsSvc.GetBestPractices(r.Context(), serverID)
+	if err != nil {
+		http.Error(w, "failed to load best practices", http.StatusInternalServerError)
+		return
+	}
+	result, ok := bestPracticesFromAny(raw)
+	if !ok {
+		http.Error(w, "unexpected response type", http.StatusInternalServerError)
+		return
+	}
+	writeBestPracticesCSV(w, csvFilename("sqlserver_best_practices", instance), result)
 }
 
 func (h *SqlServerHandlers) ExportGuardrailsCSV(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	instance := r.URL.Query().Get("instance")
+	if err := validateInstanceName(instance); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
+		http.Error(w, "instance not found", http.StatusNotFound)
+		return
+	}
+	if !instanceType(h.cfg, instance, "sqlserver") {
+		http.Error(w, "instance is not sqlserver", http.StatusBadRequest)
+		return
+	}
+	serverID, ok := h.parseID(r)
+	if !ok {
+		http.Error(w, "invalid instance", http.StatusBadRequest)
+		return
+	}
+	raw, err := h.metricsSvc.GetGuardrails(r.Context(), serverID)
+	if err != nil {
+		http.Error(w, "failed to load guardrails", http.StatusInternalServerError)
+		return
+	}
+	result, ok := guardrailsFromAny(raw)
+	if !ok {
+		http.Error(w, "unexpected response type", http.StatusInternalServerError)
+		return
+	}
+	writeGuardrailsCSV(w, csvFilename("sqlserver_guardrails", instance), result)
 }
 
 func (h *SqlServerHandlers) BlockingKPIs(w http.ResponseWriter, r *http.Request) {

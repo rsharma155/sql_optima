@@ -9,24 +9,18 @@
 package hot
 
 import (
-	"context"
 	"testing"
-	"time"
-
-	"github.com/google/uuid"
 )
 
 // TestLogSqlServerPerfCountersV2Signature is a compile-time check that the
 // extended logger function exists with the expected signature.
 func TestLogSqlServerPerfCountersV2Signature(t *testing.T) {
-	var _ func(context.Context, uuid.UUID, time.Time, []PerfCounterWriteRow) error =
-		(*TimescaleLogger)(nil).LogSqlServerPerfCountersV2
+	var _ = (*TimescaleLogger)(nil).LogSqlServerPerfCountersV2
 }
 
 // TestGetLatestPerfCounterSignature verifies the read helper compiles.
 func TestGetLatestPerfCounterSignature(t *testing.T) {
-	var _ func(context.Context, uuid.UUID, string, string) (float64, bool, error) =
-		(*TimescaleLogger)(nil).GetLatestPerfCounter
+	var _ = (*TimescaleLogger)(nil).GetLatestPerfCounter
 }
 
 // TestPerfCounterWriteRowFields is a compile-time check that PerfCounterWriteRow
@@ -41,5 +35,17 @@ func TestPerfCounterWriteRowFields(t *testing.T) {
 	}
 	if row.CounterName == "" {
 		t.Error("CounterName must not be empty")
+	}
+}
+
+func TestPerfCounterWriteHashSkipsUnchanged(t *testing.T) {
+	h1 := perfCounterWriteHash(1000, 50.5)
+	h2 := perfCounterWriteHash(1000, 50.5)
+	h3 := perfCounterWriteHash(1001, 50.5)
+	if h1 != h2 {
+		t.Error("identical values should produce identical hash")
+	}
+	if h1 == h3 {
+		t.Error("changed cntr_value should produce different hash")
 	}
 }

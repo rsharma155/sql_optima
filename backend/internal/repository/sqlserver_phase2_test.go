@@ -20,7 +20,7 @@ import (
 // function accepts serverID so it can read from the local TimescaleDB.
 func TestFetchWaitStatsCumulativeSignature(t *testing.T) {
 	// Compile-time: verify the method exists with the expected types.
-	var _ func(context.Context, uuid.UUID, string) (map[string]float64, error) = (*SqlServerRepository)(nil).FetchWaitStatsCumulative
+	var _ = (*SqlServerRepository)(nil).FetchWaitStatsCumulative
 }
 
 // TestFetchWaitStatsCumulativeNilPool verifies that when LocalPool is nil

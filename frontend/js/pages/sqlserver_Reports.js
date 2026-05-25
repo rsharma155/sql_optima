@@ -148,7 +148,7 @@ window.AlertsView = async function() {
             if (anomalies.info.length > 0) {
                 alertsHtml += `
                     <div class="alert-group mt-3">
-                        <h3 style="color: var(--info); font-size: 0.9rem; margin-bottom: 0.6rem;"><i class="fa-solid fa-info-circle"></i> AI Insights (${anomalies.info.length})</h3>
+                        <h3 style="color: var(--info); font-size: 0.9rem; margin-bottom: 0.6rem;"><i class="fa-solid fa-info-circle"></i> Correlation Insights (${anomalies.info.length})</h3>
                         <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem;">
                             ${anomalies.info.map(alert => `
                                 <div class="glass-panel" style="border-left: 2px solid var(--info); border-radius: 5px; padding: 0.5rem 0.7rem; opacity:0.9;">
@@ -178,7 +178,7 @@ window.AlertsView = async function() {
                     <div class="page-title flex-between dashboard-page-title-compact">
                         <div class="dashboard-title-line">
                             <h1 style="font-size:1.1rem; margin:0;"><i class="fa-solid fa-brain text-accent"></i> Anomaly Detection & Alerts</h1>
-                            <p class="subtitle">AI-powered system monitoring for ${window.escapeHtml(inst.name)}</p>
+                            <p class="subtitle">Rule-based anomaly detection for ${window.escapeHtml(inst.name)}</p>
                         </div>
                         <div class="dashboard-page-title-actions" style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
                             ${window.renderStatusStrip({ lastUpdateId: 'alertsLastUpdate', sourceBadgeId: 'alertsDataSourceBadge2', includeHealth: false, includeFreshness: false, autoRefreshText: 'Auto-refresh: every 15s' })}
@@ -1259,11 +1259,17 @@ ALTER RESOURCE GOVERNOR RECONFIGURE;
 window.exportSqlServerBestPracticesCSV = function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
     if (!inst) return;
-    window.location.href = `/api/sqlserver/best-practices/export?instance=${encodeURIComponent(inst.name)}`;
+    const url = `/api/sqlserver/best-practices/export?instance=${encodeURIComponent(inst.name)}`;
+    window.downloadAuthenticatedCSV(url, `sqlserver_best_practices_${inst.name}.csv`).catch(err => {
+        alert(`Export failed: ${err.message}`);
+    });
 };
 
 window.exportSqlServerGuardrailsCSV = function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
     if (!inst) return;
-    window.location.href = `/api/sqlserver/guardrails/export?instance=${encodeURIComponent(inst.name)}`;
+    const url = `/api/sqlserver/guardrails/export?instance=${encodeURIComponent(inst.name)}`;
+    window.downloadAuthenticatedCSV(url, `sqlserver_guardrails_${inst.name}.csv`).catch(err => {
+        alert(`Export failed: ${err.message}`);
+    });
 };

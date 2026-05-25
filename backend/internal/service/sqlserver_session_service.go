@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 	sqlserver "github.com/rsharma155/sql_optima/internal/collectors/infrastructure/sqlserver"
+	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
 )
 
@@ -46,7 +47,7 @@ func (st *sessionDeltaState) isChanged(rows []sqlserver.ActiveSessionRow) bool {
 func hashSessionRows(rows []sqlserver.ActiveSessionRow) string {
 	h := sha256.New()
 	for _, r := range rows {
-		fmt.Fprintf(h, "%d|%d|%s|", r.SessionID, r.BlockingSessionID, r.RequestStatus)
+		_, _ = fmt.Fprintf(h, "%d|%d|%s|", r.SessionID, r.BlockingSessionID, r.RequestStatus)
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
@@ -111,6 +112,13 @@ func (s *MetricsService) collectSessionsForInstance(
 	}
 
 	rows, err := collector.Fetch(ctx, db)
+	if err != nil && repository.IsMSSQLConnError(err) {
+		if s.MsRepo.ReconnectInstance(ctx, instanceName) {
+			if db2, ok2 := s.MsRepo.GetConn(instanceName); ok2 {
+				rows, err = collector.Fetch(ctx, db2)
+			}
+		}
+	}
 	if err != nil {
 		slog.Error("[SessionCollector] fetch failed", "instance", instanceName, "err", err)
 		return

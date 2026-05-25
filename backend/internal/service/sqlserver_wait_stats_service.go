@@ -212,6 +212,13 @@ func (s *MetricsService) collectActiveWaitSessions(ctx context.Context) {
 			continue
 		}
 		sessions, err := s.waitDMVCollector.FetchActiveWaitSessions(ctx, db)
+		if err != nil && repository.IsMSSQLConnError(err) {
+			if s.MsRepo.ReconnectInstance(ctx, inst.Name) {
+				if db2, ok2 := s.MsRepo.GetConn(inst.Name); ok2 {
+					sessions, err = s.waitDMVCollector.FetchActiveWaitSessions(ctx, db2)
+				}
+			}
+		}
 		if err != nil {
 			slog.Error("[WaitStats]", "target", inst.Name, "err", err)
 			continue

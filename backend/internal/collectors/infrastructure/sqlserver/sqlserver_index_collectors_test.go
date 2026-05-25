@@ -8,6 +8,7 @@
 package sqlserver
 
 import (
+	"context"
 	"reflect"
 	"testing"
 )
@@ -50,7 +51,7 @@ func TestIndexFragmentationCollectorIsStateless(t *testing.T) {
 
 func TestIndexFragmentationCollectorRequiresDB(t *testing.T) {
 	c := &IndexFragmentationCollector{}
-	_, err := c.Fetch(nil, nil, "")
+	_, err := c.Fetch(context.TODO(), nil, "")
 	if err == nil {
 		t.Error("expected error for empty databaseName")
 	}

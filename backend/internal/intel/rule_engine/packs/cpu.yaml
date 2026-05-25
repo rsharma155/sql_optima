@@ -1,35 +1,7 @@
-name: cpu_saturation
-description: Sustained CPU saturation
-conditions:
-  - metric: avg_cpu_load
-    operator: ">"
-    value: 85
-  - metric: total_runnable_tasks
-    operator: ">"
-    value: 10
-logic: AND
-severity: high
-message: "avg_cpu_load has remained above 85% with {total_runnable_tasks} runnable tasks, indicating sustained compute pressure."
-recommendation:
-  - "Identify top CPU consumers in sqlserver_long_running_queries"
-  - "Review MAXDOP setting"
-  - "Consider scaling up CPU resources or query tuning"
-
----
-name: scheduler_starvation
-description: Scheduler starvation
-conditions:
-  - metric: total_runnable_tasks
-    operator: ">"
-    value: 50
-logic: AND
-severity: critical
-message: "Scheduler starvation detected with {total_runnable_tasks} runnable tasks."
-recommendation:
-  - "Reduce concurrent workload immediately"
-  - "Check for worker thread exhaustion warning"
-  - "Review CXPACKET / CXCONSUMER waits"
-
-# cpu_burst removed: avg_cpu_load is already covered by the dynamic cpu_saturation rule
-# with a hardware-tuned threshold. A hardcoded 90% rule fires simultaneously and
-# creates a duplicate CurrentIssues entry with a contradictory lower severity (DEFECT-7).
+# CPU threshold rules are evaluated dynamically in analysis/engine.go using
+# core count, virtualization, and historical CPU/runnable baselines.
+#
+# Removed fixed rules:
+#   - cpu_saturation (was avg_cpu_load > 85% AND runnable > 10)
+#   - scheduler_starvation (was runnable > 50)
+#   - cpu_burst (removed earlier — duplicated cpu_saturation)

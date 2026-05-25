@@ -99,6 +99,7 @@ func (tl *TimescaleLogger) LogSqlServerPerfCounters(ctx context.Context, serverI
 			INSERT INTO sqlserver_perf_counters (
 				capture_timestamp, server_id, counter_name, value_per_sec
 			) VALUES ($1, $2, $3, $4)
+			ON CONFLICT DO NOTHING
 		`, now, serverID, name, val)
 	}
 	br := tl.pool.SendBatch(ctx, batch)

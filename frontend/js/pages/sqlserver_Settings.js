@@ -101,7 +101,7 @@ window.showOptimaDialog = function(options) {
                     <i class="fa-solid fa-database text-accent"></i>
                     <strong style="font-size:1rem;">SQL Optima</strong>
                 </div>
-                <p style="margin:0 0 0.5rem 0;color:var(--text);font-size:0.85rem;">${options.message || ''}</p>
+                <p style="margin:0 0 0.5rem 0;color:var(--text);font-size:0.85rem;">${window.escapeHtml(options.message || '')}</p>
                 ${inputHtml}
                 <div id="optima-dialog-error" style="color:var(--danger);font-size:0.75rem;margin-top:0.25rem;display:none;"></div>
                 <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1rem;">
