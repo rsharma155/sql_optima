@@ -59,7 +59,7 @@ if vault status 2>/dev/null | grep -q 'Sealed.*true'; then
   fi
   echo "[vault-init] Unsealing Vault..."
   if ! vault operator unseal "$(cat /vault/data/.unseal)"; then
-    echo "[vault-init] ERROR: unseal failed — .unseal does not match vault_data"
+    echo "[vault-init] ERROR: unseal failed - .unseal does not match vault_data"
     echo "[vault-init] Dev fix: docker compose down -v  (destroys Vault + DB volumes)"
     exit 1
   fi

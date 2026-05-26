@@ -173,7 +173,7 @@ type slackAttachment struct {
 	Ts     int64  `json:"ts"`
 }
 
-func (n *Notifier) postSlack(ctx context.Context, url string, p WebhookPayload) {
+func buildSlackMessage(p WebhookPayload) slackMessage {
 	color := map[string]string{
 		"critical": "danger",
 		"warning":  "warning",
@@ -184,15 +184,68 @@ func (n *Notifier) postSlack(ctx context.Context, url string, p WebhookPayload) 
 	}
 
 	emoji := map[string]string{"critical": "🔴", "warning": "🟡", "info": "🔵"}[p.Severity]
-	msg := slackMessage{
-		Text: fmt.Sprintf("%s *[SQL Optima Alert]* %s on `%s`", emoji, p.Title, p.ServerName),
+	server := p.ServerName
+	if server == "" {
+		server = "SQL Optima"
+	}
+	return slackMessage{
+		Text: fmt.Sprintf("%s *[SQL Optima Alert]* %s on `%s`", emoji, p.Title, server),
 		Attachments: []slackAttachment{{
 			Color:  color,
 			Title:  p.Title,
 			Text:   fmt.Sprintf("*Severity:* %s\n*Category:* %s\n*Engine:* %s\n%s", p.Severity, p.Category, p.Engine, p.Description),
-			Footer: fmt.Sprintf("SQL Optima • %s", p.ServerName),
+			Footer: fmt.Sprintf("SQL Optima • %s", server),
 			Ts:     p.FiredAt.Unix(),
 		}},
 	}
-	n.postJSON(ctx, url, msg)
+}
+
+func (n *Notifier) postSlack(ctx context.Context, url string, p WebhookPayload) {
+	n.postJSON(ctx, url, buildSlackMessage(p))
+}
+
+// TestPayload returns the JSON body used by the admin "Test" action for a channel.
+func TestPayload(channel string) any {
+	if channel == "slack" {
+		return buildSlackMessage(WebhookPayload{
+			EventType:   "test",
+			ServerName:  "SQL Optima",
+			Severity:    "info",
+			Category:    "test",
+			Title:       "SQL Optima — Test Notification",
+			Description: "This is a test message from SQL Optima admin panel.",
+			FiredAt:     time.Now(),
+		})
+	}
+	return WebhookPayload{
+		EventType:   "test",
+		ServerName:  "SQL Optima",
+		Severity:    "info",
+		Category:    "test",
+		Title:       "SQL Optima — Test Notification",
+		Description: "This is a test message from SQL Optima admin panel.",
+		FiredAt:     time.Now(),
+	}
+}
+
+// PostSync delivers payload to url and returns a non-nil error on failure.
+func (n *Notifier) PostSync(ctx context.Context, url string, payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("endpoint returned %s", resp.Status)
+	}
+	return nil
 }

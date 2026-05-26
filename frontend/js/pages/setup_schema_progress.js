@@ -65,7 +65,7 @@ var steps = [
             '<div class="setup-ref-hero__icon"><i class="fa-solid fa-database"></i></div>' +
             '<div class="setup-ref-hero__main">' +
             '<h1 class="setup-ref-hero__title">Applying schema</h1>' +
-            '<p class="setup-ref-hero__sub"><strong>' + esc(draft.host || '') + '</strong> · <strong>' + esc(draft.database || '') + '</strong> — scripts 00 → 07 (first may run several minutes).</p>' +
+            '<p class="setup-ref-hero__sub"><strong>' + esc(draft.host || '') + '</strong> &middot; <strong>' + esc(draft.database || '') + '</strong> - scripts 00 &rarr; 07 (first may run several minutes).</p>' +
             '</div></header>' +
             '<div class="setup-ref-card setup-ref-card--migrate">' +
             '<div class="setup-ref-migrate-grid">' + panels + '</div></div>' +

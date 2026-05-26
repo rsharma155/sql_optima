@@ -16,6 +16,7 @@ services:
   timescaledb:
     image: timescale/timescaledb-ha:pg16
     container_name: dbmonitor_timescaledb
+    shm_size: "1gb"
     environment:
       POSTGRES_USER: ${DB_USER:-dbmonitor}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
@@ -38,8 +39,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-dbmonitor} -d ${DB_NAME:-dbmonitor_metrics}"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 12
+      start_period: 90s
     restart: unless-stopped
     networks:
       - dbmonitor_net
@@ -145,6 +146,8 @@ services:
     depends_on:
       timescaledb:
         condition: service_healthy
+      schema-setup:
+        condition: service_completed_successfully
     restart: "no"
     networks:
       - dbmonitor_net

@@ -86,6 +86,20 @@ func (h *AdminNotificationHandlers) UpdateConfig(w http.ResponseWriter, r *http.
 		return
 	}
 	input.URL = strings.TrimSpace(input.URL)
+	if input.URL == "" {
+		rows, err := h.repo.ListAll(r.Context())
+		if err != nil {
+			slog.Error("[AdminNotification] UpdateConfig list error", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		for _, row := range rows {
+			if row.Channel == input.Channel {
+				input.URL = row.URL
+				break
+			}
+		}
+	}
 
 	actor := ""
 	if claims := middleware.GetAuthClaims(r); claims != nil {
@@ -143,43 +157,18 @@ func (h *AdminNotificationHandlers) TestNotification(w http.ResponseWriter, r *h
 		return
 	}
 
-	testPayload := map[string]any{
-		"event_type":  "test",
-		"title":       "SQL Optima — Test Notification",
-		"description": "This is a test message from SQL Optima admin panel.",
-		"severity":    "info",
-	}
-
 	if h.notifier == nil {
 		http.Error(w, "notifier unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Fire the test synchronously so the caller sees the result.
 	type testResult struct {
 		OK      bool   `json:"ok"`
 		Message string `json:"message,omitempty"`
 	}
-	ctx := r.Context()
-	bodyBytes, _ := json.Marshal(testPayload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, strings.NewReader(string(bodyBytes)))
-	if err != nil {
+	if err := h.notifier.PostSync(r.Context(), targetURL, service.TestPayload(input.Channel)); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(testResult{OK: false, Message: err.Error()})
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 10e9} // 10 seconds
-	resp, err := client.Do(req)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(testResult{OK: false, Message: err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(testResult{OK: false, Message: "endpoint returned " + http.StatusText(resp.StatusCode)})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

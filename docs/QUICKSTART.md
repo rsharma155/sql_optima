@@ -30,7 +30,7 @@ Or from a cloned repo:
 ./install.sh --no-browser    # print URL only, do not open a browser
 ```
 
-**Windows (PowerShell)**
+**Windows (PowerShell)** — also works on Linux/macOS if you have [PowerShell (`pwsh`)](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) installed; otherwise use `install.sh` above.
 
 ```powershell
 irm https://raw.githubusercontent.com/rsharma155/sql_optima/main/install.ps1 | iex
@@ -41,11 +41,21 @@ Or from a cloned repo:
 ```powershell
 PowerShell -ExecutionPolicy Bypass -File .\install.ps1
 .\install.ps1 -NoBrowser
+.\install.ps1 -Help    # setup options and environment variables
 ```
 
 Environment: `SQL_OPTIMA_DIR` (target clone path), `SQL_OPTIMA_NO_BROWSER=1`, `SQL_OPTIMA_WAIT_SEC` (API wait timeout, default 900).
 
-The install script delegates to `docker/start-dev.sh` or `docker/start-dev.ps1`, which copy `docker/.env.dev` → `docker/.env` on first run (safe dev defaults only), then `docker compose up --build -d`.
+The install script delegates to `docker/start-dev.sh` or `docker/start-dev.ps1`. On **first run** (no `docker/.env` yet), you get an interactive setup:
+
+| Mode | Behavior |
+|------|----------|
+| **1) Easy (default)** | Safe local dev. TimescaleDB stays on the Docker network only (no LAN/DBeaver from other machines). |
+| **2) Custom** | Choose DB user/password, API port, and optionally publish TimescaleDB on your **LAN IP** for DBeaver. |
+
+Non-interactive installs (`curl … \| bash`) default to **Easy** (no prompts). Override with env vars (see below).
+
+Then `docker compose up --build -d` runs.
 
 **Alternate** (manual clone + compose):
 
@@ -67,6 +77,36 @@ cd sql_optima/docker
 
 Historical dashboards usually need **~15 minutes** (two collector cycles) after you add a server.
 
+### DBeaver / psql (dev only, opt-in)
+
+Only available if you chose **Custom** and enabled **LAN/DBeaver** during setup (or set env vars below). Easy setup does **not** publish port 5432 on the host.
+
+| Field | Typical dev default |
+|-------|---------------------|
+| Host | Your Docker host **LAN IP** (`DB_PUBLISH_BIND` in `docker/.env`) |
+| Port | `5432` (`DB_PUBLISH_PORT`) |
+| Database | `dbmonitor_metrics` |
+| User | `dbmonitor` (or your custom value) |
+| Password | `sql_optima_dev_local_only` (or your custom value) |
+
+Use **SSL off** in DBeaver. Allow inbound TCP on the publish port in the host firewall for other machines on the LAN. Dev credentials are not for production or the public internet.
+
+**Without LAN exposure:** use `docker compose exec timescaledb psql -U dbmonitor -d dbmonitor_metrics`.
+
+**Non-interactive Custom + LAN** (CI or scripted):
+
+```bash
+export SQL_OPTIMA_SETUP_MODE=custom
+export SQL_OPTIMA_EXPOSE_DB_LAN=1
+export SQL_OPTIMA_DB_PUBLISH_BIND=192.168.1.10   # your host LAN IP
+export SQL_OPTIMA_DB_PASSWORD='your-dev-password'
+./install.sh
+```
+
+Other optional env vars: `SQL_OPTIMA_DB_USER`, `SQL_OPTIMA_DB_NAME`, `SQL_OPTIMA_API_PORT`, `SQL_OPTIMA_DB_PUBLISH_PORT`.
+
+Production (`cp .env.example .env` without `COMPOSE_FILE` / dev overlay) does **not** publish Postgres to the host.
+
 ### Stop the stack
 
 ```bash
@@ -83,6 +123,9 @@ Use the companion [sqlserver_postgres_ha_cluster](https://github.com/rsharma155/
 
 | Symptom | What to do |
 |---------|------------|
+| `timescaledb` failed to start / unhealthy | `docker compose logs timescaledb --tail 80`. Common: low RAM (give Docker ≥4GB), shared memory (`shm_size` in compose), or stale volume after password change — `docker compose down -v` then `./start-dev.sh` |
+| DBeaver: connection refused on `localhost:5432` | Easy setup does not publish the DB. Re-run setup: remove `docker/.env`, run `./start-dev.sh`, choose Custom + enable LAN; or use `docker compose exec timescaledb psql …` |
+| `schema-patches` exit 3 | Usually TimescaleDB not ready or schema race. After `git pull`, retry; if logs show `role "sql_optima_app" does not exist` or missing `optima_servers`, run `docker compose down -v` and restart |
 | Setup wizard says metrics DB unreachable | Run `docker compose ps` — wait for `timescaledb` and `schema-setup` to finish; check `docker compose logs api` |
 | “Setup unavailable” / public setup disabled | You are using production `.env` values. For dev, use `./start-dev.sh` / `.\start-dev.ps1` or `cp .env.dev .env` and restart |
 | Forgot admin password (dev) | `docker compose down -v` then `./start-dev.sh` or `.\start-dev.ps1` for a fresh DB and setup wizard |

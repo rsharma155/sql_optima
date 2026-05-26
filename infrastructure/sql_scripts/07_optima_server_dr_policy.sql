@@ -49,8 +49,14 @@ INSERT INTO optima_notification_config (channel, url, is_enabled)
 VALUES ('webhook', '', false), ('slack', '', false)
 ON CONFLICT (channel) DO NOTHING;
 
-GRANT SELECT, INSERT, UPDATE ON optima_notification_config TO sql_optima_app;
-GRANT USAGE, SELECT ON SEQUENCE optima_notification_config_id_seq TO sql_optima_app;
+DO $grant$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sql_optima_app') THEN
+        GRANT SELECT, INSERT, UPDATE ON optima_notification_config TO sql_optima_app;
+        GRANT USAGE, SELECT ON SEQUENCE optima_notification_config_id_seq TO sql_optima_app;
+    END IF;
+END
+$grant$;
 
 COMMENT ON TABLE optima_notification_config IS
     'Admin-managed webhook/Slack URLs for alert notifications (loaded by service.Notifier at startup).';
