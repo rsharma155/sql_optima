@@ -9,20 +9,18 @@
 package hot
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
 
 func TestSqlServerCollectorSQLExcludeSQL_usesQueryTextRaw(t *testing.T) {
 	f := sqlServerCollectorSQLExcludeSQL("q.")
-	if !strings.Contains(f, "q.query_text_raw") {
-		t.Fatalf("expected filter on query_text_raw: %s", f)
+	if !strings.Contains(f, "q.query_text_raw") || !strings.Contains(f, "q.statement_text") {
+		t.Fatalf("expected /* SQL_OPTIMA filter on query_text_raw and statement_text: %s", f)
 	}
 	if !strings.Contains(f, "%/* SQL_OPTIMA%") {
 		t.Fatalf("expected /* SQL_OPTIMA tag match: %s", f)
-	}
-	if strings.Contains(f, "statement_text") {
-		t.Fatal("monitoring collector filter must not use statement_text")
 	}
 }
 
@@ -42,20 +40,30 @@ func TestSqlServerQueryAnalysisReadFilter_OptionA(t *testing.T) {
 	if !strings.Contains(checked, "%/* SQL_OPTIMA%") {
 		t.Fatal("checked filter should exclude /* SQL_OPTIMA collector SQL")
 	}
-	if strings.Contains(checked, "is_user_workload") {
-		t.Fatal("checked filter should not gate on is_user_workload (CRUD batches must not be dropped)")
+	if !strings.Contains(checked, "is_user_workload") || strings.Contains(checked, "is_user_workload, 1)") {
+		t.Fatal("checked filter should require is_user_workload = 1 with NULL defaulting to 0")
+	}
+	if !strings.Contains(checked, "is_user_workload, 0)") {
+		t.Fatal("expected COALESCE(is_user_workload, 0)")
 	}
 	if strings.Contains(checked, "NOT LIKE 'SET %'") {
 		t.Fatal("checked filter must not exclude SET batches (normal CRUD)")
 	}
-	if !strings.Contains(checked, "'my_monitor'") {
-		t.Fatal("checked filter should exclude optima_servers monitoring login")
+	if !strings.Contains(checked, "sys.dm_") {
+		t.Fatal("checked filter should exclude DMV-shaped SQL on either text column")
+	}
+	if !strings.Contains(checked, "statement_text") {
+		t.Fatal("collector tag filter should cover statement_text as well as query_text_raw")
 	}
 	if strings.Contains(checked, "total_cpu_ms > 1") {
 		t.Fatal("cpu threshold heuristic must not be used")
 	}
-	if strings.Contains(checked, "statement_text") {
-		t.Fatal("system SQL heuristics should use query_text_raw only, not statement_text")
+	noise := sqlServerQueryTextSystemNoiseSQL("qm.")
+	if !strings.Contains(noise, "qm.statement_text") || !strings.Contains(noise, "qm.query_text_raw") {
+		t.Fatal("system SQL heuristics should check query_text_raw and statement_text")
+	}
+	if !strings.Contains(noise, "sys.dm_exec_query_stats") {
+		t.Fatal("expected collector DMV shape exclusion")
 	}
 
 	unchecked := sqlServerQueryAnalysisReadFilter(false, "q.", monitorUser)
@@ -78,6 +86,19 @@ func TestSqlServerSnapshotReadFilter_noLoginColumns(t *testing.T) {
 }
 
 func TestSqlServerQueryAnalysisClassificationFilter(t *testing.T) {
+	join, scope := sqlServerQueryAnalysisMetricsLateralJoin(true, "qh", []string{"mon"})
+	if !strings.Contains(join, "INNER JOIN LATERAL") || strings.Contains(scope, "qm.") {
+		t.Fatalf("exclude_system=true should filter inside lateral join, outer scope=%q", scope)
+	}
+	// Join must be passed as a fmt.Sprintf argument, not embedded in the format string (ILIKE '%…%').
+	built := fmt.Sprintf(`FROM t %s WHERE 1=1`, join)
+	if strings.Contains(built, "%!") {
+		t.Fatalf("fmt.Sprintf must not interpret ILIKE wildcards in join SQL")
+	}
+	if !strings.Contains(built, `'%sys.dm_%'`) {
+		t.Fatal("expected literal sys.dm ILIKE pattern in built SQL")
+	}
+
 	if sqlServerQueryAnalysisClassificationFilter(false, "q.") != "" {
 		t.Fatal("classification filter off when include system")
 	}

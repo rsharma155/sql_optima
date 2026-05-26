@@ -37,7 +37,8 @@ func mergeSqlServerExcludedLogins(monitoringLogins []string) []string {
 	return out
 }
 
-// sqlServerMonitoringLoginExcludeSQL excludes optima_servers.username and built-in monitor roles.
+// sqlServerMonitoringLoginExcludeSQL is retained for legacy callers; workload dashboards
+// use is_user_workload instead of blanket login exclusion (see sqlServerUserWorkloadNoiseSQL).
 func sqlServerMonitoringLoginExcludeSQL(col string, monitoringLogins []string) string {
 	logins := mergeSqlServerExcludedLogins(monitoringLogins)
 	if len(logins) == 0 {

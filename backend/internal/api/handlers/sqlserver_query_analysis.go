@@ -31,7 +31,7 @@ func NewSqlServerQueryAnalysisHandlers(svc *service.MetricsService, cfg *config.
 }
 
 func (h *SqlServerQueryAnalysisHandlers) resolve(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	id, _, outcome := resolveInstanceParam(r, h.cfg)
+	id, _, outcome := resolveInstanceParamWithRepo(r.Context(), r, h.cfg, h.metricsSvc)
 	switch outcome {
 	case lookupMissing:
 		w.WriteHeader(http.StatusBadRequest)

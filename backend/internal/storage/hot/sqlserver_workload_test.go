@@ -46,13 +46,19 @@ func TestTimescaleLogger_WorkloadInterface(t *testing.T) {
 
 func TestWorkloadMetricsFilterSQL(t *testing.T) {
 	excluded := workloadMetricsFilterSQL(domain.WorkloadQueryFilter{ExcludeSystem: true})
-	if excluded == "" || !strings.Contains(excluded, "%sys.dm_%") || !strings.Contains(excluded, "%/* SQL_OPTIMA%") {
+	if excluded == "" || !strings.Contains(excluded, "sys.dm_") || !strings.Contains(excluded, "%/* SQL_OPTIMA%") {
 		t.Fatalf("expected user-workload filter: %s", excluded)
+	}
+	if !strings.Contains(excluded, "statement_text") {
+		t.Fatalf("expected system noise on statement_text: %s", excluded)
 	}
 	if !strings.Contains(excluded, "distribution") {
 		t.Fatalf("expected distribution exclusion in workload scope: %s", excluded)
 	}
-	if strings.Contains(excluded, "is_user_workload") || strings.Contains(excluded, "NOT LIKE 'SET %'") {
+	if !strings.Contains(excluded, "is_user_workload") {
+		t.Fatalf("exclude_system=true should filter on is_user_workload: %s", excluded)
+	}
+	if strings.Contains(excluded, "NOT LIKE 'SET %'") {
 		t.Fatalf("filter must not drop CRUD batches: %s", excluded)
 	}
 	unchecked := workloadMetricsFilterSQL(domain.WorkloadQueryFilter{ExcludeSystem: false})

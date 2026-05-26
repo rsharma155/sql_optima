@@ -144,6 +144,12 @@ const (
 // It distinguishes between a missing param (→ 400) and a provided but unknown
 // name (→ 404), which ParseServerID cannot.
 func resolveInstanceParam(r *http.Request, cfg *config.Config) (id uuid.UUID, name string, result instanceLookup) {
+	return resolveInstanceParamWithRepo(r.Context(), r, cfg, nil)
+}
+
+// resolveInstanceParamWithRepo resolves instance/server_id query params to optima_servers.id.
+// Config is checked first; when metricsSvc.ServerRepo is set, registry rows are used as fallback.
+func resolveInstanceParamWithRepo(ctx context.Context, r *http.Request, cfg *config.Config, metricsSvc *service.MetricsService) (id uuid.UUID, name string, result instanceLookup) {
 	for _, p := range []string{"instance", "server_id", "server"} {
 		val := strings.TrimSpace(r.URL.Query().Get(p))
 		if val == "" {
@@ -157,7 +163,7 @@ func resolveInstanceParam(r *http.Request, cfg *config.Config) (id uuid.UUID, na
 		if err := validateInstanceName(val); err != nil {
 			return uuid.Nil, val, lookupMissing // treat invalid names as "missing" → 400
 		}
-		// Name lookup
+		// Name lookup in loaded config
 		if cfg != nil {
 			up := strings.ToUpper(val)
 			for _, inst := range cfg.Instances {
@@ -165,9 +171,16 @@ func resolveInstanceParam(r *http.Request, cfg *config.Config) (id uuid.UUID, na
 					return inst.ServerID, inst.Name, lookupFound
 				}
 			}
+		}
+		// Registry fallback (matches TimescaleDB server_id on metrics rows)
+		if metricsSvc != nil && metricsSvc.ServerRepo != nil {
+			if s, err := metricsSvc.ServerRepo.GetByName(ctx, val); err == nil && s.ID != uuid.Nil {
+				return s.ID, s.Name, lookupFound
+			}
+		}
+		if cfg != nil {
 			return uuid.Nil, val, lookupNotFound
 		}
-		// No config — use the name as-is; callers treat this as not-found.
 		return uuid.Nil, val, lookupNotFound
 	}
 	return uuid.Nil, "", lookupMissing

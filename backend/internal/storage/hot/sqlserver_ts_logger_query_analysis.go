@@ -557,7 +557,8 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		from = to.Add(-24 * time.Hour)
 	}
 
-	metricsFilter := sqlServerQueryAnalysisScopeSQL(excludeSystem, "qm.", monitoringLogins)
+	histMetricsJoin, metricsFilter := sqlServerQueryAnalysisMetricsLateralJoin(excludeSystem, "qh", monitoringLogins)
+	snapMetricsJoin, snapMetricsFilter := sqlServerQueryAnalysisMetricsLateralJoin(excludeSystem, "s", monitoringLogins)
 	histClassFilter := sqlServerQueryAnalysisClassificationFilter(excludeSystem, "qh.")
 	snapClassFilter := sqlServerQueryAnalysisClassificationFilter(excludeSystem, "s.")
 
@@ -579,16 +580,10 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		LEFT JOIN sqlserver_query_classification_dim class
 		  ON class.server_id = qh.server_id
 		 AND class.query_hash = qh.query_hash
-		LEFT JOIN LATERAL (
-			SELECT ` + sqlServerQueryMetricsV2LateralSelect + `
-			FROM sqlserver_query_metrics_v2
-			WHERE server_id = qh.server_id AND query_hash = qh.query_hash
-			ORDER BY capture_timestamp DESC
-			LIMIT 1
-		) qm ON true
+		%s
 		WHERE qh.server_id = $1
 		  AND qh.capture_timestamp >= $2 AND qh.capture_timestamp <= $3
-		  %s%s%s`, historyDB, metricsFilter, histClassFilter)
+		  %s%s%s`, histMetricsJoin, historyDB, metricsFilter, histClassFilter)
 
 	err := tl.pool.QueryRow(ctx, q1, histArgs...).Scan(&s.TotalExecutions, &s.AvgCPU, &s.AvgDuration, &s.AvgReads, &s.QueriesExecutedInRange)
 	if err != nil {
@@ -598,12 +593,7 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 	top10MetricsLateral := `
 			LEFT JOIN sqlserver_query_classification_dim class
 			  ON class.server_id = qh.server_id AND class.query_hash = qh.query_hash
-			LEFT JOIN LATERAL (
-				SELECT ` + sqlServerQueryMetricsV2LateralSelect + `
-				FROM sqlserver_query_metrics_v2
-				WHERE server_id = qh.server_id AND query_hash = qh.query_hash
-				ORDER BY capture_timestamp DESC LIMIT 1
-			) qm ON true`
+			` + histMetricsJoin
 	top10Q := fmt.Sprintf(`
 		WITH total AS (
 			SELECT SUM(qh.cpu_delta_ms) as total_cpu
@@ -643,14 +633,9 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		FROM sqlserver_query_stats_snapshot_v2 s
 		LEFT JOIN sqlserver_query_classification_dim class
 		  ON class.server_id = s.server_id AND class.query_hash = s.query_hash
-		LEFT JOIN LATERAL (
-			SELECT ` + sqlServerQueryMetricsV2LateralSelect + `
-			FROM sqlserver_query_metrics_v2
-			WHERE server_id = s.server_id AND query_hash = s.query_hash
-			ORDER BY capture_timestamp DESC LIMIT 1
-		) qm ON true
+		%s
 		WHERE s.server_id = $1
-		  %s%s%s`, snapDB, metricsFilter, snapClassFilter)
+		  %s%s%s`, snapMetricsJoin, snapDB, snapMetricsFilter, snapClassFilter)
 	_ = tl.pool.QueryRow(ctx, q3, snapArgs...).Scan(&s.TotalQueriesInQS)
 
 	singleQ := fmt.Sprintf(`
@@ -659,17 +644,12 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 			FROM sqlserver_query_stats_history qh
 			LEFT JOIN sqlserver_query_classification_dim class
 			  ON class.server_id = qh.server_id AND class.query_hash = qh.query_hash
-			LEFT JOIN LATERAL (
-				SELECT ` + sqlServerQueryMetricsV2LateralSelect + `
-				FROM sqlserver_query_metrics_v2
-				WHERE server_id = qh.server_id AND query_hash = qh.query_hash
-				ORDER BY capture_timestamp DESC LIMIT 1
-			) qm ON true
+			%s
 			WHERE qh.server_id = $1 AND qh.capture_timestamp >= $2 AND qh.capture_timestamp <= $3
 			  %s%s%s
 			GROUP BY qh.query_hash
 			HAVING SUM(qh.exec_delta) = 1
-		) sub`, historyDB, metricsFilter, histClassFilter)
+		) sub`, histMetricsJoin, historyDB, metricsFilter, histClassFilter)
 	_ = tl.pool.QueryRow(ctx, singleQ, histArgs...).Scan(&s.QueriesSingleExecution)
 
 	since24h := time.Now().UTC().Add(-24 * time.Hour)

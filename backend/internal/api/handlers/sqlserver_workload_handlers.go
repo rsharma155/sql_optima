@@ -33,7 +33,13 @@ func NewSqlServerWorkloadHandlers(svc *service.MetricsService, cfg *config.Confi
 }
 
 func (h *SqlServerWorkloadHandlers) parseID(r *http.Request) (uuid.UUID, bool) {
-	return ParseServerID(r, h.cfg)
+	id, _, outcome := resolveInstanceParamWithRepo(r.Context(), r, h.cfg, h.metricsSvc)
+	switch outcome {
+	case lookupFound:
+		return id, true
+	default:
+		return uuid.Nil, false
+	}
 }
 
 func parseWorkloadFilterParams(r *http.Request) (database string, autoPickDatabase bool, excludeSystem bool) {

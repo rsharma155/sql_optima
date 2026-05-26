@@ -43,6 +43,7 @@ export const sqlserverWorkload = {
     sortKey: 'total_cpu_ms',
     sortDir: 'desc',
     sectionErrors: {},
+    _refreshInFlight: false,
     _lastFrom: null,
     _lastTo: null,
     databaseFilter: '',
@@ -318,6 +319,8 @@ export const sqlserverWorkload = {
 
     async refreshAll() {
         if (!this.instance) return;
+        if (this._refreshInFlight) return;
+        this._refreshInFlight = true;
         const range = window.getAppTimeRangeISO ? window.getAppTimeRangeISO() : {};
         const from = range.from || new Date(Date.now() - 3600000).toISOString();
         const to = range.to || new Date().toISOString();
@@ -326,19 +329,18 @@ export const sqlserverWorkload = {
         this._lastTo = to;
         this.sectionErrors = {};
 
-        await this.syncDatabaseForRange(from, to, {
-            reselect: rangeChanged && !!this.getFilters().database,
-        });
-
-        this.setLoading(true);
         try {
+            await this.syncDatabaseForRange(from, to, {
+                reselect: rangeChanged && !!this.getFilters().database,
+            });
+
+            this.setLoading(true);
             const tasks = [
                 this.loadSection('summary', () => this.loadSummary(from, to)),
                 this.loadSection('trends', () => this.loadTrends(from, to)),
                 this.loadSection('top-queries', () => this.loadTopOffenders(from, to)),
                 this.loadSection('server-properties', () => this.loadServerProperties()),
                 this.loadSection('scheduler', () => this.loadSchedulerStats()),
-                this.loadSection('qa-summary', () => this.loadQaSummary(from, to)),
             ];
             if (this.loadedTabs.has('app-cpu-content')) {
                 tasks.push(this.loadSection('app-analysis', () => this.loadAppAnalysis(from, to)));
@@ -354,7 +356,10 @@ export const sqlserverWorkload = {
             this.setBanner('Workload refresh failed. Check console for details.');
         } finally {
             this.setLoading(false);
+            this._refreshInFlight = false;
         }
+        // QA summary uses heavy history + lateral joins; do not block the workload overlay.
+        void this.loadSection('qa-summary', () => this.loadQaSummary(from, to));
     },
 
     async loadSection(section, fn) {
@@ -471,7 +476,7 @@ export const sqlserverWorkload = {
 
     async loadQaSummary(from, to) {
         const { database } = this.getFilters();
-        const dbParam = encodeURIComponent(database || '');
+        const dbParam = encodeURIComponent(database || 'all');
         const data = await api.get(
             `/api/sqlserver/query-analysis/summary?instance=${encodeURIComponent(this.instance)}` +
             `&from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}` +

@@ -3431,6 +3431,20 @@ CREATE TABLE IF NOT EXISTS sqlserver_plan_enrichment (
 );
 CREATE INDEX IF NOT EXISTS idx_sqlserver_plan_enrichment_instance ON sqlserver_plan_enrichment (server_id);
 
+-- Last-known login/app per query_hash (survives after plan_handle leaves cache).
+-- UNIQUE (server_id, query_hash) indexes merge lookups; no separate query_hash-only index needed.
+CREATE TABLE IF NOT EXISTS sqlserver_query_hash_enrichment (
+    server_id          UUID NOT NULL,
+    query_hash         BIGINT NOT NULL,
+    login_name         TEXT,
+    application_name   TEXT,
+    is_user_workload   INT,
+    last_seen          TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT uq_sqlserver_query_hash_enrichment UNIQUE (server_id, query_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_sqlserver_query_hash_enrichment_instance
+    ON sqlserver_query_hash_enrichment (server_id, last_seen DESC);
+
 -- PostgreSQL Query Metrics V2
 CREATE TABLE IF NOT EXISTS pg_query_metrics_v2(
  capture_timestamp timestamptz NOT NULL,

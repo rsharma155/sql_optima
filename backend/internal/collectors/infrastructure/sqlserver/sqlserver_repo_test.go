@@ -61,9 +61,9 @@ func TestFetchSessionEnrichment(t *testing.T) {
 	repo := NewSQLServerSnapshotRepository(db)
 
 	rows := sqlmock.NewRows([]string{
-		"plan_handle", "login_name", "application_name", "database_name", "is_user_workload",
+		"plan_handle", "query_hash", "login_name", "application_name", "database_name", "is_user_workload",
 	}).AddRow(
-		[]byte("plan_handle"), "test_user", "test_app", "testdb", 1,
+		[]byte("plan_handle"), []byte{0, 0, 0, 0, 0, 0, 0, 1}, "test_user", "test_app", "testdb", 1,
 	)
 
 	mock.ExpectQuery("SELECT").WillReturnRows(rows)

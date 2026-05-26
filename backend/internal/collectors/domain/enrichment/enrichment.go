@@ -27,16 +27,18 @@ func EnrichMSSQL(snapshots []domain.MSSQLQuerySnapshot, enrichments []domain.MSS
 			QueryHash:          bytesToInt64(s.QueryHash),
 			PlanHash:           bytesToInt64(s.QueryPlanHash),
 			LastExecutionTime:  s.LastExecutionTime,
-			IsUserWorkload:     1, // Default to user workload if no enrichment found
+			IsUserWorkload:     0,
 		}
 
 		if e, ok := enrichMap[string(s.PlanHandle)]; ok {
 			metric.LoginName = e.LoginName
 			metric.ApplicationName = e.ApplicationName
-			metric.IsUserWorkload = e.IsUserWorkload
 			if metric.DatabaseName == "" {
 				metric.DatabaseName = e.DatabaseName
 			}
+			metric.IsUserWorkload = classifyMSSQLWorkload(s, &e)
+		} else {
+			metric.IsUserWorkload = classifyMSSQLWorkload(s, nil)
 		}
 
 		results = append(results, metric)

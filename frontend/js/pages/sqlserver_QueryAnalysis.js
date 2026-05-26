@@ -441,13 +441,12 @@
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const data = await resp.json();
                 const raw = Array.isArray(data) ? data : (data && data.queries) || [];
-                const deduped = typeof window.dedupeSqlServerTopQueries === 'function'
+                let deduped = typeof window.dedupeSqlServerTopQueries === 'function'
                     ? window.dedupeSqlServerTopQueries(raw)
                     : raw;
                 _topRows = filterQaExcludedRows(deduped);
                 mergeQaDatabaseOptionsFromRows(_topRows);
 
-                // Hide warning if we have data
                 const warning = document.getElementById('qaDataWarning');
                 if (warning && _topRows.length > 0) warning.style.display = 'none';
 

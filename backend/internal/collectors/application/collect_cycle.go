@@ -141,8 +141,16 @@ func (a *CollectorApp) collectMSSQLQuerySnapshot(ctx context.Context, serverID u
 		return
 	}
 
-	// 5. Save Metrics (Staging -> Merge -> Snapshot -> Watermark)
-	// This now handles both persistent history and enriched V2 metrics in a single canonical path.
+	// 5. Refresh plan/query_hash enrichment immediately before merge so metrics get login/app.
+	if enrichments, enrichErr := a.mssqlRepo.FetchSessionEnrichment(ctx); enrichErr != nil {
+		slog.Error("MSSQL FetchSessionEnrichment before snapshot", "target", serverID, "err", enrichErr)
+	} else if len(enrichments) > 0 {
+		if err := a.writer.WriteMSSQLSessionEnrichment(ctx, serverID, enrichments); err != nil {
+			slog.Error("MSSQL WriteMSSQLSessionEnrichment before snapshot", "target", serverID, "err", err)
+		}
+	}
+
+	// 6. Save Metrics (Staging -> Merge -> Snapshot -> Watermark)
 	pollTime := time.Now().UTC()
 	err = a.writer.SaveMetrics(ctx, serverID, snapshots, pollTime, currStartTime)
 	if err != nil {
