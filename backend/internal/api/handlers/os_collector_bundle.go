@@ -68,7 +68,7 @@ func (h *OSCollectorHandlers) DownloadBundle(w http.ResponseWriter, r *http.Requ
 
 	serverID := ""
 	if h.metricsSvc != nil {
-		if id, err := h.metricsSvc.ResolveServerIDByInstanceName(instance); err == nil {
+		if id, err := h.metricsSvc.ResolveServerIDByInstanceName(r.Context(), instance); err == nil {
 			serverID = id.String()
 		}
 	}

@@ -1,0 +1,5 @@
+# Keep Linux container configs valid on Windows checkouts (CRLF breaks Vault HCL and shell scripts).
+docker/vault-config.hcl text eol=lf
+docker/scripts/*.sh text eol=lf
+docker/scripts/api-entrypoint.sh text eol=lf
+docker/start-dev.sh text eol=lf

@@ -2,7 +2,7 @@ services:
   api:
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile.compose-api
     ports:
       - "${API_PORT:-8080}:8080"
     env_file:
@@ -17,7 +17,9 @@ services:
       # If unset, ingest is controlled from the UI (optima_platform_settings).
       JWT_SECRET: ${JWT_SECRET:-change-me-to-32chars-minimum-for-prod}
       VAULT_ADDR: ${VAULT_ADDR:-http://vault:8200}
-      VAULT_TOKEN: ${VAULT_TOKEN:-root}
+      # Leave VAULT_TOKEN unset in .env for Compose: token is read from vault_data (see VAULT_TOKEN_FILE).
+      VAULT_TOKEN: ${VAULT_TOKEN:-}
+      VAULT_TOKEN_FILE: /vault/token/.root_token
       VAULT_TRANSIT_MOUNT: ${VAULT_TRANSIT_MOUNT:-transit}
       VAULT_NAMESPACE: ${VAULT_NAMESPACE:-}
       VAULT_TRANSIT_KEY: ${VAULT_TRANSIT_KEY:-sql-optima}
@@ -35,6 +37,8 @@ services:
         condition: service_healthy
       vault-setup:
         condition: service_completed_successfully
+    volumes:
+      - vault_data:/vault/token:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
       interval: 30s
@@ -72,7 +76,7 @@ services:
     restart: unless-stopped
 
   vault:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:1.18
     cap_add:
       - IPC_LOCK
     ports:
@@ -80,48 +84,21 @@ services:
     environment:
       VAULT_ADDR: http://127.0.0.1:8200
       VAULT_TOKEN: ${VAULT_TOKEN:-root}
-    command:
-      - sh
-      - -lc
-      - |
-        # If Vault is already initialized and sealed, unseal it automatically.
-        # This uses the single unseal key approach acceptable for single-node dev/prod-lite deployments.
-        vault server -config=/vault/config/vault.hcl &
-        VAULT_PID=$$!
-        sleep 2
-
-        export VAULT_ADDR=http://127.0.0.1:8200
-
-        # Initialize on first run; store unseal key to /vault/data/.unseal (on the persistent volume)
-        if ! vault status 2>/dev/null | grep -q "Initialized.*true"; then
-          echo "[vault-init] Initializing Vault for the first time..."
-          vault operator init -key-shares=1 -key-threshold=1 -format=json > /vault/data/.init.json
-          UNSEAL_KEY=$$(cat /vault/data/.init.json | grep unseal_keys_b64 | head -1 | tr -d ' ",' | cut -d: -f2 | tr -d '[]')
-          ROOT_TOKEN=$$(cat /vault/data/.init.json | grep root_token | tr -d ' ",' | cut -d: -f2)
-          echo "$$UNSEAL_KEY" > /vault/data/.unseal
-          echo "$$ROOT_TOKEN"  > /vault/data/.root_token
-          echo "[vault-init] Vault initialized. Root token stored to /vault/data/.root_token"
-        fi
-
-        # Unseal if sealed
-        if vault status 2>/dev/null | grep -q "Sealed.*true"; then
-          echo "[vault-init] Unsealing Vault..."
-          vault operator unseal "$$(cat /vault/data/.unseal)"
-        fi
-
-        wait $$VAULT_PID
+    entrypoint: ["/bin/sh", "/vault/scripts/vault-entrypoint.sh"]
     volumes:
       - vault_data:/vault/data
       - ./vault-config.hcl:/vault/config/vault.hcl:ro
+      - ./scripts/vault-entrypoint.sh:/vault/scripts/vault-entrypoint.sh:ro
     healthcheck:
-      test: ["CMD", "sh", "-lc", "VAULT_ADDR=http://127.0.0.1:8200 vault status -format=json | grep -q '\"sealed\":false'"]
+      test: ["CMD", "sh", "-lc", "VAULT_ADDR=http://127.0.0.1:8200 vault status 2>/dev/null | grep -q 'Sealed.*false'"]
       interval: 5s
-      timeout: 3s
-      retries: 30
+      timeout: 5s
+      retries: 36
+      start_period: 90s
     restart: unless-stopped
 
   vault-setup:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:1.18
     environment:
       VAULT_ADDR: ${VAULT_ADDR:-http://vault:8200}
       VAULT_TOKEN: ${VAULT_TOKEN:-root}
@@ -137,6 +114,7 @@ services:
         export VAULT_ADDR="$$VAULT_ADDR"
         # Read the root token from the persistent volume written by the vault init step
         export VAULT_TOKEN=$$(cat /vault/data/.root_token 2>/dev/null || echo "${VAULT_TOKEN:-root}")
+        chmod 644 /vault/data/.root_token 2>/dev/null || true
         echo "[vault-setup] Enabling transit engine (idempotent)..."
         vault secrets enable -path=transit transit >/dev/null 2>&1 || true
         vault write -f "transit/keys/$$VAULT_TRANSIT_KEY" >/dev/null 2>&1 || true

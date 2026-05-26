@@ -351,7 +351,10 @@ async function updateCheckpointHealth(instName, from, to) {
                 return;
             }
 
-            const labels = data.map(d => new Date(d.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})).reverse();
+            const labels = data.map(d => {
+                const t = new Date(d.timestamp || d.time);
+                return isNaN(t.getTime()) ? '' : t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+            }).reverse();
             const writeTime = data.map(d => d.checkpoint_write_time).reverse();
             const syncTime = data.map(d => d.checkpoint_sync_time).reverse();
             const latestRatio = data[0].checkpoint_req_ratio || 0;

@@ -17,7 +17,7 @@ import (
 func InitServerRegistryKMS(jwtSecret []byte) (kms servers.KeyManagementService, usingLocalKMS bool) {
 	vaultAddr := strings.TrimSpace(os.Getenv("VAULT_ADDR"))
 	if vaultAddr != "" {
-		vTok := strings.TrimSpace(os.Getenv("VAULT_TOKEN"))
+		vTok := security.ResolveVaultToken()
 		vKey := strings.TrimSpace(os.Getenv("VAULT_TRANSIT_KEY"))
 		vNs := strings.TrimSpace(os.Getenv("VAULT_NAMESPACE"))
 		vMount := strings.TrimSpace(os.Getenv("VAULT_TRANSIT_MOUNT"))

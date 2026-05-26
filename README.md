@@ -36,26 +36,38 @@ Screenshots live in [`docs/screenshots/`](docs/screenshots/).
 
 ## Getting started
 
-**Fastest path:** follow the **[5-Minute Quickstart Guide](docs/QUICKSTART.md)** — clone, `docker compose up`, open the UI, add a server, and (optionally) spin up local HA test databases.
+Full walkthrough: **[docs/QUICKSTART.md](docs/QUICKSTART.md)** (development path first, then production).
 
-### What you need
+### Development — quick test (one command)
 
-| Requirement | Notes |
-|-------------|--------|
-| [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine + Compose V2 | Recommended for first run |
-| Git | To clone this repository |
-| Monitored PostgreSQL and/or SQL Server | Your own instances, **or** the [local HA test cluster](docs/QUICKSTART.md#local-test-environment-ha-clusters-for-development) described in the quickstart |
+No editing of `JWT_SECRET`, database passwords, or `.env` files. Docker provisions TimescaleDB, Vault, and schema; the install script waits for the API and opens your browser.
 
-### Run SQL Optima (Docker — recommended)
+**Requirements:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine + Compose V2, and Git (or a [release zip](https://github.com/rsharma155/sql_optima/releases)).
+
+**macOS / Linux** (from any directory — clones into `./sql_optima` if needed):
 
 ```bash
-git clone https://github.com/rsharma155/sql_optima.git
-cd sql_optima/docker
-cp .env.example .env          # set JWT_SECRET and DB_PASSWORD before production use
-docker compose up --build
+curl -fsSL https://raw.githubusercontent.com/rsharma155/sql_optima/main/install.sh | bash
+# Or, if you already cloned the repo:
+./install.sh
 ```
 
-Open **[http://localhost:8080](http://localhost:8080)** — the Global Estate Overview loads immediately. Compose defaults to **`AUTH_REQUIRED=1`**; create an admin user with `go run reset_password.go` in `backend/` (see [Quickstart](docs/QUICKSTART.md)).
+**Windows (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/rsharma155/sql_optima/main/install.ps1 | iex
+# Or from a cloned repo:
+PowerShell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+Skip opening the browser: `./install.sh --no-browser` or `.\install.ps1 -NoBrowser`.
+
+**Alternate** (already in the repo): `cd docker && ./start-dev.sh` (macOS/Linux) or `.\start-dev.ps1` (Windows).
+
+Then at **[http://localhost:8080](http://localhost:8080)**:
+
+1. **Setup wizard** — choose admin username and password (browser only; no CLI).
+2. **Add monitored databases** — register PostgreSQL or SQL Server (or follow the in-app **local HA setup guide** if you have no database yet).
 
 **What starts automatically**
 
@@ -63,55 +75,58 @@ Open **[http://localhost:8080](http://localhost:8080)** — the Global Estate Ov
 |---------|---------|
 | **api** | Go backend + SPA on port **8080** |
 | **timescaledb** | TimescaleDB (PostgreSQL 16) for metrics and registry |
-| **vault** | HashiCorp Vault (dev mode) — Transit KMS for credential encryption |
+| **vault** | HashiCorp Vault — Transit KMS for credential encryption |
 | **vault-setup** | One-shot: enables Transit and creates the encryption key |
 | **schema-setup** | One-shot: applies schema, rules, alerts, and seed data |
 
-**Add monitored databases** from **Admin → Add New Server** in the UI (no `config.yaml` required). Credentials are encrypted with Vault Transit. See [docs/QUICKSTART.md § Add your first server](docs/QUICKSTART.md#4-add-your-first-monitored-server).
-
 ```bash
-# Stop (data kept)
-docker compose down
-
-# Stop and remove volumes (destroys TimescaleDB + Vault data)
-docker compose down -v
+docker compose down      # stop, keep data
+docker compose down -v   # stop and wipe volumes (fresh install)
 ```
 
-**Create or reset a local admin user** (when `AUTH_REQUIRED=1`):
+**No databases yet?** Use the [local HA test cluster](docs/QUICKSTART.md#local-test-environment-ha-clusters-for-development) companion repo.
+
+### Production — hardened install
+
+For shared or internet-facing deployments, use production defaults from `docker/.env.example`:
 
 ```bash
-cd backend
-NEW_ADMIN_PASSWORD="Admin123!ChangeMe" go run reset_password.go
+cd sql_optima/docker
+cp .env.example .env
+# Edit .env: JWT_SECRET, DB_PASSWORD; keep AUTH_REQUIRED=1 and DISABLE_PUBLIC_SETUP=1
+docker compose up --build -d
+cd ../backend
+NEW_ADMIN_PASSWORD='YourStrongPassword8+' go run reset_password.go
 ```
+
+Sign in as **`admin`**, then add servers from **Admin**. See [QUICKSTART → Production](docs/QUICKSTART.md#production--hardened-deployment), [docs/vault_production.md](docs/vault_production.md), and [SECURITY.md](SECURITY.md).
 
 ### Choose a deployment path
 
 | Goal | Guide |
 |------|--------|
-| First-time install in ~5 minutes | **[docs/QUICKSTART.md](docs/QUICKSTART.md)** |
-| No real DBs yet — local PG + SQL Server HA + load generator | **[QUICKSTART → Local test environment](docs/QUICKSTART.md#local-test-environment-ha-clusters-for-development)** |
-| Develop the Go API locally, DB in Docker | [Option 2: Dev workflow](#option-2-timescaledb-via-docker--manual-go-server-dev-workflow) below |
-| Bring your own TimescaleDB (no Docker for DB) | [Option 3: Dedicated TimescaleDB](#option-3-dedicated-postgresql--timescaledb-no-docker) below |
-| Production-like stack (Redis worker, Prometheus, Grafana) | [Platform Compose](#platform-compose-production-profile) below |
-
-### Video walkthrough?
-
-There is **no official screencast** in this repo yet. The **[Quickstart](docs/QUICKSTART.md)** plus the **[Verify your installation](#verify-your-installation)** checklist below are enough to go from zero to a working dashboard. If you record a walkthrough for your team, link it in your fork’s README or open a PR to add `docs/WALKTHROUGH.md`.
+| Try SQL Optima locally in ~5 minutes | **[docs/QUICKSTART.md](docs/QUICKSTART.md)** → Development |
+| Production / shared network | **[QUICKSTART → Production](docs/QUICKSTART.md#production--hardened-deployment)** |
+| Local PG + SQL Server HA + load generator | **[QUICKSTART → Local test environment](docs/QUICKSTART.md#local-test-environment-ha-clusters-for-development)** |
+| Hack on the Go API, DB in Docker | [Option 2: Dev workflow](#option-2-timescaledb-via-docker--manual-go-server-dev-workflow) below |
+| Bring your own TimescaleDB | [Option 3: Dedicated TimescaleDB](#option-3-dedicated-postgresql--timescaledb-no-docker) below |
+| Redis worker, Prometheus, Grafana | [Platform Compose](#platform-compose-production-profile) below |
 
 ---
 
 ## Verify your installation
 
-Use this checklist after `docker compose up` (or any deployment option). It mirrors what a short demo video would cover.
+Use this checklist after `./start-dev.sh`, `start-dev.ps1`, or `docker compose up`.
 
 | Step | Action | Expected result |
 |------|--------|-----------------|
-| 1 | Open `http://localhost:8080` | Global Estate Overview loads (may be empty) |
-| 2 | **Admin → Add New Server** — register PostgreSQL or SQL Server | Server appears in the list; live metrics begin within one collector cycle |
-| 3 | Open engine dashboard (PostgreSQL or SQL Server) | Live panels show current DMV/catalog data |
-| 4 | Wait **~15 minutes** (default collector cadence) | Historical charts and Storage & Index Health begin filling |
-| 5 | (Optional) Run target DB grants — see [Target database setup](#target-database-setup) | Permission check in Admin returns green / supplies grant scripts |
-| 6 | (Optional) `curl -s http://localhost:8080/health` or check API logs | API healthy; no repeated connection errors to TimescaleDB |
+| 1 | Open `http://localhost:8080` | Setup wizard (first run) or login, then Global Estate Overview |
+| 2 | Complete setup / sign in | Admin account works; no CLI password step needed in dev |
+| 3 | **Admin → Add New Server** — register PostgreSQL or SQL Server | Server appears; live metrics within one collector cycle |
+| 4 | Open engine dashboard (PostgreSQL or SQL Server) | Live panels show current DMV/catalog data |
+| 5 | Wait **~15 minutes** (default collector cadence) | Historical charts and Storage & Index Health begin filling |
+| 6 | (Optional) Run target DB grants — see [Target database setup](#target-database-setup) | Permission check in Admin returns green / supplies grant scripts |
+| 7 | (Optional) `curl -s http://localhost:8080/api/health` or check API logs | API healthy; no repeated TimescaleDB connection errors |
 
 **No data on historical dashboards?** Confirm the server is registered, collectors are running (API logs), and you have waited at least two collection intervals. After an API restart, allow [1–2 warm-up cycles](docs/operations.md#api-restarts-and-metric-deltas-p2-7) before trusting delta-based charts.
 
@@ -184,7 +199,8 @@ Most monitoring tools collect metrics and show dashboards. SQL Optima focuses on
 
 ### Option 1: Docker Compose (recommended)
 
-Same as [Getting started](#getting-started). Full narrative: **[docs/QUICKSTART.md](docs/QUICKSTART.md)**.
+- **Quick test:** `./docker/start-dev.sh` or `.\docker\start-dev.ps1` — see [Getting started → Development](#development--quick-test-one-command).
+- **Production:** `cp docker/.env.example docker/.env` and set secrets — see [Getting started → Production](#production--hardened-install) and **[docs/QUICKSTART.md](docs/QUICKSTART.md)**.
 
 **API example** — register a server without the UI:
 
@@ -328,6 +344,9 @@ See **[ARCHITECTURE.md](ARCHITECTURE.md)** for live vs historical paths, collect
 
 | Path | Purpose |
 |------|---------|
+| `docker/start-dev.sh` | One-command local quick start — macOS/Linux (copies `.env.dev` → `.env`) |
+| `docker/start-dev.ps1` | Same for Windows PowerShell (process execution policy bypass) |
+| `docker/.env.dev` | Ready-to-run dev defaults (wizard + pre-set secrets for localhost only) |
 | `docker/docker-compose.yml` | Primary stack — API + TimescaleDB + Vault + schema bootstrap |
 | `docker-compose.platform.yml` | Production profile — worker, Redis, Prometheus, Grafana |
 | `infrastructure/sql_scripts/` | Schema, seeds, migrations, target DB setup — [README](infrastructure/sql_scripts/README.md) |
@@ -386,11 +405,11 @@ Cross-engine historical views (index usage deltas, scan hotspots, growth trends,
 
 ### Security checklist (production)
 
-1. Set a strong **`JWT_SECRET`** (never use the dev default in shared environments).
-2. Set **`AUTH_REQUIRED=1`**.
-3. Register targets via **Admin** — credentials encrypted at rest (Vault Transit or local KMS fallback for dev only).
-4. Use **[docs/vault_production.md](docs/vault_production.md)** — external Vault with AppRole; avoid dev root tokens.
-5. See **[SECURITY.md](SECURITY.md)** for reporting vulnerabilities.
+1. Do **not** use `docker/.env.dev` or `./start-dev.sh` defaults outside localhost evaluation.
+2. Set a strong **`JWT_SECRET`** and **`DB_PASSWORD`** via `docker/.env.example`.
+3. Keep **`AUTH_REQUIRED=1`** and **`DISABLE_PUBLIC_SETUP=1`** after bootstrap.
+4. Register targets via **Admin** — credentials encrypted at rest (Vault Transit).
+5. Use **[docs/vault_production.md](docs/vault_production.md)** for production Vault; see **[SECURITY.md](SECURITY.md)** for disclosures.
 
 ---
 

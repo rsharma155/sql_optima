@@ -58,7 +58,7 @@
 
     <!-- ROW 2: HIGH-FREQUENCY BLOCKING ANALYSIS -->
     <div class="grid-container mt-2">
-        <div class="col-8 col-laptop-8 col-tablet-12">
+        <div class="col-12">
             <div class="card glass-panel">
                 <div class="card-header flex-between" style="padding:0.4rem 0.75rem;">
                     <h3 style="font-size:0.8rem; margin:0;">Blocking Timeline Trends</h3>
@@ -69,17 +69,6 @@
                 </div>
                 <div class="chart-container" style="height: 120px;">
                     <canvas id="msBlockingTimelineChart"></canvas>
-                </div>
-            </div>
-        </div>
-        <div class="col-4 col-laptop-4 col-tablet-12">
-            <div class="card glass-panel">
-                <div class="card-header" style="padding:0.4rem 0.75rem;"><h3 style="font-size:0.8rem; margin:0;">Blocked Object Distribution</h3></div>
-                <div class="table-container-compact" style="height: 120px; overflow-y:auto;">
-                    <table class="modern-table modern-table-compact" id="msMiniBlockedObjectsTable" style="font-size:0.65rem;">
-                        <thead><tr><th>Object</th><th>Lock Type</th><th>Wait</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
                 </div>
             </div>
         </div>
@@ -126,33 +115,20 @@
         </div>
     </div>
 
-    <!-- ROW 4: HISTORICAL ANALYSIS & FORENSICS -->
+    <!-- ROW 4: OBJECT DISTRIBUTION & DEADLOCK HISTORY -->
     <div class="grid-container mt-2">
-        <div class="col-4 col-laptop-4 col-tablet-12">
+        <div class="col-6 col-laptop-6 col-tablet-12">
             <div class="card glass-panel">
-                <div class="card-header" style="padding:0.4rem 0.75rem;">
-                    <h3 style="font-size:0.8rem; margin:0;">Top Blocking Queries</h3>
-                </div>
+                <div class="card-header" style="padding:0.4rem 0.75rem;"><h3 style="font-size:0.8rem; margin:0;">Blocked Object Distribution</h3></div>
                 <div class="table-container-compact" style="height:150px; overflow-y:auto;">
-                    <table class="modern-table modern-table-compact" id="msTopBlockingQueriesTable" style="font-size:0.65rem;">
-                        <thead><tr><th>Hash</th><th>Wait</th><th>Hits</th><th>Avg Wait</th><th>Snippet</th></tr></thead>
+                    <table class="modern-table modern-table-compact" id="msMiniBlockedObjectsTable" style="font-size:0.65rem;">
+                        <thead><tr><th>Object</th><th>Lock Type</th><th>Wait</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
             </div>
         </div>
-        <div class="col-4 col-laptop-4 col-tablet-12">
-            <div class="card glass-panel">
-                <div class="card-header" style="padding:0.4rem 0.75rem;"><h3 style="font-size:0.8rem; margin:0;">Blocked Objects</h3></div>
-                <div class="table-container-compact" style="height:150px; overflow-y:auto;">
-                    <table class="modern-table modern-table-compact" id="msBlockedObjectsTable" style="font-size:0.65rem;">
-                        <thead><tr><th>Object</th><th>Lock Type</th><th>Wait</th><th>Incidents</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-        <div class="col-4 col-laptop-4 col-tablet-12">
+        <div class="col-6 col-laptop-6 col-tablet-12">
             <div class="card glass-panel">
                 <div class="card-header" style="padding:0.4rem 0.75rem;"><h3 style="font-size:0.8rem; margin:0;">Deadlock History</h3></div>
                 <div class="table-container-compact" style="height:150px; overflow-y:auto;">
@@ -165,7 +141,35 @@
         </div>
     </div>
 
-    <!-- ROW 5: FULL SESSION DETAIL -->
+    <!-- ROW 5: HISTORICAL ANALYSIS & FORENSICS -->
+    <div class="grid-container mt-2">
+        <div class="col-6 col-laptop-6 col-tablet-12">
+            <div class="card glass-panel">
+                <div class="card-header" style="padding:0.4rem 0.75rem;">
+                    <h3 style="font-size:0.8rem; margin:0;">Top Blocking Queries</h3>
+                </div>
+                <div class="table-container-compact" style="height:150px; overflow-y:auto;">
+                    <table class="modern-table modern-table-compact" id="msTopBlockingQueriesTable" style="font-size:0.65rem;">
+                        <thead><tr><th>Hash</th><th>Wait</th><th>Hits</th><th>Avg Wait</th><th>Snippet</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-laptop-6 col-tablet-12">
+            <div class="card glass-panel">
+                <div class="card-header" style="padding:0.4rem 0.75rem;"><h3 style="font-size:0.8rem; margin:0;">Blocked Objects</h3></div>
+                <div class="table-container-compact" style="height:150px; overflow-y:auto;">
+                    <table class="modern-table modern-table-compact" id="msBlockedObjectsTable" style="font-size:0.65rem;">
+                        <thead><tr><th>Object</th><th>Lock Type</th><th>Wait</th><th>Incidents</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROW 6: FULL SESSION DETAIL -->
     <div class="grid-container mt-2">
         <div class="col-12">
             <div class="card glass-panel">

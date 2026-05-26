@@ -10,7 +10,9 @@ import (
 	"strconv"
 	"strings"
 
-	vault "github.com/hashicorp/vault/api"
+	vault 	"github.com/hashicorp/vault/api"
+
+	"github.com/rsharma155/sql_optima/internal/security"
 )
 
 // TimescaleFromVault merges Vault KV data into connection fields when use_vault is enabled.
@@ -18,7 +20,7 @@ import (
 // Expected JSON keys (case-insensitive): host, port, database, username, password, ssl_mode (optional).
 func TimescaleFromVault(ctx context.Context, logicalPath string) (host string, port int, database, username, password, sslMode string, err error) {
 	addr := strings.TrimSpace(os.Getenv("VAULT_ADDR"))
-	tok := strings.TrimSpace(os.Getenv("VAULT_TOKEN"))
+	tok := security.ResolveVaultToken()
 	if addr == "" || tok == "" {
 		return "", 0, "", "", "", "", fmt.Errorf("VAULT_ADDR and VAULT_TOKEN must be set on the API server to load Timescale credentials from Vault")
 	}

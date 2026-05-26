@@ -225,6 +225,12 @@ tr:hover td { background:var(--surface2); }
   .section { page-break-inside:avoid; }
   body { background:white; color:#0f172a; }
 }
+/* Issue split — persistent 42/58 two-panel layout that only collapses on phones */
+.issue-split { display:grid; grid-template-columns:42% 58%; gap:16px; align-items:start; }
+@media (max-width:640px) { .issue-split { grid-template-columns:1fr; } }
+.issue-list-scroll { max-height:calc(100vh - 230px); overflow-y:auto; padding-right:4px; }
+/* Instance badge in header */
+.server-label-badge { font-size:9px; color:var(--text3); text-transform:uppercase; letter-spacing:.45px; display:block; margin-bottom:1px; }
 </style>
 </head>
 <body>
@@ -237,7 +243,10 @@ tr:hover td { background:var(--surface2); }
     </div>
   </div>
   <div class="header-center">
-    <div class="target" title="Server ID: {{.RunID}}">{{.ServerLabel}}</div>
+    <div class="target" title="Instance: {{.ServerLabel}} · Run: {{.RunID}}">
+      <span class="server-label-badge">SQL Server Instance</span>
+      {{.ServerLabel}}
+    </div>
     <div class="window">Last 24h &middot; {{.GeneratedAtShort}} &middot; <span title="{{.DataNote}}" style="padding:2px 6px; border-radius:4px; font-weight:600; font-size:10px; cursor:help; {{if eq .DataStatus "Full"}}background:var(--success); color:var(--green){{else if eq .DataStatus "Partial"}}background:var(--warning-bg); color:var(--orange){{else}}background:var(--danger-bg); color:var(--red){{end}}">Coverage: {{if .DataStatus}}{{.DataStatus}}{{else}}Unknown{{end}}</span></div>
   </div>
   <div class="header-right">
@@ -255,7 +264,17 @@ tr:hover td { background:var(--surface2); }
 <div class="cards">
   <div class="card clickable-card" onclick="openDrawer()" title="Click to open risk breakdown">
     <div class="label">Overall Health</div>
-    <div id="healthGauge" style="width:100%;height:105px;"></div>
+    {{$score := .OverallRisk.OverallScore}}{{$filled := mul (divf $score 100.0) 238.76}}
+    <div style="display:flex;justify-content:center;align-items:center;height:105px">
+      <svg viewBox="0 0 100 100" width="96" height="96" style="display:block;overflow:visible">
+        <circle cx="50" cy="50" r="38" fill="none" stroke="var(--border)" stroke-width="9"/>
+        <circle cx="50" cy="50" r="38" fill="none" stroke="{{.OverallRiskBarColor}}" stroke-width="9"
+          stroke-dasharray="{{printf "%.1f" $filled}} 238.8"
+          stroke-linecap="round" transform="rotate(-90 50 50)"/>
+        <text x="50" y="50" text-anchor="middle" dominant-baseline="central" fill="{{.OverallRiskBarColor}}" font-size="23" font-weight="700" font-family="Inter,sans-serif">{{printf "%.0f" $score}}</text>
+        <text x="50" y="66" text-anchor="middle" dominant-baseline="central" fill="var(--text3)" font-size="10" font-family="Inter,sans-serif">/100</text>
+      </svg>
+    </div>
     <div style="text-align:center;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-top:1px">{{.OverallRisk.Category}}</div>
     <div class="card-link-hint">Open risk breakdown</div>
   </div>
@@ -317,19 +336,24 @@ tr:hover td { background:var(--surface2); }
 </div>
 
 <div class="ribbon" style="padding:10px 14px">
-  <h3>Active Incidents</h3>
-  <div style="display:flex;gap:4px;overflow-x:auto;padding:8px 0;scrollbar-width:thin">
-    {{range $i, $ev := .IncidentTimeline}}
-    <div style="flex-shrink:0;width:120px;padding:6px 8px;border-radius:4px;cursor:pointer;
+  <h3>Active Incidents <small style="font-size:10px;font-weight:400;color:var(--text3)">— click any card to see details</small></h3>
+  <div style="display:flex;gap:6px;overflow-x:auto;padding:8px 0 4px;scrollbar-width:thin">
+    {{range $ev := .IncidentTimeline}}
+    <div style="flex-shrink:0;min-width:150px;max-width:190px;padding:8px 10px;border-radius:6px;cursor:pointer;
       {{if eq $ev.severity "critical"}}background:rgba(239,68,68,0.12);border-left:3px solid var(--red)
       {{else if eq $ev.severity "high"}}background:rgba(249,115,22,0.12);border-left:3px solid var(--orange)
       {{else}}background:rgba(234,179,8,0.12);border-left:3px solid var(--yellow){{end}}"
-      onclick="showIssueDetail({{$i}})" title="{{$ev.detail}}">
-      <div style="font-size:10px;font-weight:600;{{if eq $ev.severity "critical"}}color:var(--red){{else if eq $ev.severity "high"}}color:var(--orange){{else}}color:var(--yellow){{end}}">{{$ev.time}}</div>
-      <div style="font-size:11px;color:var(--text)">{{$ev.event}}</div>
+      onclick="showIssueDetailByRule('{{$ev.rule_name}}')" title="{{$ev.detail}}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+        <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;
+          {{if eq $ev.severity "critical"}}color:var(--red){{else if eq $ev.severity "high"}}color:var(--orange){{else}}color:var(--yellow){{end}}">{{$ev.severity}}</span>
+        <span style="font-size:9px;color:var(--text3)">{{$ev.time}}</span>
+      </div>
+      <div style="font-size:12px;font-weight:600;color:var(--text);line-height:1.3">{{$ev.event}}</div>
+      {{if $ev.metric_context}}<div style="font-size:10px;color:var(--text2);margin-top:3px;font-family:JetBrains Mono,monospace">{{$ev.metric_context}}</div>{{end}}
     </div>
     {{else}}
-    <div style="color:var(--text3);font-size:13px;padding:8px 0">No active incidents detected</div>
+    <div style="color:var(--green);font-size:13px;padding:8px 0;display:flex;align-items:center;gap:6px"><span style="font-size:16px">✓</span> No active incidents detected — system operating within normal parameters</div>
     {{end}}
   </div>
 </div>
@@ -432,7 +456,6 @@ tr:hover td { background:var(--surface2); }
         <span class="sev {{.urgency}}" style="font-size:10px">{{.urgency}}</span>
       </div>
       <p style="font-size:12px;color:var(--text2);margin:6px 0 0">{{.reason}}</p>
-      <button type="button" class="drill-link" onclick="drillToMonitor('{{.route}}')">Open related dashboard →</button>
     </div>
     {{end}}
   </div>
@@ -637,26 +660,29 @@ tr:hover td { background:var(--surface2); }
 
 <!-- ── Current Issues ── -->
 <div class="tab-content" id="tab-issues">
-  <div class="grid-2">
+  <div class="issue-split">
     <div>
       <div class="section">
         <h2>Issue List</h2>
         <div class="filter-bar"><input type="text" placeholder="Filter issues..." oninput="filterIssues(this.value)"></div>
-        <div class="issue-list" id="issueList">
+        <div class="issue-list issue-list-scroll" id="issueList">
           {{range $i, $issue := .CurrentIssues}}
-          <div class="issue-row" onclick="showIssueDetail('{{$i}}')">
+          <div class="issue-row" onclick="showIssueDetail('{{$i}}')" style="position:relative">
             <span class="sev {{$issue.severity}}" title="{{$issue.severity}}">{{if eq $issue.severity "critical"}}C{{else if eq $issue.severity "high"}}H{{else if eq $issue.severity "medium"}}M{{else}}L{{end}}</span>
-            <div style="flex:1;min-width:0"><strong style="font-size:13px">{{$issue.title | titleStr | replaceAll "_" " "}}</strong><br><span style="font-size:11px;color:var(--text2)">{{if eq $issue.severity "critical"}}Critical — immediate attention needed{{else if eq $issue.severity "high"}}High — review within 24h{{else if eq $issue.severity "medium"}}Medium — monitor closely{{else}}Low — informational{{end}}</span></div>
-            <span style="color:{{if eq $issue.severity "critical"}}var(--red){{else if eq $issue.severity "high"}}var(--orange){{else}}var(--yellow){{end}};font-size:16px">›</span>
+            <div style="flex:1;min-width:0">
+              <strong style="font-size:13px">{{$issue.title | titleStr | replaceAll "_" " "}}</strong>
+              <br><span style="font-size:11px;color:var(--text2)">{{if eq $issue.severity "critical"}}Critical — immediate attention needed{{else if eq $issue.severity "high"}}High — review within 24h{{else if eq $issue.severity "medium"}}Medium — monitor closely{{else}}Low — informational{{end}}</span>
+            </div>
+            <span style="color:var(--accent);font-size:11px;font-weight:600;white-space:nowrap">View →</span>
           </div>
           {{end}}
         </div>
       </div>
     </div>
-    <div id="issueDetail">
+    <div id="issueDetail" style="position:sticky;top:4px">
       <div class="section">
         <h2>Issue Detail</h2>
-        <p style="color:var(--text2);font-size:13px">Select an issue to see evidence stack, correlation, and remediation</p>
+        <p style="color:var(--text2);font-size:13px">Select an issue from the list to see evidence, metric values, and remediation steps</p>
       </div>
     </div>
   </div>
@@ -670,13 +696,17 @@ tr:hover td { background:var(--surface2); }
       <div class="tree">
         {{if .RootCauseHypotheses}}
           {{range $i, $h := .RootCauseHypotheses}}
-          <div class="tree-node{{if eq $i 1}} depth-1{{else if gt $i 1}} depth-2{{end}}"><span>{{$h}}</span></div>
-          {{if lt $i 3}}<div class="tree-arrow">↓ contributes to</div>{{end}}
+          <div class="tree-node{{if gt $i 2}} depth-2{{else if gt $i 0}} depth-1{{end}}">
+            <span style="font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px;font-weight:600">{{if eq $i 0}}Primary Factor{{else if eq $i 1}}Contributing Factor{{else}}Additional Signal{{end}}</span>
+            <span>{{$h}}</span>
+          </div>
+          {{if lt $i 4}}<div class="tree-arrow">↓ correlated with</div>{{end}}
           {{end}}
         {{else}}
-        <div style="color:var(--text3);padding:12px;font-size:13px"><strong style="color:var(--green);display:block;margin-bottom:4px">No cascading root causes identified</strong>System is stable or no high/critical rules have triggered.</div>
+        <div style="color:var(--text3);padding:12px;font-size:13px"><strong style="color:var(--green);display:block;margin-bottom:4px">No cascading factors identified</strong>System is stable or no high/critical rules have triggered.</div>
         {{end}}
       </div>
+      <p style="font-size:11px;color:var(--text3);margin-top:8px;padding:0 2px">Factors are derived from triggered rules and actual metric values. "Correlated with" indicates co-occurring signals, not strict causation — use the Probability table on the right for confidence estimates.</p>
     </div>
     <div class="section">
       <h2>Likely Factor Probability <small style="font-weight:400;font-size:11px;color:var(--text3)">(derived from rule severity, metric signal strength, and domain correlation — not a definitive root-cause verdict)</small></h2>
@@ -782,8 +812,7 @@ tr:hover td { background:var(--surface2); }
       </tr>
       <tr style="display:none"><td colspan="3" style="padding:12px;background:var(--surface2)">
         <strong>Detail:</strong> {{.Message}}<br>
-        <strong>Signals:</strong> {{range $k, $v := .MetricValues}}{{$k | replaceAll "_" " " | titleStr}}: {{$v | round0}} &nbsp;{{end}}<br>
-        <button type="button" class="drill-link" onclick="event.stopPropagation();drillToMonitor('{{drillRoute .RuleName}}')">Open related dashboard →</button>
+        <strong>Signals:</strong> {{range $k, $v := .MetricValues}}{{$k | replaceAll "_" " " | titleStr}}: {{$v | round0}} &nbsp;{{end}}
       </tr>
       {{end}}
     </tbody></table></div>
@@ -1168,6 +1197,12 @@ function showIssueDetail(i){
   var iss=issueData[parseInt(i)||0]||{title:'Unknown',description:'',severity:'medium'};
   document.getElementById('issueDetail').innerHTML='<div class="section"><div class="issue-detail-inner"><div class="banner '+iss.severity+'"><span class="sev '+iss.severity+'">'+iss.severity.toUpperCase()+'</span><strong style="margin-left:8px;font-size:15px">'+iss.title.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase()})+'</strong></div><p style="font-size:13px;margin-bottom:12px">'+(iss.description||'')+'</p>'+(function(){var mv='';if(iss.metric_values&&typeof iss.metric_values==='object'){Object.keys(iss.metric_values).forEach(function(k){var val=typeof iss.metric_values[k]==='number'?iss.metric_values[k].toFixed(1):iss.metric_values[k];mv+='<div class="evidence-item"><strong>'+k.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase()})+'</strong><span>'+val+'</span></div>';});}return mv;})()+'</div></div>';
 }
+function showIssueDetailByRule(ruleName){
+  var idx=0;
+  for(var i=0;i<issueData.length;i++){if(issueData[i].title===ruleName){idx=i;break;}}
+  switchToTab('issues');
+  setTimeout(function(){showIssueDetail(idx);},50);
+}
 function filterIssues(q){document.querySelectorAll('#issueList .issue-row').forEach(function(r){r.style.display=r.textContent.toLowerCase().indexOf(q.toLowerCase())>=0?'flex':'none'});}
 
 var opts={responsive:true,displayModeBar:false};
@@ -1179,13 +1214,6 @@ function chartTheme(){
 }
 function baseLayout(){var c=chartTheme();return{margin:{t:10,b:30,l:50,r:10},paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:c.font,size:11},hovermode:'x unified'};}
 function lay(xt,yt,yr){var c=chartTheme();var l=baseLayout();l.xaxis={gridcolor:c.grid,zeroline:false,title:xt};l.yaxis={gridcolor:c.grid,zeroline:false,title:yt};if(yr)l.yaxis.range=yr;return l;}
-
-// Health gauge
-Plotly.newPlot('healthGauge',[{type:'indicator',mode:'gauge+number',value:{{.OverallRisk.OverallScore}},
-  gauge:{axis:{range:[0,100],showticklabels:false,ticks:''},bar:{color:'{{.OverallRiskBarColor}}',thickness:0.3},bgcolor:'rgba(0,0,0,0)',
-    steps:[{range:[0,25],color:'rgba(34,197,94,0.15)'},{range:[25,50],color:'rgba(234,179,8,0.15)'},{range:[50,75],color:'rgba(249,115,22,0.15)'},{range:[75,100],color:'rgba(239,68,68,0.15)'}]},
-  number:{font:{color:'{{.OverallRiskBarColor}}',size:24},suffix:'/100'}}],
-  {margin:{t:15,b:25,l:20,r:20},paper_bgcolor:'rgba(0,0,0,0)',font:{color:'var(--text)'},autosize:true},opts);
 
 // Risk trend
 var riskTrend={{.RiskTrendJSON | safeJS}};

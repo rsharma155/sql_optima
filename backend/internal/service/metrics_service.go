@@ -87,8 +87,9 @@ type MetricsService struct {
 	controlPlanes map[uuid.UUID]*InstanceControlPlane
 	cpMu          sync.Mutex
 
-	hwSlowMu         sync.Mutex
-	hwLastSlowCollect map[uuid.UUID]time.Time
+	hwSlowMu          sync.Mutex
+	hwLastSlowCollect  map[uuid.UUID]time.Time
+	hwPropsLogged      map[uuid.UUID]bool
 
 	PulseSvc      *PulseService
 
@@ -118,6 +119,7 @@ func NewMetricsService(pg *repository.PgRepository, ms *repository.SqlServerRepo
 		sihLastGrowth6h:  make(map[uuid.UUID]time.Time),
 		sihLastDefsDaily:  make(map[uuid.UUID]time.Time),
 		hwLastSlowCollect: make(map[uuid.UUID]time.Time),
+		hwPropsLogged:     make(map[uuid.UUID]bool),
 		controlPlanes:     make(map[uuid.UUID]*InstanceControlPlane),
 		waitDMVCollector: &sqlserver.WaitStatsDMVCollector{},
 	}

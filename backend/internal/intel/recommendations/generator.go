@@ -147,13 +147,45 @@ func (g *RecommendationGenerator) recSchedulerStarvation(rule models.RuleTrigger
 func (g *RecommendationGenerator) recPLECollapse(rule models.RuleTriggerResult, raw map[string]interface{}, thresholds models.DynamicThresholds, config models.ServerConfig) []string {
 	memUsed := getFloatRaw(raw, "sql_memory_used_mb")
 	memTarget := getFloatRaw(raw, "sql_memory_target_mb")
-	return []string{
-		fmt.Sprintf("Review max server memory — %dGB RAM, SQL using %.0fMB of %.0fMB target. Reserve %dGB for OS", config.TotalRAMGB, memUsed, memTarget, maxInt(4, config.TotalRAMGB/8)),
-		fmt.Sprintf("Check buffer_cache_hit_ratio — currently %.0f%%", getFloatRaw(raw, "buffer_cache_hit_ratio")),
-		"Identify large table scans causing cache churn",
-		fmt.Sprintf("Review available_physical_memory (%.0f KB) for OS pressure", getFloatRaw(raw, "available_physical_memory_kb")),
-		"Consider adding RAM if trend continues",
+	cacheHit := getFloatRaw(raw, "buffer_cache_hit_ratio")
+	availPhysKB := getFloatRaw(raw, "available_physical_memory_kb")
+
+	recs := []string{}
+
+	// Memory configuration rec — always include when RAM info is available
+	osReserveGB := maxInt(4, config.TotalRAMGB/8)
+	if config.TotalRAMGB > 0 && memUsed > 0 && memTarget > 0 {
+		recs = append(recs, fmt.Sprintf(
+			"SQL Server is using %.0fMB of its %.0fMB target on a %dGB server — ensure max server memory leaves at least %dGB free for the OS",
+			memUsed, memTarget, config.TotalRAMGB, osReserveGB))
+	} else if config.TotalRAMGB > 0 {
+		recs = append(recs, fmt.Sprintf(
+			"Review max server memory setting on this %dGB server — reserve at least %dGB for OS and non-SQL processes",
+			config.TotalRAMGB, osReserveGB))
+	} else {
+		recs = append(recs, "Review max server memory in sys.configurations and ensure adequate OS memory reservation")
 	}
+
+	// Cache hit ratio — only include when we have a real value
+	if cacheHit > 0 {
+		if cacheHit < 95 {
+			recs = append(recs, fmt.Sprintf("Buffer cache hit ratio is %.0f%% — below 95%% indicates the buffer pool is too small for the working dataset", cacheHit))
+		} else {
+			recs = append(recs, fmt.Sprintf("Buffer cache hit ratio is %.0f%% — PLE pressure may be caused by large scans evicting hot pages", cacheHit))
+		}
+	} else {
+		recs = append(recs, "Check buffer cache hit ratio in sys.dm_os_performance_counters (target: ≥99% for OLTP)")
+	}
+
+	recs = append(recs, "Identify large table scans causing buffer pool churn — look for PAGEIOLATCH_SH waits and missing index alerts")
+
+	// OS physical memory — only include when non-zero
+	if availPhysKB > 1024 {
+		recs = append(recs, fmt.Sprintf("OS has %.0fMB available physical memory — if this is consistently low, other processes are competing for RAM", availPhysKB/1024))
+	}
+
+	recs = append(recs, "If PLE stays below threshold after tuning, consider adding RAM or reducing max server memory for other processes")
+	return recs
 }
 
 func (g *RecommendationGenerator) recLowDiskSpace(rule models.RuleTriggerResult, raw map[string]interface{}, thresholds models.DynamicThresholds, config models.ServerConfig) []string {
@@ -164,21 +196,28 @@ func (g *RecommendationGenerator) recLowDiskSpace(rule models.RuleTriggerResult,
 	growth := getFloatRaw(raw, "delta_data_mb")
 	neededMB := thresholds.DiskFreeMBMin - freeMB
 	if neededMB < 1024 {
-		neededMB = 1024 // Recommend at least 1GB if threshold is breached
+		neededMB = 1024
 	}
-	
+
 	totalDisk := float64(config.TotalDiskGB)
 	if totalDisk == 0 {
 		totalDisk = (getFloatRaw(raw, "total_data_mb") + getFloatRaw(raw, "total_log_mb") + freeMB) / 1024
 	}
 
-	return []string{
-		fmt.Sprintf("Immediate: free up %.1fGB disk space (threshold: %.1fGB)", neededMB/1024, thresholds.DiskFreeMBMin/1024),
+	recs := []string{
+		fmt.Sprintf("Free up %.1fGB of disk space — free space is below the %.1fGB safety threshold", neededMB/1024, thresholds.DiskFreeMBMin/1024),
 		"Purge old backup files, logs, and temporary staging tables",
-		fmt.Sprintf("Review disk history for growth trends — current delta: %.1f MB/interval", growth),
-		"Implement data archiving or partitioning for large tables",
-		fmt.Sprintf("Add storage capacity — %.0fGB currently configured", totalDisk),
 	}
+	if growth > 0 {
+		recs = append(recs, fmt.Sprintf("Disk growing at %.1f MB/collection-cycle — identify top growth contributors in sqlserver_disk_history", growth))
+	} else {
+		recs = append(recs, "Review sqlserver_disk_history to identify which databases are consuming the most space")
+	}
+	recs = append(recs, "Implement data archiving or partitioning for large historical tables")
+	if totalDisk > 0 {
+		recs = append(recs, fmt.Sprintf("Server has %.0fGB total disk configured — evaluate whether online storage expansion or additional volumes are needed", totalDisk))
+	}
+	return recs
 }
 
 func (g *RecommendationGenerator) recRapidDiskGrowth(rule models.RuleTriggerResult, raw map[string]interface{}, thresholds models.DynamicThresholds, config models.ServerConfig) []string {

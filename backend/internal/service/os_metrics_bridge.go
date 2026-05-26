@@ -9,6 +9,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -101,15 +102,9 @@ func (s *MetricsService) IngestOSCollectorPayload(ctx context.Context, p *OSColl
 	if p.InstanceName == "" {
 		return fmt.Errorf("instance_name is required")
 	}
-	var serverID uuid.UUID
-	for _, inst := range s.Config.Instances {
-		if inst.Name == p.InstanceName {
-			serverID = inst.ServerID
-			break
-		}
-	}
-	if serverID == uuid.Nil {
-		return fmt.Errorf("unknown instance %q", p.InstanceName)
+	serverID, err := s.ResolveServerIDByInstanceName(ctx, p.InstanceName)
+	if err != nil {
+		return err
 	}
 
 	metrics := p.toMetricsMap()
@@ -135,25 +130,55 @@ func (s *MetricsService) IngestOSCollectorPayload(ctx context.Context, p *OSColl
 	return s.tsLogger.LogPgHostMemory(ctx, hostSnap)
 }
 
-// ResolveServerIDByInstanceName returns the configured server UUID for a monitoring instance name.
-func (s *MetricsService) ResolveServerIDByInstanceName(name string) (uuid.UUID, error) {
-	for _, inst := range s.Config.Instances {
-		if inst.Name == name {
-			if inst.ServerID == uuid.Nil {
-				return uuid.Nil, fmt.Errorf("instance %q has no server_id", name)
+// ResolveServerIDByInstanceName returns the server UUID for a monitoring instance name
+// (config.yaml entry or active row in optima_servers).
+func (s *MetricsService) ResolveServerIDByInstanceName(ctx context.Context, name string) (uuid.UUID, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return uuid.Nil, fmt.Errorf("instance name is required")
+	}
+	if s != nil && s.Config != nil {
+		for _, inst := range s.Config.Instances {
+			if inst.Name == name {
+				if inst.ServerID == uuid.Nil {
+					return uuid.Nil, fmt.Errorf("instance %q has no server_id", name)
+				}
+				return inst.ServerID, nil
 			}
-			return inst.ServerID, nil
+		}
+	}
+	if s != nil && s.ServerRepo != nil {
+		srv, err := s.ServerRepo.GetByName(ctx, name)
+		if err == nil && srv.ID != uuid.Nil {
+			return srv.ID, nil
 		}
 	}
 	return uuid.Nil, fmt.Errorf("unknown instance %q", name)
 }
 
 // GetOSCollectorStatus reports API ingest flag and whether host memory samples were received recently.
+// Unknown instance names (e.g. while typing in the add-server form) return registered=false without an error.
 func (s *MetricsService) GetOSCollectorStatus(ctx context.Context, instanceName string) (map[string]interface{}, error) {
-	serverID, err := s.ResolveServerIDByInstanceName(instanceName)
+	info := s.OSMetricsIngestInfo(ctx)
+	base := map[string]interface{}{
+		"instance_name":           instanceName,
+		"os_collector_configured": false,
+		"registered":              false,
+		"ingest_enabled":          info.Enabled,
+		"ingest_source":           info.Source,
+		"ingest_configurable":     info.Configurable,
+	}
+
+	serverID, err := s.ResolveServerIDByInstanceName(ctx, instanceName)
 	if err != nil {
+		if strings.Contains(err.Error(), "unknown instance") {
+			return base, nil
+		}
 		return nil, err
 	}
+	base["registered"] = true
+	base["server_id"] = serverID.String()
+
 	configured := false
 	if s != nil && s.tsLogger != nil {
 		configured, err = s.tsLogger.HasRecentHostMemorySamples(ctx, serverID, 20*time.Minute)
@@ -161,13 +186,6 @@ func (s *MetricsService) GetOSCollectorStatus(ctx context.Context, instanceName 
 			return nil, err
 		}
 	}
-	info := s.OSMetricsIngestInfo(ctx)
-	return map[string]interface{}{
-		"instance_name":            instanceName,
-		"server_id":                serverID.String(),
-		"os_collector_configured":  configured,
-		"ingest_enabled":           info.Enabled,
-		"ingest_source":            info.Source,
-		"ingest_configurable":      info.Configurable,
-	}, nil
+	base["os_collector_configured"] = configured
+	return base, nil
 }
