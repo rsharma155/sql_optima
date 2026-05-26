@@ -28,6 +28,9 @@ Environment:
   SQL_OPTIMA_DIR       Target repo directory
   SQL_OPTIMA_REPO_URL  Git clone URL (default: GitHub sql_optima)
   SQL_OPTIMA_NO_BROWSER=1  Same as --no-browser
+  SQL_OPTIMA_SETUP_MODE=easy|custom  Non-interactive setup (default: easy)
+  SQL_OPTIMA_EXPOSE_DB_LAN=0|1       Publish TimescaleDB for LAN/DBeaver (custom only)
+  SQL_OPTIMA_DB_* / SQL_OPTIMA_API_PORT  Optional credentials and ports (see docs/QUICKSTART.md)
 EOF
 }
 

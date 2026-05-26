@@ -5,6 +5,8 @@
 **/.env.*
 !.env.example
 !**/.env.example
+!.env.dev
+!**/.env.dev
 secrets/
 credentials/
 

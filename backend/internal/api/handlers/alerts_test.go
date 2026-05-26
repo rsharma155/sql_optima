@@ -89,6 +89,20 @@ func (m *handlerMockAlertStore) CountOpen(_ context.Context, serverID uuid.UUID)
 	return count, nil
 }
 
+func (m *handlerMockAlertStore) ResolveByFingerprint(_ context.Context, fingerprint, actor, _ string, at time.Time) (bool, error) {
+	resolved := false
+	for id, a := range m.alerts {
+		if a.Fingerprint == fingerprint && a.Status != alerts.StatusResolved {
+			a.Status = alerts.StatusResolved
+			a.ResolvedBy = &actor
+			a.ResolvedAt = &at
+			m.alerts[id] = a
+			resolved = true
+		}
+	}
+	return resolved, nil
+}
+
 type handlerMockMaintenanceStore struct{}
 
 func (m *handlerMockMaintenanceStore) Create(_ context.Context, mw alerts.MaintenanceWindow) (alerts.MaintenanceWindow, error) {

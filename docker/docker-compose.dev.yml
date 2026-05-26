@@ -1,0 +1,7 @@
+# Dev overlay: publish TimescaleDB for DBeaver / psql (opt-in via start-dev Custom + LAN).
+# Requires COMPOSE_FILE=...:docker-compose.dev.yml and DB_PUBLISH_BIND (LAN IP) in .env.
+# Production: do not include this file.
+services:
+  timescaledb:
+    ports:
+      - "${DB_PUBLISH_BIND:-127.0.0.1}:${DB_PUBLISH_PORT:-5432}:5432"

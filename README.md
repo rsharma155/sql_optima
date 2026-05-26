@@ -407,9 +407,10 @@ See **[ARCHITECTURE.md](ARCHITECTURE.md)** for live vs historical paths, collect
 
 | Path | Purpose |
 |------|---------|
-| `docker/start-dev.sh` | One-command local quick start — macOS/Linux (copies `.env.dev` → `.env`) |
+| `docker/start-dev.sh` | One-command local quick start — macOS/Linux (interactive Easy vs Custom setup) |
 | `docker/start-dev.ps1` | Same for Windows PowerShell (process execution policy bypass) |
-| `docker/.env.dev` | Ready-to-run dev defaults (wizard + pre-set secrets for localhost only) |
+| `docker/.env.dev` | Easy-setup profile template (no LAN DB exposure by default) |
+| `docker/docker-compose.dev.yml` | Optional overlay when Custom + LAN/DBeaver is enabled |
 | `docker/docker-compose.yml` | Primary stack — API + TimescaleDB + Vault + schema bootstrap |
 | `docker-compose.platform.yml` | Production profile — worker, Redis, Prometheus, Grafana |
 | `infrastructure/sql_scripts/` | Schema, seeds, migrations, target DB setup — [README](infrastructure/sql_scripts/README.md) |

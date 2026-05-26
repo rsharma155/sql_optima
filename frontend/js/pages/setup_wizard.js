@@ -112,7 +112,7 @@
         var m1 = milestoneClass(ms[1]);
         var m2 = milestoneClass(ms[2]);
         var m3 = milestoneClass(ms[3]);
-        var tsStep = showTS ? '1' : '—';
+        var tsStep = showTS ? '1' : '-';
         var admStep = showTS ? '2' : '1';
 
         var deployLabel = docker ? 'Docker deployment' : 'Dedicated deployment';

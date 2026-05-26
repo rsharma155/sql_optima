@@ -51,12 +51,13 @@ services:
 
   timescaledb:
     image: timescale/timescaledb-ha:pg16
+    # Avoid "could not resize shared memory segment" on Linux Docker (default shm is 64MB).
+    shm_size: "1gb"
     environment:
       POSTGRES_USER: ${DB_USER:-dbmonitor}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
       POSTGRES_DB: ${DB_NAME:-dbmonitor_metrics}
-    # Not published to the host by default (metrics DB stays on the Docker network).
-    # For local psql access, add: ports: ["5432:5432"] in docker-compose.override.yml
+    # Not published by default. Dev quick start adds docker-compose.dev.yml (see start-dev.sh).
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
     command:
@@ -73,8 +74,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-dbmonitor} -d ${DB_NAME:-dbmonitor_metrics}"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 12
+      start_period: 90s
     restart: unless-stopped
 
   vault:
@@ -190,10 +191,13 @@ services:
     depends_on:
       timescaledb:
         condition: service_healthy
+      schema-setup:
+        condition: service_completed_successfully
     restart: "no"
 
-  # Cold storage — MinIO (S3-compatible object storage)
+  # Cold storage stack (optional — not started by start-dev / default compose up)
   minio:
+    profiles: ["cold-storage"]
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     ports:
@@ -211,8 +215,8 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # MinIO bucket initializer
   minio-init:
+    profiles: ["cold-storage"]
     image: minio/mc:latest
     depends_on:
       minio:
@@ -228,8 +232,8 @@ services:
       "
     restart: "no"
 
-  # Nessie — Iceberg catalog
   nessie:
+    profiles: ["cold-storage"]
     image: projectnessie/nessie:latest
     ports:
       - "${NESSIE_PORT:-19120}:19120"
@@ -237,8 +241,8 @@ services:
       QUARKUS_DATASOURCE_DB_KIND: h2
     restart: unless-stopped
 
-  # Trino — Distributed SQL Query Engine
   trino:
+    profiles: ["cold-storage"]
     image: trinodb/trino:latest
     ports:
       - "${TRINO_PORT:-8081}:8080"

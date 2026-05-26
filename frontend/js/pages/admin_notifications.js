@@ -9,8 +9,8 @@
  */
 
 const CHANNELS = [
-    { key: 'webhook', label: 'Generic Webhook', icon: 'fa-solid fa-link', desc: 'POST JSON payload to any HTTP endpoint (e.g. PagerDuty, custom receiver).' },
-    { key: 'slack',   label: 'Slack',           icon: 'fa-brands fa-slack', desc: 'Slack Incoming Webhook — paste the URL from your Slack app settings.' },
+    { key: 'webhook', label: 'Generic Webhook', icon: 'fa-solid fa-link', desc: 'POST JSON alert payload to any HTTP endpoint (PagerDuty, custom receiver). Do not use Slack URLs here.' },
+    { key: 'slack',   label: 'Slack',           icon: 'fa-brands fa-slack', desc: 'Slack Incoming Webhook URL (hooks.slack.com/…). Required for Slack — the generic webhook channel will not work with Slack.' },
 ];
 
 export async function loadNotificationConfig() {
