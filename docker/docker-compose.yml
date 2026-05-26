@@ -33,6 +33,8 @@ services:
         condition: service_healthy
       schema-setup:
         condition: service_completed_successfully
+      schema-patches:
+        condition: service_completed_successfully
       vault:
         condition: service_healthy
       vault-setup:
@@ -144,20 +146,47 @@ services:
           echo "Waiting for TimescaleDB..."
           sleep 2
         done
-        echo "[1/6] Applying TimescaleDB schema (consolidated)..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/01_timescale_schema.sql || true
-        echo "[2/6] Applying rule engine..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/02_rule_engine.sql || true
-        echo "[3/6] Applying additional PG rules..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/03_additional_pg_rules.sql || true
-        echo "[4/6] Applying alert engine schema..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/04_alert_engine.sql || true
-        echo "[5/6] Applying os metric collector..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/05_os_metrics_collector.sql || true
-        echo "[6/6] Seeding initial data..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/06_seed_data.sql || true
-        echo "[7/7] Applying cold storage schema..."
+        PSQL="psql -v ON_ERROR_STOP=1 -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME"
+        echo "[1/7] Applying TimescaleDB schema (consolidated)..."
+        $$PSQL -f /sql_scripts/01_timescale_schema.sql
+        echo "[2/7] Applying rule engine..."
+        $$PSQL -f /sql_scripts/02_rule_engine.sql
+        echo "[3/7] Applying additional PG rules..."
+        $$PSQL -f /sql_scripts/03_additional_pg_rules.sql
+        echo "[4/7] Applying alert engine schema..."
+        $$PSQL -f /sql_scripts/04_alert_engine.sql
+        echo "[5/7] Applying OS metrics collector..."
+        $$PSQL -f /sql_scripts/05_os_metrics_collector.sql
+        echo "[6/7] Seeding initial data..."
+        $$PSQL -f /sql_scripts/06_seed_data.sql
+        echo "[7/7] Applying DR policy patch..."
+        $$PSQL -f /sql_scripts/07_optima_server_dr_policy.sql
         echo "Schema setup complete."
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: "no"
+
+  schema-patches:
+    image: postgres:16-alpine
+    environment:
+      DB_HOST: timescaledb
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-dbmonitor}
+      DB_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
+      DB_NAME: ${DB_NAME:-dbmonitor_metrics}
+      PGPASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
+    volumes:
+      - ../infrastructure/sql_scripts:/sql_scripts:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        export PGPASSWORD="$$DB_PASSWORD"
+        until pg_isready -h $$DB_HOST -p $$DB_PORT -U $$DB_USER; do sleep 2; done
+        psql -v ON_ERROR_STOP=1 -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME \
+          -f /sql_scripts/07_optima_server_dr_policy.sql
     depends_on:
       timescaledb:
         condition: service_healthy

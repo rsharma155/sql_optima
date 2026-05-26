@@ -11,6 +11,10 @@ package hot
 
 const sqlServerOptimaBatchTag = `%/* SQL_OPTIMA%`
 
+// sqlServerQueryMetricsV2LateralSelect is the column set from sqlserver_query_metrics_v2
+// required when a LATERAL subquery is aliased as qm and filtered with sqlServerQueryAnalysisScopeSQL.
+const sqlServerQueryMetricsV2LateralSelect = `query_text_raw, statement_text, application_name, login_name, database_name, total_cpu_ms, total_elapsed_ms, is_user_workload`
+
 // sqlServerCollectorSQLExcludeSQL excludes SQL Optima collector DMV/monitoring batches.
 // All collector queries are tagged with /* SQL_OPTIMA */ in the monitored batch; the full
 // text is stored in query_text_raw (dm_exec_sql_text), not statement_text.

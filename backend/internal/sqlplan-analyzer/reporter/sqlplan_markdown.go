@@ -260,7 +260,7 @@ func (r *MarkdownReporter) renderOperators(plan *models.PlanAnalysis) string {
 	sb.WriteString("|----|-----------|-----------|----------|-------------|\n")
 
 	for i, op := range plan.Operators[:GetMinInt(20, len(plan.Operators))] {
-		estRows := strconv.FormatInt(op.EstimateRows, 10)
+		estRows := fmt.Sprintf("%.0f", op.EstimateRows)
 		actRows := strconv.FormatInt(op.ActualRows, 10)
 
 		sb.WriteString(fmt.Sprintf("| %d | %s | %.4f | %s | %s |\n",

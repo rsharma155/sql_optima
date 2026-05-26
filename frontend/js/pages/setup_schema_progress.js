@@ -41,7 +41,8 @@ var steps = [
     { n: 2, label: '03 · PG rules', file: '03_additional_pg_rules.sql' },
     { n: 3, label: '04 · Alert engine', file: '04_alert_engine.sql' },
     { n: 4, label: '05 · OS metrics', file: '05_os_metrics_collector.sql' },
-    { n: 5, label: '06 · Seed data', file: '06_seed_data.sql' }
+    { n: 5, label: '06 · Seed data', file: '06_seed_data.sql' },
+    { n: 6, label: '07 · DR policy', file: '07_optima_server_dr_policy.sql' }
 ];
 
         var panels = steps.map(function(s, i) {

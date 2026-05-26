@@ -8,19 +8,80 @@ SQL Optima is a self-hosted, performance-focused monitoring platform built with 
 
 ## UI preview
 
-Screenshots live in [`docs/screenshots/`](docs/screenshots/).
+Screenshots live in [`docs/screenshots/`](docs/screenshots/). For the full in-app metric reference (all dashboard pages per engine), see **[Dashboard guides](#dashboard-guides)** below.
 
 ![SQL Server dashboard](docs/screenshots/sqlserver-dashboard.png)
-*SQL Server Intelligence Report — forecasting and risk scoring.*
+*SQL Server Instance Dashboard — live DMV metrics, wait trends, and health triage.*
 
 ![PostgreSQL dashboard](docs/screenshots/postgres-dashboard.png)
 *PostgreSQL EXPLAIN plan analyzer with optimization recommendations.*
 
 ---
 
+## Dashboard guides
+
+After you register a server, use the in-app **Dashboard Info** pages for a full tour of every monitoring screen: what each dashboard shows, which metrics matter, DBA healthy/warning/critical thresholds, and copy-paste remediation tips.
+
+**In the app:** select a PostgreSQL or SQL Server instance in the sidebar, then open **Dashboard Info** (book icon, at the bottom of that engine’s menu). Each card links to the live dashboard; a floating **Back to Dashboard Guide** button returns you to the reference page.
+
+| Engine | Dashboards | Metrics covered | In-app route |
+|--------|------------|-----------------|--------------|
+| PostgreSQL | **14** | 100+ with threshold reference | **Dashboard Info** under PostgreSQL |
+| SQL Server | **15** | 80+ with threshold reference | **Dashboard Info** under SQL Server |
+
+### PostgreSQL — 14 dashboards
+
+![PostgreSQL Dashboard Guide](docs/screenshots/postgres_dashboard_guide.png)
+*In-app PostgreSQL Dashboard Guide — overview of all PG screens, metrics, and DBA thresholds.*
+
+| Dashboard | Purpose |
+|-----------|---------|
+| **Control Center** | First-look triage: sessions, cache hit ratio, waits, replica lag, and bloat risk in one pane. |
+| **Enterprise Monitor** | BGWriter, checkpointer, and WAL archiver health; temp spill and config drift. |
+| **CPU Health Monitor** | Host and PostgreSQL CPU; per-database/query attribution and bloat-driven CPU waste. |
+| **Memory Intelligence** | RAM, `shared_buffers`, `work_mem`, swap, and temp-file spill analysis. |
+| **Waits & Sessions** | Live `pg_stat_activity` triage — state, duration, and wait-event breakdown. |
+| **Locks & Blocking** | Blocking chains, deadlocks, and lock forensics (MVCC-aware). |
+| **Query Monitor** | `pg_stat_statements` workload, regressions, latency, and WAL-per-execution. |
+| **EXPLAIN Plan Analyzer** | Visual plan trees, row-estimate errors, and index recommendations. |
+| **Storage & Maintenance** | Bloat, autovacuum health, XID age, and unused indexes. |
+| **Index & Table Health** | Historical index vs seq scan ratios, growth, and efficiency (Timescale-backed). |
+| **Backup & DR** | WAL archiving, replication lag, and replication-slot retention risk. |
+| **Security Monitor** | Failed logins, superuser/role audit, and privilege anomalies. |
+| **Best Practices** | Configuration audit against DBA guardrails with remediation SQL. |
+| **Alerts & Events** | Open incidents, event timeline, and repeat-incident patterns. |
+
+### SQL Server — 15 dashboards
+
+![SQL Server Dashboard Guide](docs/screenshots/sqlserver_dashboard_guide.png)
+*In-app SQL Server Dashboard Guide — overview of all SQL Server screens, metrics, and DBA thresholds.*
+
+| Dashboard | Purpose |
+|-----------|---------|
+| **Instance Dashboard** | First-look triage: CPU, memory, I/O, blocking, waits, and top offenders (live DMVs). |
+| **Workload Analytics** | CPU/IO trends, app/user attribution, scheduler pressure, and compilation rates. |
+| **Wait Statistics** | Long-term wait-category trends — PAGEIOLATCH, locking, CPU, log I/O, network. |
+| **Memory Analyzer** | Buffer pool, memory clerks, grant queue, PLE, and plan-cache composition. |
+| **Locks & Blocking** | Blocking trees, root blockers, deadlock XML, and contention forensics. |
+| **Enterprise Metrics** | Engine telemetry over time: compilations, plan cache, TempDB, latch trends. |
+| **Storage & Index Health** | Growth forecasting, fragmentation, index read/write ratios, reclaimable space. |
+| **Performance Debt** | MAXDOP, memory caps, statistics health, backup SLA, and risky settings. |
+| **Intelligence Report** | Rule-based health narrative, risk scoring, and statistical forecasting. |
+| **Query Analysis** | Query Store regressions, plan instability, and top CPU consumers. |
+| **Plan Analyzer** | Interactive execution-plan trees and optimization guidance. |
+| **Watched Queries** | Curated per-query monitoring with duration and plan-change history. |
+| **SQL Agent Jobs** | Job success/failure, overlap risk, and maintenance-window forensics. |
+| **Alerts & Events** | Active incidents, behavioral anomalies, and severity escalation. |
+| **Best Practices** | Automated configuration audit with copy-paste remediation SQL. |
+
+Each guide card in the app expands with **key metrics** (healthy / warning / critical bands) and **DBA insights** for that screen. Use it alongside [docs/QUICKSTART.md](docs/QUICKSTART.md) after your first server is registered.
+
+---
+
 ## Table of contents
 
 - [UI preview](#ui-preview)
+- [Dashboard guides](#dashboard-guides)
 - [Getting started](#getting-started)
 - [Verify your installation](#verify-your-installation)
 - [Documentation](#documentation)
@@ -124,6 +185,7 @@ Use this checklist after `./start-dev.sh`, `start-dev.ps1`, or `docker compose u
 | 2 | Complete setup / sign in | Admin account works; no CLI password step needed in dev |
 | 3 | **Admin → Add New Server** — register PostgreSQL or SQL Server | Server appears; live metrics within one collector cycle |
 | 4 | Open engine dashboard (PostgreSQL or SQL Server) | Live panels show current DMV/catalog data |
+| 4b | Sidebar → **Dashboard Info** for that engine | Guide lists all dashboards, metrics, and DBA thresholds |
 | 5 | Wait **~15 minutes** (default collector cadence) | Historical charts and Storage & Index Health begin filling |
 | 6 | (Optional) Run target DB grants — see [Target database setup](#target-database-setup) | Permission check in Admin returns green / supplies grant scripts |
 | 7 | (Optional) `curl -s http://localhost:8080/api/health` or check API logs | API healthy; no repeated TimescaleDB connection errors |
@@ -143,6 +205,7 @@ Docs are grouped by role. Start with **Quickstart**, then drill into operations 
 | Document | Description |
 |----------|-------------|
 | **[docs/QUICKSTART.md](docs/QUICKSTART.md)** | Step-by-step install, first server, local HA test clusters, troubleshooting |
+| **[Dashboard guides](#dashboard-guides)** | In-app metric reference (14 PG + 15 SQL Server dashboards); screenshots in README |
 | **[ARCHITECTURE.md](ARCHITECTURE.md)** | Components, trust boundaries, live vs historical query paths |
 | **[ROADMAP.md](ROADMAP.md)** | Shipped features and near-term plans |
 | **[RELEASES.md](RELEASES.md)** | Release notes and upgrade context (current: **0.5.0**) |
@@ -364,8 +427,10 @@ The sections below summarize major modules. For API paths and behavior, use **[d
 
 ### PostgreSQL and SQL Server dashboards
 
-- **PostgreSQL:** Control Center, sessions, locks, pg_stat_statements, EXPLAIN analyzer, storage, replication/HA, autovacuum, enterprise monitor, best practices (OS-aware when host metrics exist), CPU/memory (optional [**OS collector**](os_collector/README.md) bash agent on the DB host), waits, **Backup & DR** (policy + readiness), alerts.
-- **SQL Server:** Instance dashboard, **Intelligence Report**, CPU/memory drilldowns, HA/AG, workload analytics, query analysis (statement fingerprint), locks & blocking, wait stats, plan analyzer, performance debt, **Backup & Recovery**, agent jobs, alerts, best practices.
+Full per-dashboard metric reference, DBA thresholds, and remediation tips live in the app under **Dashboard Info** (see **[Dashboard guides](#dashboard-guides)** and the screenshots there).
+
+- **PostgreSQL (14 screens):** Control Center, Enterprise Monitor, CPU/memory (optional [**OS collector**](os_collector/README.md) on the DB host), waits & sessions, locks, Query Monitor (`pg_stat_statements`), EXPLAIN analyzer, storage & maintenance, index & table health, Backup & DR, security, best practices, alerts.
+- **SQL Server (15 screens):** Instance dashboard, workload analytics, wait stats, memory analyzer, locks & blocking, enterprise metrics, storage & index health, performance debt, **Intelligence Report**, query analysis, plan analyzer, watched queries, SQL Agent jobs, alerts, best practices.
 
 ### SQL Server Intelligence Report
 

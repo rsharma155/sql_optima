@@ -84,8 +84,8 @@ type Operator struct {
 	ParentNodeID             int                 `json:"parent_node_id"`
 	EstimateCost             float64             `json:"estimate_cost"`
 	EstimatedTotalSubtreeCost float64            `json:"estimated_total_subtree_cost"`
-	EstimateRows             int64               `json:"estimate_rows"`
-	EstimatedRowsRead        int64               `json:"estimated_rows_read"`
+	EstimateRows             float64             `json:"estimate_rows"`
+	EstimatedRowsRead        float64             `json:"estimated_rows_read"`
 	EstimateCPUms            float64             `json:"estimate_cpu_ms"`
 	EstimatedIOs             float64             `json:"estimated_ios"`
 	AvgRowSize               float64             `json:"avg_row_size"`
@@ -120,6 +120,9 @@ type Operator struct {
 	TableCardinality          int64               `json:"table_cardinality"`
 	EstimatedExecutionMode    string              `json:"estimated_execution_mode"`
 	RuntimeCounters          []RuntimeCounter    `json:"runtime_counters,omitempty"`
+	AdaptiveThresholdRows    float64             `json:"adaptive_threshold_rows,omitempty"`
+	OpWaitStats              []WaitStat          `json:"op_wait_stats,omitempty"`
+	OpStatisticsInfo         []OperatorStatsInfo `json:"op_statistics_info,omitempty"`
 	Hash                     *HashMatch          `json:"hash,omitempty"`
 	NestedLoops              *NestedLoops       `json:"nested_loops,omitempty"`
 	Merge                    *MergeJoin          `json:"merge,omitempty"`
@@ -198,6 +201,8 @@ type IndexScan struct {
 	IndexCols     []IndexExpr `json:"index_columns"`
 	IncludedCols  []IndexExpr `json:"included_columns"`
 	Storage       string     `json:"storage"`
+	Ordered       bool       `json:"ordered,omitempty"`
+	ForcedIndex   bool       `json:"forced_index,omitempty"`
 }
 
 type TableScan struct {
@@ -461,7 +466,8 @@ type QueryPlan struct {
 	CompileCPU          int          `json:"compile_cpu"`
 	CompileMemory       int          `json:"compile_memory"`
 	OptimizationLevel    string       `json:"optimization_level"`
-	WaitStatsBatch       bool         `json:"wait_stats_batch"`
+	WaitStatsBatch           bool   `json:"wait_stats_batch"`
+	NonParallelPlanReason    string `json:"non_parallel_plan_reason,omitempty"`
 }
 
 type EvidenceDetail struct {
@@ -516,22 +522,49 @@ type Recommendation struct {
 	Priority    int    `json:"priority"`
 }
 
+// OperatorStatsInfo holds statistics object info referenced by a plan operator.
+type OperatorStatsInfo struct {
+	Object            string  `json:"object"`
+	LastUpdate        string  `json:"last_update"`
+	ModificationCount int64   `json:"modification_count"`
+	SamplingPercent   float64 `json:"sampling_percent"`
+	TableCardinality  int64   `json:"table_cardinality"`
+}
+
+// Statement represents a single statement within a multi-statement batch plan.
+type Statement struct {
+	StatementID   string     `json:"statement_id"`
+	StatementText string     `json:"statement_text"`
+	SubTreeCost   float64    `json:"sub_tree_cost"`
+	CostPercent   float64    `json:"cost_percent"`
+	RootOperator  *Operator  `json:"root_operator,omitempty"`
+	Operators     []Operator `json:"operators"`
+}
+
 type PlanAnalysis struct {
-	Version             string          `json:"version"`
-	Build               string          `json:"build"`
-	Timestamp           time.Time       `json:"timestamp"`
-	Metadata            QueryMetadata   `json:"metadata"`
-	QueryPlan           *QueryPlan      `json:"query_plan"`
-	Operators           []Operator      `json:"operators"`
-	Warnings            []Warning       `json:"warnings"`
-	MissingIndexes      []MissingIndex  `json:"missing_indexes"`
-	Findings            []Finding       `json:"findings"`
+	Version             string           `json:"version"`
+	Build               string           `json:"build"`
+	Timestamp           time.Time        `json:"timestamp"`
+	Metadata            QueryMetadata    `json:"metadata"`
+	QueryPlan           *QueryPlan       `json:"query_plan"`
+	Operators           []Operator       `json:"operators"`
+	Warnings            []Warning        `json:"warnings"`
+	MissingIndexes      []MissingIndex   `json:"missing_indexes"`
+	Findings            []Finding        `json:"findings"`
 	Recommendations     []Recommendation `json:"recommendations"`
-	HealthScore         HealthScore     `json:"health_score"`
+	HealthScore         HealthScore      `json:"health_score"`
 	TechnicalSummary    TechnicalSummary `json:"technical_summary"`
 	ExecutiveSummary    ExecutiveSummary `json:"executive_summary"`
-	CostSummary         CostSummary     `json:"cost_summary"`
-	QueryNarrative      []string        `json:"query_narrative"`
+	CostSummary         CostSummary      `json:"cost_summary"`
+	QueryNarrative      []string         `json:"query_narrative"`
+	// Multi-statement batch support
+	IsBatch             bool             `json:"is_batch"`
+	Statements          []Statement      `json:"statements,omitempty"`
+	// Plan-level parameter lists (for sniffing detection)
+	CompiledParameters  []ParameterInfo  `json:"compiled_parameters,omitempty"`
+	RuntimeParameters   []ParameterInfo  `json:"runtime_parameters,omitempty"`
+	// Plan-level statistics objects
+	StatisticsInfo      []OperatorStatsInfo `json:"statistics_info,omitempty"`
 }
 
 type BusinessExplanation struct {

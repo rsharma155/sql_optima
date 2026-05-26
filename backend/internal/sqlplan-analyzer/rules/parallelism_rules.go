@@ -60,7 +60,7 @@ func (e *RuleEngine) registerParallelismRules() {
 		ExtractFinding: func(plan *models.PlanAnalysis, op *models.Operator) models.Finding {
 			return makeBaseFinding(op,
 				"Excessive DOP for Small Result Set",
-				fmt.Sprintf("DOP of %d for only %d estimated rows. Thread creation overhead exceeds parallel benefit.", plan.QueryPlan.DegreeOfParallelism, op.EstimateRows),
+				fmt.Sprintf("DOP of %d for only %.0f estimated rows. Thread creation overhead exceeds parallel benefit.", plan.QueryPlan.DegreeOfParallelism, op.EstimateRows),
 				"Consider OPTION (MAXDOP 1) for small result sets or set server MAXDOP to lower value",
 				"Context switching overhead, memory pressure",
 				models.SeverityMedium,

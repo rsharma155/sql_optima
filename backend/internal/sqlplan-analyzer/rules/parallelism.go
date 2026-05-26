@@ -94,7 +94,7 @@ func (r *CardinalityEstimationRule) Evaluate(plan *models.PlanAnalysis) []models
 			continue
 		}
 
-		ratio := float64(op.ActualRows) / float64(op.EstimateRows)
+		ratio := float64(op.ActualRows) / op.EstimateRows
 
 		if ratio > thresholdRatio || ratio < 1.0/thresholdRatio {
 			severity := models.SeverityMedium
@@ -113,7 +113,7 @@ func (r *CardinalityEstimationRule) Evaluate(plan *models.PlanAnalysis) []models
 				OperatorID:          op.ID,
 				OperatorName:        op.PhysicalOp,
 				Title:               "Cardinality estimation " + direction + ": " + op.PhysicalOp,
-				TechnicalExplanation: "Estimated " + formatInt(op.EstimateRows) + " rows, actual " + formatInt(op.ActualRows) + " rows (ratio: " + formatFloat(ratio) + "x)",
+				TechnicalExplanation: "Estimated " + fmt.Sprintf("%.0f", op.EstimateRows) + " rows, actual " + formatInt(op.ActualRows) + " rows (ratio: " + formatFloat(ratio) + "x)",
 				BusinessExplanation:  "The query optimizer misjudged how much data would be processed by a factor of " + formatFloat(ratio) + " times.",
 				Recommendation:      "Update statistics or consider query hints for better estimation",
 				Impact:              "Suboptimal execution plan selection",

@@ -24,7 +24,7 @@ func (e *RuleEngine) registerAccessMethodRules() {
 			tbl := getTableName(op)
 			return makeBaseFinding(op,
 				fmt.Sprintf("Full Table Scan on %s", tbl),
-				fmt.Sprintf("Table scan reads all %d rows from %s, requiring full data file read. This is one of the most expensive operations in SQL Server.", op.EstimateRows, tbl),
+				fmt.Sprintf("Table scan reads all %.0f rows from %s, requiring full data file read. This is one of the most expensive operations in SQL Server.", op.EstimateRows, tbl),
 				fmt.Sprintf("Create an appropriate index on columns used in WHERE, JOIN, or ORDER BY clauses for table %s", tbl),
 				"High IO cost, poor performance on large tables, blocks other queries",
 				models.SeverityHigh,
@@ -52,7 +52,7 @@ func (e *RuleEngine) registerAccessMethodRules() {
 			idx := getIndexName(op)
 			return makeBaseFinding(op,
 				fmt.Sprintf("Clustered Index Scan on %s(%s)", tbl, idx),
-				fmt.Sprintf("Clustered index scan on %s reads all leaf pages. Estimated %d rows.", tbl, op.EstimateRows),
+				fmt.Sprintf("Clustered index scan on %s reads all leaf pages. Estimated %.0f rows.", tbl, op.EstimateRows),
 				"Consider index on filtered columns or covering index to enable seek operation",
 				"High IO for large tables, consider covering index",
 				models.SeverityMedium,

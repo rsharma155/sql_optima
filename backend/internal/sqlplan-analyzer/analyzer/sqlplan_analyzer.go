@@ -130,7 +130,7 @@ func (a *Analyzer) analyzeCosts(plan *models.PlanAnalysis) {
 			CPUCost:     op.EstimateCPUms,
 			IOCost:      op.EstimatedIOs,
 			TotalCost:   op.EstimatedTotalSubtreeCost,
-			RowEstimate: op.EstimateRows,
+			RowEstimate: int64(op.EstimateRows),
 			ActualRows:  op.ActualRows,
 		}
 	}
