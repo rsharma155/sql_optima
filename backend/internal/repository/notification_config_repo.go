@@ -9,6 +9,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -39,7 +40,7 @@ func (r *NotificationConfigRepository) ListAll(ctx context.Context) ([]Notificat
 		FROM optima_notification_config
 		ORDER BY channel`)
 	if err != nil {
-		if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "42P01" {
+		if isMissingNotificationConfigTable(err) {
 			// Table not yet created — schema migration pending; return empty.
 			return []NotificationChannelConfig{}, nil
 		}
@@ -56,6 +57,17 @@ func (r *NotificationConfigRepository) ListAll(ctx context.Context) ([]Notificat
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+func isMissingNotificationConfigTable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "42P01" {
+		return true
+	}
+	return strings.Contains(err.Error(), "optima_notification_config") &&
+		strings.Contains(err.Error(), "does not exist")
 }
 
 func (r *NotificationConfigRepository) Upsert(ctx context.Context, channel, url string, enabled bool, updatedBy string) error {

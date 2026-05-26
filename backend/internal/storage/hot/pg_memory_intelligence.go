@@ -155,11 +155,25 @@ func (tl *TimescaleLogger) ComputeAndLogPgMemoryDerived(ctx context.Context, ser
 }
 
 // GetPgMemoryTimeSeries returns time-series data for the memory intelligence dashboard.
-// Host RAM is driven by monitor.host_memory_samples (os_collector); PG internals join when present.
+// Timeline merges pg_memory_samples (always collected from the instance) with host_memory_samples
+// (os_collector only) so PG cache/connection/spill metrics appear without the OS agent.
 func (tl *TimescaleLogger) GetPgMemoryTimeSeries(ctx context.Context, serverID uuid.UUID, from, to time.Time) (map[string]interface{}, error) {
 	query := `
+		WITH timeline AS (
+			SELECT capture_timestamp AS ts, server_id
+			FROM monitor.pg_memory_samples
+			WHERE server_id = $1
+			  AND capture_timestamp >= $2
+			  AND capture_timestamp <= $3
+			UNION
+			SELECT capture_timestamp, server_id
+			FROM monitor.host_memory_samples
+			WHERE server_id = $1
+			  AND capture_timestamp >= $2
+			  AND capture_timestamp <= $3
+		)
 		SELECT
-			h.capture_timestamp,
+			t.ts,
 			COALESCE(h.used_memory_mb, 0)                           AS used_mb,
 			COALESCE(h.free_memory_mb, 0)                           AS free_mb,
 			COALESCE(h.cached_memory_mb, 0)                         AS cached_mb,
@@ -168,10 +182,10 @@ func (tl *TimescaleLogger) GetPgMemoryTimeSeries(ctx context.Context, serverID u
 				(SELECT (pm.postgres_rss_bytes / 1048576)::bigint
 				 FROM monitor.pg_os_process_memory pm
 				 JOIN monitor.pg_os_host_instance ohi ON pm.host_id = ohi.host_id
-				 WHERE ohi.server_id = h.server_id
-				   AND pm.capture_timestamp BETWEEN h.capture_timestamp - INTERVAL '2 minutes'
-				                                AND h.capture_timestamp + INTERVAL '2 minutes'
-				 ORDER BY ABS(EXTRACT(EPOCH FROM (pm.capture_timestamp - h.capture_timestamp))) ASC
+				 WHERE ohi.server_id = t.server_id
+				   AND pm.capture_timestamp BETWEEN t.ts - INTERVAL '2 minutes'
+				                                AND t.ts + INTERVAL '2 minutes'
+				 ORDER BY ABS(EXTRACT(EPOCH FROM (pm.capture_timestamp - t.ts))) ASC
 				 LIMIT 1), 0)                                          AS rss_mb,
 			COALESCE(d.pg_memory_percent, 0)                        AS pg_mem_pct,
 			COALESCE(d.cache_hit_ratio,
@@ -196,27 +210,33 @@ func (tl *TimescaleLogger) GetPgMemoryTimeSeries(ctx context.Context, serverID u
 			COALESCE(p.buffers_checkpoint, 0)                       AS buf_checkpoint,
 			COALESCE(p.buffers_clean, 0)                            AS buf_clean,
 			COALESCE(p.buffers_backend, 0)                          AS buf_backend
-		FROM monitor.host_memory_samples h
+		FROM timeline t
+		LEFT JOIN LATERAL (
+			SELECT * FROM monitor.host_memory_samples h
+			WHERE h.server_id = t.server_id
+			  AND h.capture_timestamp BETWEEN t.ts - INTERVAL '30 seconds'
+			                              AND t.ts + INTERVAL '30 seconds'
+			ORDER BY ABS(EXTRACT(EPOCH FROM (h.capture_timestamp - t.ts))) ASC
+			LIMIT 1
+		) h ON TRUE
 		LEFT JOIN LATERAL (
 			SELECT * FROM monitor.pg_memory_samples p
-			WHERE p.server_id = h.server_id
-			  AND p.capture_timestamp BETWEEN h.capture_timestamp - INTERVAL '30 seconds'
-			                              AND h.capture_timestamp + INTERVAL '30 seconds'
-			ORDER BY ABS(EXTRACT(EPOCH FROM (p.capture_timestamp - h.capture_timestamp))) ASC
+			WHERE p.server_id = t.server_id
+			  AND p.capture_timestamp BETWEEN t.ts - INTERVAL '30 seconds'
+			                              AND t.ts + INTERVAL '30 seconds'
+			ORDER BY ABS(EXTRACT(EPOCH FROM (p.capture_timestamp - t.ts))) ASC
 			LIMIT 1
 		) p ON TRUE
 		LEFT JOIN LATERAL (
 			SELECT * FROM monitor.pg_memory_derived d2
-			WHERE d2.server_id = h.server_id
-			  AND d2.capture_timestamp BETWEEN h.capture_timestamp - INTERVAL '10 seconds'
-			                               AND h.capture_timestamp + INTERVAL '10 seconds'
-			ORDER BY ABS(EXTRACT(EPOCH FROM (d2.capture_timestamp - h.capture_timestamp))) ASC
+			WHERE d2.server_id = t.server_id
+			  AND d2.capture_timestamp BETWEEN t.ts - INTERVAL '10 seconds'
+			                               AND t.ts + INTERVAL '10 seconds'
+			ORDER BY ABS(EXTRACT(EPOCH FROM (d2.capture_timestamp - t.ts))) ASC
 			LIMIT 1
 		) d ON TRUE
-		WHERE h.server_id = $1
-		  AND h.capture_timestamp >= $2
-		  AND h.capture_timestamp <= $3
-		ORDER BY h.capture_timestamp ASC`
+		WHERE t.server_id = $1
+		ORDER BY t.ts ASC`
 
 	rows, err := tl.pool.Query(ctx, query, serverID, from, to)
 	if err != nil {

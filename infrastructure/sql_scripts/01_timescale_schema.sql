@@ -708,6 +708,20 @@ SELECT add_continuous_aggregate_policy('monitor.sqlserver_replication_backlog_1m
     start_offset => INTERVAL '1 hour', end_offset => INTERVAL '1 minute',
     schedule_interval => INTERVAL '1 minute', if_not_exists => true);
 
+-- Collector configs must exist before HA/Query V2 seed rows below (also defined again ~3056 for idempotency).
+CREATE TABLE IF NOT EXISTS optima_collector_configs (
+    id SERIAL PRIMARY KEY,
+    collector_name VARCHAR(100) UNIQUE NOT NULL,
+    module VARCHAR(100) NOT NULL,
+    frequency_seconds INTEGER NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by VARCHAR(100),
+    -- Startup launch sequence: lower = earlier goroutine in appserver.go.
+    -- 10=Pulse, 20=Background, 30-180=dedicated goroutines, NULL=system/framework.
+    run_order INT
+);
+
 -- 11. Collector Configurations (HA & Replication)
 INSERT INTO optima_collector_configs (collector_name, module, frequency_seconds, is_active) VALUES
 ('sqlserver_ha_discovery', 'SQLSERVER', 900, true),
@@ -3052,19 +3066,7 @@ SELECT add_retention_policy('monitor.pg_memory_samples', INTERVAL '180 days', if
 SELECT add_retention_policy('monitor.pg_memory_derived', INTERVAL '180 days', if_not_exists => TRUE);
 SELECT add_retention_policy('monitor.pg_memory_components', INTERVAL '365 days', if_not_exists => TRUE);
 
--- Collector Configs (Controls frequency and status of background metrics collection)
-CREATE TABLE IF NOT EXISTS optima_collector_configs (
-    id SERIAL PRIMARY KEY,
-    collector_name VARCHAR(100) UNIQUE NOT NULL,
-    module VARCHAR(100) NOT NULL,
-    frequency_seconds INTEGER NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_by VARCHAR(100),
-    -- Startup launch sequence: lower = earlier goroutine in appserver.go.
-    -- 10=Pulse, 20=Background, 30-180=dedicated goroutines, NULL=system/framework.
-    run_order INT
-);
+-- optima_collector_configs: created in SECTION 1 (before HA/Query V2 INSERTs).
 
 -- Notification Config (Admin-managed outbound alert destinations)
 CREATE TABLE IF NOT EXISTS optima_notification_config (
@@ -3078,6 +3080,10 @@ CREATE TABLE IF NOT EXISTS optima_notification_config (
 INSERT INTO optima_notification_config (channel, url, is_enabled)
 VALUES ('webhook', '', false), ('slack', '', false)
 ON CONFLICT (channel) DO NOTHING;
+GRANT SELECT, INSERT, UPDATE ON optima_notification_config TO sql_optima_app;
+GRANT USAGE, SELECT ON SEQUENCE optima_notification_config_id_seq TO sql_optima_app;
+GRANT SELECT, INSERT, UPDATE ON optima_collector_configs TO sql_optima_app;
+GRANT USAGE, SELECT ON SEQUENCE optima_collector_configs_id_seq TO sql_optima_app;
 
 -- Platform settings (UI-managed toggles; e.g. os_metrics_ingest_enabled from OS Collector UI)
 CREATE TABLE IF NOT EXISTS optima_platform_settings (
@@ -4897,7 +4903,7 @@ CREATE INDEX idx_pg_disk_server_time ON postgres_disk_stats (server_id, capture_
 DROP INDEX IF EXISTS idx_pg_backup_runs_server_time;
 CREATE INDEX idx_pg_backup_runs_server_time ON postgres_backup_runs (server_id, capture_timestamp DESC);
 
--- optima_server_dr_policy: defined in SECTION 2.0 (after optima_servers); see 07_optima_server_dr_policy.sql for upgrades.
+-- optima_server_dr_policy + optima_notification_config: see 07_optima_server_dr_policy.sql for idempotent upgrades.
 
 DROP INDEX IF EXISTS idx_pg_log_events_server_time;
 CREATE INDEX idx_pg_log_events_server_time ON postgres_log_events (server_id, capture_timestamp DESC);

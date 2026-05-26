@@ -102,6 +102,9 @@ func (tl *TimescaleLogger) UpsertPgssQueryDim(ctx context.Context, serverID uuid
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
 		ON CONFLICT (server_id, query_id) DO UPDATE SET
 		    last_seen  = NOW(),
+		    query_text = CASE WHEN EXCLUDED.query_text IS NOT NULL AND EXCLUDED.query_text != ''
+		                      THEN EXCLUDED.query_text
+		                      ELSE pgss_query_dim.query_text END,
 		    db_name    = COALESCE(EXCLUDED.db_name,    pgss_query_dim.db_name),
 		    username   = COALESCE(EXCLUDED.username,   pgss_query_dim.username),
 		    app_name   = CASE WHEN EXCLUDED.app_name != '' THEN EXCLUDED.app_name ELSE pgss_query_dim.app_name END,
@@ -581,15 +584,15 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 			a.total_exec_time,
 			CASE WHEN g.db_total > 0 THEN (a.total_exec_time / g.db_total) * 100.0 ELSE 0 END,
 			a.total_calls,
-			a.total_exec_time / NULLIF(a.total_calls, 0) AS avg_ms,
-			a.total_rows::float / NULLIF(a.total_calls, 0),
+			COALESCE(a.total_exec_time / NULLIF(a.total_calls, 0), 0) AS avg_ms,
+			COALESCE(a.total_rows::float / NULLIF(a.total_calls, 0), 0),
 			CASE WHEN a.total_hit + a.total_blks_read > 0
 				THEN (a.total_hit::float / (a.total_hit + a.total_blks_read)) * 100.0
 				ELSE 100.0 END,
 			a.total_temp::float * 8.0 / 1024.0,
 			a.total_wal::float / (1024.0 * 1024.0),
-			a.total_blks_read::float / NULLIF(a.total_calls, 0),
-			a.total_plan / NULLIF(a.total_exec_time, 0),
+			COALESCE(a.total_blks_read::float / NULLIF(a.total_calls, 0), 0),
+			COALESCE(a.total_plan / NULLIF(a.total_exec_time, 0), 0),
 			a.last_seen
 		FROM agg a
 		CROSS JOIN grand g
@@ -632,6 +635,7 @@ func (tl *TimescaleLogger) GetPgssTopQueries(
 			&r.TotalTime, &r.PctDBTime, &r.Calls,
 			&r.AvgMs, &r.RowsPerCall, &r.HitPct, &r.TempMB, &r.WalMB,
 			&r.ReadsPerCall, &r.PlanRatio, &r.CapturedAt); err != nil {
+			slog.Warn("pgss: top query scan error", "err", err)
 			continue
 		}
 		var flags []string
@@ -899,6 +903,8 @@ type PgssRegression struct {
 	PrevAvgMs  float64   `json:"prev_avg_ms"`
 	CurrAvgMs  float64   `json:"curr_avg_ms"`
 	ChangePct  float64   `json:"change_pct"`
+	PrevCalls  int64     `json:"prev_calls"`
+	CurrCalls  int64     `json:"curr_calls"`
 	Status     string    `json:"status"`
 	DetectedAt time.Time `json:"detected_at"`
 }
@@ -931,11 +937,16 @@ func (tl *TimescaleLogger) GetPgssRegressions(ctx context.Context, serverID uuid
 			COALESCE(q.query_text, ''),
 			p.avg_ms,
 			c.avg_ms,
-			((c.avg_ms - p.avg_ms) / NULLIF(p.avg_ms, 0)) * 100.0
+			((c.avg_ms - p.avg_ms) / NULLIF(p.avg_ms, 0)) * 100.0,
+			p.total_calls,
+			c.total_calls
 		FROM curr c
 		JOIN prev p ON p.query_id = c.query_id
 		LEFT JOIN pgss_query_dim q ON q.server_id = $1 AND q.query_id = c.query_id
-		WHERE p.avg_ms > 0 AND ((c.avg_ms - p.avg_ms) / p.avg_ms) > 0.5
+		WHERE p.avg_ms >= 1.0
+		  AND p.total_calls >= 2 AND c.total_calls >= 2
+		  AND (c.avg_ms - p.avg_ms) >= 5.0
+		  AND ((c.avg_ms - p.avg_ms) / p.avg_ms) > 0.5
 		  AND COALESCE(q.query_text, '') NOT LIKE '%%/* SQL_OPTIMA */%%'
 		ORDER BY ((c.avg_ms - p.avg_ms) / NULLIF(p.avg_ms, 0)) DESC
 		LIMIT 20`
@@ -949,7 +960,7 @@ func (tl *TimescaleLogger) GetPgssRegressions(ctx context.Context, serverID uuid
 	var results []PgssRegression
 	for rows.Next() {
 		var r PgssRegression
-		if err := rows.Scan(&r.QueryID, &r.Query, &r.PrevAvgMs, &r.CurrAvgMs, &r.ChangePct); err != nil {
+		if err := rows.Scan(&r.QueryID, &r.Query, &r.PrevAvgMs, &r.CurrAvgMs, &r.ChangePct, &r.PrevCalls, &r.CurrCalls); err != nil {
 			continue
 		}
 		if r.ChangePct > 100 {

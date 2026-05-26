@@ -174,3 +174,15 @@ func (s *TimescaleAlertStore) CountOpen(ctx context.Context, serverID uuid.UUID)
 	err := s.pool.QueryRow(ctx, "SELECT count(*) FROM optima_alerts WHERE server_id = $1 AND status IN ('open', 'acknowledged')", serverID).Scan(&count)
 	return count, err
 }
+
+func (s *TimescaleAlertStore) ResolveByFingerprint(ctx context.Context, fingerprint, actor, reason string, at time.Time) (bool, error) {
+	res, err := s.pool.Exec(ctx, `
+		UPDATE optima_alerts
+		SET status = 'resolved', resolved_by = $2, resolved_at = $3, updated_at = $3
+		WHERE fingerprint = $1 AND status IN ('open', 'acknowledged')
+	`, fingerprint, actor, at)
+	if err != nil {
+		return false, err
+	}
+	return res.RowsAffected() > 0, nil
+}

@@ -9,6 +9,8 @@
 
 package hot
 
+import "fmt"
+
 const sqlServerOptimaBatchTag = `%/* SQL_OPTIMA%`
 
 // sqlServerQueryMetricsV2LateralSelect is the column set from sqlserver_query_metrics_v2
@@ -77,9 +79,43 @@ func sqlServerQueryAnalysisScopeSQL(excludeSystem bool, col string, monitoringLo
 		sqlServerQueryAnalysisDistributionExcludeSQL(col)
 }
 
+// sqlServerQueryAnalysisQualifyingHashesCTE scans metrics_v2 once for user-workload query_hashes in range.
+// Use instead of per-row LATERAL joins on sqlserver_query_stats_history (avoids 60s+ plans on large hypertables).
+// Expects $1=server_id, $2=from, $3=to; optional $dbArgPos database name when databaseScoped.
+func sqlServerQueryAnalysisQualifyingHashesCTE(excludeSystem bool, monitoringLogins []string, databaseScoped bool, dbArgPos int) string {
+	if !excludeSystem {
+		return ""
+	}
+	dbClause := ""
+	if databaseScoped && dbArgPos > 0 {
+		dbClause = fmt.Sprintf(" AND LOWER(TRIM(COALESCE(m.database_name, ''))) = LOWER(TRIM($%d))", dbArgPos)
+	}
+	// Extend the lower bound by 1 hour so a narrow selected range does not exclude hashes
+	// whose latest metrics_v2 snapshot landed just before $2 due to collection timing skew.
+	// The actual aggregation window [$2, $3] is still enforced by the outer history query.
+	return `WITH qualifying_hashes AS (
+    SELECT DISTINCT m.query_hash
+    FROM sqlserver_query_metrics_v2 m
+    WHERE m.server_id = $1
+      AND m.capture_timestamp >= ($2::timestamptz - INTERVAL '1 hour')
+      AND m.capture_timestamp <= $3::timestamptz` +
+		sqlServerUserWorkloadNoiseSQL("m.", monitoringLogins) + dbClause + `
+  )`
+}
+
+// sqlServerQueryAnalysisHistoryHashJoin filters history to hashes from qualifying_hashes CTE.
+func sqlServerQueryAnalysisHistoryHashJoin() string {
+	return `INNER JOIN qualifying_hashes qq ON qq.query_hash = qh.query_hash`
+}
+
+// sqlServerQueryAnalysisSnapshotHashJoin filters snapshot rows to qualifying_hashes CTE.
+func sqlServerQueryAnalysisSnapshotHashJoin() string {
+	return `INNER JOIN qualifying_hashes qq ON qq.query_hash = s.query_hash`
+}
+
 // sqlServerQueryAnalysisMetricsLateralJoin attaches the latest metrics_v2 row for a history/snapshot query_hash.
-// histAlias is the outer table alias (e.g. qh, s). When excludeSystem is true, uses INNER JOIN and applies
-// read filters inside the subquery so history rows without a qualifying metrics row are not counted.
+// Prefer sqlServerQueryAnalysisQualifyingHashesCTE when excludeSystem is true (summary/history aggregates).
+// histAlias is the outer table alias (e.g. qh, s). When excludeSystem is true, uses INNER JOIN LATERAL (legacy path).
 func sqlServerQueryAnalysisMetricsLateralJoin(excludeSystem bool, histAlias string, monitoringLogins []string) (joinSQL string, outerScopeSQL string) {
 	base := `
 			SELECT ` + sqlServerQueryMetricsV2LateralSelect + `

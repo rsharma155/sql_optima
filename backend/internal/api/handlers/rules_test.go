@@ -1,11 +1,43 @@
 package handlers
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 
 	"github.com/rsharma155/sql_optima/internal/ruleengine/models"
 )
+
+func TestRuleEvalRow_detectionQuery(t *testing.T) {
+	pgOnly := ruleEvalRow{
+		RuleID:         "PG_IDLE_TX_TIMEOUT_021",
+		DetectionSQL:   sql.NullString{},
+		DetectionSQLPg: sql.NullString{String: "SELECT setting FROM pg_settings WHERE name = 'idle_in_transaction_session_timeout'", Valid: true},
+	}
+	if got := pgOnly.detectionQuery("postgres"); !strings.Contains(got, "pg_settings") {
+		t.Fatalf("postgres pg-only rule: got %q", got)
+	}
+
+	basePG := ruleEvalRow{
+		RuleID:       "PG_SHARED_BUFFERS_001",
+		DetectionSQL: sql.NullString{String: "SELECT setting FROM pg_settings WHERE name = 'shared_buffers'", Valid: true},
+	}
+	if got := basePG.detectionQuery("postgres"); !strings.Contains(got, "shared_buffers") {
+		t.Fatalf("postgres base rule: got %q", got)
+	}
+
+	mssql := ruleEvalRow{
+		RuleID:       "INST_MEM_MAX_001",
+		DetectionSQL: sql.NullString{String: "SELECT 1", Valid: true},
+	}
+	if got := mssql.detectionQuery("sqlserver"); got != "SELECT 1" {
+		t.Fatalf("sqlserver rule: got %q", got)
+	}
+
+	if got := pgOnly.detectionQuery("sqlserver"); got != "" {
+		t.Fatalf("postgres-only SQL on sqlserver target should be empty, got %q", got)
+	}
+}
 
 // ---------------------------------------------------------------------------
 // buildRawRulePayload + buildRuleEvidence

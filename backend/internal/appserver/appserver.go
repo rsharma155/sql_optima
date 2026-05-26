@@ -10,6 +10,7 @@ package appserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -479,6 +480,25 @@ func Main() {
 	slog.Info("Server exited")
 }
 
+func newSQLServerSnapshotCollectorRepo(
+	db *sql.DB,
+	msRepo *repository.SqlServerRepository,
+	instanceName string,
+) *sqlserver.SQLServerSnapshotRepository {
+	repo := sqlserver.NewSQLServerSnapshotRepository(db)
+	repo.SetConnRecovery(func(ctx context.Context) (*sql.DB, bool) {
+		if !msRepo.ReconnectInstance(ctx, instanceName) {
+			return nil, false
+		}
+		db2, ok := msRepo.GetConn(instanceName)
+		if !ok || db2 == nil {
+			return nil, false
+		}
+		return db2, true
+	})
+	return repo
+}
+
 func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, msRepo *repository.SqlServerRepository, pgRepo *repository.PgRepository) {
 	// Query V2 pipeline is always enabled (hash-based query deltas for SQL Server and PostgreSQL).
 	slog.Info("[collector-v2] starting lightweight query metrics pipeline")
@@ -537,7 +557,7 @@ func startQueryV2Collector(ctx context.Context, pool *pgxpool.Pool, cfg *config.
 						if _, ok := mssqlApps[inst.ServerID]; !ok {
 							db, ok := msRepo.GetConn(inst.Name)
 							if ok {
-								repo := sqlserver.NewSQLServerSnapshotRepository(db)
+								repo := newSQLServerSnapshotCollectorRepo(db, msRepo, inst.Name)
 								mssqlApps[inst.ServerID] = application.NewCollectorApp(jobScheduler, repo, nil, writer, filter)
 								slog.Info("[collector-v2] Dynamic start: SQL Server collector for", "val", inst.Name)
 							}

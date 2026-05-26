@@ -114,6 +114,22 @@ func (m *mockAlertStore) CountOpen(_ context.Context, serverID uuid.UUID) (int, 
 	return count, nil
 }
 
+func (m *mockAlertStore) ResolveByFingerprint(_ context.Context, fingerprint, actor, _ string, at time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	resolved := false
+	for id, a := range m.alerts {
+		if a.Fingerprint == fingerprint && a.Status != alerts.StatusResolved {
+			a.Status = alerts.StatusResolved
+			a.ResolvedBy = &actor
+			a.ResolvedAt = &at
+			m.alerts[id] = a
+			resolved = true
+		}
+	}
+	return resolved, nil
+}
+
 type mockMaintenanceStore struct {
 	underMaintenance bool
 }
@@ -168,7 +184,7 @@ func TestAlertService_RunEvaluation_CreatesAlerts(t *testing.T) {
 
 	svc := NewAlertService(store, maintStore, []AlertEvaluator{ev}, nil)
 
-	count, err := svc.RunEvaluation(context.Background(), id, alerts.EngineSQLServer)
+	count, err := svc.RunEvaluation(context.Background(), id, alerts.EngineSQLServer, "test-instance")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -201,8 +217,8 @@ func TestAlertService_RunEvaluation_Deduplicates(t *testing.T) {
 
 	// Run twice with the same server ID so deduplication by fingerprint fires
 	serverID := uuid.New()
-	svc.RunEvaluation(context.Background(), serverID, alerts.EngineSQLServer)
-	svc.RunEvaluation(context.Background(), serverID, alerts.EngineSQLServer)
+	svc.RunEvaluation(context.Background(), serverID, alerts.EngineSQLServer, "test-instance")
+	svc.RunEvaluation(context.Background(), serverID, alerts.EngineSQLServer, "test-instance")
 
 	if len(store.alerts) != 1 {
 		t.Errorf("expected 1 deduplicated alert, got %d", len(store.alerts))
@@ -226,7 +242,7 @@ func TestAlertService_RunEvaluation_SkipsMaintenanceWindow(t *testing.T) {
 	}
 
 	svc := NewAlertService(store, maintStore, []AlertEvaluator{ev}, nil)
-	count, err := svc.RunEvaluation(context.Background(), uuid.New(), alerts.EngineSQLServer)
+	count, err := svc.RunEvaluation(context.Background(), uuid.New(), alerts.EngineSQLServer, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -247,7 +263,7 @@ func TestAlertService_RunEvaluation_SkipsMismatchedEngine(t *testing.T) {
 	}
 
 	svc := NewAlertService(store, maintStore, []AlertEvaluator{ev}, nil)
-	count, _ := svc.RunEvaluation(context.Background(), uuid.New(), alerts.EngineSQLServer)
+	count, _ := svc.RunEvaluation(context.Background(), uuid.New(), alerts.EngineSQLServer, "")
 	if count != 0 {
 		t.Errorf("expected 0 (wrong engine), got %d", count)
 	}

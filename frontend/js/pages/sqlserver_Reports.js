@@ -8,22 +8,19 @@
  * SPDX-License-Identifier: MIT
  */
 
-// Global function to update alerts badge
+// Global function to update alerts badge (alert engine + live blocking KPIs)
 window.updateAlertsBadge = async function() {
     try {
         const inst = window.appState.config.instances[window.appState.currentInstanceIdx];
-        if (!inst || inst.type !== 'sqlserver') return;
+        if (!inst || (inst.type !== 'sqlserver' && !(inst.engine || '').toLowerCase().includes('sql'))) return;
 
-        const response = await window.apiClient.authenticatedFetch(`/api/sqlserver/dashboard?instance=${encodeURIComponent(inst.name)}`);
-        if (!response.ok) return;
-        
-        const contentType = response.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) return;
-        
-        const metrics = await response.json();
-        const anomalies = analyzeAnomalies(metrics, inst);
-        const totalAlerts = anomalies.critical.length + anomalies.warning.length + anomalies.info.length;
-        
+        let totalAlerts = 0;
+        const alertData = await window.fetchAlertsPageData(inst);
+        totalAlerts += alertData.openCount || 0;
+
+        const blocked = alertData.blockingKpis?.active_blocked_sessions ?? 0;
+        if (blocked > 0) totalAlerts += 1;
+
         const badgeElement = document.getElementById('alerts-badge');
         if (badgeElement) {
             badgeElement.textContent = totalAlerts;
@@ -61,6 +58,8 @@ window.AlertsView = async function() {
         `;
 
         try {
+            const alertPageData = await window.fetchAlertsPageData(inst);
+
             // Fetch v2 so we can display source badge consistently
             const response = await window.apiClient.authenticatedFetch(`/api/sqlserver/dashboard/v2?instance=${encodeURIComponent(inst.name)}`);
             if (!response.ok) throw new Error(`Failed to fetch dashboard data (HTTP ${response.status})`);
@@ -173,12 +172,30 @@ window.AlertsView = async function() {
                 `;
             }
 
+            const engineAlertsSection = alertPageData.disconnected ? `
+                <div class="glass-panel mt-2" style="padding:1rem; border-left:3px solid var(--warning);">
+                    <strong>Alert engine offline</strong>
+                    <p class="text-muted small mb-0">TimescaleDB is required for persisted alerts. Live anomaly cards below still use dashboard metrics.</p>
+                </div>
+            ` : `
+                ${window.renderAlertsKpiStrip(alertPageData.openCount, alertPageData.blockingKpis, 'sqlserver')}
+                <div class="card glass-panel mt-2">
+                    <div class="card-header flex-between">
+                        <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-bell text-danger"></i> Alert Engine (TimescaleDB)</h3>
+                        <span class="text-muted" style="font-size:0.65rem;">Blocking, jobs, disk · ~60s evaluation</span>
+                    </div>
+                    <div style="padding:0.5rem;">
+                        ${window.renderEngineAlertsTable(alertPageData.engineAlerts, { showAllStatuses: true })}
+                    </div>
+                </div>
+            `;
+
             window.routerOutlet.innerHTML = `
                 <div class="page-view active dashboard-sky-theme">
                     <div class="page-title flex-between dashboard-page-title-compact">
                         <div class="dashboard-title-line">
-                            <h1 style="font-size:1.1rem; margin:0;"><i class="fa-solid fa-brain text-accent"></i> Anomaly Detection & Alerts</h1>
-                            <p class="subtitle">Rule-based anomaly detection for ${window.escapeHtml(inst.name)}</p>
+                            <h1 style="font-size:1.1rem; margin:0;"><i class="fa-solid fa-brain text-accent"></i> Alerts &amp; Anomaly Detection</h1>
+                            <p class="subtitle">${window.escapeHtml(inst.name)} · Engine alerts + live dashboard rules</p>
                         </div>
                         <div class="dashboard-page-title-actions" style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
                             ${window.renderStatusStrip({ lastUpdateId: 'alertsLastUpdate', sourceBadgeId: 'alertsDataSourceBadge2', includeHealth: false, includeFreshness: false, autoRefreshText: 'Auto-refresh: every 15s' })}
@@ -188,7 +205,9 @@ window.AlertsView = async function() {
                             <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="refreshAlerts"><i class="fa-solid fa-refresh"></i> Refresh</button>
                         </div>
                     </div>
+                    ${engineAlertsSection}
                     <div class="mt-2" style="display:grid; gap:0.75rem;">
+                        <h3 style="font-size:0.8rem; color:var(--text-muted); margin:0.25rem 0 0;"><i class="fa-solid fa-chart-line"></i> Live dashboard anomalies</h3>
                         ${alertsHtml}
                     </div>
 
@@ -283,6 +302,7 @@ window.AlertsView = async function() {
                 autoRefreshCheckbox.__bound = true;
             }
             enableAutoRefresh();
+            window.bindAlertsPageActions(loadAlerts);
 
         } catch (error) {
             appDebug("Alerts analysis failed:", error);
@@ -395,23 +415,23 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
         }
     }
 
-    // Blocking detection
+    // Blocking detection (live DMV snapshot on dashboard)
     const activeBlocks = metrics.active_blocks ? metrics.active_blocks.filter(s => s.blocking_session_id !== 0).length : 0;
-    if (activeBlocks > 10) {
+    if (activeBlocks >= 5) {
         anomalies.critical.push({
             title: 'Severe Blocking Chain',
             description: `${activeBlocks} sessions currently blocked - major performance impact`,
             timestamp: now,
-            route: 'drilldown-locks',
+            route: 'sqlserver-locks',
             actionText: 'View Blocking & Waits'
         });
         anomalies.healthScore -= 20;
-    } else if (activeBlocks > 5) {
+    } else if (activeBlocks >= 1) {
         anomalies.warning.push({
             title: 'Active Blocking Detected',
-            description: `${activeBlocks} sessions currently blocked`,
+            description: `${activeBlocks} session(s) currently blocked`,
             timestamp: now,
-            route: 'drilldown-locks',
+            route: 'sqlserver-locks',
             actionText: 'View Blocking & Waits'
         });
         anomalies.healthScore -= 10;
@@ -425,7 +445,7 @@ function analyzeAnomalies(metrics, instance, historicalIncidents = []) {
             title: 'High Lock Count',
             description: `${totalLocks} active locks - potential performance bottleneck`,
             timestamp: now,
-            route: 'drilldown-locks',
+            route: 'sqlserver-locks',
             actionText: 'View Lock Analysis'
         });
         anomalies.healthScore -= 5;

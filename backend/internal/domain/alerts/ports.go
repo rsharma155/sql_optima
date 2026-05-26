@@ -32,6 +32,9 @@ type AlertStore interface {
 
 	// CountOpen returns the number of active alerts for a given server.
 	CountOpen(ctx context.Context, serverID uuid.UUID) (int, error)
+
+	// ResolveByFingerprint resolves an open/acknowledged alert with the given fingerprint.
+	ResolveByFingerprint(ctx context.Context, fingerprint, actor, reason string, at time.Time) (bool, error)
 }
 
 // AlertFilter defines criteria for listing alerts.

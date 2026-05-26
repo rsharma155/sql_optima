@@ -7,7 +7,7 @@ This directory is the **single source** for SQL Optima database scripts (merged 
 | File | Description |
 |------|-------------|
 | `01_timescale_schema.sql` | Main TimescaleDB schema: hypertables, indexes, compression |
-| `07_optima_server_dr_policy.sql` | Idempotent DR/RPO policy table (`optima_server_dr_policy`); re-run on upgrade |
+| `07_optima_server_dr_policy.sql` | Idempotent platform config: `optima_server_dr_policy`, `optima_notification_config`; re-run on upgrade |
 | `06_seed_data.sql` | Default users, widgets, and collection schedules |
 | `03_additional_pg_rules.sql` | Additional PostgreSQL-specific rules for the rule engine |
 | `04_alert_engine.sql` | **Canonical** alert engine schema |
@@ -169,3 +169,4 @@ Postgres (`pg_stat_monitor` → primary, `pg_stat_statements` → fallback) → 
    docker compose -f infrastructure/docker/docker-compose.yml run --rm schema-patches
    ```
    Or apply manually: `psql ... -f infrastructure/sql_scripts/07_optima_server_dr_policy.sql`
+5. **`relation "optima_notification_config" does not exist`** (startup log: `notifier: could not load config from DB`): Re-run `07_optima_server_dr_policy.sql` via `schema-patches` (same command as item 4 above).

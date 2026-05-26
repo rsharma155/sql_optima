@@ -128,7 +128,10 @@ function renderPgMemoryCockpit(data, instanceName) {
     if (osBadge) osBadge.style.display = osConfigured ? 'inline-block' : 'none';
 
     if (series.length === 0) {
-        const noDataMsg = 'No memory data collected yet. The collector runs on the next cycle (typically within 1 minute).';
+        const hasGucs = (components.shared_buffers_mb || components.work_mem_mb || components.max_connections);
+        const noDataMsg = hasGucs
+            ? 'No time-series samples in the selected range. Try widening the time window or wait for the next collector cycle (~1 minute).'
+            : 'No memory data collected yet. Ensure the PostgreSQL instance is online and the Postgres Dashboard Snapshot collector is enabled (Settings → Collectors).';
         if (notice) { notice.textContent = noDataMsg; notice.style.display = 'block'; }
         const tbody = document.getElementById('pg-memory-raw-tbody');
         if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">${window.escapeHtml(noDataMsg)}</td></tr>`;

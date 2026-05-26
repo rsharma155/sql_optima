@@ -79,11 +79,10 @@
     font-size: 0.95rem;
 }
 
-/* ---- PGSS Regression table red theme ---- */
-.pgss-regression-table tr td:nth-child(4) { font-weight: 600; }
-.pgss-regression-table tr:hover { background: rgba(248,113,113,0.08); }
-.pgss-regression-table .badge-danger { font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; }
-.pgss-regression-table .badge-warning { font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; }
+/* ---- PGSS Regression table red theme (now uses pgss-grid) ---- */
+#pgss-regression-table tbody tr:hover { background: rgba(248,113,113,0.08) !important; }
+#pgss-regression-table .badge-danger  { font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; }
+#pgss-regression-table .badge-warning { font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; }
 
 /* ---- PGSS chart legend multi-line ---- */
 .pgss-chart-card .chartjs-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 4px 0; }

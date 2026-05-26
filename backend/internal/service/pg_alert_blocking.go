@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/domain/alerts"
 )
@@ -29,50 +30,88 @@ func (e *PgBlockingEvaluator) Engine() alerts.Engine { return alerts.EnginePostg
 
 func (e *PgBlockingEvaluator) Evaluate(ctx context.Context, serverID uuid.UUID) ([]AlertEvaluatorResult, error) {
 	var results []AlertEvaluatorResult
-	serverName := serverID.String()
 
-	// 1. Check active incidents
+	if r, ok, err := e.evalBlockingIncident(ctx, serverID); err != nil {
+		return nil, err
+	} else if ok {
+		results = append(results, r)
+	}
+
+	if r, ok, err := e.evalIdleInTransaction(ctx, serverID); err != nil {
+		return nil, err
+	} else if ok {
+		results = append(results, r)
+	}
+
+	return results, nil
+}
+
+func (e *PgBlockingEvaluator) evalBlockingIncident(ctx context.Context, serverID uuid.UUID) (AlertEvaluatorResult, bool, error) {
 	q := `
-		SELECT incident_id, started_at, root_blocker_pid, COALESCE(root_blocker_query, ''), peak_blocked_sessions
+		SELECT incident_id, started_at, ended_at, status, root_blocker_pid,
+		       COALESCE(root_blocker_query, ''), COALESCE(peak_blocked_sessions, 0)
 		FROM monitor.pg_blocking_incident
-		WHERE server_id = $1 AND status = 'active'
+		WHERE server_id = $1
+		  AND (
+		    status = 'active'
+		    OR (status = 'resolved' AND ended_at >= now() - interval '15 minutes' AND COALESCE(peak_blocked_sessions, 0) > 0)
+		  )
 		ORDER BY started_at DESC
 		LIMIT 1
 	`
 	var id int64
 	var startedAt time.Time
+	var endedAt *time.Time
+	var status string
 	var rootPID *int
 	var rootQuery string
 	var peakVictims int
 
-	err := e.tsPool.QueryRow(ctx, q, serverID).Scan(&id, &startedAt, &rootPID, &rootQuery, &peakVictims)
-	if err == nil {
-		duration := time.Since(startedAt)
-		sev := alerts.SeverityWarning
-		if duration > 5*time.Minute || peakVictims > 10 {
-			sev = alerts.SeverityCritical
-		}
-
-		results = append(results, AlertEvaluatorResult{
-			RuleName:    "PGBlockingIncident",
-			Category:    "Performance",
-			Severity:    sev,
-			Title:       fmt.Sprintf("Active PostgreSQL blocking incident (%d victims)", peakVictims),
-			Description: fmt.Sprintf("Blocking incident active for %s. Root blocker PID: %v. Query: %s", duration.Round(time.Second), rootPID, rootQuery),
-			Evidence: map[string]interface{}{
-				"incident_id":           id,
-				"started_at":            startedAt,
-				"duration_sec":          duration.Seconds(),
-				"root_blocker_pid":      rootPID,
-				"peak_blocked_sessions": peakVictims,
-			},
-			ServerID:   serverID,
-			ServerName: serverName,
-			Engine:     alerts.EnginePostgres,
-		})
+	err := e.tsPool.QueryRow(ctx, q, serverID).Scan(&id, &startedAt, &endedAt, &status, &rootPID, &rootQuery, &peakVictims)
+	if err == pgx.ErrNoRows {
+		return AlertEvaluatorResult{}, false, nil
+	}
+	if err != nil {
+		return AlertEvaluatorResult{}, false, err
 	}
 
-	// 2. Check for "Idle in Transaction" sessions older than 5 minutes
+	duration := time.Since(startedAt)
+	if status == "resolved" && endedAt != nil {
+		duration = endedAt.Sub(startedAt)
+	}
+	sev := alerts.SeverityWarning
+	if duration > 5*time.Minute || peakVictims > 10 {
+		sev = alerts.SeverityCritical
+	}
+
+	title := fmt.Sprintf("Active PostgreSQL blocking incident (%d victims)", peakVictims)
+	desc := fmt.Sprintf("Blocking incident active for %s. Root blocker PID: %v. Query: %s", duration.Round(time.Second), rootPID, rootQuery)
+	if status == "resolved" {
+		title = fmt.Sprintf("Recent PostgreSQL blocking incident (%d victims)", peakVictims)
+		desc = fmt.Sprintf("Blocking ended %s ago after %s. Peak victims: %d.",
+			time.Since(*endedAt).Round(time.Second), duration.Round(time.Second), peakVictims)
+	}
+
+	return AlertEvaluatorResult{
+		RuleName:    "PGBlockingIncident",
+		Category:    "Performance",
+		Severity:    sev,
+		Title:       title,
+		Description: desc,
+		Evidence: map[string]interface{}{
+			"incident_id":           id,
+			"started_at":            startedAt,
+			"duration_sec":          duration.Seconds(),
+			"root_blocker_pid":      rootPID,
+			"peak_blocked_sessions": peakVictims,
+			"status":                status,
+		},
+		ServerID: serverID,
+		Engine:   alerts.EnginePostgres,
+	}, true, nil
+}
+
+func (e *PgBlockingEvaluator) evalIdleInTransaction(ctx context.Context, serverID uuid.UUID) (AlertEvaluatorResult, bool, error) {
 	qIdle := `
 		SELECT count(*)
 		FROM monitor.pg_session_snapshot
@@ -82,22 +121,21 @@ func (e *PgBlockingEvaluator) Evaluate(ctx context.Context, serverID uuid.UUID) 
 		  AND state_change <= now() - interval '5 minutes'
 	`
 	var idleCount int
-	_ = e.tsPool.QueryRow(ctx, qIdle, serverID).Scan(&idleCount)
-	if idleCount > 0 {
-		results = append(results, AlertEvaluatorResult{
-			RuleName:    "PGIdleInTransaction",
-			Category:    "Performance",
-			Severity:    alerts.SeverityWarning,
-			Title:       fmt.Sprintf("%d sessions idle in transaction > 5m", idleCount),
-			Description: "Sessions holding transactions open while idle can cause bloat and prevent vacuum progress.",
-			Evidence: map[string]interface{}{
-				"idle_session_count": idleCount,
-			},
-			ServerID:   serverID,
-			ServerName: serverName,
-			Engine:     alerts.EnginePostgres,
-		})
+	err := e.tsPool.QueryRow(ctx, qIdle, serverID).Scan(&idleCount)
+	if err != nil || idleCount == 0 {
+		return AlertEvaluatorResult{}, false, err
 	}
 
-	return results, nil
+	return AlertEvaluatorResult{
+		RuleName:    "PGIdleInTransaction",
+		Category:    "Performance",
+		Severity:    alerts.SeverityWarning,
+		Title:       fmt.Sprintf("%d sessions idle in transaction > 5m", idleCount),
+		Description: "Sessions holding transactions open while idle can cause bloat and prevent vacuum progress.",
+		Evidence: map[string]interface{}{
+			"idle_session_count": idleCount,
+		},
+		ServerID: serverID,
+		Engine:   alerts.EnginePostgres,
+	}, true, nil
 }

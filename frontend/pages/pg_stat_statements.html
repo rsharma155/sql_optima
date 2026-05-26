@@ -271,21 +271,37 @@
 
   <!-- Regressions panel -->
   <div class="table-card glass-panel mt-3">
-    <h6><i class="fa-solid fa-arrow-trend-up text-danger"></i> Query Regressions (last 30 min vs previous 30 min) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Query Performance" data-metric="Query Regressions"></i></h6>
-    <div class="table-responsive">
-      <table class="data-table pgss-regression-table" id="pgss-regression-table">
+    <div class="flex-between mb-2">
+      <h6 style="margin:0;"><i class="fa-solid fa-arrow-trend-up text-danger"></i> Query Regressions (last 30 min vs previous 30 min) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-pg-info" data-section="Query Performance" data-metric="Query Regressions"></i></h6>
+      <span class="pgss-row-count" id="pgss-regr-row-count"></span>
+    </div>
+    <div class="pgss-table-scroll">
+      <table class="pgss-grid" id="pgss-regression-table">
+        <colgroup>
+          <col style="width:32px">
+          <col style="width:300px">
+          <col style="width:100px">
+          <col style="width:100px">
+          <col style="width:80px">
+          <col style="width:90px">
+          <col style="width:90px">
+          <col style="width:110px">
+        </colgroup>
         <thead>
           <tr>
-            <th>Query</th>
-            <th>Prev Avg ms</th>
-            <th>Curr Avg ms</th>
-            <th>Change %</th>
-            <th>Status</th>
+            <th class="c-rownum">#</th>
+            <th>Query <span class="c-dim" style="font-size:0.62rem;font-weight:400;text-transform:none;letter-spacing:0;">(click row)</span></th>
+            <th class="num">Prev Avg ms</th>
+            <th class="num">Curr Avg ms</th>
+            <th class="num">Change %</th>
+            <th class="num">Prev Calls</th>
+            <th class="num">Curr Calls</th>
             <th>Detected At</th>
           </tr>
         </thead>
         <tbody id="pgss-regression-tbody"></tbody>
       </table>
     </div>
+    <div class="pgss-pagination-bar" id="pgss-regr-pagination"></div>
   </div>
 </div>

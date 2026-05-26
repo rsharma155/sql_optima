@@ -44,6 +44,7 @@ export const sqlserverWorkload = {
     sortDir: 'desc',
     sectionErrors: {},
     _refreshInFlight: false,
+    _pendingRefresh: false,
     _lastFrom: null,
     _lastTo: null,
     databaseFilter: '',
@@ -156,28 +157,38 @@ export const sqlserverWorkload = {
         return first ? first.trim() : '';
     },
 
-    /** Align database filter with the selected time range (re-pick when range changes). */
-    async syncDatabaseForRange(from, to, { reselect = false } = {}) {
+    /** Refresh database dropdown options; keep the user's selection when possible. */
+    async syncDatabaseForRange(from, to, { pickIfInvalid = false } = {}) {
         const dbSelect = document.getElementById('wl-database-filter');
         if (!dbSelect) return '';
-        const previous = (dbSelect.value || this.databaseFilter || '').trim();
+        const previous = (dbSelect.value ?? this.databaseFilter ?? '').trim();
         try {
             const data = await api.get(this.workloadDatabasesUrl(from, to)) || {};
             const list = (data.databases || []).filter(d => !isWlExcludedDatabase(d.database_name));
             this.applyDatabaseListToSelect(dbSelect, list);
 
-            let name = '';
-            if (list.length > 0 && (!previous || reselect)) {
-                name = this.pickDatabaseForRange(list, reselect ? '' : previous);
-            } else if (list.length > 0) {
-                name = this.pickDatabaseForRange(list, previous);
+            if (!previous) {
+                dbSelect.value = WL_ALL_DATABASES;
+                this.databaseFilter = '';
+                return '';
             }
 
-            if (name) {
-                dbSelect.value = name;
-                this.databaseFilter = name;
-                return name;
+            const hasOption = [...dbSelect.options].some(o => o.value === previous);
+            if (hasOption) {
+                dbSelect.value = previous;
+                this.databaseFilter = previous;
+                return previous;
             }
+
+            if (pickIfInvalid && list.length > 0) {
+                const name = this.pickDatabaseForRange(list, '');
+                if (name) {
+                    dbSelect.value = name;
+                    this.databaseFilter = name;
+                    return name;
+                }
+            }
+
             dbSelect.value = WL_ALL_DATABASES;
             this.databaseFilter = '';
             return '';
@@ -197,7 +208,7 @@ export const sqlserverWorkload = {
             dbSelect.value = WL_ALL_DATABASES;
             this.databaseFilter = '';
         }
-        await this.syncDatabaseForRange(from, to, { reselect: false });
+        await this.syncDatabaseForRange(from, to, { pickIfInvalid: false });
         return this.getFilters().database;
     },
 
@@ -319,7 +330,10 @@ export const sqlserverWorkload = {
 
     async refreshAll() {
         if (!this.instance) return;
-        if (this._refreshInFlight) return;
+        if (this._refreshInFlight) {
+            this._pendingRefresh = true;
+            return;
+        }
         this._refreshInFlight = true;
         const range = window.getAppTimeRangeISO ? window.getAppTimeRangeISO() : {};
         const from = range.from || new Date(Date.now() - 3600000).toISOString();
@@ -330,9 +344,7 @@ export const sqlserverWorkload = {
         this.sectionErrors = {};
 
         try {
-            await this.syncDatabaseForRange(from, to, {
-                reselect: rangeChanged && !!this.getFilters().database,
-            });
+            await this.syncDatabaseForRange(from, to, { pickIfInvalid: rangeChanged });
 
             this.setLoading(true);
             const tasks = [
@@ -357,6 +369,10 @@ export const sqlserverWorkload = {
         } finally {
             this.setLoading(false);
             this._refreshInFlight = false;
+            if (this._pendingRefresh) {
+                this._pendingRefresh = false;
+                void this.refreshAll();
+            }
         }
         // QA summary uses heavy history + lateral joins; do not block the workload overlay.
         void this.loadSection('qa-summary', () => this.loadQaSummary(from, to));
@@ -633,7 +649,7 @@ export const sqlserverWorkload = {
             return `
             <tr>
                 <td class="text-muted small" title="Server local time">${q.last_seen ? new Date(q.last_seen).toLocaleString() : '--'}</td>
-                <td class="query-column small" style="cursor:pointer;" data-action="show-query-modal-direct" data-key="${cacheKey}">
+                <td class="query-column small" style="cursor:pointer;" data-action="show-query-modal-direct" data-key="${cacheKey}" data-fn="showQueryStoreQueryModal">
                     <span class="query-text-truncated">${this.escapeHtml((q.query_text || '').substring(0, 100))}${(q.query_text || '').length > 100 ? '...' : ''}</span>${variantBadge}
                 </td>
                 <td class="text-end font-mono small">${formatters.compactNumber(q.total_executions || 0)}</td>

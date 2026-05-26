@@ -27,7 +27,6 @@ import (
 var pgssExcludedUsers = []string{
 	"dbmonitor_user", "dbmonitor", "sql_optima", "sqloptima",
 	"pgbouncer", "repmgr", "barman", "patroni", "pg_monitor", "streaming_replica",
-	"postgres",
 }
 
 // pgssExcludeUsersForInstance returns role names to omit from Query Performance (optima_servers.username + defaults).
