@@ -217,7 +217,7 @@ func (c *Calculator) calculateCardinalityScore(plan *models.PlanAnalysis) int {
 	varianceCount := 0
 	for _, op := range plan.Operators {
 		if op.EstimateRows > 0 && op.ActualRows > 0 {
-			ratio := math.Abs(float64(op.ActualRows)/float64(op.EstimateRows) - 1)
+			ratio := math.Abs(float64(op.ActualRows)/op.EstimateRows - 1)
 			varianceSum += ratio
 			varianceCount++
 		}

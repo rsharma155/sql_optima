@@ -323,7 +323,7 @@ async function renderPgFallbackAudit(inst) {
             context_tags: { source: 'live_audit' }
         }));
         
-        renderPgRefinedBestPractices(inst, { best_practices: mappedRules });
+        renderPgRefinedBestPractices(inst, mappedRules);
     } catch (e) {
         container.innerHTML = `<div class="alert alert-danger">Live audit failed: ${window.escapeHtml(e.message)}</div>`;
     }

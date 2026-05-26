@@ -4,6 +4,9 @@
 package rules
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/rsharma155/sqlplan-analyzer/models"
 )
 
@@ -44,6 +47,7 @@ func (e *RuleEngine) registerAllRules() {
 	e.registerIndexRules()
 	e.registerBlockingOperatorRules()
 	e.registerWarningRules()
+	e.registerAdvancedPlanRules()
 }
 
 func (e *RuleEngine) Evaluate(plan *models.PlanAnalysis) []models.Finding {
@@ -133,6 +137,132 @@ func (e *RuleEngine) RemoveRule(name string) {
 	}
 }
 
+func (e *RuleEngine) registerAdvancedPlanRules() {
+	// Key Lookup Hotspot — lookup > 30% of total plan cost
+	e.rules = append(e.rules, RuleDefinition{
+		Name:        "KeyLookupHotspot",
+		Description: "Key or RID Lookup consuming >30% of total plan cost",
+		Category:    "AccessMethods",
+		Severity:    models.SeverityCritical,
+		RuleType:    RuleTypeAccessPath,
+		Condition: func(plan *models.PlanAnalysis, op *models.Operator) bool {
+			if plan.CostSummary.TotalEstimatedCost <= 0 { return false }
+			isLookup := strings.Contains(op.PhysicalOp, "Key Lookup") || strings.Contains(op.PhysicalOp, "RID Lookup")
+			if !isLookup { return false }
+			return op.EstimatedTotalSubtreeCost/plan.CostSummary.TotalEstimatedCost >= 0.30
+		},
+		ExtractFinding: func(plan *models.PlanAnalysis, op *models.Operator) models.Finding {
+			pct := op.EstimatedTotalSubtreeCost / plan.CostSummary.TotalEstimatedCost * 100
+			tbl := getTableName(op)
+			return makeBaseFinding(op,
+				fmt.Sprintf("Key Lookup hotspot on %s (%.0f%% of plan cost)", tbl, pct),
+				fmt.Sprintf("A %s consumes %.1f%% of total plan cost. Each qualifying row from the index seek triggers a separate clustered-index row fetch.", op.PhysicalOp, pct),
+				fmt.Sprintf("Add a covering index or INCLUDE columns so the nonclustered index satisfies all output columns, eliminating the lookup. CREATE NONCLUSTERED INDEX on %s ... INCLUDE (...)", tbl),
+				"High I/O per qualifying row; scales linearly with row count",
+				models.SeverityCritical,
+			)
+		},
+		Priority:    1,
+		BookChapter: "Key Lookup / Bookmark Lookup",
+		Tags:        []string{"key-lookup", "hotspot", "covering-index"},
+	})
+
+	// Excessive Rewinds — nested-loop inner side re-executed too many times
+	e.rules = append(e.rules, RuleDefinition{
+		Name:        "ExcessiveRewinds",
+		Description: "Operator is rewound (re-executed) more than 100 times",
+		Category:    "Join",
+		Severity:    models.SeverityHigh,
+		RuleType:    RuleTypeJoin,
+		Condition: func(plan *models.PlanAnalysis, op *models.Operator) bool {
+			return op.EstimateRewinds > 100 && op.EstimatedTotalSubtreeCost > 0.5
+		},
+		ExtractFinding: func(plan *models.PlanAnalysis, op *models.Operator) models.Finding {
+			return makeBaseFinding(op,
+				fmt.Sprintf("Excessive rewinds on %s (%d rewinds)", op.PhysicalOp, op.EstimateRewinds),
+				fmt.Sprintf("Operator %s is rewound %d times. Each rewind re-executes the entire subtree, multiplying its cost by the outer-loop iteration count.", op.PhysicalOp, op.EstimateRewinds),
+				"Consider a Lazy Spool to cache the inner result set, or rewrite the query to eliminate correlated sub-expressions driving the nested loop.",
+				fmt.Sprintf("Effective subtree cost ≈ %.2f × %d = %.0f (amplified by rewinds)", op.EstimatedTotalSubtreeCost, op.EstimateRewinds, op.EstimatedTotalSubtreeCost*float64(op.EstimateRewinds)),
+				models.SeverityHigh,
+			)
+		},
+		Priority:    2,
+		BookChapter: "Nested Loops / Rewinds",
+		Tags:        []string{"rewinds", "nested-loops", "correlated"},
+	})
+
+	// Parameter Sniffing — compiled and runtime parameter values differ
+	e.rules = append(e.rules, RuleDefinition{
+		Name:        "ParameterSniffingMismatch",
+		Description: "Compiled parameter values differ from runtime values",
+		Category:    "Estimation",
+		Severity:    models.SeverityCritical,
+		RuleType:    RuleTypeEstimation,
+		Condition: func(plan *models.PlanAnalysis, op *models.Operator) bool {
+			if len(plan.CompiledParameters) == 0 || len(plan.RuntimeParameters) == 0 { return false }
+			// Only fire on root operator (op.ID == 1) to emit once per plan
+			if op.ID != 1 { return false }
+			compiled := make(map[string]string, len(plan.CompiledParameters))
+			for _, p := range plan.CompiledParameters { compiled[p.Parameter] = p.Value }
+			for _, p := range plan.RuntimeParameters {
+				if cv, ok := compiled[p.Parameter]; ok && cv != p.Value { return true }
+			}
+			return false
+		},
+		ExtractFinding: func(plan *models.PlanAnalysis, op *models.Operator) models.Finding {
+			mismatches := []string{}
+			compiled := make(map[string]string, len(plan.CompiledParameters))
+			for _, p := range plan.CompiledParameters { compiled[p.Parameter] = p.Value }
+			for _, p := range plan.RuntimeParameters {
+				if cv, ok := compiled[p.Parameter]; ok && cv != p.Value {
+					mismatches = append(mismatches, fmt.Sprintf("%s: compiled=%s runtime=%s", p.Parameter, cv, p.Value))
+				}
+			}
+			return makeBaseFinding(op,
+				fmt.Sprintf("Parameter sniffing: %d parameter(s) compiled with different values than runtime", len(mismatches)),
+				fmt.Sprintf("The plan was compiled for parameter values that differ from the current execution: %s. The optimizer chose a plan optimal for the compiled values, which may be suboptimal now.", strings.Join(mismatches, "; ")),
+				"Add OPTION (OPTIMIZE FOR UNKNOWN) or OPTION (RECOMPILE) to force per-execution optimization. Consider plan guides for stable parameters.",
+				"Query may run slower than expected; cardinality estimates are based on wrong parameter values",
+				models.SeverityCritical,
+			)
+		},
+		Priority:    1,
+		BookChapter: "Parameter Sniffing",
+		Tags:        []string{"parameter-sniffing", "recompile", "plan-cache"},
+	})
+
+	// Forced serial plan with large estimated row count
+	e.rules = append(e.rules, RuleDefinition{
+		Name:        "ForcedSerialLargeRowset",
+		Description: "Plan is forced serial (non-parallel) but has large estimated rows",
+		Category:    "Parallelism",
+		Severity:    models.SeverityMedium,
+		RuleType:    RuleTypeParallelism,
+		Condition: func(plan *models.PlanAnalysis, op *models.Operator) bool {
+			if plan.QueryPlan == nil { return false }
+			reason := plan.QueryPlan.NonParallelPlanReason
+			if reason == "" || reason == "MaxDOPSetToOne" { return false }
+			// Fire on root operator only
+			if op.ID != 1 { return false }
+			return op.EstimateRows > 5_000_000
+		},
+		ExtractFinding: func(plan *models.PlanAnalysis, op *models.Operator) models.Finding {
+			reason := ""
+			if plan.QueryPlan != nil { reason = plan.QueryPlan.NonParallelPlanReason }
+			return makeBaseFinding(op,
+				fmt.Sprintf("Serial plan forced (%s) with %.0fM estimated rows", reason, float64(op.EstimateRows)/1_000_000),
+				fmt.Sprintf("The optimizer chose a serial plan (reason: %s) despite %.0fM estimated rows. Parallelism could significantly reduce elapsed time on a multi-core server.", reason, float64(op.EstimateRows)/1_000_000),
+				"Investigate the reason for non-parallel execution. Common causes: MAXDOP hint, non-parallelizable operator (scalar UDF, ROWLOCK hint), or small-table heuristic. Remove the constraint if query latency is critical.",
+				"Query runs single-threaded; elapsed time not reduced by additional CPU cores",
+				models.SeverityMedium,
+			)
+		},
+		Priority:    3,
+		BookChapter: "Parallelism / NonParallelPlanReason",
+		Tags:        []string{"parallelism", "serial", "maxdop"},
+	})
+}
+
 func makeBaseFinding(op *models.Operator, title, explanation, recommendation, impact string, severity models.Severity) models.Finding {
 	finding := models.Finding{
 		Severity:             severity,
@@ -143,7 +273,7 @@ func makeBaseFinding(op *models.Operator, title, explanation, recommendation, im
 		Recommendation:       recommendation,
 		Impact:              impact,
 		EstimatedCost:       op.EstimatedTotalSubtreeCost,
-		AffectedRows:        op.EstimateRows,
+		AffectedRows:        int64(op.EstimateRows),
 		QueryPlanNode:       op,
 		Confidence:          calculateConfidence(op, severity),
 		EvidenceTrace:       buildEvidenceTrace(op),

@@ -81,7 +81,7 @@ func (tl *TimescaleLogger) GetQueryStatsDashboard(ctx context.Context, params Qu
 		  ON class.server_id = q.server_id
 		 AND class.query_hash = q.query_hash
 		WHERE q.server_id = $1::uuid
-		  AND COALESCE(q.is_user_workload, 1) = 1
+		  AND COALESCE(q.is_user_workload, 0) = 1
 		  AND COALESCE(class.classification, 'UNKNOWN') <> 'SYSTEM'`,
 		dimExpr, metricCol)
 

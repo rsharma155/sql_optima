@@ -57,11 +57,18 @@
     }
 
     async function fetchOsCollectorStatus(instanceName) {
+        const name = (instanceName || '').trim();
+        if (!name) {
+            return { registered: false, os_collector_configured: false };
+        }
         const base = encodeURIComponent(window.location.origin);
-        const url = `/api/os-collector/status?instance=${encodeURIComponent(instanceName)}&metrics_base_url=${base}`;
+        const url = `/api/os-collector/status?instance=${encodeURIComponent(name)}&metrics_base_url=${base}`;
         const resp = await window.apiClient.authenticatedFetch(url);
         const body = await resp.json().catch(() => ({}));
         if (!resp.ok) {
+            if (resp.status === 404 || (body.error && String(body.error).includes('unknown instance'))) {
+                return { instance_name: name, registered: false, os_collector_configured: false };
+            }
             throw new Error(body.error || `Status failed (${resp.status})`);
         }
         return body;
@@ -194,6 +201,11 @@
         try {
             const st = await fetchOsCollectorStatus(instanceName);
             const parts = [];
+            if (st.registered === false) {
+                parts.push('<span class="text-muted"><i class="fa-solid fa-circle-info"></i> Save this monitoring server first, then refresh status or download the bundle.</span>');
+                slotEl.innerHTML = parts.join('<br>');
+                return;
+            }
             if (st.ingest_enabled) {
                 parts.push('<span class="text-success"><i class="fa-solid fa-circle-check"></i> API ingest enabled</span>');
                 if (st.ingest_source === 'env') {

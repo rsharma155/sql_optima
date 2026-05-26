@@ -59,6 +59,18 @@ window.OnboardingMonitoredServersView = async function() {
                         </button>
                     </div>
 
+                    <div id="onb-ha-hint-card" style="margin-top:1.5rem; padding:1rem; border-radius:8px; background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.2);">
+                        <h4 style="font-size:0.85rem; margin:0 0 0.5rem; color:var(--accent); font-weight:700;">
+                            <i class="fa-solid fa-flask"></i> No PostgreSQL or SQL Server yet?
+                        </h4>
+                        <p class="text-muted" style="font-size:0.75rem; line-height:1.45; margin:0 0 0.75rem;">
+                            Run local HA test clusters (Patroni + Always On) with demo databases and a CRUD load generator on your laptop.
+                        </p>
+                        <button type="button" class="btn btn-sm btn-outline" id="onb-open-ha-guide" style="width:100%; justify-content:flex-start;">
+                            <i class="fa-solid fa-book-open"></i> Local HA setup guide
+                        </button>
+                    </div>
+
                     <div id="distributor-note" style="margin-top:1.5rem; padding:1rem; border-radius:8px; background:rgba(var(--accent-rgb), 0.05); border:1px solid rgba(var(--accent-rgb), 0.1); display:none;">
                         <h4 style="font-size:0.85rem; margin:0 0 0.5rem; color:var(--accent); font-weight:700;">
                             <i class="fa-solid fa-circle-info"></i> Remote Distributor Note
@@ -74,7 +86,97 @@ window.OnboardingMonitoredServersView = async function() {
             </div>
         </div>`;
 
+    document.getElementById('onb-open-ha-guide')?.addEventListener('click', () => {
+        if (typeof window.showLocalHaTestGuide === 'function') {
+            window.showLocalHaTestGuide({ highlight: false });
+        }
+    });
+
     await window.onbLoadServers();
+};
+
+/** @type {number|undefined} */
+window._onbHaGuideTimer = undefined;
+
+window.onbCancelHaGuideTimer = function() {
+    if (window._onbHaGuideTimer != null) {
+        clearTimeout(window._onbHaGuideTimer);
+        window._onbHaGuideTimer = undefined;
+    }
+};
+
+window.onbFormHasUserInput = function() {
+    const ids = ['onb-name', 'onb-host', 'onb-port', 'onb-user', 'onb-pass', 'onb-database'];
+    return ids.some(id => {
+        const el = document.getElementById(id);
+        return el && String(el.value || '').trim() !== '';
+    });
+};
+
+window.onbScheduleHaGuideIfIdle = function() {
+    window.onbCancelHaGuideTimer();
+    if (typeof window.isLocalHaGuideDismissed === 'function' && window.isLocalHaGuideDismissed()) {
+        return;
+    }
+    if (!document.getElementById('onb-add-form')) {
+        return;
+    }
+    window._onbHaGuideTimer = window.setTimeout(() => {
+        window._onbHaGuideTimer = undefined;
+        if (!document.getElementById('onb-add-form')) return;
+        if (window.onbFormHasUserInput()) return;
+        if (typeof window.showLocalHaTestGuide === 'function') {
+            window.showLocalHaTestGuide({ highlight: true });
+            window.onbShowHaInlineBanner();
+        }
+    }, 5000);
+};
+
+window.onbShowHaInlineBanner = function() {
+    const form = document.getElementById('onb-add-form');
+    if (!form || document.getElementById('onb-ha-inline-banner')) return;
+    const banner = document.createElement('div');
+    banner.id = 'onb-ha-inline-banner';
+    banner.className = 'alert alert-info';
+    banner.style.cssText = 'margin:0 0 1rem; padding:0.85rem 1rem; font-size:0.85rem; display:flex; flex-wrap:wrap; align-items:center; gap:0.75rem; justify-content:space-between;';
+    banner.innerHTML = `
+        <span><i class="fa-solid fa-flask"></i> Need sample databases? Use the <strong>local HA test cluster</strong> guide.</span>
+        <button type="button" class="btn btn-xs btn-outline" id="onb-ha-banner-open">View guide</button>
+    `;
+    const inner = form.querySelector('[style*="padding:1.5rem"]') || form.children[1];
+    if (inner && inner.firstChild) {
+        inner.insertBefore(banner, inner.firstChild);
+    } else {
+        form.insertBefore(banner, form.firstChild);
+    }
+    banner.querySelector('#onb-ha-banner-open')?.addEventListener('click', () => {
+        if (typeof window.showLocalHaTestGuide === 'function') {
+            window.showLocalHaTestGuide({ highlight: false });
+        }
+    });
+};
+
+window.onbBindHaGuideFormWatchers = function() {
+    const fieldIds = ['onb-name', 'onb-host', 'onb-port', 'onb-user', 'onb-pass', 'onb-database'];
+    const cancelIfTyping = () => {
+        if (window.onbFormHasUserInput()) {
+            window.onbCancelHaGuideTimer();
+        }
+    };
+    fieldIds.forEach(id => {
+        const el = document.getElementById(id);
+        el?.addEventListener('input', cancelIfTyping);
+        el?.addEventListener('change', cancelIfTyping);
+    });
+};
+
+window.onbMaybeAutoOpenAddForm = function(serverCount) {
+    if (serverCount > 0) return;
+    try {
+        if (sessionStorage.getItem('sql_optima_onb_form_auto_open') === '1') return;
+        sessionStorage.setItem('sql_optima_onb_form_auto_open', '1');
+    } catch (e) { /* ignore */ }
+    window.onbShowAddForm();
 };
 
 window.onbShowPermissionScript = async function(type) {
@@ -320,9 +422,28 @@ window.onbShowAddForm = function() {
             }
         }
     };
+    let osCollectorNameDebounce = null;
     typeSel?.addEventListener('change', syncOnbTrust);
-    document.getElementById('onb-name')?.addEventListener('input', syncOnbTrust);
+    document.getElementById('onb-name')?.addEventListener('input', () => {
+        if (typeSel?.value !== 'postgres') {
+            syncOnbTrust();
+            return;
+        }
+        const slot = document.getElementById('os-collector-onb-status');
+        const name = document.getElementById('onb-name')?.value.trim() || '';
+        if (slot && window.refreshOsCollectorSetupStatus) {
+            clearTimeout(osCollectorNameDebounce);
+            osCollectorNameDebounce = setTimeout(() => window.refreshOsCollectorSetupStatus(slot, name), 400);
+            return;
+        }
+        syncOnbTrust();
+    });
     syncOnbTrust();
+    window.onbBindHaGuideFormWatchers();
+    window.onbScheduleHaGuideIfIdle();
+    document.querySelector('#onb-add-form [data-action="close-id"]')?.addEventListener('click', () => {
+        window.onbCancelHaGuideTimer();
+    });
 };
 
 window.onbTestAddDraft = async function() {
@@ -389,6 +510,7 @@ window.onbSubmitAdd = async function() {
         const response = await window.apiClient.authenticatedFetch('/api/admin/servers', { method: 'POST', body: JSON.stringify(payload) });
         if (!response.ok) { const j = await response.json().catch(() => ({})); throw new Error(j.error || `HTTP ${response.status}`); }
         
+        window.onbCancelHaGuideTimer();
         document.getElementById('onb-add-form')?.remove();
         const msg = document.getElementById('onb-msg');
         if (msg) {
@@ -416,6 +538,7 @@ window.onbLoadServers = async function() {
 
         if (!Array.isArray(servers) || servers.length === 0) {
             container.innerHTML = '<div class="text-center text-muted" style="padding:3rem; border:2px dashed var(--border-color); border-radius:12px;">No servers registered yet. Use <strong>Add New Server</strong> to begin monitoring.</div>';
+            window.onbMaybeAutoOpenAddForm(0);
             return;
         }
 

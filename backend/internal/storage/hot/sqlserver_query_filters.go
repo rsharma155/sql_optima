@@ -11,50 +11,47 @@ package hot
 
 const sqlServerOptimaBatchTag = `%/* SQL_OPTIMA%`
 
+// sqlServerQueryMetricsV2LateralSelect is the column set from sqlserver_query_metrics_v2
+// required when a LATERAL subquery is aliased as qm and filtered with sqlServerQueryAnalysisScopeSQL.
+const sqlServerQueryMetricsV2LateralSelect = `query_text_raw, statement_text, application_name, login_name, database_name, total_cpu_ms, total_elapsed_ms, is_user_workload`
+
 // sqlServerCollectorSQLExcludeSQL excludes SQL Optima collector DMV/monitoring batches.
-// All collector queries are tagged with /* SQL_OPTIMA */ in the monitored batch; the full
-// text is stored in query_text_raw (dm_exec_sql_text), not statement_text.
+// Tag may appear on query_text_raw (full batch) or statement_text (statement slice).
 func sqlServerCollectorSQLExcludeSQL(col string) string {
 	return `
-		  AND COALESCE(` + col + `query_text_raw, '') NOT ILIKE '` + sqlServerOptimaBatchTag + `'`
+		  AND COALESCE(` + col + `query_text_raw, '') NOT ILIKE '` + sqlServerOptimaBatchTag + `'
+		  AND COALESCE(` + col + `statement_text, '') NOT ILIKE '` + sqlServerOptimaBatchTag + `'`
 }
 
-// sqlServerMonitoringSelfNoiseSQL strips collector-tagged SQL and monitor login/app noise.
+// sqlServerUserWorkloadOnlySQL keeps rows the collector marked as user workload (exclude_system=true).
+func sqlServerUserWorkloadOnlySQL(col string) string {
+	return ` AND COALESCE(` + col + `is_user_workload, 0) = 1`
+}
+
+// sqlServerMonitoringSelfNoiseSQL strips collector-tagged SQL and monitor application noise.
+// Used when exclude_system=false (broader view). Does not apply login blanket exclusion.
 func sqlServerMonitoringSelfNoiseSQL(col string, monitoringLogins []string) string {
+	_ = monitoringLogins
 	return sqlServerCollectorSQLExcludeSQL(col) +
-		sqlServerMonitoringLoginExcludeSQL(col, monitoringLogins) +
 		sqlServerMonitoringAppExcludeSQL(col)
 }
 
-// sqlServerQueryTextRawSystemNoiseSQL excludes catalog/DMV-shaped batches on query_text_raw.
-// Intentionally omits SET/DECLARE/CREATE/ALTER/(@% — those appear in normal user CRUD batches.
-func sqlServerQueryTextRawSystemNoiseSQL(col string) string {
-	return `
-		  AND COALESCE(` + col + `query_text_raw, '') NOT ILIKE '%sys.dm_%'
-		  AND COALESCE(` + col + `query_text_raw, '') NOT ILIKE '%sys.partitions%'
-		  AND COALESCE(` + col + `query_text_raw, '') NOT ILIKE '%sys.plan_%'
-		  AND COALESCE(` + col + `query_text_raw, '') NOT ILIKE '%sys.all_objects%'
-		  AND UPPER(COALESCE(` + col + `query_text_raw, '')) NOT LIKE '%BACKUP DATABASE%'
-		  AND UPPER(COALESCE(` + col + `query_text_raw, '')) NOT LIKE '%RESTORE DATABASE%'
-		  AND COALESCE(` + col + `query_text_raw, '') NOT ILIKE '%is_ms_shipped%'
-		  AND UPPER(COALESCE(` + col + `query_text_raw, '')) NOT LIKE 'SELECT % FROM SYS.%'
-		  AND UPPER(COALESCE(` + col + `query_text_raw, '')) NOT LIKE 'SELECT % FROM [SYS].%'
-		  AND UPPER(COALESCE(` + col + `query_text_raw, '')) NOT LIKE 'SELECT % FROM MSDB.%'
-		  AND UPPER(COALESCE(` + col + `query_text_raw, '')) NOT LIKE 'SELECT % FROM INFORMATION_SCHEMA.%'
-		  AND COALESCE(` + col + `query_text_raw, '') NOT ILIKE '%sp_mshistory_cleanup%'
-		  AND COALESCE(` + col + `query_text_raw, '') NOT ILIKE '(@_msparam_0%'`
-}
-
-// sqlServerUserWorkloadNoiseSQL excludes monitoring-tagged SQL and catalog/DMV batches.
+// sqlServerUserWorkloadNoiseSQL is the strict dashboard filter (exclude_system=true).
+// Requires collector is_user_workload=1, strips DMV/SQL_OPTIMA/monitor-app noise on both text columns,
+// and drops legacy rows mis-tagged as user workload when attribution was unknown.
 func sqlServerUserWorkloadNoiseSQL(col string, monitoringLogins []string) string {
-	return sqlServerMonitoringSelfNoiseSQL(col, monitoringLogins) + sqlServerQueryTextRawSystemNoiseSQL(col)
+	return sqlServerCollectorSQLExcludeSQL(col) +
+		sqlServerMonitoringAppExcludeSQL(col) +
+		sqlServerQueryTextSystemNoiseSQL(col) +
+		sqlServerMisclassifiedWorkloadSQL(col, monitoringLogins) +
+		sqlServerUserWorkloadOnlySQL(col)
 }
 
 // sqlServerSnapshotReadFilter applies read filters for sqlserver_query_stats_snapshot_v2 (text columns only).
 func sqlServerSnapshotReadFilter(excludeSystem bool, col string) string {
 	f := sqlServerCollectorSQLExcludeSQL(col)
 	if excludeSystem {
-		f += sqlServerQueryTextRawSystemNoiseSQL(col)
+		f += sqlServerQueryTextSystemNoiseSQL(col)
 	}
 	return f
 }
@@ -78,6 +75,26 @@ func sqlServerQueryAnalysisReadFilter(excludeSystem bool, col string, monitoring
 func sqlServerQueryAnalysisScopeSQL(excludeSystem bool, col string, monitoringLogins []string) string {
 	return sqlServerQueryAnalysisReadFilter(excludeSystem, col, monitoringLogins) +
 		sqlServerQueryAnalysisDistributionExcludeSQL(col)
+}
+
+// sqlServerQueryAnalysisMetricsLateralJoin attaches the latest metrics_v2 row for a history/snapshot query_hash.
+// histAlias is the outer table alias (e.g. qh, s). When excludeSystem is true, uses INNER JOIN and applies
+// read filters inside the subquery so history rows without a qualifying metrics row are not counted.
+func sqlServerQueryAnalysisMetricsLateralJoin(excludeSystem bool, histAlias string, monitoringLogins []string) (joinSQL string, outerScopeSQL string) {
+	base := `
+			SELECT ` + sqlServerQueryMetricsV2LateralSelect + `
+			FROM sqlserver_query_metrics_v2 m
+			WHERE m.server_id = ` + histAlias + `.server_id AND m.query_hash = ` + histAlias + `.query_hash`
+	if excludeSystem {
+		return `INNER JOIN LATERAL (` + base + sqlServerUserWorkloadNoiseSQL("m.", monitoringLogins) + `
+			ORDER BY m.capture_timestamp DESC
+			LIMIT 1
+		) qm ON true`, ""
+	}
+	return `LEFT JOIN LATERAL (` + base + `
+			ORDER BY m.capture_timestamp DESC
+			LIMIT 1
+		) qm ON true`, sqlServerQueryAnalysisScopeSQL(excludeSystem, "qm.", monitoringLogins)
 }
 
 func sqlServerQueryAnalysisClassificationFilter(excludeSystem bool, tableCol string) string {

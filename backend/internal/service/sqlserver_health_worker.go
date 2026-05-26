@@ -280,8 +280,11 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 			_ = s.ServerRepo.SetEngineEdition(ctx, serverID, engineEdition)
 		}
 
-		// 14. Server Properties (Log once per hour or on start)
-		if uptimeSeconds < 60 || time.Now().Minute() == 0 {
+		// 14. Server Properties (Log on first collection per server, on SQL Server restart, or hourly)
+		s.hwSlowMu.Lock()
+		propsAlreadyLogged := s.hwPropsLogged[serverID]
+		s.hwSlowMu.Unlock()
+		if !propsAlreadyLogged || uptimeSeconds < 60 || time.Now().Minute() == 0 {
 			propQuery := `
 				/* SQL_OPTIMA */
 				SELECT
@@ -309,8 +312,46 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 					"cpu_type":             "Unknown",
 					"properties_hash":      fmt.Sprintf("%d-%d-%d", cc, sc, int(pm)),
 				}
-				_ = s.tsLogger.LogServerProperties(ctx, serverID, props)
+				if logErr := s.tsLogger.LogServerProperties(ctx, serverID, props); logErr == nil {
+					s.hwSlowMu.Lock()
+					s.hwPropsLogged[serverID] = true
+					s.hwSlowMu.Unlock()
+				}
 			}
+		}
+
+		// 14b. CPU Scheduler Stats (every collection cycle — feeds Scheduler Status & Pressure KPIs)
+		if sched, err := s.MsRepo.CollectCPUSchedulerStats(ctx, db); err == nil {
+			_ = s.tsLogger.LogCPUSchedulerStats(ctx, serverID, map[string]interface{}{
+				"max_workers_count":                sched.MaxWorkersCount,
+				"scheduler_count":                  sched.SchedulerCount,
+				"cpu_count":                        sched.CPUCount,
+				"total_runnable_tasks_count":       sched.TotalRunnableTasksCount,
+				"total_work_queue_count":           sched.TotalWorkQueueCount,
+				"total_current_workers_count":      sched.TotalCurrentWorkersCount,
+				"active_workers_count":             sched.ActiveWorkersCount,
+				"pending_disk_io_count":            sched.PendingDiskIoCount,
+				"avg_runnable_tasks_count":         sched.AvgRunnableTasksCount,
+				"total_active_request_count":       sched.TotalActiveRequestCount,
+				"total_queued_request_count":       sched.TotalQueuedRequestCount,
+				"total_blocked_task_count":         sched.TotalBlockedTaskCount,
+				"total_active_parallel_thread_count": sched.TotalActiveParallelThreadCount,
+				"runnable_request_count":           sched.RunnableRequestCount,
+				"total_request_count":              sched.TotalRequestCount,
+				"runnable_percent":                 sched.RunnablePercent,
+				"worker_thread_exhaustion_warning": sched.WorkerThreadExhaustionWarning,
+				"runnable_tasks_warning":           sched.RunnableTasksWarning,
+				"blocked_tasks_warning":            sched.BlockedTasksWarning,
+				"queued_requests_warning":          sched.QueuedRequestsWarning,
+				"total_physical_memory_kb":         sched.TotalPhysicalMemoryKB,
+				"available_physical_memory_kb":     sched.AvailablePhysicalMemoryKB,
+				"system_memory_state_desc":         sched.SystemMemoryStateDesc,
+				"physical_memory_pressure_warning": sched.PhysicalMemoryPressureWarning,
+				"total_node_count":                 sched.TotalNodeCount,
+				"nodes_online_count":               sched.NodesOnlineCount,
+				"offline_cpu_count":                sched.OfflineCPUCount,
+				"offline_cpu_warning":              sched.OfflineCPUWarning,
+			})
 		}
 
 		// 15. Risk Health Metrics

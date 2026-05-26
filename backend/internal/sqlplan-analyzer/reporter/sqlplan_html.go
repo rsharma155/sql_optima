@@ -1,6 +1,7 @@
 package reporter
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"sort"
@@ -153,7 +154,7 @@ func (r *HTMLReporter) renderRuntimeEvidenceMatrix(plan *models.PlanAnalysis) st
 		}
 		variance := "-"
 		if op.EstimateRows > 0 && op.ActualRows > 0 {
-			ratio := float64(op.ActualRows) / float64(op.EstimateRows)
+			ratio := float64(op.ActualRows) / op.EstimateRows
 			if ratio >= 1 {
 				variance = fmt.Sprintf("%.0fx", ratio)
 			} else {
@@ -170,7 +171,7 @@ func (r *HTMLReporter) renderRuntimeEvidenceMatrix(plan *models.PlanAnalysis) st
 		sb.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%.2f</td><td>%.2f</td><td>%d</td><td>%d</td></tr>`,
 			html.EscapeString(opName),
 			r.fmtInt(op.ActualRows),
-			r.fmtInt(op.EstimateRows),
+			r.fmtRows(op.EstimateRows),
 			variance,
 			op.ActualCPUms,
 			op.ActualElapsedms,
@@ -198,7 +199,7 @@ func (r *HTMLReporter) renderCardinalityVarianceAnalysis(plan *models.PlanAnalys
 		if op.EstimateRows <= 0 || op.ActualRows <= 0 {
 			continue
 		}
-		ratio := float64(op.ActualRows) / float64(op.EstimateRows)
+		ratio := float64(op.ActualRows) / op.EstimateRows
 		if ratio < 1 {
 			ratio = 1 / ratio
 		}
@@ -694,188 +695,762 @@ func (r *HTMLReporter) renderFindingsTab(plan *models.PlanAnalysis) string {
 	return sb.String()
 }
 
+// planViewerData is the JSON blob embedded in the Plan Viewer tab for the JS renderer.
+type planViewerData struct {
+	Tree                  *models.Operator   `json:"tree"`
+	TotalCost             float64            `json:"total_cost"`
+	IsBatch               bool               `json:"is_batch"`
+	Statements            []models.Statement `json:"statements,omitempty"`
+	NonParallelPlanReason string             `json:"non_parallel_plan_reason,omitempty"`
+	CompileTimeMs         int                `json:"compile_time_ms,omitempty"`
+	CachedPlanSizeKB      int                `json:"cached_plan_size_kb,omitempty"`
+	DegreeOfParallelism   int                `json:"degree_of_parallelism,omitempty"`
+	OptimizationLevel     string             `json:"optimization_level,omitempty"`
+}
+
 func (r *HTMLReporter) renderPlanViewerTab(plan *models.PlanAnalysis) string {
 	var sb strings.Builder
-	sb.WriteString(`<div class="tab-panel">`)
-	if len(plan.Operators) == 0 {
-		sb.WriteString(`<p class="none">No operators found.</p></div>`)
+	sb.WriteString(`<div class="tab-panel" id="pv-root">`)
+
+	if len(plan.Operators) == 0 || plan.QueryPlan == nil || plan.QueryPlan.RelOp == nil {
+		// Fallback table when no tree is available
+		sb.WriteString(`<p class="none">No operator tree found. Showing flat operator list.</p>`)
+		sb.WriteString(`<table class="dt"><tr><th>ID</th><th>Physical Op</th><th>Logical Op</th><th>Est. Cost</th><th>Est. Rows</th><th>Actual Rows</th></tr>`)
+		for _, op := range plan.Operators {
+			act := "\u2014"
+			if op.ActualRows > 0 { act = strconv.FormatInt(op.ActualRows, 10) }
+			sb.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%s</td><td class="m">%.4f</td><td>%s</td><td>%s</td></tr>`,
+				op.ID, html.EscapeString(op.PhysicalOp), html.EscapeString(op.LogicalOp),
+				op.EstimatedTotalSubtreeCost, fmt.Sprintf("%.0f", op.EstimateRows), act))
+		}
+		sb.WriteString(`</table></div>`)
 		return sb.String()
 	}
 
-	totalCost := plan.CostSummary.TotalEstimatedCost
-	if totalCost <= 0 {
-		for _, op := range plan.Operators {
-			if op.EstimatedTotalSubtreeCost > totalCost {
-				totalCost = op.EstimatedTotalSubtreeCost
-			}
-		}
+	// Build JSON payload for the renderer
+	pvd := planViewerData{
+		Tree:      plan.QueryPlan.RelOp,
+		TotalCost: plan.CostSummary.TotalEstimatedCost,
+		IsBatch:   plan.IsBatch,
+		Statements: plan.Statements,
 	}
-
-	root := plan.QueryPlan.RelOp
-	if root != nil {
-		// Collect operators by depth level for horizontal layout
-		levels := make(map[int][]*models.Operator)
-		r.collectLevels(root, 0, levels)
-
-		// Get sorted depth keys in descending order (SSMS style: leaves on left, root on right)
-		var depths []int
-		for d := range levels {
-			depths = append(depths, d)
-		}
-		sort.Slice(depths, func(i, j int) bool {
-			return depths[i] > depths[j]
-		})
-
-		sb.WriteString(`<div class="pv-scroll"><div class="pv-hflow">`)
-
-		for idx, depth := range depths {
-			ops := levels[depth]
-			if idx > 0 {
-				// Arrow pointing from child (left) to parent (right)
-				sb.WriteString(`<div class="pv-arrow-col"><div class="pv-arr">&#x25B6;</div></div>`)
-			}
-			sb.WriteString(`<div class="pv-col">`)
-			for _, op := range ops {
-				r.renderPlanCard(&sb, op, totalCost)
-			}
-			sb.WriteString(`</div>`)
-		}
-
-		sb.WriteString(`</div></div>`)
-	} else {
-		// Fallback to table
-		sb.WriteString(`<table class="dt"><tr><th>ID</th><th>Physical Op</th><th>Logical Op</th><th>Est. Cost</th><th>Est. Rows</th><th>Actual Rows</th></tr>`)
-		for _, op := range plan.Operators {
-			act := "-"
-			if op.ActualRows > 0 {
-				act = strconv.FormatInt(op.ActualRows, 10)
-			}
-			sb.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%s</td><td class="m">%.4f</td><td>%s</td><td>%s</td></tr>`,
-				op.ID, html.EscapeString(op.PhysicalOp), html.EscapeString(op.LogicalOp), op.EstimatedTotalSubtreeCost, strconv.FormatInt(op.EstimateRows, 10), act))
-		}
-		sb.WriteString(`</table>`)
+	if plan.QueryPlan != nil {
+		pvd.NonParallelPlanReason = plan.QueryPlan.NonParallelPlanReason
+		pvd.CompileTimeMs = plan.QueryPlan.CompileTimeMs
+		pvd.CachedPlanSizeKB = plan.QueryPlan.CachedPlanSize
+		pvd.DegreeOfParallelism = plan.QueryPlan.DegreeOfParallelism
+		pvd.OptimizationLevel = plan.QueryPlan.OptimizationLevel
 	}
+	jsonBytes, _ := json.Marshal(pvd)
+
+	// Plan header bar
+	sb.WriteString(`<div class="pv-plan-hdr" id="pv-plan-header"></div>`)
+
+	// Toolbar
+	sb.WriteString(`<div class="pv-toolbar">`)
+	if plan.IsBatch && len(plan.Statements) > 1 {
+		sb.WriteString(`<select id="pv-stmt-select" class="pv-search" title="Statement"></select>`)
+	}
+	sb.WriteString(`<button id="pv-fit" class="pv-btn" title="Fit to screen">Fit</button>`)
+	sb.WriteString(`<button id="pv-zoom-in" class="pv-btn" title="Zoom in">+</button>`)
+	sb.WriteString(`<button id="pv-zoom-out" class="pv-btn" title="Zoom out">-</button>`)
+	sb.WriteString(`<input id="pv-search" class="pv-search" type="search" placeholder="Search operator\u2026" title="Highlight matching nodes">`)
+	sb.WriteString(`</div>`)
+
+	// Main canvas + side panels
+	sb.WriteString(`<div class="pv-layout">`)
+
+	// Top-5 sidebar
+	sb.WriteString(`<div class="pv-top5-panel" id="pv-top5"></div>`)
+
+	// SVG canvas wrapper
+	sb.WriteString(`<div class="pv-canvas-wrap"><div class="pv-canvas" id="pv-canvas"></div>`)
+
+	// Hover tooltip (hidden by default)
+	sb.WriteString(`<div id="pv-tt" class="pv-tt"></div>`)
+
+	// Properties panel (hidden until node clicked)
+	sb.WriteString(`<div class="pv-props-panel" id="pv-props-panel"></div>`)
+	sb.WriteString(`</div>`) // canvas-wrap
+
+	sb.WriteString(`</div>`) // layout
+
+	// Embedded plan data
+	sb.WriteString(`<script type="application/json" id="plan-data">`)
+	sb.Write(jsonBytes)
+	sb.WriteString(`</script>`)
+
+	// Inline SVG renderer
+	sb.WriteString(r.planViewerScript())
 
 	sb.WriteString(`</div>`)
 	return sb.String()
 }
 
-func (r *HTMLReporter) collectLevels(op *models.Operator, depth int, levels map[int][]*models.Operator) {
-	if op == nil {
-		return
-	}
-	levels[depth] = append(levels[depth], op)
-	for _, child := range op.Children {
-		r.collectLevels(child, depth+1, levels)
-	}
+// planViewerScript returns the self-contained vanilla-JS SVG renderer.
+func (r *HTMLReporter) planViewerScript() string {
+	return `<script>
+(function(){
+'use strict';
+/* SSMS-style: root (SELECT) on LEFT, leaves on RIGHT, arrows flow right\u2192left */
+var NODE_W=196,NODE_H=110,H_GAP=56,V_GAP=16,TOTAL_W=NODE_W+H_GAP;
+var DATA=null,currentStmt=0,_maxRows=1,_searchTerm='',_initialized=false;
+var _svgW=0,_svgH=0,_sc=1;
+
+function loadData(){
+  var el=document.getElementById('plan-data');
+  if(!el)return null;
+  try{return JSON.parse(el.textContent);}catch(e){return null;}
 }
 
-func (r *HTMLReporter) renderPlanCard(sb *strings.Builder, op *models.Operator, totalCost float64) {
-	pct := 0.0
-	if totalCost > 0 {
-		pct = op.EstimatedTotalSubtreeCost / totalCost * 100
-	}
-	icon := r.opIcon(op.PhysicalOp)
-	tbl := r.opTableShort(op)
-	cardID := fmt.Sprintf("pv-d-%d", op.ID)
+/* ---- Layout (SSMS: root at depth=0 \u2192 leftmost x=0) ---- */
+function computeSize(n){
+  if(!n.children||!n.children.length){n._size=1;return 1;}
+  var s=0;for(var i=0;i<n.children.length;i++)s+=computeSize(n.children[i]);
+  n._size=s;return s;
+}
+function assignPos(n,startY,depth){
+  n._depth=depth;
+  var SLOT=NODE_H+V_GAP;
+  if(!n.children||!n.children.length){n._y=startY+SLOT/2-NODE_H/2;return depth;}
+  var y=startY,maxD=depth;
+  for(var i=0;i<n.children.length;i++){
+    var d=assignPos(n.children[i],y,depth+1);
+    if(d>maxD)maxD=d;
+    y+=n.children[i]._size*SLOT;
+  }
+  var fy=n.children[0]._y,ly=n.children[n.children.length-1]._y;
+  n._y=(fy+ly)/2;
+  n._maxDepth=maxD;return maxD;
+}
+function assignX(n,maxD){
+  /* SSMS: root at x=0, each child level moves right */
+  n._x=n._depth*TOTAL_W;
+  if(n.children)for(var i=0;i<n.children.length;i++)assignX(n.children[i],maxD);
+}
+function collectNodes(n,arr){
+  arr.push(n);
+  if(n.children)for(var i=0;i<n.children.length;i++)collectNodes(n.children[i],arr);
+  return arr;
+}
+function findMaxRows(n){
+  var m=Math.max(n.estimate_rows||0,n.actual_rows||0);
+  if(n.children)for(var i=0;i<n.children.length;i++){var c=findMaxRows(n.children[i]);if(c>m)m=c;}
+  return m;
+}
+/* Mark critical path: root \u2192 max-cost child at each step */
+function markCriticalPath(n){
+  n._critical=true;
+  if(!n.children||!n.children.length)return;
+  var best=n.children[0];
+  for(var i=1;i<n.children.length;i++)
+    if((n.children[i].estimated_total_subtree_cost||0)>(best.estimated_total_subtree_cost||0))best=n.children[i];
+  markCriticalPath(best);
+}
 
-	memGrant := ""
-	if op.MemoryFractions != nil {
-		memGrant = fmt.Sprintf("Input: %.2f | Output: %.2f", op.MemoryFractions.Input, op.MemoryFractions.Output)
-	}
+/* ---- Helpers ---- */
+function fmtN(n){
+  if(n===null||n===undefined||n===0)return '0';
+  if(n>=1e9)return (n/1e9).toFixed(1)+'B';
+  if(n>=1e6)return (n/1e6).toFixed(1)+'M';
+  if(n>=1e3)return (n/1e3).toFixed(1)+'K';
+  return ''+Math.round(n);
+}
+function trunc(s,max){if(!s)return '';return s.length>max?s.substring(0,max-1)+'\u2026':s;}
+function edgeW(rows){
+  if(!rows||!_maxRows||_maxRows===0)return 1.5;
+  return Math.max(1.5,Math.min(10,(Math.log2(rows+1)/Math.log2(_maxRows+1))*10));
+}
+function costColor(pct,warn){
+  if(warn)return '#a855f7';
+  if(pct>=20)return '#ef4444';
+  if(pct>=10)return '#f97316';
+  if(pct>=5)return '#eab308';
+  return '#22c55e';
+}
+function getTableName(n){
+  if(n.index_scan&&n.index_scan.object){
+    var o=n.index_scan.object;
+    return o.table||(o.schema?o.schema+'.'+o.table:null);
+  }
+  if(n.table_scan&&n.table_scan.object)return n.table_scan.object.table;
+  return null;
+}
+function getIndexName(n){
+  if(n.index_scan&&n.index_scan.object&&n.index_scan.object.index)return n.index_scan.object.index;
+  return null;
+}
+function getPredSnippet(n){
+  if(n.predicate&&n.predicate.scalar_string)return n.predicate.scalar_string;
+  if(n.seek_predicates&&n.seek_predicates.length>0){
+    var sp=n.seek_predicates[0];
+    if(sp.prefix_predicate&&sp.prefix_predicate.length>0)return sp.prefix_predicate[0].scalar_string||null;
+  }
+  return null;
+}
+function getOutputCols(n){
+  if(n.output_list&&n.output_list.length>0)
+    return n.output_list.map(function(c){return c.column;}).join(', ');
+  return null;
+}
 
-	sb.WriteString(fmt.Sprintf(`
-<div class="pv-card" title="PhysicalOp: %s | LogicalOp: %s | Est Rows: %d | Act Rows: %d | Est Cost: %.4f | CPU: %.4f | I/O: %.4f | Parallel: %v | NodeID: %d | Table: %s">
-  <input type="checkbox" id="%s" class="pv-expand-toggle">
-  <div class="pv-card-header">
-    <span class="pv-icon">%s</span>
-    <span class="pv-name">%s</span>
-  </div>`, html.EscapeString(op.PhysicalOp), html.EscapeString(op.LogicalOp), op.EstimateRows, op.ActualRows, op.EstimatedTotalSubtreeCost, op.EstimateCPUms, op.EstimatedIOs, op.Parallel, op.NodeID, html.EscapeString(tbl), cardID, icon, html.EscapeString(op.PhysicalOp)))
+/* ---- SVG helpers ---- */
+var SVG_NS='http://www.w3.org/2000/svg';
+function svgEl(tag,attrs){
+  var el=document.createElementNS(SVG_NS,tag);
+  if(attrs)Object.keys(attrs).forEach(function(k){el.setAttribute(k,attrs[k]);});
+  return el;
+}
+function svgText(x,y,txt,attrs){
+  var el=svgEl('text',Object.assign({x:x,y:y},attrs||{}));
+  el.textContent=txt;return el;
+}
 
-	tableStr := ""
-	if tbl != "" {
-		tableStr = fmt.Sprintf(` %s %s`, "\u2192", html.EscapeString(tbl))
-		sb.WriteString(fmt.Sprintf(`  <div class="pv-table">%s%s</div>`, html.EscapeString(op.PhysicalOp), tableStr))
-	}
-	if op.EstimatedTotalSubtreeCost > 0 {
-		sb.WriteString(fmt.Sprintf(`  <div class="pv-bar-c"><div class="pv-bar" style="width:%.1f%%"></div></div>`, pct))
-	}
-	sb.WriteString(fmt.Sprintf(`  <div class="pv-cost">Cost: %.4f (%.0f%%)</div>`, op.EstimatedTotalSubtreeCost, pct))
-	sb.WriteString(fmt.Sprintf(`  <div class="pv-rows">Est: %s | Act: %s</div>`, r.fmtInt(op.EstimateRows), r.fmtInt(op.ActualRows)))
+/* ---- Tooltip ---- */
+function showTooltip(n,pct,e){
+  var tt=document.getElementById('pv-tt');if(!tt)return;
+  var opName=n.physical_op||n.logical_op||'';
+  var tbl=getTableName(n);
+  var idx=getIndexName(n);
+  var pred=getPredSnippet(n);
+  var outs=getOutputCols(n);
+  var hasAct=n.actual_rows>0||n.actual_executions>0;
+  var html='<div class="pv-tt-op">'+escH(opName)+'</div>';
+  if(tbl){
+    var objStr=tbl+(idx?' \u25b8 '+idx:'');
+    html+='<div class="pv-tt-row"><span class="pv-tt-lbl">Object</span><span class="pv-tt-val">'+escH(objStr)+'</span></div>';
+  }
+  html+='<div class="pv-tt-row"><span class="pv-tt-lbl">Cost</span><span class="pv-tt-val" style="color:'+costColor(pct,false)+'">'+pct.toFixed(2)+'% &middot; '+(n.estimated_total_subtree_cost||0).toFixed(4)+'</span></div>';
+  if(hasAct){
+    html+='<div class="pv-tt-row"><span class="pv-tt-lbl">Rows</span><span class="pv-tt-val">Est '+fmtN(n.estimate_rows)+' &middot; Act '+fmtN(n.actual_rows)+'</span></div>';
+  }else{
+    html+='<div class="pv-tt-row"><span class="pv-tt-lbl">Est Rows</span><span class="pv-tt-val">'+fmtN(n.estimate_rows)+'</span></div>';
+  }
+  if(n.avg_row_size)html+='<div class="pv-tt-row"><span class="pv-tt-lbl">Row Size</span><span class="pv-tt-val">'+n.avg_row_size+' B</span></div>';
+  if(pred)html+='<div class="pv-tt-pred">'+escH(trunc(pred,72))+'</div>';
+  if(outs)html+='<div class="pv-tt-out">'+escH(trunc(outs,72))+'</div>';
+  html+='<div class="pv-tt-hint">Click for full details</div>';
+  tt.innerHTML=html;
+  var vw=window.innerWidth,vh=window.innerHeight;
+  var lx=e.clientX+16,ly=e.clientY-10;
+  tt.style.display='block';
+  /* keep inside viewport */
+  var tw=tt.offsetWidth||260,th=tt.offsetHeight||120;
+  if(lx+tw>vw-8)lx=e.clientX-tw-8;
+  if(ly+th>vh-8)ly=vh-th-8;
+  tt.style.left=lx+'px';tt.style.top=ly+'px';
+}
+function hideTooltip(){
+  var tt=document.getElementById('pv-tt');if(tt)tt.style.display='none';
+}
+function escH(s){
+  if(!s)return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
-	if op.EstimateCPUms > 0 || op.EstimatedIOs > 0 {
-		sb.WriteString(fmt.Sprintf(`  <div class="pv-cpu">CPU: %.4f | I/O: %.4f</div>`, op.EstimateCPUms, op.EstimatedIOs))
-	}
+/* ---- Draw a single node ---- */
+function drawNode(n,totalCost,searchTerm){
+  var pct=totalCost>0?(n.estimated_total_subtree_cost||0)/totalCost*100:0;
+  var hasWarn=(n.warnings&&n.warnings.length>0)||(n.op_wait_stats&&n.op_wait_stats.length>0);
+  var color=costColor(pct,hasWarn);
+  var hasAct=(n.actual_rows>0||n.actual_executions>0);
+  var opName=n.physical_op||n.logical_op||'Unknown';
+  var tblName=getTableName(n);
+  var idxName=getIndexName(n);
+  var pred=getPredSnippet(n);
+  var outs=getOutputCols(n);
 
-	sb.WriteString(fmt.Sprintf(`  <label for="%s" class="pv-expand-label">&#x25BC; Details</label>`, cardID))
+  var g=svgEl('g',{transform:'translate('+n._x+','+n._y+')','class':'pv-node','data-nid':n.id});
 
-	sb.WriteString(`  <div class="pv-details">`)
-	sb.WriteString(`<table>`)
-	if op.NodeID > 0 {
-		sb.WriteString(fmt.Sprintf(`<tr><td>Node ID</td><td>%d</td></tr>`, op.NodeID))
-	}
-	sb.WriteString(fmt.Sprintf(`<tr><td>Physical Op</td><td>%s</td></tr>`, html.EscapeString(op.PhysicalOp)))
-	sb.WriteString(fmt.Sprintf(`<tr><td>Logical Op</td><td>%s</td></tr>`, html.EscapeString(op.LogicalOp)))
-	if op.EstimatedTotalSubtreeCost > 0 {
-		sb.WriteString(fmt.Sprintf(`<tr><td>Est Cost</td><td>%.4f</td></tr>`, op.EstimatedTotalSubtreeCost))
-	}
-	sb.WriteString(fmt.Sprintf(`<tr><td>Est Rows</td><td>%s</td></tr>`, r.fmtInt(op.EstimateRows)))
-	sb.WriteString(fmt.Sprintf(`<tr><td>Act Rows</td><td>%s</td></tr>`, r.fmtInt(op.ActualRows)))
-	if op.ActualExecutions > 0 {
-		sb.WriteString(fmt.Sprintf(`<tr><td>Executions</td><td>%d</td></tr>`, op.ActualExecutions))
-	}
-	if op.EstimateCPUms > 0 {
-		sb.WriteString(fmt.Sprintf(`<tr><td>CPU Cost</td><td>%.4f</td></tr>`, op.EstimateCPUms))
-	}
-	if op.EstimatedIOs > 0 {
-		sb.WriteString(fmt.Sprintf(`<tr><td>I/O Cost</td><td>%.4f</td></tr>`, op.EstimatedIOs))
-	}
-	if op.ActualSpills > 0 {
-		sb.WriteString(fmt.Sprintf(`<tr><td>Spills</td><td>%d</td></tr>`, op.ActualSpills))
-	}
-	if op.ActualLogicalReads > 0 {
-		sb.WriteString(fmt.Sprintf(`<tr><td>Logical Reads</td><td>%d</td></tr>`, op.ActualLogicalReads))
-	}
-	if op.ActualPhysicalReads > 0 {
-		sb.WriteString(fmt.Sprintf(`<tr><td>Physical Reads</td><td>%d</td></tr>`, op.ActualPhysicalReads))
-	}
-	if op.Parallel {
-		sb.WriteString(fmt.Sprintf(`<tr><td>Parallel</td><td>Yes (Threads: %d)</td></tr>`, op.ParallelThreadCount))
-	} else if op.ParallelThreadCount > 0 {
-		sb.WriteString(fmt.Sprintf(`<tr><td>Threads</td><td>%d</td></tr>`, op.ParallelThreadCount))
-	}
-	if op.TableCardinality > 0 {
-		sb.WriteString(fmt.Sprintf(`<tr><td>Table Cardinality</td><td>%s</td></tr>`, r.fmtInt(op.TableCardinality)))
-	}
-	if op.EstimateRebinds > 0 {
-		sb.WriteString(fmt.Sprintf(`<tr><td>Rebinds</td><td>%d</td></tr>`, op.EstimateRebinds))
-	}
-	if op.EstimateRewinds > 0 {
-		sb.WriteString(fmt.Sprintf(`<tr><td>Rewinds</td><td>%d</td></tr>`, op.EstimateRewinds))
-	}
-	if memGrant != "" {
-		sb.WriteString(fmt.Sprintf(`<tr><td>Memory Fractions</td><td>%s</td></tr>`, html.EscapeString(memGrant)))
-	}
-	if len(op.OutputList) > 0 {
-		cols := make([]string, 0, len(op.OutputList))
-		for _, c := range op.OutputList {
-			cols = append(cols, c.Column)
-		}
-		sb.WriteString(fmt.Sprintf(`<tr><td>Output Columns</td><td>%s</td></tr>`, html.EscapeString(strings.Join(cols, ", "))))
-	}
-	if op.IndexScan != nil {
-		obj := op.IndexScan.Object
-		if obj.Index != "" {
-			sb.WriteString(fmt.Sprintf(`<tr><td>Index</td><td>[%s].[%s].[%s]</td></tr>`, html.EscapeString(obj.Database), html.EscapeString(obj.Schema), html.EscapeString(obj.Index)))
-		} else {
-			sb.WriteString(fmt.Sprintf(`<tr><td>Table</td><td>[%s].[%s].[%s]</td></tr>`, html.EscapeString(obj.Database), html.EscapeString(obj.Schema), html.EscapeString(obj.Table)))
-		}
-	}
-	sb.WriteString(`</table>`)
-	sb.WriteString(`</div>`)
-	sb.WriteString(fmt.Sprintf(`  <label for="%s" class="pv-expand-label pv-hide-label">&#x25B2; Hide</label>`, cardID))
+  /* critical path: dashed orange glow rect behind node */
+  if(n._critical){
+    g.appendChild(svgEl('rect',{x:-2,y:-2,width:NODE_W+4,height:NODE_H+4,rx:8,
+      fill:'none',stroke:'#f97316','stroke-width':2.5,'stroke-dasharray':'6,3','pointer-events':'none'}));
+  }
 
-	sb.WriteString(`</div>`)
+  /* background */
+  g.appendChild(svgEl('rect',{x:0,y:0,width:NODE_W,height:NODE_H,rx:6,
+    fill:'var(--pv-bg)',stroke:color,'stroke-width':hasWarn?2.5:1.5}));
+  /* left stripe */
+  g.appendChild(svgEl('rect',{x:0,y:0,width:4,height:NODE_H,rx:3,fill:color}));
+
+  /* operator name */
+  g.appendChild(svgText(10,16,trunc(opName,23),{
+    fill:'var(--tx)','font-size':11,'font-weight':700,'font-family':'inherit'}));
+
+  /* warning / critical badge */
+  if(hasWarn||n._critical){
+    var badge=n._critical&&!hasWarn?{bg:'#f97316',txt:'!'}:{bg:'#a855f7',txt:'!'};
+    if(hasWarn)badge={bg:'#f97316',txt:'!'};
+    var wc=svgEl('circle',{cx:NODE_W-12,cy:10,r:7,fill:badge.bg});
+    var wt=svgText(NODE_W-12,14,badge.txt,{'text-anchor':'middle',fill:'#fff','font-size':8,'font-weight':700});
+    g.appendChild(wc);g.appendChild(wt);
+  }
+
+  /* divider */
+  g.appendChild(svgEl('line',{x1:8,y1:22,x2:NODE_W-8,y2:22,stroke:'var(--bd)','stroke-width':1}));
+
+  /* object: table + index */
+  var yOff=0;
+  if(tblName){
+    var objTxt=idxName?trunc(idxName,22)+' \u25b8 '+trunc(tblName,14):trunc(tblName,26);
+    g.appendChild(svgText(10,34,objTxt,{fill:'#60a5fa','font-size':10,'font-family':'inherit'}));
+    yOff=13;
+  }
+
+  /* cost bar */
+  var barY=34+yOff;
+  g.appendChild(svgEl('rect',{x:8,y:barY,width:NODE_W-16,height:4,rx:2,fill:'var(--pv-bar)'}));
+  var bw=Math.max(0,Math.min(NODE_W-16,(pct/100)*(NODE_W-16)));
+  if(bw>0)g.appendChild(svgEl('rect',{x:8,y:barY,width:bw,height:4,rx:2,fill:color}));
+
+  /* cost% \u00b7 subtree cost */
+  var cy1=barY+14;
+  g.appendChild(svgText(8,cy1,pct.toFixed(1)+'% \u00b7 '+(n.estimated_total_subtree_cost||0).toFixed(4),
+    {fill:color,'font-size':10,'font-weight':700,'font-family':'monospace'}));
+
+  /* rows */
+  var cy2=cy1+13;
+  var rowTxt;
+  if(hasAct){
+    var ratio=(n.estimate_rows>0&&n.actual_rows>0)?n.actual_rows/n.estimate_rows:0;
+    var ratioStr=ratio>=2?'\u00d7'+fmtN(ratio)+'\u2191':(ratio>0&&ratio<0.5?'\u00d7'+fmtN(1/ratio)+'\u2193':'');
+    rowTxt='Est:'+fmtN(n.estimate_rows)+' Act:'+fmtN(n.actual_rows)+(ratioStr?' '+ratioStr:'');
+  }else{
+    rowTxt='Est: '+fmtN(n.estimate_rows)+' rows'+(n.avg_row_size?' ('+n.avg_row_size+'B)':'');
+  }
+  g.appendChild(svgText(8,cy2,trunc(rowTxt,30),{fill:'var(--tx2)','font-size':10,'font-family':'inherit'}));
+
+  /* CPU / reads / spills */
+  var cy3=cy2+12;
+  var parts=[];
+  if(n.actual_cpu_ms>0)parts.push('CPU:'+n.actual_cpu_ms.toFixed(0)+'ms');
+  if(n.actual_logical_reads>0)parts.push('Rds:'+fmtN(n.actual_logical_reads));
+  if(n.actual_spills>0)parts.push('Spill:'+n.actual_spills);
+  if(parts.length>0)
+    g.appendChild(svgText(8,cy3,trunc(parts.join(' '),30),{fill:'#f97316','font-size':9,'font-family':'inherit'}));
+
+  /* predicate snippet */
+  var cy4=cy3+11;
+  if(pred){
+    g.appendChild(svgText(8,cy4,'\u25b8 '+trunc(pred,28),{fill:'var(--tx3)','font-size':9,'font-style':'italic','font-family':'inherit'}));
+  }else if(outs){
+    var colList=outs.split(',').slice(0,3).join(',')+(outs.split(',').length>3?'\u2026':'');
+    g.appendChild(svgText(8,cy4,'\u25ba '+trunc(colList,28),{fill:'var(--tx3)','font-size':9,'font-family':'monospace'}));
+  }
+
+  /* search highlight / fade */
+  var matchSearch=searchTerm&&(opName.toLowerCase().indexOf(searchTerm)>=0||
+    (tblName&&tblName.toLowerCase().indexOf(searchTerm)>=0)||
+    (pred&&pred.toLowerCase().indexOf(searchTerm)>=0));
+  if(searchTerm){
+    if(matchSearch){
+      g.appendChild(svgEl('rect',{x:0,y:0,width:NODE_W,height:NODE_H,rx:6,
+        fill:'rgba(37,99,235,0.12)',stroke:'#2563eb','stroke-width':2.5,'pointer-events':'none'}));
+    }else{
+      g.setAttribute('opacity','0.22');
+    }
+  }
+
+  g.style.cursor='pointer';
+  (function(node,p){
+    g.addEventListener('mousemove',function(e){showTooltip(node,p,e);});
+    g.addEventListener('mouseleave',function(){hideTooltip();});
+    g.addEventListener('click',function(e){e.stopPropagation();hideTooltip();showProps(node,p,totalCost);});
+  })(n,pct);
+
+  return g;
+}
+
+/* ---- Draw edge (SSMS style: right\u2192left; child.left \u2192 parent.right) ---- */
+function drawEdge(parent,child){
+  var rows=child.actual_rows||child.estimate_rows||0;
+  var sw=edgeW(rows);
+  var hasAct=child.actual_rows>0;
+  var clr=hasAct?'rgba(37,99,235,0.70)':'rgba(148,163,184,0.60)';
+  var dash=hasAct?'':'6,4';
+  /* child is RIGHT of parent: arrow from child.left \u2192 parent.right */
+  var sx=child._x,       sy=child._y+NODE_H/2;
+  var tx=parent._x+NODE_W, ty=parent._y+NODE_H/2;
+  var mx=(sx+tx)/2;
+  var g=svgEl('g',{'class':'pv-edge'});
+  var path=svgEl('path',{
+    d:'M '+sx+' '+sy+' C '+mx+' '+sy+', '+mx+' '+ty+', '+tx+' '+ty,
+    fill:'none',stroke:clr,'stroke-width':sw,'stroke-dasharray':dash,'stroke-linecap':'round'});
+  g.appendChild(path);
+  /* arrowhead at parent right edge, pointing INTO the parent (pointing left) */
+  var ah=svgEl('polygon',{
+    points:tx+','+ty+' '+(tx+8)+','+(ty-4)+' '+(tx+8)+','+(ty+4),
+    fill:clr,'pointer-events':'none'});
+  g.appendChild(ah);
+  /* row label on thick edges */
+  if(sw>=4&&rows>0){
+    var lx=(sx+tx)/2,ly=(sy+ty)/2;
+    var bg=svgEl('rect',{x:lx-20,y:ly-8,width:40,height:14,rx:3,
+      fill:'var(--bg)',opacity:0.9,'pointer-events':'none'});
+    var lt=svgText(lx,ly+3,fmtN(rows),{'text-anchor':'middle',fill:clr,
+      'font-size':9,'font-weight':700,'pointer-events':'none','font-family':'monospace'});
+    g.appendChild(bg);g.appendChild(lt);
+  }
+  return g;
+}
+
+/* ---- Render full plan ---- */
+function renderPlan(root,container,searchTerm){
+  container.innerHTML='';
+  if(!root)return;
+  computeSize(root);
+  var maxD=assignPos(root,0,0);
+  assignX(root,maxD);
+  markCriticalPath(root);
+  _maxRows=findMaxRows(root);
+  var allNodes=collectNodes(root,[]);
+  var totalCost=root.estimated_total_subtree_cost||DATA.total_cost||1;
+  if(totalCost<=0)totalCost=1;
+  var VPAD=28;
+  /* natural SVG coordinate space — no pre-scaling */
+  _svgH=root._size*(NODE_H+V_GAP)+V_GAP*4+VPAD*2;
+  _svgW=(maxD+1)*TOTAL_W+NODE_W+20;
+  /* initial scale: fit canvas HEIGHT so nodes are full-size vertically;
+     clamp between 0.72 (floor for readability) and 1.0 */
+  var cH=container.clientHeight||560;
+  _sc=Math.min(1.0,Math.max(0.72,(cH-24)/_svgH));
+  var svg=svgEl('svg',{
+    viewBox:'0 0 '+_svgW+' '+_svgH,
+    width:Math.round(_svgW*_sc),
+    height:Math.round(_svgH*_sc)
+  });
+  svg.style.display='block'; /* remove inline-block gap */
+  /* edges first */
+  var eG=svgEl('g',{'class':'pv-edges'});
+  for(var i=0;i<allNodes.length;i++){
+    var n=allNodes[i];
+    if(n.children)for(var j=0;j<n.children.length;j++)eG.appendChild(drawEdge(n,n.children[j]));
+  }
+  svg.appendChild(eG);
+  /* nodes on top */
+  var nG=svgEl('g',{'class':'pv-nodes'});
+  for(var i=0;i<allNodes.length;i++)nG.appendChild(drawNode(allNodes[i],totalCost,searchTerm));
+  svg.appendChild(nG);
+  container.appendChild(svg);
+  /* scroll to top-left so SELECT (root) is visible */
+  container.scrollLeft=0;container.scrollTop=0;
+  renderTop5(allNodes,totalCost);
+}
+
+/* ---- Fit / zoom / pan ---- */
+/* applyT: resize SVG via width/height attrs so overflow:auto scrollbars reflect true size */
+var _dragging=false,_lx=0,_ly=0;
+function applyT(container){
+  var svg=container.querySelector('svg');
+  if(!svg||!_svgW||!_svgH)return;
+  svg.setAttribute('width',Math.round(_svgW*_sc));
+  svg.setAttribute('height',Math.round(_svgH*_sc));
+}
+function fitToScreen(container){
+  if(!_svgW||!_svgH)return;
+  var cW=container.clientWidth||800,cH=container.clientHeight||560;
+  _sc=Math.min(1.0,Math.min((cW-12)/_svgW,(cH-12)/_svgH));
+  applyT(container);
+  container.scrollLeft=0;container.scrollTop=0;
+}
+function setupZoom(container){
+  /* wheel zoom: zoom toward cursor position */
+  container.addEventListener('wheel',function(e){
+    e.preventDefault();
+    var oldSc=_sc;
+    _sc=Math.max(0.15,Math.min(4,_sc*(e.deltaY>0?0.88:1.14)));
+    /* adjust scroll to keep point under cursor fixed */
+    var rect=container.getBoundingClientRect();
+    var cx=e.clientX-rect.left+container.scrollLeft;
+    var cy=e.clientY-rect.top+container.scrollTop;
+    applyT(container);
+    container.scrollLeft=cx*(_sc/oldSc)-( e.clientX-rect.left);
+    container.scrollTop =cy*(_sc/oldSc)-( e.clientY-rect.top);
+  },{passive:false});
+  /* drag to pan */
+  container.addEventListener('mousedown',function(e){
+    if(e.target.closest('.pv-node')||e.button!==0)return;
+    _dragging=true;_lx=e.clientX;_ly=e.clientY;
+    container.style.cursor='grabbing';e.preventDefault();
+  });
+  document.addEventListener('mousemove',function(e){
+    if(!_dragging)return;
+    container.scrollLeft-=(e.clientX-_lx);
+    container.scrollTop -=(e.clientY-_ly);
+    _lx=e.clientX;_ly=e.clientY;
+  });
+  document.addEventListener('mouseup',function(){
+    if(_dragging){_dragging=false;container.style.cursor='grab';}
+  });
+  container.style.cursor='grab';
+  /* buttons */
+  var fitBtn=document.getElementById('pv-fit');
+  if(fitBtn)fitBtn.onclick=function(){fitToScreen(container);};
+  var ziBtn=document.getElementById('pv-zoom-in');
+  if(ziBtn)ziBtn.onclick=function(){_sc=Math.min(4,_sc*1.25);applyT(container);};
+  var zoBtn=document.getElementById('pv-zoom-out');
+  if(zoBtn)zoBtn.onclick=function(){_sc=Math.max(0.15,_sc/1.25);applyT(container);};
+}
+
+/* ---- Properties panel ---- */
+function showProps(node,costPct,totalCost){
+  var panel=document.getElementById('pv-props-panel');if(!panel)return;
+  panel.innerHTML=buildPropsHTML(node,costPct,totalCost);
+  panel.classList.add('open');
+}
+function propRow(label,val){
+  if(val===null||val===undefined||val===''||(typeof val==='number'&&val===0))return '';
+  return '<div class="pv-pr"><span class="pv-pl">'+label+'</span><span class="pv-pv">'+val+'</span></div>';
+}
+function propSection(title,body){
+  if(!body)return '';
+  return '<details class="pv-sec" open><summary class="pv-sec-hdr">'+title+'</summary><div class="pv-sec-body">'+body+'</div></details>';
+}
+function buildPropsHTML(n,pct,totalCost){
+  var hasAct=n.actual_rows>0||n.actual_executions>0;
+
+  var gen=propRow('Node ID',n.node_id||n.id)
+    +propRow('Physical Op',n.physical_op)
+    +propRow('Logical Op',n.logical_op)
+    +propRow('Exec Mode',n.estimated_execution_mode)
+    +propRow('Storage',n.storage)
+    +propRow('Parallel',n.parallel?'Yes ('+(n.parallel_thread_count||'?')+' threads)':null)
+    +propRow('Avg Row Size',n.avg_row_size?n.avg_row_size+' bytes':null)
+    +propRow('Adaptive Threshold',n.adaptive_threshold_rows||null)
+    +propRow('Critical Path',n._critical?'Yes (highest-cost chain)':null);
+
+  var io=propRow('Est Rows',fmtN(n.estimate_rows))
+    +propRow('Est Rows Read',n.estimated_rows_read>0?fmtN(n.estimated_rows_read):null)
+    +propRow('Act Rows',hasAct?fmtN(n.actual_rows):'\u2014')
+    +propRow('Act Executions',hasAct?n.actual_executions:null)
+    +propRow('Act CPU ms',n.actual_cpu_ms>0?n.actual_cpu_ms.toFixed(2):null)
+    +propRow('Act Elapsed ms',n.actual_elapsed_ms>0?n.actual_elapsed_ms.toFixed(2):null)
+    +propRow('Logical Reads',n.actual_logical_reads>0?fmtN(n.actual_logical_reads):null)
+    +propRow('Physical Reads',n.actual_physical_reads>0?fmtN(n.actual_physical_reads):null)
+    +propRow('Spills',n.actual_spills>0?n.actual_spills:null)
+    +propRow('Rebinds',n.estimate_rebinds>0?n.estimate_rebinds:null)
+    +propRow('Rewinds',n.estimate_rewinds>0?n.estimate_rewinds:null);
+
+  var cost=propRow('Est Cost',n.estimated_total_subtree_cost?(n.estimated_total_subtree_cost).toFixed(6):null)
+    +propRow('CPU Cost',n.estimate_cpu_ms>0?n.estimate_cpu_ms.toFixed(6):null)
+    +propRow('I/O Cost',n.estimated_ios>0?n.estimated_ios.toFixed(6):null)
+    +propRow('Cost % of Plan',pct.toFixed(2)+'%')
+    +propRow('Table Cardinality',n.table_cardinality>0?fmtN(n.table_cardinality):null);
+
+  var idx='';
+  if(n.index_scan&&n.index_scan.object){
+    var o=n.index_scan.object;
+    idx=propRow('Schema',o.schema||null)
+      +propRow('Table',o.table)
+      +propRow('Index',o.index||null)
+      +propRow('Index Kind',n.index_scan.index_kind)
+      +propRow('Scan Type',n.index_scan.scan_type)
+      +propRow('Ordered',n.index_scan.ordered?'Yes':null)
+      +propRow('Forced Index',n.index_scan.forced_index?'Yes':null);
+  }else if(n.table_scan&&n.table_scan.object){
+    var ts=n.table_scan.object;
+    idx=propRow('Schema',ts.schema||null)+propRow('Table',ts.table);
+  }
+
+  var pred='';
+  if(n.predicate&&n.predicate.scalar_string)
+    pred+=propRow('Residual','<code>'+escH(n.predicate.scalar_string)+'</code>');
+  if(n.seek_predicates){
+    for(var i=0;i<n.seek_predicates.length;i++){
+      var sp=n.seek_predicates[i];
+      if(sp.prefix_predicate)for(var j=0;j<sp.prefix_predicate.length;j++)
+        pred+=propRow('Seek Prefix','<code>'+escH(sp.prefix_predicate[j].scalar_string||'')+'</code>');
+    }
+  }
+
+  var join='';
+  if(n.hash){
+    var bk=(n.hash.hash_keys_build||[]).map(function(c){return c.column;}).join(', ');
+    var pk=(n.hash.hash_keys_probe||[]).map(function(c){return c.column;}).join(', ');
+    join=propRow('Build Keys',bk)+propRow('Probe Keys',pk)
+      +propRow('Probe Residual',n.hash.probe_residual)
+      +propRow('Build Residual',n.hash.build_residual);
+  }else if(n.nested_loops){
+    var refs=(n.nested_loops.outer_references||[]).map(function(c){return c.column;}).join(', ');
+    join=propRow('Outer References',refs)
+      +propRow('Predicate',n.nested_loops.predicate)
+      +propRow('Adaptive',n.nested_loops.outer_is_adaptive?'Yes':null);
+  }else if(n.merge){
+    var ic=(n.merge.inner_side_join_columns||[]).map(function(c){return c.column;}).join(', ');
+    var oc=(n.merge.outer_side_join_columns||[]).map(function(c){return c.column;}).join(', ');
+    join=propRow('Inner Join Cols',ic)+propRow('Outer Join Cols',oc);
+  }
+
+  var mem='';
+  if(n.memory_fractions){
+    mem=propRow('Input Fraction',n.memory_fractions.input?(n.memory_fractions.input).toFixed(3):null)
+      +propRow('Output Fraction',n.memory_fractions.output?(n.memory_fractions.output).toFixed(3):null);
+  }
+
+  var out='';
+  if(n.output_list&&n.output_list.length>0){
+    var cols=n.output_list.map(function(c){return c.column;}).join(', ');
+    out=propRow('Columns','<code>'+escH(cols)+'</code>');
+  }
+
+  var threads='';
+  if(n.runtime_counters&&n.runtime_counters.length>1){
+    var tbl2='<table class="pv-thr-tbl"><tr><th>Thd</th><th>Act Rows</th><th>CPU ms</th><th>Reads</th></tr>';
+    for(var i=0;i<n.runtime_counters.length;i++){
+      var rc=n.runtime_counters[i];
+      tbl2+='<tr><td>'+(rc.thread||i)+'</td><td>'+fmtN(rc.actual_rows)+'</td><td>'+(rc.actual_cpu_ms||0).toFixed(1)+'</td><td>'+fmtN(rc.actual_logical_reads)+'</td></tr>';
+    }
+    tbl2+='</table>';threads=propRow('Per-thread',tbl2);
+  }
+
+  var waits='';
+  if(n.op_wait_stats&&n.op_wait_stats.length>0){
+    for(var i=0;i<n.op_wait_stats.length;i++){
+      var w=n.op_wait_stats[i];
+      waits+=propRow(w.wait_type,(w.wait_time_ms||0)+'ms (count:'+(w.wait_count||0)+')');
+    }
+  }
+
+  var stats='';
+  if(n.op_statistics_info&&n.op_statistics_info.length>0){
+    for(var i=0;i<n.op_statistics_info.length;i++){
+      var s=n.op_statistics_info[i];
+      stats+=propRow(s.object,'Updated: '+(s.last_update||'unknown')+
+        (s.sampling_percent?' Sample: '+s.sampling_percent.toFixed(1)+'%':'')+
+        (s.modification_count?' Mods: '+s.modification_count:''));
+    }
+  }
+
+  var closeBtn='<button onclick="document.getElementById(\'pv-props-panel\').classList.remove(\'open\')" class="pv-close-btn">\u2715</button>';
+  return '<div class="pv-props-hdr"><span class="pv-props-title">'+escH(trunc(n.physical_op||'Operator',24))+'</span>'+closeBtn+'</div>'
+    +propSection('General',gen)
+    +propSection('I/O &amp; Rows',io)
+    +propSection('Cost',cost)
+    +propSection('Object',idx)
+    +propSection('Predicates',pred)
+    +propSection('Output Columns',out)
+    +propSection('Join Details',join)
+    +propSection('Memory Fractions',mem)
+    +propSection('Parallelism (Per-Thread)',threads)
+    +propSection('Wait Statistics',waits)
+    +propSection('Statistics Objects',stats);
+}
+
+/* ---- Top-5 grid panel ---- */
+function renderTop5(allNodes,totalCost){
+  var el=document.getElementById('pv-top5');if(!el)return;
+  var sorted=allNodes.slice().sort(function(a,b){return (b.estimated_total_subtree_cost||0)-(a.estimated_total_subtree_cost||0);});
+  var top=sorted.slice(0,5);
+  var html='<div class="pv-t5-hdr">Top 5 by Cost</div>'
+    +'<div class="pv-t5-head-row">'
+    +'<span class="pv-t5-col-rank">#</span>'
+    +'<span class="pv-t5-col-pct">%</span>'
+    +'<span class="pv-t5-col-name">Operator &middot; Object</span>'
+    +'<span class="pv-t5-col-rows">Est Rows</span>'
+    +'</div>';
+  for(var i=0;i<top.length;i++){
+    var n=top[i];
+    var pct=totalCost>0?(n.estimated_total_subtree_cost||0)/totalCost*100:0;
+    var tn=getTableName(n);
+    var ix=getIndexName(n);
+    var color=costColor(pct,false);
+    var opLabel=n.physical_op||n.logical_op||'?';
+    var objLabel=ix?ix+(tn?' \u25b8 '+tn:''):(tn||'');
+    html+='<div class="pv-t5-row" data-nid="'+n.id+'">'
+      +'<span class="pv-t5-col-rank" style="color:'+color+'">'+(i+1)+'</span>'
+      +'<div class="pv-t5-col-pct">'
+        +'<div class="pv-t5-bar"><div class="pv-t5-bar-fill" style="width:'+Math.min(100,pct).toFixed(1)+'%;background:'+color+'"></div></div>'
+        +'<span class="pv-t5-pct-txt" style="color:'+color+'">'+pct.toFixed(1)+'%</span>'
+      +'</div>'
+      +'<div class="pv-t5-col-name">'
+        +'<div class="pv-t5-op">'+escH(opLabel)+'</div>'
+        +(objLabel?'<div class="pv-t5-obj">'+escH(trunc(objLabel,26))+'</div>':'')
+      +'</div>'
+      +'<span class="pv-t5-col-rows">'+fmtN(n.estimate_rows)+'</span>'
+      +'</div>';
+  }
+  el.innerHTML=html;
+  el.querySelectorAll('.pv-t5-row').forEach(function(item){
+    item.addEventListener('click',function(){
+      var nid=this.getAttribute('data-nid');
+      var g=document.querySelector('#pv-canvas [data-nid="'+nid+'"]');
+      if(g)g.dispatchEvent(new MouseEvent('click',{bubbles:false}));
+    });
+  });
+}
+
+/* ---- Plan header ---- */
+function renderPlanHeader(){
+  var el=document.getElementById('pv-plan-header');if(!el||!DATA)return;
+  var parts=[];
+  if(DATA.optimization_level)parts.push('Opt: '+DATA.optimization_level);
+  if(DATA.degree_of_parallelism)parts.push('DOP: '+DATA.degree_of_parallelism);
+  if(DATA.compile_time_ms)parts.push('Compile: '+DATA.compile_time_ms+'ms');
+  if(DATA.cached_plan_size_kb)parts.push('Cache: '+DATA.cached_plan_size_kb+'KB');
+  if(DATA.non_parallel_plan_reason)parts.push('Serial: '+DATA.non_parallel_plan_reason);
+  el.textContent=parts.join(' \u00b7 ');
+}
+
+/* ---- Statement selector ---- */
+function setupStatements(container){
+  var sel=document.getElementById('pv-stmt-select');
+  if(!sel||!DATA||!DATA.statements||DATA.statements.length<=1)return;
+  sel.innerHTML='';
+  for(var i=0;i<DATA.statements.length;i++){
+    var s=DATA.statements[i];
+    var opt=document.createElement('option');
+    opt.value=i;
+    opt.textContent='Stmt '+(i+1)+': '+trunc(s.statement_text||'',40)+' ('+((s.cost_percent||0).toFixed(1))+'%)';
+    sel.appendChild(opt);
+  }
+  sel.addEventListener('change',function(){
+    currentStmt=parseInt(this.value);init();
+  });
+}
+
+/* ---- Search ---- */
+function setupSearch(container){
+  var si=document.getElementById('pv-search');if(!si)return;
+  si.addEventListener('input',function(){
+    _searchTerm=(this.value||'').toLowerCase();
+    var root=getRoot();
+    if(root)renderPlan(root,container,_searchTerm);
+  });
+}
+
+function getRoot(){
+  if(!DATA)return null;
+  if(DATA.is_batch&&DATA.statements&&DATA.statements.length>0){
+    var s=DATA.statements[currentStmt];
+    return s?s.root_operator:DATA.tree;
+  }
+  return DATA.tree;
+}
+
+/* ---- Init ---- */
+function init(){
+  var container=document.getElementById('pv-canvas');if(!container)return;
+  if(!DATA){DATA=loadData();if(!DATA)return;}
+  var root=getRoot();
+  if(!root){container.innerHTML='<p class="none">No plan tree available.</p>';return;}
+  renderPlan(root,container,_searchTerm);
+  if(!_initialized){
+    setupZoom(container);
+    setupSearch(container);
+    setupStatements(container);
+    renderPlanHeader();
+    _initialized=true;
+  }
+}
+
+/* Activate when tab radio is checked */
+var radio=document.getElementById('tab-planviewer');
+if(radio){radio.addEventListener('change',function(){if(this.checked)setTimeout(init,30);});}
+/* Also init immediately if already on this tab */
+if(radio&&radio.checked)init();
+})();
+</script>`
 }
 
 func (r *HTMLReporter) renderRecommendationsTab(plan *models.PlanAnalysis) string {
@@ -1173,33 +1748,64 @@ blockquote{border-left:4px solid var(--ac);padding:12px 16px;margin-bottom:10px;
 .sev-high{color:#f97316;font-weight:600}
 .sev-crit{color:#ef4444;font-weight:600}
 
-.pv-scroll{overflow-x:auto;padding-bottom:8px}
-.pv-hflow{display:flex;flex-direction:row;align-items:flex-start;gap:0;min-width:800px}
-.pv-arrow-col{display:flex;align-items:center;padding:0 6px}
-.pv-arr{font-size:1.2rem;color:var(--ac);opacity:.6}
-.pv-col{display:flex;flex-direction:column;gap:8px}
-.pv-card{background:var(--pv-bg);border:1px solid var(--pv-bd);border-radius:8px;padding:10px 12px;min-width:180px;max-width:220px;box-shadow:0 1px 3px rgba(0,0,0,0.06);cursor:default;transition:box-shadow .15s}
-.pv-card:hover{box-shadow:0 2px 8px rgba(0,0,0,0.12);border-color:var(--ac)}
-.pv-card-header{display:flex;align-items:center;gap:6px;margin-bottom:4px}
-.pv-icon{font-size:1.1rem}
-.pv-name{font-weight:700;font-size:0.82rem;color:var(--tx);word-break:break-word}
-.pv-table{font-size:0.75rem;color:var(--tx3);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pv-bar-c{height:5px;background:var(--pv-bar);border-radius:3px;overflow:hidden;margin:4px 0}
-.pv-bar{height:100%;background:linear-gradient(90deg,var(--ac),#818cf8);border-radius:3px}
-.pv-cost{font-family:'SF Mono',Monaco,Consolas,monospace;font-size:0.75rem;color:var(--mo)}
-.pv-rows{font-size:0.72rem;color:var(--tx4);margin-top:2px}
-.pv-cpu{font-size:0.72rem;color:#f97316;margin-top:1px}
-.pv-expand-toggle{display:none}
-.pv-expand-label{display:inline-block;font-size:0.72rem;color:var(--ac);cursor:pointer;margin-top:3px;padding:1px 6px;border-radius:3px;user-select:none}
-.pv-expand-label:hover{background:var(--hv);text-decoration:underline}
-.pv-expand-toggle:checked~.pv-details{display:block}
-.pv-expand-toggle:checked~.pv-expand-label{display:none}
-.pv-expand-toggle:checked~.pv-hide-label{display:inline-block}
-.pv-hide-label{display:none}
-.pv-details{display:none;margin-top:6px;padding-top:6px;border-top:1px solid var(--bd);font-size:0.75rem}
-.pv-details table{width:100%;border-collapse:collapse}
-.pv-details td{padding:2px 4px;color:var(--tx2);vertical-align:top}
-.pv-details td:first-child{font-weight:600;color:var(--tx3);white-space:nowrap;width:40%}
+/* Plan Viewer — SVG tree renderer (SSMS-style) */
+.pv-plan-hdr{font-size:0.78rem;color:var(--tx3);padding:4px 0 8px;min-height:20px}
+.pv-toolbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.pv-btn{padding:4px 10px;border:1px solid var(--bd);border-radius:4px;background:var(--bg2);color:var(--tx);cursor:pointer;font-size:0.78rem;font-weight:600;transition:background .12s}
+.pv-btn:hover{background:var(--hv)}
+.pv-search{padding:4px 10px;border:1px solid var(--bd);border-radius:4px;background:var(--bg2);color:var(--tx);font-size:0.82rem;flex:1;max-width:220px}
+.pv-layout{display:flex;gap:8px;align-items:flex-start}
+/* Top-5 sidebar with proper grid */
+.pv-top5-panel{width:248px;flex-shrink:0;background:var(--bg2);border:1px solid var(--bd);border-radius:6px;padding:8px 6px;font-size:0.77rem}
+.pv-t5-hdr{font-weight:700;color:var(--tx3);font-size:0.72rem;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;padding:0 4px}
+.pv-t5-head-row{display:grid;grid-template-columns:18px 72px 1fr 44px;gap:2px 4px;padding:2px 4px;color:var(--tx3);font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border-bottom:1px solid var(--bd);margin-bottom:2px}
+.pv-t5-row{display:grid;grid-template-columns:18px 72px 1fr 44px;gap:2px 4px;align-items:center;padding:4px 4px;border-radius:4px;cursor:pointer;margin-bottom:1px}
+.pv-t5-row:hover{background:var(--hv)}
+.pv-t5-col-rank{font-weight:700;font-size:0.78rem;text-align:center;flex-shrink:0}
+.pv-t5-col-pct{display:flex;flex-direction:column;gap:2px;min-width:0}
+.pv-t5-bar{height:5px;background:var(--bd2);border-radius:3px;overflow:hidden}
+.pv-t5-bar-fill{height:100%;border-radius:3px;transition:width .2s}
+.pv-t5-pct-txt{font-size:0.74rem;font-weight:700;line-height:1}
+.pv-t5-col-name{min-width:0;overflow:hidden}
+.pv-t5-op{font-weight:600;color:var(--tx);font-size:0.77rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-t5-obj{color:var(--tx3);font-size:0.70rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-t5-col-rows{font-size:0.73rem;color:var(--tx2);text-align:right;font-family:monospace;white-space:nowrap}
+/* Canvas */
+.pv-canvas-wrap{flex:1;position:relative;min-width:0}
+.pv-canvas{width:100%;height:580px;border:1px solid var(--bd);border-radius:8px;overflow:auto;background:var(--pv-bg);position:relative;cursor:grab}
+.pv-canvas::-webkit-scrollbar{height:8px;width:8px}
+.pv-canvas::-webkit-scrollbar-track{background:var(--bg2)}
+.pv-canvas::-webkit-scrollbar-thumb{background:var(--bd);border-radius:4px}
+.pv-canvas::-webkit-scrollbar-thumb:hover{background:var(--tx3)}
+.pv-node{transition:opacity .15s}
+.pv-node:hover rect:first-of-type{filter:brightness(0.94)}
+/* Hover tooltip */
+.pv-tt{position:fixed;z-index:9999;display:none;background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:9px 12px;font-size:0.78rem;max-width:300px;box-shadow:0 4px 16px rgba(0,0,0,0.22);pointer-events:none}
+.pv-tt-op{font-weight:700;font-size:0.86rem;color:var(--tx);margin-bottom:5px}
+.pv-tt-row{display:flex;gap:8px;margin-bottom:3px;line-height:1.3}
+.pv-tt-lbl{color:var(--tx3);flex:0 0 62px;font-weight:600;font-size:0.74rem}
+.pv-tt-val{color:var(--tx2);font-size:0.76rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pv-tt-pred{margin-top:5px;padding:4px 6px;background:var(--cd);border-radius:4px;font-size:0.73rem;color:var(--cc);font-family:monospace;word-break:break-all;line-height:1.4}
+.pv-tt-out{margin-top:4px;font-size:0.72rem;color:var(--tx3);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-tt-hint{margin-top:6px;font-size:0.70rem;color:var(--tx4);text-align:right;font-style:italic}
+/* Properties panel */
+.pv-props-panel{position:absolute;right:0;top:0;bottom:0;width:300px;background:var(--bg);border-left:1px solid var(--bd);overflow-y:auto;display:none;z-index:20;border-radius:0 8px 8px 0;font-size:0.78rem}
+.pv-props-panel.open{display:block}
+.pv-props-hdr{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--hd);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:2}
+.pv-props-title{font-weight:700;color:var(--tx);font-size:0.85rem}
+.pv-close-btn{background:none;border:none;cursor:pointer;font-size:1rem;color:var(--tx3);padding:2px 4px;border-radius:3px}
+.pv-close-btn:hover{background:var(--hv)}
+.pv-sec{border-bottom:1px solid var(--bd2)}
+.pv-sec-hdr{padding:5px 12px;background:var(--hd);font-weight:700;color:var(--tx3);font-size:0.72rem;text-transform:uppercase;letter-spacing:.4px;cursor:pointer;list-style:none}
+.pv-sec-hdr::-webkit-details-marker{display:none}
+.pv-sec-body{padding:2px 0}
+.pv-pr{display:flex;padding:3px 12px;border-bottom:1px solid var(--bd2)}
+.pv-pl{color:var(--tx3);flex:0 0 44%;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.76rem}
+.pv-pv{color:var(--tx2);flex:1;word-break:break-all;overflow:hidden;font-size:0.76rem}
+.pv-pv code{font-size:0.76rem;background:var(--cd);padding:1px 4px;border-radius:2px;color:var(--cc);word-break:break-all}
+.pv-thr-tbl{width:100%;border-collapse:collapse;font-size:0.75rem}
+.pv-thr-tbl th{background:var(--hd);padding:2px 4px;color:var(--tx3)}
+.pv-thr-tbl td{padding:2px 4px;border-bottom:1px solid var(--bd2)}
 
 .rc{border:1px solid var(--bd);border-radius:8px;margin-bottom:10px;overflow:hidden}
 .rc-h{display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--hd);border-left:4px solid}
@@ -1390,4 +1996,11 @@ func (r *HTMLReporter) fmtInt(n int64) string {
 		return "-"
 	}
 	return strconv.FormatInt(n, 10)
+}
+
+func (r *HTMLReporter) fmtRows(n float64) string {
+	if n <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.0f", n)
 }

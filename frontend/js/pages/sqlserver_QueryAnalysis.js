@@ -41,6 +41,8 @@
         const dbs = window.appState?.databases || inst?.databases || [];
         const seen = new Set();
         dbSelect.innerHTML = '';
+        ensureQaAllDatabasesOption(dbSelect);
+        seen.add(QA_ALL_DATABASES);
         dbs.forEach(db => {
             const name = typeof db === 'string' ? db : db?.name;
             if (!name || seen.has(name) || isQaExcludedDatabase(name)) return;
@@ -50,6 +52,7 @@
             opt.textContent = name;
             dbSelect.appendChild(opt);
         });
+        dbSelect.value = QA_ALL_DATABASES;
     }
 
     function mergeQaDatabaseOptionsFromRows(rows) {
@@ -68,9 +71,21 @@
     }
 
     const QA_EXCLUDED_DATABASES = new Set(['distribution']);
+    const QA_ALL_DATABASES = '';
 
     function isQaExcludedDatabase(name) {
         return QA_EXCLUDED_DATABASES.has(String(name || '').trim().toLowerCase());
+    }
+
+    function ensureQaAllDatabasesOption(dbSelect) {
+        if (!dbSelect) return;
+        let allOpt = [...dbSelect.options].find(o => o.value === QA_ALL_DATABASES);
+        if (!allOpt) {
+            allOpt = document.createElement('option');
+            allOpt.value = QA_ALL_DATABASES;
+            allOpt.textContent = 'All databases';
+            dbSelect.insertBefore(allOpt, dbSelect.firstChild);
+        }
     }
 
     function getQaDatabaseFilter() {
@@ -78,9 +93,14 @@
         return (dbEl?.value || '').trim();
     }
 
+    function qaDatabaseQueryParam(dbName) {
+        return dbName ? encodeURIComponent(dbName) : 'all';
+    }
+
     async function ensureQaDatabaseSelected(instName, from, to) {
         const dbSelect = document.getElementById('qa-database-filter');
         if (!dbSelect) return '';
+        ensureQaAllDatabasesOption(dbSelect);
         const excludeSystem = getQaExcludeSystem();
         const exParam = excludeSystem ? '' : '&exclude_system=false';
         try {
@@ -100,21 +120,15 @@
                     opt.textContent = `${name} (${d.row_count || 0})`;
                     dbSelect.appendChild(opt);
                 });
-                if (list.length > 0) {
-                    const pick = list.find(d => (d.row_count || 0) > 0) || list[0];
-                    const name = (pick.database_name || '').trim();
-                    if (name) {
-                        dbSelect.value = name;
-                        return name;
-                    }
+                const active = list.find(d => (d.row_count || 0) > 0);
+                if (active?.database_name) {
+                    const name = active.database_name.trim();
+                    dbSelect.value = name;
+                    return name;
                 }
             }
         } catch (e) { console.warn('[QueryAnalysis] databases in range', e); }
-        if (dbSelect.value) return dbSelect.value;
-        if (dbSelect.options.length > 0) {
-            dbSelect.value = dbSelect.options[0].value;
-            return dbSelect.value;
-        }
+        dbSelect.value = QA_ALL_DATABASES;
         return '';
     }
 
@@ -278,10 +292,6 @@
             }
             const excludeSystem = getQaExcludeSystem();
             let dbName = getQaDatabaseFilter();
-            if (!dbName) {
-                dbName = await ensureQaDatabaseSelected(instName, from, to);
-            }
-            if (!dbName) return;
 
             // Always refresh summary for KPIs and trend charts
             fetchSummary(from, to, excludeSystem, dbName);
@@ -329,7 +339,7 @@
 
         async function fetchSummary(from, to, excludeSystem, dbName) {
             try {
-                const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/summary?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}&exclude_system=${excludeSystem}&database=${encodeURIComponent(dbName)}`);
+                const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/summary?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}&exclude_system=${excludeSystem}&database=${qaDatabaseQueryParam(dbName)}`);
                 if (!resp.ok) return;
                 const data = await resp.json();
                 updateKpis(data);
@@ -377,7 +387,7 @@
             try {
                 const excludeSystem = getQaExcludeSystem();
                 const exParam = `&exclude_system=${excludeSystem}`;
-                const dbParam = `&database=${encodeURIComponent(dbName)}`;
+                const dbParam = `&database=${qaDatabaseQueryParam(dbName)}`;
                 const base = `/api/timescale/sqlserver/query-stats-timeseries?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}`;
 
                 const cpuResp = await window.apiClient.authenticatedFetch(`${base}&metric=cpu${dbParam}${exParam}`);
@@ -410,7 +420,7 @@
             }
             try {
                 const resp = await window.apiClient.authenticatedFetch(
-                    `/api/sqlserver/query-analysis/top-queries-trends?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}&exclude_system=${excludeSystem}&limit=10&database=${encodeURIComponent(dbName)}&fingerprints=${encodeURIComponent(fingerprints)}`
+                    `/api/sqlserver/query-analysis/top-queries-trends?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}&exclude_system=${excludeSystem}&limit=10&database=${qaDatabaseQueryParam(dbName)}&fingerprints=${encodeURIComponent(fingerprints)}`
                 );
                 if (!resp.ok) return;
                 const data = await resp.json();
@@ -427,17 +437,16 @@
             const excludeSystem = getQaExcludeSystem();
             body.innerHTML = '<div class="text-muted p-3"><i class="fa-solid fa-spinner fa-spin"></i> Loading top queries...</div>';
             try {
-                const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/top-queries?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}&exclude_system=${excludeSystem}&limit=100&database=${encodeURIComponent(dbName)}`);
+                const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/top-queries?instance=${encodeURIComponent(instName)}&from=${from}&to=${to}&exclude_system=${excludeSystem}&limit=100&database=${qaDatabaseQueryParam(dbName)}`);
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const data = await resp.json();
                 const raw = Array.isArray(data) ? data : (data && data.queries) || [];
-                const deduped = typeof window.dedupeSqlServerTopQueries === 'function'
+                let deduped = typeof window.dedupeSqlServerTopQueries === 'function'
                     ? window.dedupeSqlServerTopQueries(raw)
                     : raw;
                 _topRows = filterQaExcludedRows(deduped);
                 mergeQaDatabaseOptionsFromRows(_topRows);
 
-                // Hide warning if we have data
                 const warning = document.getElementById('qaDataWarning');
                 if (warning && _topRows.length > 0) warning.style.display = 'none';
 
@@ -897,7 +906,7 @@
         /* ── Fetchers ── */
         async function fetchRegressions(dbName) {
             try {
-                const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/regressions?instance=${encodeURIComponent(instName)}&database=${encodeURIComponent(dbName)}`);
+                const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/regressions?instance=${encodeURIComponent(instName)}&database=${qaDatabaseQueryParam(dbName)}`);
                 if (!resp.ok) { console.error('regressions HTTP', resp.status); return; }
                 const data = await resp.json();
                 const raw = data.regressions || data || [];
@@ -908,7 +917,7 @@
 
         async function fetchPlanInstability(dbName) {
             try {
-                const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/plan-instability?instance=${encodeURIComponent(instName)}&database=${encodeURIComponent(dbName)}`);
+                const resp = await window.apiClient.authenticatedFetch(`/api/sqlserver/query-analysis/plan-instability?instance=${encodeURIComponent(instName)}&database=${qaDatabaseQueryParam(dbName)}`);
                 if (!resp.ok) { console.error('instability HTTP', resp.status); return; }
                 const data = await resp.json();
                 const raw = data.plan_instability || data || [];

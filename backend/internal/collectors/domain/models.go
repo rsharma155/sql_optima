@@ -34,6 +34,7 @@ type MSSQLQuerySnapshot struct {
 // MSSQLSessionEnrichment represents session metadata for joining
 type MSSQLSessionEnrichment struct {
 	PlanHandle      []byte
+	QueryHash       []byte // optional; when set, also upserts sqlserver_query_hash_enrichment
 	LoginName       string
 	ApplicationName string
 	DatabaseName    string

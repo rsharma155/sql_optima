@@ -33,24 +33,27 @@ func NewSqlServerWorkloadHandlers(svc *service.MetricsService, cfg *config.Confi
 }
 
 func (h *SqlServerWorkloadHandlers) parseID(r *http.Request) (uuid.UUID, bool) {
-	return ParseServerID(r, h.cfg)
+	id, _, outcome := resolveInstanceParamWithRepo(r.Context(), r, h.cfg, h.metricsSvc)
+	switch outcome {
+	case lookupFound:
+		return id, true
+	default:
+		return uuid.Nil, false
+	}
 }
 
-func parseWorkloadFilterParams(r *http.Request) (database string, excludeSystem bool) {
-	database = strings.TrimSpace(r.URL.Query().Get("database"))
-	if strings.EqualFold(database, "all") {
-		database = ""
-	}
+func parseWorkloadFilterParams(r *http.Request) (database string, autoPickDatabase bool, excludeSystem bool) {
+	database, autoPickDatabase = ParseSQLServerDatabaseScope(r)
 	excludeSystem = true
 	if es := r.URL.Query().Get("exclude_system"); es == "false" {
 		excludeSystem = false
 	}
-	return database, excludeSystem
+	return database, autoPickDatabase, excludeSystem
 }
 
-func (h *SqlServerWorkloadHandlers) resolveWorkloadDatabase(ctx context.Context, serverID uuid.UUID, from, to time.Time, database string, partial domain.WorkloadQueryFilter) (string, error) {
+func (h *SqlServerWorkloadHandlers) resolveWorkloadDatabase(ctx context.Context, serverID uuid.UUID, from, to time.Time, database string, autoPick bool, partial domain.WorkloadQueryFilter) (string, error) {
 	database = strings.TrimSpace(database)
-	if database != "" && !strings.EqualFold(database, "all") {
+	if !autoPick {
 		return database, nil
 	}
 	if h.metricsSvc != nil {
@@ -58,7 +61,6 @@ func (h *SqlServerWorkloadHandlers) resolveWorkloadDatabase(ctx context.Context,
 			return db, nil
 		}
 	}
-	// Do not default to master — it hides user DB activity when metrics live elsewhere.
 	return "", nil
 }
 
@@ -67,12 +69,12 @@ func (h *SqlServerWorkloadHandlers) instanceNameFromRequest(r *http.Request) str
 }
 
 func (h *SqlServerWorkloadHandlers) workloadFilter(ctx context.Context, r *http.Request, serverID uuid.UUID, from, to time.Time) (domain.WorkloadQueryFilter, error) {
-	database, excludeSystem := parseWorkloadFilterParams(r)
+	database, autoPick, excludeSystem := parseWorkloadFilterParams(r)
 	partial := domain.WorkloadQueryFilter{
 		ExcludeSystem:    excludeSystem,
 		MonitoringLogins: sqlServerExcludeLoginsForInstance(h.cfg, h.instanceNameFromRequest(r)),
 	}
-	db, err := h.resolveWorkloadDatabase(ctx, serverID, from, to, database, partial)
+	db, err := h.resolveWorkloadDatabase(ctx, serverID, from, to, database, autoPick, partial)
 	if err != nil {
 		return domain.WorkloadQueryFilter{}, err
 	}
@@ -87,7 +89,7 @@ func (h *SqlServerWorkloadHandlers) GetDatabases(w http.ResponseWriter, r *http.
 		return
 	}
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	database, excludeSystem := parseWorkloadFilterParams(r)
+	selectedDB, _, excludeSystem := parseWorkloadFilterParams(r)
 	partial := domain.WorkloadQueryFilter{
 		ExcludeSystem:    excludeSystem,
 		MonitoringLogins: sqlServerExcludeLoginsForInstance(h.cfg, h.instanceNameFromRequest(r)),
@@ -97,9 +99,13 @@ func (h *SqlServerWorkloadHandlers) GetDatabases(w http.ResponseWriter, r *http.
 		writeWorkloadTimescaleJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list databases", "detail": err.Error()})
 		return
 	}
+	scope := selectedDB
+	if scope == "" {
+		scope = "all"
+	}
 	writeWorkloadTimescaleJSON(w, http.StatusOK, map[string]interface{}{
 		"server_id":      id.String(),
-		"selected_scope": database,
+		"selected_scope": scope,
 		"exclude_system": excludeSystem,
 		"databases":      list,
 	})
@@ -112,12 +118,12 @@ func (h *SqlServerWorkloadHandlers) GetDefaultDatabase(w http.ResponseWriter, r 
 		return
 	}
 	from, to := ParseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	_, excludeSystem := parseWorkloadFilterParams(r)
+	_, _, excludeSystem := parseWorkloadFilterParams(r)
 	partial := domain.WorkloadQueryFilter{
 		ExcludeSystem:    excludeSystem,
 		MonitoringLogins: sqlServerExcludeLoginsForInstance(h.cfg, h.instanceNameFromRequest(r)),
 	}
-	db, err := h.resolveWorkloadDatabase(r.Context(), id, from, to, "", partial)
+	db, err := h.resolveWorkloadDatabase(r.Context(), id, from, to, "", true, partial)
 	if err != nil {
 		writeWorkloadTimescaleJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to resolve default database"})
 		return

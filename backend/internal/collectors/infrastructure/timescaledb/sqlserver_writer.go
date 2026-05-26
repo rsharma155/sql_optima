@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -176,25 +177,40 @@ SELECT
     d.ts, d.server_id, d.database_name,
     CASE
         WHEN COALESCE(d.query_text_raw, '') ILIKE '%/* SQL_OPTIMA%'
-            THEN COALESCE(NULLIF(TRIM(e.login_name), ''), 'sql-optima')
-        ELSE COALESCE(e.login_name, 'unknown')
+            OR COALESCE(d.statement_text, '') ILIKE '%/* SQL_OPTIMA%'
+            THEN COALESCE(NULLIF(TRIM(e.login_name), ''), NULLIF(TRIM(eh.login_name), ''), 'sql-optima')
+        ELSE COALESCE(NULLIF(TRIM(e.login_name), ''), NULLIF(TRIM(eh.login_name), ''), 'unknown')
     END,
     CASE
         WHEN COALESCE(d.query_text_raw, '') ILIKE '%/* SQL_OPTIMA%'
-            THEN COALESCE(NULLIF(TRIM(e.application_name), ''), 'sql-optima')
-        ELSE COALESCE(e.application_name, 'unknown')
+            OR COALESCE(d.statement_text, '') ILIKE '%/* SQL_OPTIMA%'
+            THEN COALESCE(NULLIF(TRIM(e.application_name), ''), NULLIF(TRIM(eh.application_name), ''), 'sql-optima')
+        ELSE COALESCE(NULLIF(TRIM(e.application_name), ''), NULLIF(TRIM(eh.application_name), ''), 'unknown')
     END,
     d.query_hash, d.plan_handle, d.exec_delta, d.cpu_delta_ms, d.elapsed_delta_ms,
     d.reads_delta, d.physical_reads_delta, d.rows_delta, d.statement_text,
     d.query_text_raw, d.last_execution_time,
     CASE
-        WHEN COALESCE(d.query_text_raw, '') ILIKE '%/* SQL_OPTIMA%' THEN 0
-        WHEN COALESCE(e.is_user_workload, 1) = 0 THEN 0
-        ELSE 1
+        WHEN COALESCE(d.query_text_raw, '') ILIKE '%/* SQL_OPTIMA%'
+          OR COALESCE(d.statement_text, '') ILIKE '%/* SQL_OPTIMA%' THEN 0
+        WHEN COALESCE(d.query_text_raw, '') ILIKE '%sys.dm_%'
+          OR COALESCE(d.statement_text, '') ILIKE '%sys.dm_%' THEN 0
+        WHEN (COALESCE(d.query_text_raw, '') ILIKE '%db_id()%' AND COALESCE(d.query_text_raw, '') ILIKE '%system_type_id%')
+          OR (COALESCE(d.statement_text, '') ILIKE '%db_id()%' AND COALESCE(d.statement_text, '') ILIKE '%system_type_id%')
+          OR (COALESCE(d.query_text_raw, '') ILIKE '%db_id()%' AND COALESCE(d.query_text_raw, '') ILIKE '%is_inlineable%')
+          OR (COALESCE(d.statement_text, '') ILIKE '%db_id()%' AND COALESCE(d.statement_text, '') ILIKE '%is_inlineable%')
+          OR (COALESCE(d.query_text_raw, '') ILIKE '%vector_column_count%')
+          OR (COALESCE(d.statement_text, '') ILIKE '%vector_column_count%') THEN 0
+        WHEN LOWER(TRIM(COALESCE(e.application_name, eh.application_name, ''))) IN ('sql-optima', 'go-mssqldb', 'sqlserverms') THEN 0
+        WHEN COALESCE(e.is_user_workload, eh.is_user_workload, 0) = 1 THEN 1
+        ELSE 0
     END
 FROM deltas d
 LEFT JOIN sqlserver_plan_enrichment e
     ON e.server_id = d.server_id AND e.plan_handle = d.plan_handle
+LEFT JOIN sqlserver_query_hash_enrichment eh
+    ON eh.server_id = d.server_id AND eh.query_hash = d.query_hash
+   AND eh.last_seen >= NOW() - INTERVAL '30 days'
 WHERE d.exec_delta > 0 OR d.cpu_delta_ms > 0 OR d.reads_delta > 0
 `
 	if _, err := tx.Exec(ctx, mergeMetricsSQL, serverID); err != nil {
@@ -274,7 +290,7 @@ func (w *TimescaleWriter) WriteMSSQLSessionEnrichment(ctx context.Context, serve
 		return nil
 	}
 
-	const q = `
+	const planQ = `
 		INSERT INTO sqlserver_plan_enrichment (
 			server_id, plan_handle, login_name, application_name, database_name, is_user_workload, last_seen
 		) VALUES ($1, $2, $3, $4, $5, $6, NOW())
@@ -285,23 +301,47 @@ func (w *TimescaleWriter) WriteMSSQLSessionEnrichment(ctx context.Context, serve
 			is_user_workload = EXCLUDED.is_user_workload,
 			last_seen = NOW();
 	`
+	const hashQ = `
+		INSERT INTO sqlserver_query_hash_enrichment (
+			server_id, query_hash, login_name, application_name, is_user_workload, last_seen
+		) VALUES ($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (server_id, query_hash) DO UPDATE SET
+			login_name = EXCLUDED.login_name,
+			application_name = EXCLUDED.application_name,
+			is_user_workload = EXCLUDED.is_user_workload,
+			last_seen = NOW();
+	`
 
 	batch := &pgx.Batch{}
 	for _, e := range enrichments {
-		batch.Queue(q,
+		batch.Queue(planQ,
 			serverID, e.PlanHandle, e.LoginName, e.ApplicationName, e.DatabaseName, e.IsUserWorkload,
 		)
+		if qHash := planQueryHashInt64(e.QueryHash); qHash != 0 && stringsTrimNotEmpty(e.LoginName) {
+			batch.Queue(hashQ, serverID, qHash, e.LoginName, e.ApplicationName, e.IsUserWorkload)
+		}
 	}
 
 	br := w.pool.SendBatch(ctx, batch)
 	defer br.Close()
 
-	for range enrichments {
+	for i := 0; i < batch.Len(); i++ {
 		if _, err := br.Exec(); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func planQueryHashInt64(b []byte) int64 {
+	if len(b) < 8 {
+		return 0
+	}
+	return int64(binary.BigEndian.Uint64(b))
+}
+
+func stringsTrimNotEmpty(s string) bool {
+	return len(strings.TrimSpace(s)) > 0
 }
 
 // ReadMSSQLPlanEnrichment returns enrichment rows for an serverID from

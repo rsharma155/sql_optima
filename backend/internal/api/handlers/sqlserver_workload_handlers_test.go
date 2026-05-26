@@ -32,15 +32,15 @@ func TestWorkloadSummary_InvalidInstance(t *testing.T) {
 
 func TestParseWorkloadFilterParams(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/?database=AdventureWorks&exclude_system=false", nil)
-	db, ex := parseWorkloadFilterParams(req)
-	if db != "AdventureWorks" || ex {
-		t.Fatalf("unexpected params: db=%q ex=%v", db, ex)
+	db, auto, ex := parseWorkloadFilterParams(req)
+	if db != "AdventureWorks" || auto || ex {
+		t.Fatalf("unexpected params: db=%q auto=%v ex=%v", db, auto, ex)
 	}
 
 	req2 := httptest.NewRequest(http.MethodGet, "/?database=all", nil)
-	db2, _ := parseWorkloadFilterParams(req2)
-	if db2 != "" {
-		t.Fatalf("want empty database param for all, got %q", db2)
+	db2, auto2, _ := parseWorkloadFilterParams(req2)
+	if db2 != "" || auto2 {
+		t.Fatalf("want all-databases scope, got db=%q auto=%v", db2, auto2)
 	}
 }
 

@@ -126,16 +126,81 @@ func buildTemplateIncidentTimeline(rules []models.RuleTriggerResult, genAt strin
 		}
 
 		timeline = append(timeline, map[string]string{
-			"time":     timeStr,
-			"event":    label,
-			"detail":   detail,
-			"severity": rule.Severity,
+			"time":           timeStr,
+			"event":          label,
+			"detail":         detail,
+			"severity":       rule.Severity,
+			"metric_context": buildMetricContext(rule.MetricValues, rule.RuleName),
+			"rule_name":      rule.RuleName,
 		})
 		if len(timeline) >= 8 {
 			break
 		}
 	}
 	return timeline
+}
+
+// buildMetricContext returns a short human-readable metric summary for an incident card.
+func buildMetricContext(mv map[string]float64, ruleName string) string {
+	// Priority metric per rule — pick the most meaningful signal for the card subtitle.
+	priority := map[string]string{
+		"cpu_saturation":         "avg_cpu_load",
+		"cpu_burst":              "avg_cpu_load",
+		"scheduler_starvation":   "avg_cpu_load",
+		"ple_collapse":           "ple_seconds",
+		"memory_grant_pressure":  "memory_grants_pending",
+		"low_disk_space":         "free_disk_mb",
+		"rapid_disk_growth":      "delta_data_mb",
+		"blocking_chains":        "blocking_sessions",
+		"tempdb_pressure":        "tempdb_used_percent",
+		"io_latency_high":        "read_latency_ms",
+		"replication_lag":        "replication_lag_seconds",
+		"ha_replication_lag":     "replication_lag_seconds",
+	}
+
+	key := priority[ruleName]
+	if key == "" {
+		// Fall back to first non-zero metric in the map
+		for k, v := range mv {
+			if v > 0 {
+				key = k
+				break
+			}
+		}
+	}
+	if key == "" {
+		return ""
+	}
+	v, exists := mv[key]
+	if !exists || v <= 0 {
+		return ""
+	}
+	switch key {
+	case "avg_cpu_load":
+		return fmt.Sprintf("CPU: %.0f%%", v)
+	case "ple_seconds":
+		return fmt.Sprintf("PLE: %.0fs", v)
+	case "free_disk_mb":
+		return fmt.Sprintf("Free: %.1fGB", v/1024)
+	case "delta_data_mb":
+		return fmt.Sprintf("Growth: %.0fMB/cycle", v)
+	case "blocking_sessions":
+		return fmt.Sprintf("Blocking: %.0f sessions", v)
+	case "tempdb_used_percent":
+		return fmt.Sprintf("TempDB: %.0f%%", v)
+	case "read_latency_ms":
+		return fmt.Sprintf("Read: %.0fms", v)
+	case "replication_lag_seconds":
+		return fmt.Sprintf("Lag: %.0fs", v)
+	case "memory_grants_pending":
+		return fmt.Sprintf("Grants pending: %.0f", v)
+	default:
+		label := cases.Title(language.Und).String(strings.ReplaceAll(key, "_", " "))
+		if v == float64(int(v)) {
+			return fmt.Sprintf("%s: %.0f", label, v)
+		}
+		return fmt.Sprintf("%s: %.1f", label, v)
+	}
 }
 
 // buildTemplateCapacityRows computes current disk/memory usage and 30/90-day projections

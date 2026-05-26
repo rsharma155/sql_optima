@@ -1092,46 +1092,72 @@ func (e *AnalysisEngine) buildWorkingWell(raw map[string]interface{}, thresholds
 }
 
 func (e *AnalysisEngine) buildRootCauses(triggered []models.RuleTriggerResult, raw map[string]interface{}) []string {
+	// Sort by severity so the primary (most critical) factor always leads the chain.
+	sevOrder := map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3}
+	sorted := make([]models.RuleTriggerResult, len(triggered))
+	copy(sorted, triggered)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sevOrder[sorted[i].Severity] < sevOrder[sorted[j].Severity]
+	})
+
+	seen := map[string]bool{} // deduplicate by domain
 	var causes []string
-	for _, t := range triggered {
+
+	for _, t := range sorted {
 		if t.Severity == "low" {
 			continue
 		}
 		mv := t.MetricValues
-		if cpu, ok := mv["avg_cpu_load"]; ok {
+		var cause string
+
+		if cpu, ok := mv["avg_cpu_load"]; ok && !seen["cpu"] {
+			seen["cpu"] = true
 			runnable := mv["runnable_tasks"]
-			causes = append(causes, fmt.Sprintf("Sustained CPU at %.1f%% with %.0f runnable tasks indicates compute-bound workload rather than I/O wait", cpu, runnable))
-		}
-		if ple, ok := mv["ple_seconds"]; ok {
-			causes = append(causes, fmt.Sprintf("PLE collapse to %.0fs suggests memory pressure from large buffer pool scans or insufficient RAM", ple))
-		}
-		if disk, ok := mv["free_disk_mb"]; ok {
+			if runnable > 0 {
+				cause = fmt.Sprintf("CPU pressure at %.1f%% with %.0f runnable tasks — workload is compute-bound; queries are competing for CPU cycles", cpu, runnable)
+			} else {
+				cause = fmt.Sprintf("CPU at %.1f%% — sustained high utilization; investigate top consumers in sys.dm_exec_requests and wait stats", cpu)
+			}
+		} else if ple, ok := mv["ple_seconds"]; ok && !seen["memory"] {
+			seen["memory"] = true
+			cause = fmt.Sprintf("Page Life Expectancy at %.0fs — buffer pool is evicting pages faster than normal, indicating insufficient RAM for current workload", ple)
+		} else if disk, ok := mv["free_disk_mb"]; ok && !seen["disk"] {
+			seen["disk"] = true
 			growth := mv["delta_growth_mb"]
 			if growth == 0 {
 				growth = getFloat(raw, "delta_data_mb", "", 0)
 			}
-			causes = append(causes, fmt.Sprintf("Disk space at %.0f MB with growth rate %.1f MB/interval indicates storage planning gap", disk, growth))
-		}
-		if repl, ok := mv["replication_lag_seconds"]; ok {
-			causes = append(causes, fmt.Sprintf("Replication lag of %.0fs suggests network throughput or subscriber apply speed issue", repl))
-		}
-		if block, ok := mv["blocking_sessions"]; ok {
-			causes = append(causes, fmt.Sprintf("Blocking chains with %.0f sessions indicate application concurrency or transaction length issues", block))
-		}
-		if t.RuleName == "backup_failure_risk" {
-			if jobs, ok := mv["failed_jobs_24h"]; ok {
-				causes = append(causes, fmt.Sprintf("SQL Agent job failures (%.0f in 24h) indicate potential backup/recovery gaps", jobs))
+			if disk > 0 && growth > 0 {
+				cause = fmt.Sprintf("Disk free space at %.1fGB with active growth (%.1f MB/cycle) — storage will reach threshold within forecast window", disk/1024, growth)
+			} else if disk > 0 {
+				cause = fmt.Sprintf("Disk free space at %.1fGB — below safety threshold; identify large tables, logs, or backup files to reclaim space", disk/1024)
+			} else {
+				cause = "Low disk space detected — review sqlserver_disk_history for top growth contributors"
 			}
-		}
-	}
-	if len(causes) == 0 && len(triggered) > 0 {
-		for _, t := range triggered {
-			if t.Severity != "low" {
-				causes = append(causes, t.Message)
-				if len(causes) >= 3 {
-					break
-				}
+		} else if repl, ok := mv["replication_lag_seconds"]; ok && !seen["replication"] {
+			seen["replication"] = true
+			cause = fmt.Sprintf("Replication lag at %.0fs — secondary replica is falling behind; check network bandwidth and transaction log generation rate", repl)
+		} else if block, ok := mv["blocking_sessions"]; ok && !seen["blocking"] {
+			seen["blocking"] = true
+			cause = fmt.Sprintf("%.0f blocking session(s) detected — long-running transactions or missing indexes are creating a concurrency bottleneck", block)
+		} else if t.RuleName == "backup_failure_risk" && !seen["backup"] {
+			seen["backup"] = true
+			if jobs, ok2 := mv["failed_jobs_24h"]; ok2 {
+				cause = fmt.Sprintf("%.0f SQL Agent job failure(s) in the last 24h — backup integrity and recoverability may be at risk", jobs)
 			}
+		} else if t.RuleName == "tempdb_pressure" && !seen["tempdb"] {
+			seen["tempdb"] = true
+			cause = "TempDB contention detected — sort/hash spills or allocation page hotspots; add TempDB data files or fix spill-causing queries"
+		} else if !seen[t.RuleName] && t.Message != "" {
+			seen[t.RuleName] = true
+			cause = t.Message
+		}
+
+		if cause != "" {
+			causes = append(causes, cause)
+		}
+		if len(causes) >= 5 {
+			break
 		}
 	}
 	return causes

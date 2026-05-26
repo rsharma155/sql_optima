@@ -93,6 +93,7 @@ func TestCollectMSSQL_Workflow(t *testing.T) {
 	mockMSSQL := new(MockMSSQLRepo)
 	mockMSSQL.On("GetSqlServerStartTime", mock.Anything).Return(startTime, nil)
 	mockMSSQL.On("FetchSnapshot", mock.Anything, lastPoll).Return(snapshots, nil)
+	mockMSSQL.On("FetchSessionEnrichment", mock.Anything).Return([]domain.MSSQLSessionEnrichment{}, nil)
 
 	mockWriter := new(MockWriter)
 	mockWriter.On("GetInstanceState", mock.Anything, serverID).Return(lastPoll, startTime, nil)
@@ -147,6 +148,7 @@ func TestCollectMSSQL_RestartDetection(t *testing.T) {
 	mockMSSQL.On("GetSqlServerStartTime", mock.Anything).Return(currStartTime, nil)
 	// Watermark should be reset (zero time) because restart was detected
 	mockMSSQL.On("FetchSnapshot", mock.Anything, time.Time{}).Return(snapshots, nil)
+	mockMSSQL.On("FetchSessionEnrichment", mock.Anything).Return([]domain.MSSQLSessionEnrichment{}, nil)
 
 	mockWriter := new(MockWriter)
 	mockWriter.On("GetInstanceState", mock.Anything, serverID).Return(lastPoll, prevStartTime, nil)

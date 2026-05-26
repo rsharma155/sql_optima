@@ -171,7 +171,7 @@ func (h *TimescaleHandlers) SqlServerQueryStatsTimeSeries(w http.ResponseWriter,
 			ExcludeSystem:    excludeSystem,
 			MonitoringLogins: sqlServerExcludeLoginsForInstance(h.metricsSvc.Config, strings.TrimSpace(r.URL.Query().Get("instance"))),
 		}
-		if resolved, err := qa.resolveAnalysisDatabase(r.Context(), serverID, tFrom, tTo, "", partial); err == nil {
+		if resolved, err := qa.resolveAnalysisDatabase(r.Context(), serverID, tFrom, tTo, "", true, partial); err == nil {
 			dbName = resolved
 		}
 	}

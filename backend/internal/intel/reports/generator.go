@@ -137,6 +137,16 @@ func (g *ReportGenerator) GenerateHTML(analysis *models.IntelligenceReportRespon
 	top3Actions := buildTemplateTop3Actions(analysis.RecommendedActions, analysis.TriggeredRules)
 	haNotConfigured, _ := rawData["ha_not_configured"].(bool)
 
+	// Override confidence with a weighted multi-factor model using the 5 diagnostics components.
+	// This replaces the simplistic nonzero-dimension count from the scorer with a richer signal.
+	if dc, ok := confidenceDiag["data_completeness"].(float64); ok {
+		ts, _ := confidenceDiag["trend_stability"].(float64)
+		hc, _ := confidenceDiag["historical_coverage"].(float64)
+		rc, _ := confidenceDiag["rule_correlation"].(float64)
+		mc, _ := confidenceDiag["metric_coverage"].(float64)
+		confidencePct = int(math.Round(0.25*dc + 0.20*ts + 0.20*hc + 0.15*rc + 0.20*mc))
+	}
+
 	// Series data for Performance Analysis charts (null when not collected)
 	cpuSeriesJSON     := rawSeriesJSON(rawData, "avg_cpu_load_series")
 	pleSeriesJSON     := rawSeriesJSON(rawData, "ple_seconds_series")

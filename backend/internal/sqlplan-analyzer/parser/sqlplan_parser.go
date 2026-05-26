@@ -36,6 +36,13 @@ type Parser struct {
 	insideHashProbe       bool
 	insideProbeResidual   bool
 	insideBuildResidual   bool
+	insideParamList     bool
+	insideOptimizerStats bool
+	// multi-statement batch tracking
+	stmtRoots    []*models.Operator
+	stmtTexts    []string
+	stmtCosts    []float64
+	stmtIDs      []string
 }
 
 func New(cfg Config) *Parser {
@@ -65,6 +72,12 @@ func (p *Parser) Parse(r io.Reader) (*models.PlanAnalysis, error) {
 	p.opIDCounter = 0
 	p.rootOp = nil
 	p.depth = 0
+	p.insideParamList = false
+	p.insideOptimizerStats = false
+	p.stmtRoots = nil
+	p.stmtTexts = nil
+	p.stmtCosts = nil
+	p.stmtIDs = nil
 
 	data, err := io.ReadAll(r)
 	if err != nil { return nil, err }
@@ -95,6 +108,31 @@ func (p *Parser) Parse(r io.Reader) (*models.PlanAnalysis, error) {
 	}
 	p.planAnalysis.Warnings = p.warnings
 	p.planAnalysis.MissingIndexes = p.missingIdx
+
+	// Populate multi-statement batch metadata
+	if len(p.stmtRoots) > 1 {
+		p.planAnalysis.IsBatch = true
+		stmts := make([]models.Statement, len(p.stmtRoots))
+		totalBatchCost := 0.0
+		for _, r := range p.stmtRoots {
+			if r != nil { totalBatchCost += r.EstimatedTotalSubtreeCost }
+		}
+		for i, r := range p.stmtRoots {
+			s := models.Statement{
+				RootOperator: r,
+			}
+			if i < len(p.stmtIDs)   { s.StatementID = p.stmtIDs[i] }
+			if i < len(p.stmtTexts) { s.StatementText = p.stmtTexts[i] }
+			if i < len(p.stmtCosts) { s.SubTreeCost = p.stmtCosts[i] }
+			if totalBatchCost > 0 && s.SubTreeCost > 0 {
+				s.CostPercent = s.SubTreeCost / totalBatchCost * 100
+			}
+			if r != nil { s.Operators = p.collectOperators(r) }
+			stmts[i] = s
+		}
+		p.planAnalysis.Statements = stmts
+	}
+
 	return p.planAnalysis, nil
 }
 
@@ -115,9 +153,8 @@ func (p *Parser) handleStartElement(el xml.StartElement) {
 	switch tag {
 	case "QUERYPLAN": p.parseQueryPlan(el)
 	case "RELOP": p.parseRelOp(el)
-	case "INDEXSCAN", "INDEXSEEK": 
-		if len(p.operatorStack) > 0 { p.operatorStack[len(p.operatorStack)-1].IndexScan = &models.IndexScan{} }
-	case "TABLESCAN": 
+	case "INDEXSCAN", "INDEXSEEK": p.parseIndexScanAttrs(el)
+	case "TABLESCAN":
 		if len(p.operatorStack) > 0 { p.operatorStack[len(p.operatorStack)-1].TableScan = &models.TableScan{} }
 	case "OBJECT": p.parseObject(el)
 	case "STMTSIMPLE": p.parseStatement(el)
@@ -133,9 +170,15 @@ func (p *Parser) handleStartElement(el xml.StartElement) {
 	case "MISSINGINDEXGROUP": p.parseMissingIndexGroup(el)
 	case "MISSINGINDEX": p.parseMissingIndex(el)
 	case "COLUMNGROUP": p.parseColumnGroup(el)
-	case "COLUMN": p.parseMissingIndexColumn(el)
+	case "COLUMN":
+		if p.insideOptimizerStats { p.parseStatisticsInfo(el) } else { p.parseMissingIndexColumn(el) }
+	case "COLUMNREFERENCE": p.parseColumnReference(el)
 	case "PLANAFFECTINGCONVERT": p.parsePlanAffectingConvert(el)
 	case "SEEKPREDICATE", "SEEKPREDICATENEW": p.predicateType = "seek"
+	case "PARAMETERLIST": p.insideParamList = true
+	case "OPTIMIZERSTATSUSAGE": p.insideOptimizerStats = true
+	case "STATISTICSINFO": p.parseStatisticsInfo(el)
+	case "ADAPTIVEJOIN": p.parseAdaptiveJoin(el)
 	}
 }
 
@@ -148,7 +191,11 @@ func (p *Parser) handleEndElement(el xml.EndElement) {
 			p.operatorStack = p.operatorStack[:len(p.operatorStack)-1]
 			if len(p.operatorStack) > 0 {
 				p.operatorStack[len(p.operatorStack)-1].Children = append(p.operatorStack[len(p.operatorStack)-1].Children, popped)
-			} else { p.rootOp = popped }
+			} else {
+				// Track each root per statement
+				p.stmtRoots = append(p.stmtRoots, popped)
+				p.rootOp = popped
+			}
 		}
 	case "MISSINGINDEX":
 		if p.currentMissingIdx != nil {
@@ -162,6 +209,8 @@ func (p *Parser) handleEndElement(el xml.EndElement) {
 	case "BUILDRESIDUAL": p.insideBuildResidual = false
 	case "PREDICATE": p.predicateType = ""
 	case "SEEKPREDICATE", "SEEKPREDICATENEW": p.predicateType = ""
+	case "PARAMETERLIST": p.insideParamList = false
+	case "OPTIMIZERSTATSUSAGE": p.insideOptimizerStats = false
 	}
 }
 
@@ -175,6 +224,7 @@ func (p *Parser) parseQueryPlan(el xml.StartElement) {
 		case "CACHEDPLANSIZE": p.planAnalysis.QueryPlan.CachedPlanSize = parseInt(val)
 		case "COMPILETIME": p.planAnalysis.QueryPlan.CompileTimeMs = parseInt(val)
 		case "OPTIMIZATIONLEVEL": p.planAnalysis.QueryPlan.OptimizationLevel = val
+		case "NONPARALLELPLANREASON": p.planAnalysis.QueryPlan.NonParallelPlanReason = val
 		}
 	}
 }
@@ -188,8 +238,15 @@ func (p *Parser) parseRelOp(el xml.StartElement) {
 		case "PHYSICALOP": op.PhysicalOp = v
 		case "LOGICALOP": op.LogicalOp = v
 		case "ESTIMATEDTOTALSUBTREECOST": op.EstimatedTotalSubtreeCost = parseFloat(v)
-		case "ESTIMATEROWS": op.EstimateRows = parseInt64(v)
+		case "ESTIMATEROWS": op.EstimateRows = parseFloat(v)
+		case "ESTIMATEDROWSREAD": op.EstimatedRowsRead = parseFloat(v)
+		case "AVGROWSIZE": op.AvgRowSize = parseFloat(v)
 		case "ACTUALROWS": op.ActualRows = parseInt64(v)
+		case "NODEID": op.NodeID = parseInt(v)
+		case "ESTIMATEDEXECUTIONMODE": op.EstimatedExecutionMode = v
+		case "STORAGE": op.Storage = v
+		case "PARALLEL":
+			op.Parallel = v == "1" || strings.ToLower(v) == "true"
 		}
 	}
 	p.operatorStack = append(p.operatorStack, op)
@@ -215,13 +272,22 @@ func (p *Parser) parseObject(el xml.StartElement) {
 }
 
 func (p *Parser) parseStatement(el xml.StartElement) {
+	var stmtID, stmtText string
+	var stmtCost float64
 	for _, a := range el.Attr {
 		v := a.Value
 		switch strings.ToUpper(a.Name.Local) {
-		case "STATEMENTTEXT": p.planAnalysis.Metadata.QueryText = v
+		case "STATEMENTTEXT":
+			stmtText = v
+			if p.planAnalysis.Metadata.QueryText == "" { p.planAnalysis.Metadata.QueryText = v }
 		case "QUERYHASH": p.planAnalysis.Metadata.QueryHash = v
+		case "STATEMENTID": stmtID = v
+		case "STATEMENTSUBTREECOST": stmtCost = parseFloat(v)
 		}
 	}
+	p.stmtTexts = append(p.stmtTexts, stmtText)
+	p.stmtIDs = append(p.stmtIDs, stmtID)
+	p.stmtCosts = append(p.stmtCosts, stmtCost)
 }
 
 func (p *Parser) parseRuntimeCounters(el xml.StartElement) {
@@ -230,18 +296,32 @@ func (p *Parser) parseRuntimeCounters(el xml.StartElement) {
 	for _, a := range el.Attr {
 		v := a.Value
 		switch strings.ToUpper(a.Name.Local) {
+		case "THREAD": rc.Thread = parseInt(v)
 		case "ACTUALROWS": rc.ActualRows = parseInt64(v)
+		case "ACTUALROWSREAD": rc.ActualRowsRead = parseInt64(v)
 		case "ACTUALEXECUTIONS": rc.ActualExecutions = parseInt(v)
 		case "ACTUALCPUMS": rc.ActualCPUms = parseFloat(v)
 		case "ACTUALELAPSEDMS": rc.ActualElapsedms = parseFloat(v)
+		case "ACTUALLOGICALREADS": rc.ActualLogicalReads = parseInt64(v)
+		case "ACTUALPHYSICALREADS": rc.ActualPhysicalReads = parseInt64(v)
+		case "ACTUALREBINDS": rc.ActualRebinds = parseInt64(v)
+		case "ACTUALREWINDS": rc.ActualRewinds = parseInt64(v)
+		case "ACTIVEPARALLELTHREAD": rc.ActiveParallelThread = parseInt(v)
 		}
 	}
 	op := p.operatorStack[len(p.operatorStack)-1]
 	op.RuntimeCounters = append(op.RuntimeCounters, rc)
+
+	// Aggregate runtime counters into operator-level fields
+	op.ActualRows += rc.ActualRows
+	op.ActualExecutions = rc.ActualExecutions
+	op.ActualCPUms += rc.ActualCPUms
+	op.ActualElapsedms = rc.ActualElapsedms // last thread wins for elapsed
+	op.ActualLogicalReads += rc.ActualLogicalReads
+	op.ActualPhysicalReads += rc.ActualPhysicalReads
 }
 
 func (p *Parser) parseWait(el xml.StartElement) {
-	if p.planAnalysis.QueryPlan == nil { p.planAnalysis.QueryPlan = &models.QueryPlan{} }
 	w := models.WaitStat{}
 	for _, a := range el.Attr {
 		val := a.Value
@@ -251,7 +331,14 @@ func (p *Parser) parseWait(el xml.StartElement) {
 		case "WAITCOUNT": w.WaitCount = parseInt(val)
 		}
 	}
-	p.planAnalysis.QueryPlan.WaitStats = append(p.planAnalysis.QueryPlan.WaitStats, w)
+	// Per-operator wait stats when inside a RelOp; otherwise plan-level
+	if len(p.operatorStack) > 0 {
+		op := p.operatorStack[len(p.operatorStack)-1]
+		op.OpWaitStats = append(op.OpWaitStats, w)
+	} else {
+		if p.planAnalysis.QueryPlan == nil { p.planAnalysis.QueryPlan = &models.QueryPlan{} }
+		p.planAnalysis.QueryPlan.WaitStats = append(p.planAnalysis.QueryPlan.WaitStats, w)
+	}
 }
 
 func (p *Parser) parseScalarOperator(el xml.StartElement) {
@@ -343,6 +430,112 @@ func (p *Parser) parseMissingIndexColumn(el xml.StartElement) {
 	case "EQUALITY": p.currentMissingIdx.Columns = append(p.currentMissingIdx.Columns, models.MissingIndexColumn{Column: name, Equality: true})
 	case "INEQUALITY": p.currentMissingIdx.Columns = append(p.currentMissingIdx.Columns, models.MissingIndexColumn{Column: name, Inequality: true})
 	case "INCLUDE": p.currentMissingIdx.IncludedColumns = append(p.currentMissingIdx.IncludedColumns, name)
+	}
+}
+
+// parseIndexScanAttrs initialises IndexScan on the top operator and captures
+// Ordered, ForcedIndex, IndexKind from the element attributes.
+func (p *Parser) parseIndexScanAttrs(el xml.StartElement) {
+	if len(p.operatorStack) == 0 { return }
+	op := p.operatorStack[len(p.operatorStack)-1]
+	if op.IndexScan == nil { op.IndexScan = &models.IndexScan{} }
+	for _, a := range el.Attr {
+		v := a.Value
+		switch strings.ToUpper(a.Name.Local) {
+		case "ORDERED":
+			op.IndexScan.Ordered = v == "1" || strings.ToLower(v) == "true"
+		case "FORCEDINDEX":
+			op.IndexScan.ForcedIndex = v == "1" || strings.ToLower(v) == "true"
+		case "INDEXKIND": op.IndexScan.IndexKind = v
+		case "SCANTYPE":  op.IndexScan.ScanType = v
+		case "STORAGE":   op.IndexScan.Storage = v
+		}
+	}
+}
+
+// parseColumnReference handles ColumnReference elements for hash-key lists and parameter lists.
+func (p *Parser) parseColumnReference(el xml.StartElement) {
+	if p.insideParamList {
+		p.parseParamColumnRef(el)
+		return
+	}
+	if len(p.operatorStack) == 0 { return }
+	op := p.operatorStack[len(p.operatorStack)-1]
+	if !p.insideHashBuild && !p.insideHashProbe { return }
+	ref := models.ColumnReference{}
+	for _, a := range el.Attr {
+		v := a.Value
+		switch strings.ToUpper(a.Name.Local) {
+		case "DATABASE": ref.Database = v
+		case "SCHEMA":   ref.Schema = v
+		case "TABLE":    ref.Table = v
+		case "ALIAS":    ref.Alias = v
+		case "COLUMN":   ref.Column = v
+		}
+	}
+	if op.Hash == nil { op.Hash = &models.HashMatch{} }
+	if p.insideHashBuild {
+		op.Hash.HashKeysBuild = append(op.Hash.HashKeysBuild, ref)
+	} else {
+		op.Hash.HashKeysProbe = append(op.Hash.HashKeysProbe, ref)
+	}
+}
+
+// parseParamColumnRef reads compiled/runtime parameter values from ParameterList/ColumnReference.
+func (p *Parser) parseParamColumnRef(el xml.StartElement) {
+	var col, dataType, compiled, runtime string
+	for _, a := range el.Attr {
+		v := a.Value
+		switch strings.ToUpper(a.Name.Local) {
+		case "COLUMN": col = v
+		case "PARAMETERDATATYPE": dataType = v
+		case "PARAMETERCOMPILEDVALUE": compiled = v
+		case "PARAMETERRUNTIMEVALUE": runtime = v
+		}
+	}
+	if compiled != "" {
+		p.planAnalysis.CompiledParameters = append(p.planAnalysis.CompiledParameters,
+			models.ParameterInfo{Parameter: col, DataType: dataType, Value: compiled})
+	}
+	if runtime != "" {
+		p.planAnalysis.RuntimeParameters = append(p.planAnalysis.RuntimeParameters,
+			models.ParameterInfo{Parameter: col, DataType: dataType, Value: runtime})
+	}
+}
+
+// parseStatisticsInfo reads a StatisticsInfo element into plan-level or operator-level stats.
+func (p *Parser) parseStatisticsInfo(el xml.StartElement) {
+	info := models.OperatorStatsInfo{}
+	for _, a := range el.Attr {
+		v := a.Value
+		switch strings.ToUpper(a.Name.Local) {
+		case "STATISTICS":        info.Object = v
+		case "TABLE":
+			if info.Object == "" { info.Object = v }
+		case "LASTUPDATE":        info.LastUpdate = v
+		case "MODIFICATIONCOUNT": info.ModificationCount = parseInt64(v)
+		case "SAMPLINGPERCENT":   info.SamplingPercent = parseFloat(v)
+		case "STATISTICSROWS":    info.TableCardinality = parseInt64(v)
+		}
+	}
+	if info.Object == "" { return }
+	if len(p.operatorStack) > 0 {
+		op := p.operatorStack[len(p.operatorStack)-1]
+		op.OpStatisticsInfo = append(op.OpStatisticsInfo, info)
+	} else {
+		p.planAnalysis.StatisticsInfo = append(p.planAnalysis.StatisticsInfo, info)
+	}
+}
+
+// parseAdaptiveJoin reads AdaptiveJoin attributes.
+func (p *Parser) parseAdaptiveJoin(el xml.StartElement) {
+	if len(p.operatorStack) == 0 { return }
+	op := p.operatorStack[len(p.operatorStack)-1]
+	for _, a := range el.Attr {
+		v := a.Value
+		switch strings.ToUpper(a.Name.Local) {
+		case "ADAPTIVETHRESHOLDROWS": op.AdaptiveThresholdRows = parseFloat(v)
+		}
 	}
 }
 

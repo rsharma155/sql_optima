@@ -5,6 +5,19 @@ import { charts } from '../utils/charts.js';
 
 /** Same exclusions as Query Analysis (distribution replica noise). */
 const WL_EXCLUDED_DATABASES = new Set(['distribution']);
+/** Empty value = all databases (must match API database=all). */
+const WL_ALL_DATABASES = '';
+
+function ensureWlAllDatabasesOption(dbSelect) {
+    if (!dbSelect) return;
+    let allOpt = [...dbSelect.options].find(o => o.value === WL_ALL_DATABASES);
+    if (!allOpt) {
+        allOpt = document.createElement('option');
+        allOpt.value = WL_ALL_DATABASES;
+        allOpt.textContent = 'All databases';
+        dbSelect.insertBefore(allOpt, dbSelect.firstChild);
+    }
+}
 
 function isWlExcludedDatabase(name) {
     return WL_EXCLUDED_DATABASES.has(String(name || '').trim().toLowerCase());
@@ -30,6 +43,7 @@ export const sqlserverWorkload = {
     sortKey: 'total_cpu_ms',
     sortDir: 'desc',
     sectionErrors: {},
+    _refreshInFlight: false,
     _lastFrom: null,
     _lastTo: null,
     databaseFilter: '',
@@ -91,7 +105,9 @@ export const sqlserverWorkload = {
     filterQueryString() {
         const { database } = this.getFilters();
         let q = '&exclude_system=true';
-        if (database) q += `&database=${encodeURIComponent(database)}`;
+        q += database
+            ? `&database=${encodeURIComponent(database)}`
+            : '&database=all';
         return q;
     },
 
@@ -101,12 +117,13 @@ export const sqlserverWorkload = {
     },
 
     applyDatabaseListToSelect(dbSelect, list) {
+        ensureWlAllDatabasesOption(dbSelect);
         const counts = new Map();
         list.forEach(d => {
             const name = (d.database_name || '').trim();
             if (name) counts.set(name, d.row_count || 0);
         });
-        const seen = new Set();
+        const seen = new Set([WL_ALL_DATABASES]);
         list.forEach(d => {
             const name = (d.database_name || '').trim();
             if (!name || seen.has(name)) return;
@@ -161,19 +178,27 @@ export const sqlserverWorkload = {
                 this.databaseFilter = name;
                 return name;
             }
+            dbSelect.value = WL_ALL_DATABASES;
+            this.databaseFilter = '';
+            return '';
         } catch (e) {
             console.warn('[Workload] databases in range', e);
         }
-        if (dbSelect.value) {
-            this.databaseFilter = dbSelect.value;
-            return dbSelect.value;
-        }
+        dbSelect.value = WL_ALL_DATABASES;
         this.databaseFilter = '';
         return '';
     },
 
     async ensureDatabaseSelected(from, to) {
-        return this.syncDatabaseForRange(from, to, { reselect: true });
+        // Default to all databases; user can narrow to one DB from the dropdown.
+        const dbSelect = document.getElementById('wl-database-filter');
+        if (dbSelect) {
+            ensureWlAllDatabasesOption(dbSelect);
+            dbSelect.value = WL_ALL_DATABASES;
+            this.databaseFilter = '';
+        }
+        await this.syncDatabaseForRange(from, to, { reselect: false });
+        return this.getFilters().database;
     },
 
     bindTimeRangeRefresh() {
@@ -189,18 +214,22 @@ export const sqlserverWorkload = {
 
     bindFilters() {
         const dbSelect = document.getElementById('wl-database-filter');
-        if (dbSelect && dbSelect.options.length === 0) {
-            const dbs = window.appState?.databases || window.appState?.config?.instances?.[window.appState?.currentInstanceIdx]?.databases || [];
-            const seen = new Set();
-            dbs.forEach(db => {
-                const name = typeof db === 'string' ? db : db?.name;
-                if (!name || seen.has(name) || isWlExcludedDatabase(name)) return;
-                seen.add(name);
-                const opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = name;
-                dbSelect.appendChild(opt);
-            });
+        if (dbSelect) {
+            ensureWlAllDatabasesOption(dbSelect);
+            if (dbSelect.options.length <= 1) {
+                const dbs = window.appState?.databases || window.appState?.config?.instances?.[window.appState?.currentInstanceIdx]?.databases || [];
+                const seen = new Set([WL_ALL_DATABASES]);
+                dbs.forEach(db => {
+                    const name = typeof db === 'string' ? db : db?.name;
+                    if (!name || seen.has(name) || isWlExcludedDatabase(name)) return;
+                    seen.add(name);
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    dbSelect.appendChild(opt);
+                });
+            }
+            if (!dbSelect.value) dbSelect.value = WL_ALL_DATABASES;
         }
         const applyBtn = document.getElementById('wl-apply-filters');
         if (applyBtn && !applyBtn._wlBound) {
@@ -290,6 +319,8 @@ export const sqlserverWorkload = {
 
     async refreshAll() {
         if (!this.instance) return;
+        if (this._refreshInFlight) return;
+        this._refreshInFlight = true;
         const range = window.getAppTimeRangeISO ? window.getAppTimeRangeISO() : {};
         const from = range.from || new Date(Date.now() - 3600000).toISOString();
         const to = range.to || new Date().toISOString();
@@ -298,22 +329,18 @@ export const sqlserverWorkload = {
         this._lastTo = to;
         this.sectionErrors = {};
 
-        await this.syncDatabaseForRange(from, to, {
-            reselect: rangeChanged || !this.getFilters().database,
-        });
-        if (!this.getFilters().database) {
-            this.setBanner('No workload rows in this range yet — pick a database after collector data arrives, or widen the time range.', 'warning');
-        }
-
-        this.setLoading(true);
         try {
+            await this.syncDatabaseForRange(from, to, {
+                reselect: rangeChanged && !!this.getFilters().database,
+            });
+
+            this.setLoading(true);
             const tasks = [
                 this.loadSection('summary', () => this.loadSummary(from, to)),
                 this.loadSection('trends', () => this.loadTrends(from, to)),
                 this.loadSection('top-queries', () => this.loadTopOffenders(from, to)),
                 this.loadSection('server-properties', () => this.loadServerProperties()),
                 this.loadSection('scheduler', () => this.loadSchedulerStats()),
-                this.loadSection('qa-summary', () => this.loadQaSummary(from, to)),
             ];
             if (this.loadedTabs.has('app-cpu-content')) {
                 tasks.push(this.loadSection('app-analysis', () => this.loadAppAnalysis(from, to)));
@@ -329,7 +356,10 @@ export const sqlserverWorkload = {
             this.setBanner('Workload refresh failed. Check console for details.');
         } finally {
             this.setLoading(false);
+            this._refreshInFlight = false;
         }
+        // QA summary uses heavy history + lateral joins; do not block the workload overlay.
+        void this.loadSection('qa-summary', () => this.loadQaSummary(from, to));
     },
 
     async loadSection(section, fn) {
@@ -446,7 +476,7 @@ export const sqlserverWorkload = {
 
     async loadQaSummary(from, to) {
         const { database } = this.getFilters();
-        const dbParam = encodeURIComponent(database || '');
+        const dbParam = encodeURIComponent(database || 'all');
         const data = await api.get(
             `/api/sqlserver/query-analysis/summary?instance=${encodeURIComponent(this.instance)}` +
             `&from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}` +

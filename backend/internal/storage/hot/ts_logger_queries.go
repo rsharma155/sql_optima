@@ -525,7 +525,7 @@ func (tl *TimescaleLogger) GetQueryStoreStats(ctx context.Context, serverID uuid
 		 AND class.query_hash = q.query_hash
 		WHERE q.server_id = $1
 		  AND q.capture_timestamp >= NOW() - INTERVAL '%s'
-		  AND COALESCE(q.is_user_workload, 1) = 1
+		  AND COALESCE(q.is_user_workload, 0) = 1
 		  AND q.query_text_raw NOT LIKE '%%/* SQL_OPTIMA%%'
 		  AND q.query_text_raw NOT LIKE '%%sys.all_objects%%'
 		  AND q.query_text_raw NOT LIKE '(@_msparam_0%%'

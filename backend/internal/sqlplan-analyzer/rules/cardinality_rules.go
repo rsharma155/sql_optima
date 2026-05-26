@@ -21,7 +21,7 @@ func (e *RuleEngine) registerCardinalityRules() {
 			if op.EstimateRows < 10 {
 				return false
 			}
-			ratio := float64(op.ActualRows) / float64(op.EstimateRows)
+			ratio := float64(op.ActualRows) / op.EstimateRows
 			return ratio > 10 || ratio < 0.1
 		},
 		ExtractFinding: func(plan *models.PlanAnalysis, op *models.Operator) models.Finding {
@@ -33,17 +33,17 @@ func (e *RuleEngine) registerCardinalityRules() {
 
 			var title, desc string
 			if op.ActualRows == 0 {
-				title = fmt.Sprintf("Cardinality Estimate %d, actual 0 rows on %s", op.EstimateRows, tableStr)
-				desc = fmt.Sprintf("On %s: optimizer estimated %d rows but actual was 0 (no rows returned).", opLabel, op.EstimateRows)
+				title = fmt.Sprintf("Cardinality Estimate %.0f, actual 0 rows on %s", op.EstimateRows, tableStr)
+				desc = fmt.Sprintf("On %s: optimizer estimated %.0f rows but actual was 0 (no rows returned).", opLabel, op.EstimateRows)
 			} else {
-				ratio := float64(op.ActualRows) / float64(op.EstimateRows)
+				ratio := float64(op.ActualRows) / op.EstimateRows
 				if ratio < 1 {
 					r := 1 / ratio
 					title = fmt.Sprintf("Cardinality overestimate %.0fx on %s", r, tableStr)
-					desc = fmt.Sprintf("On %s: optimizer estimated %d rows but actual was %d. %.0fx overestimate.", opLabel, op.EstimateRows, op.ActualRows, r)
+					desc = fmt.Sprintf("On %s: optimizer estimated %.0f rows but actual was %d. %.0fx overestimate.", opLabel, op.EstimateRows, op.ActualRows, r)
 				} else {
 					title = fmt.Sprintf("Cardinality underestimate %.0fx on %s", ratio, tableStr)
-					desc = fmt.Sprintf("On %s: optimizer estimated %d rows but actual was %d. %.0fx underestimate.", opLabel, op.EstimateRows, op.ActualRows, ratio)
+					desc = fmt.Sprintf("On %s: optimizer estimated %.0f rows but actual was %d. %.0fx underestimate.", opLabel, op.EstimateRows, op.ActualRows, ratio)
 				}
 			}
 			return makeBaseFinding(op, title, desc,

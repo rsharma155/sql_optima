@@ -7,6 +7,7 @@ This directory is the **single source** for SQL Optima database scripts (merged 
 | File | Description |
 |------|-------------|
 | `01_timescale_schema.sql` | Main TimescaleDB schema: hypertables, indexes, compression |
+| `07_optima_server_dr_policy.sql` | Idempotent DR/RPO policy table (`optima_server_dr_policy`); re-run on upgrade |
 | `06_seed_data.sql` | Default users, widgets, and collection schedules |
 | `03_additional_pg_rules.sql` | Additional PostgreSQL-specific rules for the rule engine |
 | `04_alert_engine.sql` | **Canonical** alert engine schema |
@@ -163,3 +164,8 @@ Postgres (`pg_stat_monitor` → primary, `pg_stat_statements` → fallback) → 
 1. TimescaleDB extension: `SELECT * FROM pg_extension WHERE extname = 'timescaledb';`
 2. Clean Docker volumes if reinitializing from scratch.
 3. Migrations require a user with sufficient privileges.
+4. **`relation "optima_server_dr_policy" does not exist`**: The table is created early in `01_timescale_schema.sql` and by `07_optima_server_dr_policy.sql`. Older volumes may have stopped applying `01` before the end of the file (e.g. `ruleengine.rules` not present yet). Run:
+   ```bash
+   docker compose -f infrastructure/docker/docker-compose.yml run --rm schema-patches
+   ```
+   Or apply manually: `psql ... -f infrastructure/sql_scripts/07_optima_server_dr_policy.sql`

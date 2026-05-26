@@ -427,8 +427,22 @@ window.showAddServerForm = function() {
             }
         }
     };
+    let osCollectorNameDebounce = null;
     typeSel?.addEventListener('change', syncTrustUI);
-    document.getElementById('srv-name')?.addEventListener('input', syncTrustUI);
+    document.getElementById('srv-name')?.addEventListener('input', () => {
+        if (typeSel?.value !== 'postgres') {
+            syncTrustUI();
+            return;
+        }
+        const slot = document.getElementById('os-collector-admin-add-status');
+        const name = document.getElementById('srv-name')?.value.trim() || '';
+        if (slot && window.refreshOsCollectorSetupStatus) {
+            clearTimeout(osCollectorNameDebounce);
+            osCollectorNameDebounce = setTimeout(() => window.refreshOsCollectorSetupStatus(slot, name), 400);
+            return;
+        }
+        syncTrustUI();
+    });
     syncTrustUI();
 
     // Disable save if any input changes

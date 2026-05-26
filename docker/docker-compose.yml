@@ -2,7 +2,7 @@ services:
   api:
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile.compose-api
     ports:
       - "${API_PORT:-8080}:8080"
     env_file:
@@ -17,7 +17,9 @@ services:
       # If unset, ingest is controlled from the UI (optima_platform_settings).
       JWT_SECRET: ${JWT_SECRET:-change-me-to-32chars-minimum-for-prod}
       VAULT_ADDR: ${VAULT_ADDR:-http://vault:8200}
-      VAULT_TOKEN: ${VAULT_TOKEN:-root}
+      # Leave VAULT_TOKEN unset in .env for Compose: token is read from vault_data (see VAULT_TOKEN_FILE).
+      VAULT_TOKEN: ${VAULT_TOKEN:-}
+      VAULT_TOKEN_FILE: /vault/token/.root_token
       VAULT_TRANSIT_MOUNT: ${VAULT_TRANSIT_MOUNT:-transit}
       VAULT_NAMESPACE: ${VAULT_NAMESPACE:-}
       VAULT_TRANSIT_KEY: ${VAULT_TRANSIT_KEY:-sql-optima}
@@ -31,10 +33,14 @@ services:
         condition: service_healthy
       schema-setup:
         condition: service_completed_successfully
+      schema-patches:
+        condition: service_completed_successfully
       vault:
         condition: service_healthy
       vault-setup:
         condition: service_completed_successfully
+    volumes:
+      - vault_data:/vault/token:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
       interval: 30s
@@ -72,7 +78,7 @@ services:
     restart: unless-stopped
 
   vault:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:1.18
     cap_add:
       - IPC_LOCK
     ports:
@@ -80,48 +86,21 @@ services:
     environment:
       VAULT_ADDR: http://127.0.0.1:8200
       VAULT_TOKEN: ${VAULT_TOKEN:-root}
-    command:
-      - sh
-      - -lc
-      - |
-        # If Vault is already initialized and sealed, unseal it automatically.
-        # This uses the single unseal key approach acceptable for single-node dev/prod-lite deployments.
-        vault server -config=/vault/config/vault.hcl &
-        VAULT_PID=$$!
-        sleep 2
-
-        export VAULT_ADDR=http://127.0.0.1:8200
-
-        # Initialize on first run; store unseal key to /vault/data/.unseal (on the persistent volume)
-        if ! vault status 2>/dev/null | grep -q "Initialized.*true"; then
-          echo "[vault-init] Initializing Vault for the first time..."
-          vault operator init -key-shares=1 -key-threshold=1 -format=json > /vault/data/.init.json
-          UNSEAL_KEY=$$(cat /vault/data/.init.json | grep unseal_keys_b64 | head -1 | tr -d ' ",' | cut -d: -f2 | tr -d '[]')
-          ROOT_TOKEN=$$(cat /vault/data/.init.json | grep root_token | tr -d ' ",' | cut -d: -f2)
-          echo "$$UNSEAL_KEY" > /vault/data/.unseal
-          echo "$$ROOT_TOKEN"  > /vault/data/.root_token
-          echo "[vault-init] Vault initialized. Root token stored to /vault/data/.root_token"
-        fi
-
-        # Unseal if sealed
-        if vault status 2>/dev/null | grep -q "Sealed.*true"; then
-          echo "[vault-init] Unsealing Vault..."
-          vault operator unseal "$$(cat /vault/data/.unseal)"
-        fi
-
-        wait $$VAULT_PID
+    entrypoint: ["/bin/sh", "/vault/scripts/vault-entrypoint.sh"]
     volumes:
       - vault_data:/vault/data
       - ./vault-config.hcl:/vault/config/vault.hcl:ro
+      - ./scripts/vault-entrypoint.sh:/vault/scripts/vault-entrypoint.sh:ro
     healthcheck:
-      test: ["CMD", "sh", "-lc", "VAULT_ADDR=http://127.0.0.1:8200 vault status -format=json | grep -q '\"sealed\":false'"]
+      test: ["CMD", "sh", "-lc", "VAULT_ADDR=http://127.0.0.1:8200 vault status 2>/dev/null | grep -q 'Sealed.*false'"]
       interval: 5s
-      timeout: 3s
-      retries: 30
+      timeout: 5s
+      retries: 36
+      start_period: 90s
     restart: unless-stopped
 
   vault-setup:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:1.18
     environment:
       VAULT_ADDR: ${VAULT_ADDR:-http://vault:8200}
       VAULT_TOKEN: ${VAULT_TOKEN:-root}
@@ -137,6 +116,7 @@ services:
         export VAULT_ADDR="$$VAULT_ADDR"
         # Read the root token from the persistent volume written by the vault init step
         export VAULT_TOKEN=$$(cat /vault/data/.root_token 2>/dev/null || echo "${VAULT_TOKEN:-root}")
+        chmod 644 /vault/data/.root_token 2>/dev/null || true
         echo "[vault-setup] Enabling transit engine (idempotent)..."
         vault secrets enable -path=transit transit >/dev/null 2>&1 || true
         vault write -f "transit/keys/$$VAULT_TRANSIT_KEY" >/dev/null 2>&1 || true
@@ -166,20 +146,47 @@ services:
           echo "Waiting for TimescaleDB..."
           sleep 2
         done
-        echo "[1/6] Applying TimescaleDB schema (consolidated)..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/01_timescale_schema.sql || true
-        echo "[2/6] Applying rule engine..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/02_rule_engine.sql || true
-        echo "[3/6] Applying additional PG rules..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/03_additional_pg_rules.sql || true
-        echo "[4/6] Applying alert engine schema..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/04_alert_engine.sql || true
-        echo "[5/6] Applying os metric collector..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/05_os_metrics_collector.sql || true
-        echo "[6/6] Seeding initial data..."
-        psql -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME -f /sql_scripts/06_seed_data.sql || true
-        echo "[7/7] Applying cold storage schema..."
+        PSQL="psql -v ON_ERROR_STOP=1 -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME"
+        echo "[1/7] Applying TimescaleDB schema (consolidated)..."
+        $$PSQL -f /sql_scripts/01_timescale_schema.sql
+        echo "[2/7] Applying rule engine..."
+        $$PSQL -f /sql_scripts/02_rule_engine.sql
+        echo "[3/7] Applying additional PG rules..."
+        $$PSQL -f /sql_scripts/03_additional_pg_rules.sql
+        echo "[4/7] Applying alert engine schema..."
+        $$PSQL -f /sql_scripts/04_alert_engine.sql
+        echo "[5/7] Applying OS metrics collector..."
+        $$PSQL -f /sql_scripts/05_os_metrics_collector.sql
+        echo "[6/7] Seeding initial data..."
+        $$PSQL -f /sql_scripts/06_seed_data.sql
+        echo "[7/7] Applying DR policy patch..."
+        $$PSQL -f /sql_scripts/07_optima_server_dr_policy.sql
         echo "Schema setup complete."
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: "no"
+
+  schema-patches:
+    image: postgres:16-alpine
+    environment:
+      DB_HOST: timescaledb
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-dbmonitor}
+      DB_PASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
+      DB_NAME: ${DB_NAME:-dbmonitor_metrics}
+      PGPASSWORD: ${DB_PASSWORD:-change_me_in_production_use_strong_password}
+    volumes:
+      - ../infrastructure/sql_scripts:/sql_scripts:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        export PGPASSWORD="$$DB_PASSWORD"
+        until pg_isready -h $$DB_HOST -p $$DB_PORT -U $$DB_USER; do sleep 2; done
+        psql -v ON_ERROR_STOP=1 -h $$DB_HOST -p $$DB_PORT -U $$DB_USER -d $$DB_NAME \
+          -f /sql_scripts/07_optima_server_dr_policy.sql
     depends_on:
       timescaledb:
         condition: service_healthy

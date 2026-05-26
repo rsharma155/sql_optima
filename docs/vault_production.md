@@ -17,7 +17,7 @@ The Compose `vault` service uses **file storage** (`docker/vault-config.hcl` →
 | Artifact | Location | Purpose |
 |----------|----------|---------|
 | Unseal key | `/vault/data/.unseal` | Auto-unseal on container start |
-| Root token | `/vault/data/.root_token` | Written at first init; used by `schema-setup` / API as `VAULT_TOKEN` |
+| Root token | `/vault/data/.root_token` | Written at first init; API reads via `VAULT_TOKEN_FILE` in Compose (not the literal `root`) |
 | Transit key | `sql-optima` (env: `VAULT_TRANSIT_KEY`) | Encrypt/decrypt instance credentials |
 
 **TLS:** The bundled listener has `tls_disable = 1`. In production, place Vault behind a reverse proxy with TLS or use a proper Vault cluster with TLS enabled.
@@ -88,7 +88,7 @@ Configure the API with:
 - `VAULT_ADDR` — HTTPS URL of your Vault cluster
 - `VAULT_TOKEN` — **or** integrate AppRole login in your secret injection (Kubernetes secrets, systemd `EnvironmentFile`, etc.)
 
-> The stock Compose entrypoint injects `VAULT_TOKEN` from `.root_token`. Replace that with your secret manager in production.
+> The stock Compose API mounts `vault_data` read-only at `/vault/token` and sets `VAULT_TOKEN_FILE=/vault/token/.root_token`. Replace that with your secret manager in production.
 
 ### 4. Re-encrypt credentials (if changing keys)
 

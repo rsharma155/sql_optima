@@ -31,7 +31,7 @@ func NewSqlServerQueryAnalysisHandlers(svc *service.MetricsService, cfg *config.
 }
 
 func (h *SqlServerQueryAnalysisHandlers) resolve(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	id, _, outcome := resolveInstanceParam(r, h.cfg)
+	id, _, outcome := resolveInstanceParamWithRepo(r.Context(), r, h.cfg, h.metricsSvc)
 	switch outcome {
 	case lookupMissing:
 		w.WriteHeader(http.StatusBadRequest)
@@ -60,17 +60,14 @@ func (h *SqlServerQueryAnalysisHandlers) requireSqlServer(w http.ResponseWriter,
 	return true
 }
 
-func parseQueryAnalysisParams(r *http.Request) (from, to time.Time, database string, excludeSystem bool) {
+func parseQueryAnalysisParams(r *http.Request) (from, to time.Time, database string, autoPickDatabase bool, excludeSystem bool) {
 	from, to, _ = parseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
-	database = strings.TrimSpace(r.URL.Query().Get("database"))
-	if strings.EqualFold(database, "all") {
-		database = ""
-	}
+	database, autoPickDatabase = ParseSQLServerDatabaseScope(r)
 	excludeSystem = true
 	if es := r.URL.Query().Get("exclude_system"); es == "false" {
 		excludeSystem = false
 	}
-	return from, to, database, excludeSystem
+	return from, to, database, autoPickDatabase, excludeSystem
 }
 
 func (h *SqlServerQueryAnalysisHandlers) instanceNameFromRequest(r *http.Request) string {
@@ -81,9 +78,9 @@ func (h *SqlServerQueryAnalysisHandlers) monitoringLoginsForRequest(r *http.Requ
 	return sqlServerExcludeLoginsForInstance(h.cfg, h.instanceNameFromRequest(r))
 }
 
-func (h *SqlServerQueryAnalysisHandlers) resolveAnalysisDatabase(ctx context.Context, serverID uuid.UUID, from, to time.Time, database string, partial domain.WorkloadQueryFilter) (string, error) {
+func (h *SqlServerQueryAnalysisHandlers) resolveAnalysisDatabase(ctx context.Context, serverID uuid.UUID, from, to time.Time, database string, autoPick bool, partial domain.WorkloadQueryFilter) (string, error) {
 	database = strings.TrimSpace(database)
-	if database != "" && !strings.EqualFold(database, "all") {
+	if !autoPick {
 		return database, nil
 	}
 	if h.metricsSvc != nil {
@@ -102,12 +99,12 @@ func (h *SqlServerQueryAnalysisHandlers) GetDefaultDatabase(w http.ResponseWrite
 	if !h.requireSqlServer(w, id) {
 		return
 	}
-	from, to, _, excludeSystem := parseQueryAnalysisParams(r)
+	from, to, _, _, excludeSystem := parseQueryAnalysisParams(r)
 	partial := domain.WorkloadQueryFilter{
 		ExcludeSystem:    excludeSystem,
 		MonitoringLogins: h.monitoringLoginsForRequest(r),
 	}
-	db, err := h.resolveAnalysisDatabase(r.Context(), id, from, to, "", partial)
+	db, err := h.resolveAnalysisDatabase(r.Context(), id, from, to, "", true, partial)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -125,10 +122,10 @@ func (h *SqlServerQueryAnalysisHandlers) GetSummary(w http.ResponseWriter, r *ht
 		return
 	}
 
-	from, to, database, excludeSystem := parseQueryAnalysisParams(r)
+	from, to, database, autoPick, excludeSystem := parseQueryAnalysisParams(r)
 	logins := h.monitoringLoginsForRequest(r)
 	partial := domain.WorkloadQueryFilter{ExcludeSystem: excludeSystem, MonitoringLogins: logins}
-	database, err := h.resolveAnalysisDatabase(r.Context(), id, from, to, database, partial)
+	database, err := h.resolveAnalysisDatabase(r.Context(), id, from, to, database, autoPick, partial)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -196,10 +193,10 @@ func (h *SqlServerQueryAnalysisHandlers) GetTopQueries(w http.ResponseWriter, r 
 			limit = val
 		}
 	}
-	from, to, database, excludeSystem := parseQueryAnalysisParams(r)
+	from, to, database, autoPick, excludeSystem := parseQueryAnalysisParams(r)
 	logins := h.monitoringLoginsForRequest(r)
 	partial := domain.WorkloadQueryFilter{ExcludeSystem: excludeSystem, MonitoringLogins: logins}
-	database, err := h.resolveAnalysisDatabase(r.Context(), id, from, to, database, partial)
+	database, err := h.resolveAnalysisDatabase(r.Context(), id, from, to, database, autoPick, partial)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -228,10 +225,10 @@ func (h *SqlServerQueryAnalysisHandlers) GetTopQueryTrends(w http.ResponseWriter
 			limit = val
 		}
 	}
-	from, to, database, excludeSystem := parseQueryAnalysisParams(r)
+	from, to, database, autoPick, excludeSystem := parseQueryAnalysisParams(r)
 	logins := h.monitoringLoginsForRequest(r)
 	partial := domain.WorkloadQueryFilter{ExcludeSystem: excludeSystem, MonitoringLogins: logins}
-	database, err := h.resolveAnalysisDatabase(r.Context(), id, from, to, database, partial)
+	database, err := h.resolveAnalysisDatabase(r.Context(), id, from, to, database, autoPick, partial)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

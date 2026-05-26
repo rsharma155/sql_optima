@@ -141,10 +141,10 @@ INSERT INTO ruleengine.rules (
     'PG_ARCHIVE_MODE_027',
     'WAL Archive Mode (archive_mode)',
     'Backup', 'Instance', 'Warning', 'BestPractice',
-    'archive_mode is off. Enable for point-in-time recovery (PITR) capability.',
+    'archive_mode is off. Enable for PITR on bare-metal/VM. Often intentionally off in containers and cloud-managed PostgreSQL.',
     NULL,
     'SELECT setting AS setting FROM pg_settings WHERE name = ''archive_mode'';',
-    'setting == ''off'' ? "Warning" : "OK"',
+    'setting == ''off'' ? "INFO" : "OK"',
     'on',
     'on',
     NULL,
@@ -168,20 +168,20 @@ INSERT INTO ruleengine.rules (
     'exact', '{"value":"on"}', 28, 'postgres', TRUE
 ),
 
--- 9. default_statistics_target — low value (100) yields poor query plans on large tables
+-- 9. default_statistics_target — below-default value degrades query plans
 (
     'PG_STATS_TARGET_029',
     'Default Statistics Target',
     'Performance', 'Instance', 'Warning', 'BestPractice',
-    'default_statistics_target=100 is the default. Increase to 200–500 for better query plans on large tables.',
+    'Values below the PostgreSQL default (100) degrade planner accuracy. Default (100) is acceptable; for tables with millions of rows consider 200–500.',
     NULL,
     'SELECT setting::int AS setting FROM pg_settings WHERE name = ''default_statistics_target'';',
-    'setting < 200 ? "Warning" : "OK"',
-    '200',
-    '200',
+    'setting < 100 ? "Warning" : "OK"',
+    '100',
+    '≥ 100 (200–500 recommended for large tables)',
     NULL,
     'ALTER SYSTEM SET default_statistics_target = 200; SELECT pg_reload_conf(); ANALYZE;',
-    'threshold', '{"min":200}', 29, 'postgres', TRUE
+    'threshold', '{"min":100}', 29, 'postgres', TRUE
 ),
 
 -- 10. effective_io_concurrency — SSD optimisation (default 1 is for HDD)
@@ -189,26 +189,26 @@ INSERT INTO ruleengine.rules (
     'PG_EFFECTIVE_IO_CONCURRENCY_030',
     'Effective I/O Concurrency',
     'Performance', 'Instance', 'Warning', 'BestPractice',
-    'effective_io_concurrency=1 is tuned for HDDs. Set to 100–200 for SSDs/NVMe.',
+    'Default (1) is tuned for HDDs. Set to 100–200 if running on SSDs or NVMe. No change needed on spinning disks or if storage type is unknown.',
     NULL,
     'SELECT setting::int AS setting FROM pg_settings WHERE name = ''effective_io_concurrency'';',
-    'setting < 100 ? "Warning" : "OK"',
+    'setting >= 100 ? "OK" : "INFO"',
     '100',
-    '100',
+    '100 (SSD/NVMe) or 1 (HDD)',
     NULL,
     'ALTER SYSTEM SET effective_io_concurrency = 100; SELECT pg_reload_conf();',
     'threshold', '{"min":100}', 30, 'postgres', TRUE
 ),
 
--- 11. Unused indexes — find indexes that have never been scanned
+-- 11. Unused indexes — find indexes that have never been scanned (7-day uptime guard avoids false positives after restarts)
 (
     'PG_UNUSED_INDEXES_031',
     'Unused Indexes',
     'Performance', 'Database', 'Warning', 'BestPractice',
-    'Indexes with zero scans waste storage and slow down writes.',
+    'Indexes with zero scans waste storage and slow down writes. Suppressed as INFO for the first 7 days after server start to avoid post-restart false positives.',
     NULL,
-    'SELECT COUNT(*) AS cnt FROM pg_stat_user_indexes WHERE idx_scan = 0 AND schemaname NOT IN (''pg_catalog'',''information_schema'');',
-    'cnt == 0 ? "OK" : "Warning"',
+    'SELECT COUNT(*) AS cnt, EXTRACT(EPOCH FROM (now() - pg_postmaster_start_time())) / 86400 AS server_uptime_days FROM pg_stat_user_indexes WHERE idx_scan = 0 AND schemaname NOT IN (''pg_catalog'', ''information_schema'');',
+    'server_uptime_days < 7 ? "INFO" : (cnt == 0 ? "OK" : "Warning")',
     '0',
     '0',
     NULL,
@@ -239,7 +239,7 @@ INSERT INTO ruleengine.rules (
     'Schema', 'Database', 'Critical', 'BestPractice',
     'Sequences that have consumed ≥ 80 % of their range will soon fail with integer overflow.',
     NULL,
-    E'SELECT COUNT(*) AS cnt FROM ( SELECT seqrelid, (last_value::numeric - minimum_value::numeric + 1) / (maximum_value::numeric - minimum_value::numeric + 1) * 100 AS used_pct FROM pg_sequences, LATERAL (SELECT last_value, minimum_value, maximum_value FROM pg_sequences WHERE schemaname || ''.'' || sequencename = schemaname || ''.'' || sequencename) sub WHERE (last_value::numeric - minimum_value::numeric + 1) / (maximum_value::numeric - minimum_value::numeric + 1) * 100 >= 80) sq;',
+    'SELECT COUNT(*) AS cnt FROM pg_sequences WHERE maximum_value > 0 AND last_value IS NOT NULL AND (last_value::numeric - minimum_value::numeric + 1) / NULLIF((maximum_value::numeric - minimum_value::numeric + 1), 0) * 100 >= 80;',
     'cnt == 0 ? "OK" : "Critical"',
     '0',
     '0',
@@ -253,15 +253,15 @@ INSERT INTO ruleengine.rules (
     'PG_CHKPT_WARNING_034',
     'Checkpoint Frequency (max_wal_size)',
     'Performance', 'Instance', 'Warning', 'BestPractice',
-    'If pg_log shows "checkpoints occurring too frequently" increase max_wal_size.',
+    'max_wal_size below the PostgreSQL default (1 GB) forces excessive checkpoints. For write-heavy workloads consider 2–4 GB.',
     NULL,
     'SELECT setting::bigint AS setting FROM pg_settings WHERE name = ''max_wal_size'';',
-    'setting < 2048 ? "Warning" : "OK"',
-    '2048',
-    '2048 MB',
+    'setting < 1024 ? "Warning" : "OK"',
+    '1024',
+    '≥ 1024 MB (2048–4096 recommended for write-heavy workloads)',
     NULL,
     'ALTER SYSTEM SET max_wal_size = ''2GB''; SELECT pg_reload_conf();',
-    'threshold', '{"min":2048}', 34, 'postgres', TRUE
+    'threshold', '{"min":1024}', 34, 'postgres', TRUE
 ),
 
 -- 15. logging_collector — required for log_min_duration_statement to write files
@@ -269,15 +269,98 @@ INSERT INTO ruleengine.rules (
     'PG_LOGGING_COLLECTOR_035',
     'Logging Collector Enabled',
     'Observability', 'Instance', 'Warning', 'BestPractice',
-    'logging_collector is off. Without it, CSV/text log files are not written on most platforms.',
+    'logging_collector is off. Enable for file-based logs on bare-metal/VM. Intentionally off in Docker, Kubernetes, and cloud-managed PostgreSQL that log to stdout.',
     NULL,
     'SELECT setting AS setting FROM pg_settings WHERE name = ''logging_collector'';',
-    'setting == ''on'' ? "OK" : "Warning"',
+    'setting == ''on'' ? "OK" : "INFO"',
     'on',
     'on',
     NULL,
     'ALTER SYSTEM SET logging_collector = on; -- requires restart',
     'exact', '{"value":"on"}', 35, 'postgres', TRUE
+),
+
+-- sp_Blitz Compliance: New PostgreSQL Rules
+
+-- 16. pg_stat_statements — primary query performance extension
+(
+    'PG_STAT_STATEMENTS_036',
+    'pg_stat_statements Installed',
+    'Observability', 'Instance', 'Critical', 'BestPractice',
+    'pg_stat_statements is the primary query performance tool in PostgreSQL. Without it there is no query-level performance data for tuning or regressions.',
+    NULL,
+    'SELECT COUNT(*) AS cnt FROM pg_extension WHERE extname = ''pg_stat_statements'';',
+    'cnt == 0 ? "Critical" : "OK"',
+    '1',
+    'Installed and loaded via shared_preload_libraries',
+    NULL,
+    'CREATE EXTENSION IF NOT EXISTS pg_stat_statements; -- Also add pg_stat_statements to shared_preload_libraries in postgresql.conf and restart',
+    'threshold', '{"min":1}', 36, 'postgres', TRUE
+),
+
+-- 17. fsync — must never be disabled; disabling causes irreversible corruption on crash
+(
+    'PG_FSYNC_037',
+    'fsync Enabled',
+    'Reliability', 'Instance', 'Critical', 'BestPractice',
+    'Disabling fsync means PostgreSQL never flushes dirty pages to disk. A power failure or OS crash will cause irreversible database corruption — data loss is guaranteed.',
+    NULL,
+    'SELECT setting AS setting FROM pg_settings WHERE name = ''fsync'';',
+    'setting == ''on'' ? "OK" : "Critical"',
+    'on',
+    'on (never disable)',
+    NULL,
+    'ALTER SYSTEM SET fsync = on; SELECT pg_reload_conf();',
+    'exact', '{"value":"on"}', 37, 'postgres', TRUE
+),
+
+-- 18. full_page_writes — protects against torn pages after an unclean shutdown
+(
+    'PG_FULL_PAGE_WRITES_038',
+    'Full Page Writes Enabled',
+    'Reliability', 'Instance', 'Critical', 'BestPractice',
+    'full_page_writes writes the full page to WAL on the first modification after each checkpoint. Disabling it risks data corruption after an unclean shutdown.',
+    NULL,
+    'SELECT setting AS setting FROM pg_settings WHERE name = ''full_page_writes'';',
+    'setting == ''on'' ? "OK" : "Critical"',
+    'on',
+    'on (never disable unless using a storage system that guarantees atomicity)',
+    NULL,
+    'ALTER SYSTEM SET full_page_writes = on; SELECT pg_reload_conf();',
+    'exact', '{"value":"on"}', 38, 'postgres', TRUE
+),
+
+-- 19. checkpoint_completion_target — spread checkpoint I/O evenly across the checkpoint interval
+(
+    'PG_CHKPT_COMPLETION_039',
+    'Checkpoint Completion Target',
+    'Performance', 'Instance', 'Warning', 'BestPractice',
+    'A low checkpoint_completion_target (< 0.7) concentrates checkpoint I/O at the end of each interval, causing write spikes. Default of 0.9 (PG 14+) spreads writes smoothly.',
+    NULL,
+    'SELECT setting::float AS setting FROM pg_settings WHERE name = ''checkpoint_completion_target'';',
+    'setting < 0.7 ? "Warning" : "OK"',
+    '0.9',
+    '0.9 (default since PG 14)',
+    NULL,
+    'ALTER SYSTEM SET checkpoint_completion_target = 0.9; SELECT pg_reload_conf();',
+    'threshold', '{"min":0.7}', 39, 'postgres', TRUE
+),
+
+-- 20. random_page_cost — default (4.0) assumes spinning disks; incorrect on SSDs causes index-scan avoidance
+(
+    'PG_RANDOM_PAGE_COST_040',
+    'Random Page Cost Calibration',
+    'Performance', 'Instance', 'Warning', 'BestPractice',
+    'Default random_page_cost (4.0) is calibrated for HDDs. On SSD/NVMe storage a value of 4.0 discourages index scans that are actually faster than sequential scans.',
+    NULL,
+    'SELECT setting::float AS setting FROM pg_settings WHERE name = ''random_page_cost'';',
+    'setting > 2.0 ? "INFO" : "OK"',
+    '1.1',
+    '1.1–2.0 for SSD/NVMe; 4.0 for HDD',
+    NULL,
+    'ALTER SYSTEM SET random_page_cost = 1.1; -- for SSD/NVMe
+SELECT pg_reload_conf();',
+    'threshold', '{"max":2.0}', 40, 'postgres', TRUE
 )
 
 ON CONFLICT (rule_id) DO UPDATE SET
