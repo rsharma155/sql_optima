@@ -49,5 +49,5 @@ docker compose up --build
 - Note any operational impact (new env vars, migrations, config changes).
 
 ## Reporting security issues
-Please do **not** open public issues for security findings. See `SECURITY.md`.
+Please do **not** open public issues for security findings. See `SECURITY.md`. 
 
