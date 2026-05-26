@@ -20,3 +20,11 @@
 .alert-success { background: rgba(16, 185, 129, 0.1); border-left-color: var(--success); color: var(--success); }
 .alert-info { background: rgba(59, 130, 246, 0.1); border-left-color: var(--accent-blue); color: var(--accent-blue); }
 
+.alerts-kpi-strip .alerts-kpi-card {
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.alerts-kpi-strip .alerts-kpi-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+

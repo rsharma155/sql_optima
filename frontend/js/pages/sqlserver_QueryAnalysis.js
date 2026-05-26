@@ -148,6 +148,7 @@
     /* ── State ── */
     let _charts = {};
     let _topRows = [];
+    let _topRowsFetchError = null;
     let _regRows = [];
     let _instabRows = [];
     let _schedulerRows = [];
@@ -171,7 +172,7 @@
     /* ── main view ──────────────────────────────────────────── */
     async function loadQueryAnalysis() {
         destroyCharts();
-        _topRows = []; _regRows = []; _instabRows = []; _schedulerRows = []; _watchedHashes = new Set();
+        _topRows = []; _topRowsFetchError = null; _regRows = []; _instabRows = []; _schedulerRows = []; _watchedHashes = new Set();
         _currentPage = 1;
         window.appState.queryCache = window.appState.queryCache || {};
         
@@ -433,6 +434,7 @@
         }
 
         async function fetchTopQueries(from, to, dbName) {
+            _topRowsFetchError = null;
             const body = document.getElementById('qaTopQueriesBody');
             const excludeSystem = getQaExcludeSystem();
             body.innerHTML = '<div class="text-muted p-3"><i class="fa-solid fa-spinner fa-spin"></i> Loading top queries...</div>';
@@ -457,12 +459,16 @@
                 let toR = range?.to || to;
                 await refreshTopQueryTrendChart(fromR, toR, dbName, excludeSystem);
             } catch (e) {
-                body.innerHTML = `<div class="text-danger p-3">Failed to load top queries: ${esc(e.message)}</div>`;
+                _topRowsFetchError = e.message;
             }
         }
 
         function renderTopQueries() {
             const container = document.getElementById('qaTopQueriesBody');
+            if (_topRowsFetchError !== null) {
+                container.innerHTML = `<div class="text-danger p-3">Failed to load top queries: ${esc(_topRowsFetchError)}</div>`;
+                return;
+            }
             if (!_topRows.length) {
                 container.innerHTML = `<div class="text-muted p-4 text-center">No queries found for this period.</div>`;
                 return;

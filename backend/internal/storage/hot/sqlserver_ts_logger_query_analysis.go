@@ -557,19 +557,37 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		from = to.Add(-24 * time.Hour)
 	}
 
-	histMetricsJoin, metricsFilter := sqlServerQueryAnalysisMetricsLateralJoin(excludeSystem, "qh", monitoringLogins)
-	snapMetricsJoin, snapMetricsFilter := sqlServerQueryAnalysisMetricsLateralJoin(excludeSystem, "s", monitoringLogins)
 	histClassFilter := sqlServerQueryAnalysisClassificationFilter(excludeSystem, "qh.")
 	snapClassFilter := sqlServerQueryAnalysisClassificationFilter(excludeSystem, "s.")
+	dbScoped := queryAnalysisUsesDatabase(database)
 
-	historyDB := ""
 	histArgs := []interface{}{serverID, from, to}
-	if queryAnalysisUsesDatabase(database) {
-		historyDB = queryAnalysisHistoryDatabaseExists(4)
+	if dbScoped {
 		histArgs = append(histArgs, database)
 	}
 
-	q1 := fmt.Sprintf(`
+	var q1 string
+	if excludeSystem {
+		cte := sqlServerQueryAnalysisQualifyingHashesCTE(true, monitoringLogins, dbScoped, 4)
+		q1 = cte + `
+		SELECT
+			COALESCE(SUM(qh.exec_delta), 0),
+			COALESCE(SUM(qh.cpu_delta_ms) / NULLIF(SUM(qh.exec_delta), 0), 0),
+			COALESCE(SUM(qh.cpu_delta_ms) / NULLIF(SUM(qh.exec_delta), 0), 0),
+			COALESCE(SUM(qh.reads_delta) / NULLIF(SUM(qh.exec_delta), 0), 0),
+			COALESCE(COUNT(DISTINCT qh.query_hash), 0)
+		FROM sqlserver_query_stats_history qh
+		` + sqlServerQueryAnalysisHistoryHashJoin() + `
+		WHERE qh.server_id = $1
+		  AND qh.capture_timestamp >= $2 AND qh.capture_timestamp <= $3
+		  ` + histClassFilter
+	} else {
+		histMetricsJoin, metricsFilter := sqlServerQueryAnalysisMetricsLateralJoin(false, "qh", monitoringLogins)
+		historyDB := ""
+		if dbScoped {
+			historyDB = queryAnalysisHistoryDatabaseExists(4)
+		}
+		q1 = fmt.Sprintf(`
 		SELECT
 			COALESCE(SUM(qh.exec_delta), 0),
 			COALESCE(SUM(qh.cpu_delta_ms) / NULLIF(SUM(qh.exec_delta), 0), 0),
@@ -584,17 +602,50 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		WHERE qh.server_id = $1
 		  AND qh.capture_timestamp >= $2 AND qh.capture_timestamp <= $3
 		  %s%s%s`, histMetricsJoin, historyDB, metricsFilter, histClassFilter)
+	}
 
 	err := tl.pool.QueryRow(ctx, q1, histArgs...).Scan(&s.TotalExecutions, &s.AvgCPU, &s.AvgDuration, &s.AvgReads, &s.QueriesExecutedInRange)
 	if err != nil {
 		slog.Info("[TSLogger] GetSqlServerQueryAnalysisSummary history", "err", err)
 	}
 
-	top10MetricsLateral := `
+	var top10Q string
+	if excludeSystem {
+		cte := sqlServerQueryAnalysisQualifyingHashesCTE(true, monitoringLogins, dbScoped, 4)
+		top10Q = cte + `,
+		total AS (
+			SELECT SUM(qh.cpu_delta_ms) as total_cpu
+			FROM sqlserver_query_stats_history qh
+			` + sqlServerQueryAnalysisHistoryHashJoin() + `
+			WHERE qh.server_id = $1 AND qh.capture_timestamp >= $2 AND qh.capture_timestamp <= $3
+			  ` + histClassFilter + `
+		),
+		top10 AS (
+			SELECT SUM(sub.query_cpu) as top_cpu
+			FROM (
+				SELECT SUM(qh.cpu_delta_ms) as query_cpu
+				FROM sqlserver_query_stats_history qh
+				` + sqlServerQueryAnalysisHistoryHashJoin() + `
+				WHERE qh.server_id = $1 AND qh.capture_timestamp >= $2 AND qh.capture_timestamp <= $3
+				  ` + histClassFilter + `
+				GROUP BY qh.query_hash
+				ORDER BY query_cpu DESC
+				LIMIT 10
+			) sub
+		)
+		SELECT COALESCE((top_cpu::float8 / NULLIF(total_cpu, 0)) * 100, 0)
+		FROM total, top10`
+	} else {
+		histMetricsJoin, metricsFilter := sqlServerQueryAnalysisMetricsLateralJoin(false, "qh", monitoringLogins)
+		historyDB := ""
+		if dbScoped {
+			historyDB = queryAnalysisHistoryDatabaseExists(4)
+		}
+		top10MetricsLateral := `
 			LEFT JOIN sqlserver_query_classification_dim class
 			  ON class.server_id = qh.server_id AND class.query_hash = qh.query_hash
 			` + histMetricsJoin
-	top10Q := fmt.Sprintf(`
+		top10Q = fmt.Sprintf(`
 		WITH total AS (
 			SELECT SUM(qh.cpu_delta_ms) as total_cpu
 			FROM sqlserver_query_stats_history qh
@@ -617,18 +668,46 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		)
 		SELECT COALESCE((top_cpu::float8 / NULLIF(total_cpu, 0)) * 100, 0)
 		FROM total, top10`, top10MetricsLateral, historyDB, metricsFilter, histClassFilter,
-		top10MetricsLateral, historyDB, metricsFilter, histClassFilter)
+			top10MetricsLateral, historyDB, metricsFilter, histClassFilter)
+	}
 	if err := tl.pool.QueryRow(ctx, top10Q, histArgs...).Scan(&s.Top10CpuSharePct); err != nil {
 		slog.Info("[TSLogger] GetSqlServerQueryAnalysisSummary top10 cpu share", "err", err)
 	}
 
-	snapDB := ""
-	snapArgs := []interface{}{serverID}
-	if queryAnalysisUsesDatabase(database) {
-		snapDB = ` AND LOWER(TRIM(COALESCE(s.database_name, ''))) = LOWER(TRIM($2))`
-		snapArgs = append(snapArgs, database)
-	}
-	q3 := fmt.Sprintf(`
+	var q3, singleQ string
+	var snapArgs []interface{}
+	if excludeSystem {
+		snapArgs = []interface{}{serverID, from, to}
+		snapDB := ""
+		if dbScoped {
+			snapArgs = append(snapArgs, database)
+			snapDB = ` AND LOWER(TRIM(COALESCE(s.database_name, ''))) = LOWER(TRIM($4))`
+		}
+		cte := sqlServerQueryAnalysisQualifyingHashesCTE(true, monitoringLogins, dbScoped, 4)
+		q3 = cte + `
+		SELECT COUNT(DISTINCT s.query_hash)
+		FROM sqlserver_query_stats_snapshot_v2 s
+		` + sqlServerQueryAnalysisSnapshotHashJoin() + `
+		WHERE s.server_id = $1` + snapDB + snapClassFilter
+		singleQ = cte + `
+		SELECT COUNT(*) FROM (
+			SELECT qh.query_hash
+			FROM sqlserver_query_stats_history qh
+			` + sqlServerQueryAnalysisHistoryHashJoin() + `
+			WHERE qh.server_id = $1 AND qh.capture_timestamp >= $2 AND qh.capture_timestamp <= $3
+			  ` + histClassFilter + `
+			GROUP BY qh.query_hash
+			HAVING SUM(qh.exec_delta) = 1
+		) sub`
+	} else {
+		snapMetricsJoin, snapMetricsFilter := sqlServerQueryAnalysisMetricsLateralJoin(false, "s", monitoringLogins)
+		snapArgs = []interface{}{serverID}
+		snapDB := ""
+		if dbScoped {
+			snapDB = ` AND LOWER(TRIM(COALESCE(s.database_name, ''))) = LOWER(TRIM($2))`
+			snapArgs = append(snapArgs, database)
+		}
+		q3 = fmt.Sprintf(`
 		SELECT COUNT(DISTINCT s.query_hash)
 		FROM sqlserver_query_stats_snapshot_v2 s
 		LEFT JOIN sqlserver_query_classification_dim class
@@ -636,9 +715,12 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 		%s
 		WHERE s.server_id = $1
 		  %s%s%s`, snapMetricsJoin, snapDB, snapMetricsFilter, snapClassFilter)
-	_ = tl.pool.QueryRow(ctx, q3, snapArgs...).Scan(&s.TotalQueriesInQS)
-
-	singleQ := fmt.Sprintf(`
+		histMetricsJoin, metricsFilter := sqlServerQueryAnalysisMetricsLateralJoin(false, "qh", monitoringLogins)
+		historyDB := ""
+		if dbScoped {
+			historyDB = queryAnalysisHistoryDatabaseExists(4)
+		}
+		singleQ = fmt.Sprintf(`
 		SELECT COUNT(*) FROM (
 			SELECT qh.query_hash
 			FROM sqlserver_query_stats_history qh
@@ -650,6 +732,8 @@ func (tl *TimescaleLogger) GetSqlServerQueryAnalysisSummary(ctx context.Context,
 			GROUP BY qh.query_hash
 			HAVING SUM(qh.exec_delta) = 1
 		) sub`, histMetricsJoin, historyDB, metricsFilter, histClassFilter)
+	}
+	_ = tl.pool.QueryRow(ctx, q3, snapArgs...).Scan(&s.TotalQueriesInQS)
 	_ = tl.pool.QueryRow(ctx, singleQ, histArgs...).Scan(&s.QueriesSingleExecution)
 
 	since24h := time.Now().UTC().Add(-24 * time.Hour)

@@ -78,6 +78,8 @@ func (c *SqlServerRepository) FetchBlockingSnapshots(ctx context.Context, db *sq
 				r.plan_handle,
 				r.wait_resource,
 				r.percent_complete,
+				r.statement_start_offset,
+				r.statement_end_offset,
 				CONVERT(VARCHAR(64), r.sql_handle, 1) AS sql_hash,
 				CONVERT(VARCHAR(64), r.plan_handle, 1) AS plan_hash
 			FROM sys.dm_exec_requests r
@@ -143,7 +145,22 @@ func (c *SqlServerRepository) FetchBlockingSnapshots(ctx context.Context, db *sq
 			ISNULL(r.percent_complete, 0.0) AS percent_complete,
 			ISNULL(r.sql_hash, CONVERT(VARCHAR(64), c.most_recent_sql_handle, 1)) AS sql_hash,
 			ISNULL(r.plan_hash, '') AS plan_hash,
-			ISNULL(st.text, cst.text) AS query_text,
+			-- Prefer the actual call (input buffer = "EXEC sp_name @p=v") over the SP definition body.
+			-- For ad-hoc batches, extract just the currently-executing statement via offsets.
+			CASE
+				WHEN st.objectid IS NOT NULL THEN
+					-- Stored procedure: show the EXEC call from input buffer, fall back to SP name
+					ISNULL(NULLIF(LTRIM(RTRIM(ib.event_info)), ''),
+						'EXEC ' + ISNULL(OBJECT_SCHEMA_NAME(st.objectid, r.database_id) + '.', '') +
+						ISNULL(OBJECT_NAME(st.objectid, r.database_id), ''))
+				WHEN r.statement_start_offset IS NOT NULL AND st.text IS NOT NULL THEN
+					-- Ad-hoc batch: extract only the statement currently running
+					LTRIM(RTRIM(SUBSTRING(st.text, r.statement_start_offset / 2 + 1,
+						(CASE WHEN r.statement_end_offset = -1 THEN DATALENGTH(st.text)
+							  ELSE r.statement_end_offset END - r.statement_start_offset) / 2 + 1)))
+				ELSE
+					ISNULL(NULLIF(LTRIM(RTRIM(ib.event_info)), ''), ISNULL(st.text, cst.text))
+			END AS query_text,
 			qp.query_plan
 		FROM sessions s
 		LEFT JOIN requests r ON s.session_id = r.session_id
@@ -152,9 +169,10 @@ func (c *SqlServerRepository) FetchBlockingSnapshots(ctx context.Context, db *sq
 		LEFT JOIN connections c ON s.session_id = c.session_id
 		OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) st
 		OUTER APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) cst
+		OUTER APPLY sys.dm_exec_input_buffer(s.session_id, 0) ib
 		OUTER APPLY (
-			SELECT CAST(query_plan AS NVARCHAR(MAX)) AS query_plan 
-			FROM sys.dm_exec_query_plan(r.plan_handle) 
+			SELECT CAST(query_plan AS NVARCHAR(MAX)) AS query_plan
+			FROM sys.dm_exec_query_plan(r.plan_handle)
 			WHERE ISNULL(w.wait_duration_ms, 0) > 5000
 		) qp
 		WHERE w.blocking_session_id IS NOT NULL 

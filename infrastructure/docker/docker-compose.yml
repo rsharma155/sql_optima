@@ -98,7 +98,7 @@ services:
         $$PSQL -f /sql_scripts/04_alert_engine.sql
         echo "[6/7] Applying OS metrics collector..."
         $$PSQL -f /sql_scripts/05_os_metrics_collector.sql
-        echo "[7/7] Seeding initial data and DR policy patch..."
+        echo "[7/7] Seeding initial data and platform config patch..."
         $$PSQL -f /sql_scripts/06_seed_data.sql
         $$PSQL -f /sql_scripts/07_optima_server_dr_policy.sql
         echo ""

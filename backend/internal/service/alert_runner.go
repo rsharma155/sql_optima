@@ -28,7 +28,7 @@ func runOnce(ctx context.Context, cfg *config.Config, alertSvc *AlertService) {
 		if !ok {
 			continue
 		}
-		_, _ = alertSvc.RunEvaluation(ctx, inst.ServerID, engine)
+		_, _ = alertSvc.RunEvaluation(ctx, inst.ServerID, engine, inst.Name)
 	}
 }
 
@@ -56,9 +56,9 @@ func StartAlertEvaluationLoop(ctx context.Context, pool *pgxpool.Pool, cfg *conf
 					continue
 				}
 				serverID := inst.ServerID
-				go func(sid uuid.UUID, eng alerts.Engine) {
-					_, _ = alertSvc.RunEvaluation(ctx, sid, eng)
-				}(serverID, engine)
+				go func(instanceName string, sid uuid.UUID, eng alerts.Engine) {
+					_, _ = alertSvc.RunEvaluation(ctx, sid, eng, instanceName)
+				}(inst.Name, serverID, engine)
 			}
 		}
 	}
@@ -96,7 +96,7 @@ func (s *MetricsService) RunPostgresAlertEvaluation(ctx context.Context, alertSv
 		}
 
 		go func(instanceName string, serverID uuid.UUID) {
-			_, err := alertSvc.RunEvaluation(ctx, serverID, alerts.EnginePostgres)
+			_, err := alertSvc.RunEvaluation(ctx, serverID, alerts.EnginePostgres, instanceName)
 			if err != nil {
 				slog.Error("[AlertRunner] ERROR: PG evaluation failed", "target", instanceName, "err", err)
 			}
@@ -111,7 +111,7 @@ func (s *MetricsService) RunSQLServerAlertEvaluation(ctx context.Context, alertS
 		}
 
 		go func(instanceName string, serverID uuid.UUID) {
-			_, err := alertSvc.RunEvaluation(ctx, serverID, alerts.EngineSQLServer)
+			_, err := alertSvc.RunEvaluation(ctx, serverID, alerts.EngineSQLServer, instanceName)
 			if err != nil {
 				slog.Error("[AlertRunner] ERROR: SQLServer evaluation failed", "target", instanceName, "err", err)
 			}

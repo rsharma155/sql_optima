@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: MIT
 
 window.pgssOpenQueryDetail = function(sql) {
+    if (!sql || !sql.trim()) return;
     if (window.showQueryModal) {
         window.showQueryModal(sql);
     } else {
@@ -38,6 +39,12 @@ window._pgssState = {
     allRows:        [],     // cached full result for client-side search/pagination
 };
 window._pgssRefreshTimer = null;
+
+window._pgssRegrState = {
+    page:     0,
+    pageSize: 10,
+    allRows:  [],
+};
 
 // ============================================================
 // Entry point
@@ -111,12 +118,19 @@ function refreshFilterDropdownsFromRows() {
 // Event Binding
 // ============================================================
 function pgssBindEvents() {
-    // Row click → show query detail modal
+    // Query cell click → show query detail modal (only the query text cell, not the whole row)
     const topTbody = document.getElementById('pgss-top-tbody');
     if (topTbody) {
         topTbody.addEventListener('click', e => {
-            const row = e.target.closest('tr[data-query]');
-            if (row) window.pgssOpenQueryDetail(row.getAttribute('data-query'));
+            const cell = e.target.closest('td.c-query[data-query]');
+            if (cell) window.pgssOpenQueryDetail(cell.getAttribute('data-query'));
+        });
+    }
+    const regrTbody = document.getElementById('pgss-regression-tbody');
+    if (regrTbody) {
+        regrTbody.addEventListener('click', e => {
+            const cell = e.target.closest('td.c-query[data-query]');
+            if (cell) window.pgssOpenQueryDetail(cell.getAttribute('data-query'));
         });
     }
 
@@ -376,8 +390,9 @@ const SYSTEM_QUERY_RE = /^(VACUUM\b|ANALYZE\b|autovacuum:|CHECKPOINT\b|SELECT pg
 
 function isSystemQuery(q) {
     const text = (q.query || '').trim();
-    if (!text || text === '<insufficient privilege>') return true;
-    if (q.username === 'postgres' && (text.includes('pg_stat_') || text.includes('pg_catalog.'))) return true;
+    if (!text) return false; // empty-text rows are "unknown", not system — keep visible
+    if (text === '<insufficient privilege>') return true;
+    if (text.includes('pg_stat_') || text.includes('pg_catalog.')) return true;
     return SYSTEM_QUERY_RE.test(text);
 }
 
@@ -397,7 +412,7 @@ function renderTopQueriesPage() {
     // Client-side safety net: drop collector/monitoring rows (backend already excludes these).
     rows = rows.filter(q => {
         const text = (q.query || '').trim();
-        if (!text || text === '<insufficient privilege>') return false;
+        if (text === '<insufficient privilege>') return false;
         if (text.includes('/* SQL_OPTIMA')) return false;
         if (monitoringUser && (q.username || '').toLowerCase() === monitoringUser) return false;
         return true;
@@ -433,11 +448,16 @@ function renderTopQueriesPage() {
         const capturedTs  = fmtCapturedAt(q.captured_at);
         const qtBadge = `<span class="qtype-badge qtype-${escapeHtml(q.query_type || 'O')}">${qtLabel(q.query_type)}</span>`;
 
-        return `<tr data-query="${escapeHtml(q.query)}" title="Click to view full SQL">
+        const queryText = (q.query || '').trim();
+        const queryDisplay = queryText ? escapeHtml(truncate(queryText, 160)) : '<span class="text-muted fst-italic">(query text not yet available)</span>';
+        return `<tr>
             <td class="c-rownum">${start + i + 1}</td>
             <td class="c-captured-ts" title="${escapeHtml(q.captured_at || '')}">${capturedTs}</td>
             <td class="ctr">${qtBadge}</td>
-            <td class="c-query">${escapeHtml(truncate(q.query, 160))}</td>
+            <td class="c-query"
+                data-query="${escapeHtml(queryText)}"
+                title="${queryText ? 'Click to view full SQL' : 'Query text will appear after the next collection cycle'}"
+                style="${queryText ? 'cursor:pointer;text-decoration:underline dotted;' : ''}">${queryDisplay}</td>
             <td class="c-dim">${escapeHtml(q.db_name   || '—')}</td>
             <td class="c-dim">${escapeHtml(q.username  || '—')}</td>
             <td class="num">${fmtMs(q.total_time_ms)}</td>
@@ -595,24 +615,114 @@ async function loadPgssRegressions() {
         const resp = await window.apiClient.authenticatedFetch(
             `/api/postgres/pgss/regressions?instance=${encodeURIComponent(inst.name)}`
         );
-        if (!resp.ok) { tbody.innerHTML = '<tr><td colspan="6">Error loading</td></tr>'; return; }
+        if (!resp.ok) { tbody.innerHTML = '<tr><td colspan="8">Error loading</td></tr>'; return; }
         const data = await resp.json();
         const regs = data.regressions || [];
-        if (!regs.length) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted p-3">No regressions detected</td></tr>';
-            return;
-        }
-        tbody.innerHTML = regs.map(r => `
-            <tr>
-                <td title="${escapeHtml(r.query)}" style="cursor:pointer;text-decoration:underline;"
-                    data-action="view-query" data-query="${escapeHtml(r.query)}">${escapeHtml(truncate(r.query, 80))}</td>
-                <td>${fmtMs(r.prev_avg_ms)}</td>
-                <td>${fmtMs(r.curr_avg_ms)}</td>
-                <td class="${r.change_pct > 100 ? 'text-danger' : 'text-warning'}">+${r.change_pct?.toFixed(0)}%</td>
-                <td><span class="badge ${r.status === 'Degraded' ? 'badge-danger' : 'badge-warning'}">${r.status}</span></td>
-                <td>${r.detected_at ? new Date(r.detected_at).toLocaleTimeString() : '—'}</td>
-            </tr>`).join('');
-    } catch (_) { tbody.innerHTML = '<tr><td colspan="6">Error</td></tr>'; }
+        window._pgssRegrState.allRows = regs;
+        window._pgssRegrState.page = 0;
+        renderRegressions();
+    } catch (_) { tbody.innerHTML = '<tr><td colspan="8">Error loading regressions</td></tr>'; }
+}
+
+function fmtRegrChangePct(pct) {
+    if (pct == null || !Number.isFinite(pct)) return '—';
+    const cls = pct >= 200 ? 'text-danger fw-bold' : 'text-warning fw-semibold';
+    if (pct >= 1000) {
+        const mult = (pct / 100 + 1).toFixed(1);
+        return `<span class="${cls}" title="+${pct.toFixed(0)}%">${mult}×</span>`;
+    }
+    return `<span class="${cls}">+${pct.toFixed(0)}%</span>`;
+}
+
+function renderRegressions() {
+    const s     = window._pgssRegrState;
+    const tbody = document.getElementById('pgss-regression-tbody');
+    if (!tbody) return;
+
+    const total = s.allRows.length;
+    const start = s.page * s.pageSize;
+    const page  = s.allRows.slice(start, start + s.pageSize);
+
+    const rowCount = document.getElementById('pgss-regr-row-count');
+    if (rowCount) {
+        rowCount.textContent = total
+            ? `Showing ${start + 1}–${Math.min(start + page.length, total)} of ${total}`
+            : '';
+    }
+
+    if (page.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted p-4">No regressions detected in the last 30 minutes</td></tr>';
+        renderRegressionPagination(0);
+        return;
+    }
+
+    tbody.innerHTML = page.map((r, i) => {
+        const queryText    = (r.query || '').trim();
+        const queryDisplay = queryText
+            ? escapeHtml(truncate(queryText, 160))
+            : '<span class="text-muted fst-italic">(query text not yet available)</span>';
+        const detectedAt   = r.detected_at ? new Date(r.detected_at).toLocaleTimeString() : '—';
+        const statusCls    = r.status === 'Degraded' ? 'badge-danger' : 'badge-warning';
+
+        return `<tr>
+            <td class="c-rownum">${start + i + 1}</td>
+            <td class="c-query"
+                data-query="${escapeHtml(queryText)}"
+                title="${queryText ? 'Click to view full SQL' : 'Query text will appear after the next collection cycle'}"
+                style="${queryText ? 'cursor:pointer;text-decoration:underline dotted;' : ''}">${queryDisplay}</td>
+            <td class="num">${fmtMs(r.prev_avg_ms)}</td>
+            <td class="num">${fmtMs(r.curr_avg_ms)}</td>
+            <td class="num">${fmtRegrChangePct(r.change_pct)}</td>
+            <td class="num">${fmtNum(r.prev_calls)}</td>
+            <td class="num">${fmtNum(r.curr_calls)}</td>
+            <td>${detectedAt}</td>
+        </tr>`;
+    }).join('');
+
+    renderRegressionPagination(total);
+}
+
+function renderRegressionPagination(total) {
+    const s = window._pgssRegrState;
+    const container = document.getElementById('pgss-regr-pagination');
+    if (!container) return;
+    const pages = Math.ceil(total / s.pageSize);
+    if (pages <= 1) { container.innerHTML = ''; return; }
+
+    const cur     = s.page;
+    const isFirst = cur === 0;
+    const isLast  = cur === pages - 1;
+
+    const windowSize = 5;
+    let winStart = Math.max(0, cur - Math.floor(windowSize / 2));
+    const winEnd = Math.min(pages, winStart + windowSize);
+    winStart = Math.max(0, winEnd - windowSize);
+
+    const pageNums = Array.from({ length: winEnd - winStart }, (_, i) => winStart + i)
+        .map(i => `<button class="pgss-pg-btn${i === cur ? ' active' : ''}" data-action="pgss-regr-page" data-page="${i}" aria-label="Page ${i + 1}">${i + 1}</button>`)
+        .join('');
+
+    container.innerHTML = `
+        <button class="pgss-pg-nav" data-action="pgss-regr-page" data-page="0" ${isFirst ? 'disabled' : ''} title="First page"><i class="fa-solid fa-angles-left"></i></button>
+        <button class="pgss-pg-nav" data-action="pgss-regr-page" data-page="${cur - 1}" ${isFirst ? 'disabled' : ''} title="Previous page"><i class="fa-solid fa-angle-left"></i></button>
+        <span class="pgss-pg-nums">${pageNums}</span>
+        <button class="pgss-pg-nav" data-action="pgss-regr-page" data-page="${cur + 1}" ${isLast ? 'disabled' : ''} title="Next page"><i class="fa-solid fa-angle-right"></i></button>
+        <button class="pgss-pg-nav" data-action="pgss-regr-page" data-page="${pages - 1}" ${isLast ? 'disabled' : ''} title="Last page"><i class="fa-solid fa-angles-right"></i></button>`;
+
+    if (!container.dataset.regrBound) {
+        container.dataset.regrBound = '1';
+        container.addEventListener('click', e => {
+            const btn = e.target?.closest?.('[data-action="pgss-regr-page"]');
+            if (btn && !btn.disabled) {
+                const p = Number(btn.dataset.page);
+                const maxPage = Math.ceil(window._pgssRegrState.allRows.length / window._pgssRegrState.pageSize) - 1;
+                if (!isNaN(p) && p >= 0 && p <= maxPage) {
+                    window._pgssRegrState.page = p;
+                    renderRegressions();
+                }
+            }
+        });
+    }
 }
 
 // ============================================================

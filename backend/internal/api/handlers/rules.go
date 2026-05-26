@@ -645,9 +645,13 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID uuid
 		var r ruleEvalRow
 		if err := rows.Scan(&r.RuleID, &r.RuleName, &r.Category, &r.DetectionSQL, &r.DetectionSQLPg,
 			&r.EvaluationLogic, &r.ExpectedCalc, &r.RecommendedValue, &r.TargetDBType); err != nil {
+			slog.Warn("[RulesHandler] Skipping rule row (scan failed)", "err", err)
 			continue
 		}
 		rules = append(rules, r)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to read rules: %w", err)
 	}
 
 	if len(rules) == 0 {
@@ -722,10 +726,7 @@ func (h *RulesHandler) evaluateRulesForServer(ctx context.Context, serverID uuid
 			break
 		}
 
-		query := r.DetectionSQL
-		if instanceType == "postgres" && r.DetectionSQLPg.Valid {
-			query = r.DetectionSQLPg.String
-		}
+		query := r.detectionQuery(instanceType)
 		if strings.TrimSpace(query) == "" {
 			h.storeRuleEvaluation(ctx, runID, serverID, r, instanceType, nil, "N/A", "no detection SQL configured", r.RecommendedValue.String, false, osEval)
 			continue
@@ -988,12 +989,33 @@ type ruleEvalRow struct {
 	RuleID           string
 	RuleName         string
 	Category         string
-	DetectionSQL     string
+	DetectionSQL     sql.NullString
 	DetectionSQLPg   sql.NullString
 	EvaluationLogic  sql.NullString
 	ExpectedCalc     sql.NullString
 	RecommendedValue sql.NullString
 	TargetDBType     string
+}
+
+// detectionQuery returns the detection SQL to run on the monitored instance.
+// PostgreSQL rules from 03_additional_pg_rules.sql store SQL only in detection_sql_pg
+// (detection_sql is NULL); base rules in 02_rule_engine.sql use detection_sql.
+func (r ruleEvalRow) detectionQuery(instanceType string) string {
+	if strings.EqualFold(instanceType, "postgres") {
+		if r.DetectionSQLPg.Valid {
+			if q := strings.TrimSpace(r.DetectionSQLPg.String); q != "" {
+				return q
+			}
+		}
+		if r.DetectionSQL.Valid {
+			return strings.TrimSpace(r.DetectionSQL.String)
+		}
+		return ""
+	}
+	if r.DetectionSQL.Valid {
+		return strings.TrimSpace(r.DetectionSQL.String)
+	}
+	return ""
 }
 
 func truncateErrMsg(err error, max int) string {

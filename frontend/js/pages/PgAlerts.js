@@ -5,7 +5,6 @@
 window.PgAlertsView = async function() {
     const inst = window.appState.config.instances[window.appState.currentInstanceIdx] || {name: 'Loading...'};
     const instName = inst.name;
-    const engine = (inst.engine || inst.type || 'postgres').toLowerCase().includes('sql') ? 'sqlserver' : 'postgres';
 
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">
@@ -22,37 +21,14 @@ window.PgAlertsView = async function() {
             </div>
             <div class="flex-center" style="height:200px; flex-direction:column; gap:1rem;">
                 <div class="spinner"></div>
-                <span class="text-muted">Analyzing incident telemetry...</span>
+                <span class="text-muted">Loading alert engine and blocking telemetry...</span>
             </div>
         </div>
     `;
 
-    // Fetch alerts and open count in parallel
-    let alerts = [];
-    let openCount = 0;
-    let disconnected = false;
-    try {
-        const qs = `instance=${encodeURIComponent(instName)}&engine=${encodeURIComponent(engine)}&status=open`;
-        const [alertsResp, countResp] = await Promise.all([
-            window.apiClient.authenticatedFetch(`/api/alerts?${qs}`),
-            window.apiClient.authenticatedFetch(`/api/alerts/count?instance=${encodeURIComponent(instName)}&engine=${encodeURIComponent(engine)}`)
-        ]);
-        if (alertsResp.status === 503 || countResp.status === 503) disconnected = true;
-        if (alertsResp.ok) {
-            const body = await alertsResp.json();
-            const list = body?.data?.list ?? body?.data?.alerts ?? body?.alerts ?? body?.list;
-            alerts = Array.isArray(list) ? list : [];
-        }
-        if (countResp.ok) {
-            const body = await countResp.json();
-            openCount = body?.data?.count ?? body?.count ?? 0;
-        }
-        if (alerts.length > 0) {
-            openCount = Math.max(openCount, alerts.length);
-        }
-    } catch (e) { console.error("Alert engine fetch failed:", e); }
+    const data = await window.fetchAlertsPageData(inst);
 
-    if (disconnected) {
+    if (data.disconnected) {
         window.routerOutlet.innerHTML = `
             <div class="page-view active dashboard-sky-theme">
                 <div class="page-title flex-between">
@@ -69,48 +45,19 @@ window.PgAlertsView = async function() {
         return;
     }
 
-    const severityBadge = (s) => {
-        const cls = s === 'critical' ? 'danger' : s === 'warning' ? 'warning' : 'info';
-        return `<span class="badge badge-${cls}">${window.escapeHtml(s.toUpperCase())}</span>`;
-    };
-
-    const statusIcon = (s) => {
-        if (s === 'acknowledged') return '<i class="fa-solid fa-eye text-warning"></i> ACK';
-        if (s === 'resolved') return '<i class="fa-solid fa-check-circle text-success"></i> RESOLVED';
-        return '<i class="fa-solid fa-triangle-exclamation text-danger"></i> OPEN';
-    };
-
-    const alertRows = alerts.length === 0
-        ? '<tr><td colspan="7" class="text-center text-muted">No active alerts</td></tr>'
-        : alerts.map(a => `
-            <tr>
-                <td>${severityBadge(a.severity)}</td>
-                <td>${window.escapeHtml(a.category || '')}</td>
-                <td><strong>${window.escapeHtml(a.title)}</strong></td>
-                <td class="small" title="${window.escapeHtml(String(a.description || ''))}">${window.escapeHtml(String(a.description || '').substring(0, 80))}</td>
-                <td class="text-center">${a.hit_count || 1}</td>
-                <td class="small text-muted">${a.last_seen_at ? new Date(a.last_seen_at).toLocaleString() : '--'}</td>
-                <td style="white-space:nowrap;">
-                    ${a.status === 'open' ? `
-                        <button class="btn btn-xs btn-outline" data-alert-id="${window.escapeHtml(String(a.id))}" data-alert-action="ack">Ack</button>
-                        <button class="btn btn-xs btn-outline" data-alert-id="${window.escapeHtml(String(a.id))}" data-alert-action="resolve">Resolve</button>
-                    ` : a.status === 'acknowledged' ? `
-                        <button class="btn btn-xs btn-outline" data-alert-id="${window.escapeHtml(String(a.id))}" data-alert-action="resolve">Resolve</button>
-                    ` : statusIcon(a.status)}
-                </td>
-            </tr>
-        `).join('');
+    const openAlerts = data.engineAlerts.filter(a => a.status === 'open' || a.status === 'acknowledged');
+    const timelineItems = openAlerts.length > 0 ? openAlerts : data.engineAlerts;
 
     window.routerOutlet.innerHTML = `
         <div class="page-view active dashboard-sky-theme">
             <div class="page-title flex-between dashboard-page-title-compact">
                 <div class="dashboard-title-line">
                     <h1><i class="fa-solid fa-bell text-danger"></i> Alerts &amp; Event Timeline</h1>
-                    <span class="subtitle">Instance: ${window.escapeHtml(instName)}</span>
+                    <span class="subtitle">Instance: ${window.escapeHtml(instName)} · PostgreSQL</span>
                 </div>
                 <div class="flex-center dashboard-page-title-actions" style="gap:1rem;">
                     <div class="glass-panel" style="padding:0.4rem 0.8rem; border-radius:8px;">
-                        <span class="badge badge-${openCount > 0 ? 'danger' : 'success'}">${openCount} Open Incidents</span>
+                        <span class="badge badge-${data.openCount > 0 ? 'danger' : 'success'}">${data.openCount} Open</span>
                     </div>
                     <button class="btn btn-sm btn-outline text-accent" data-action="call" data-fn="PgAlertsView">
                         <i class="fa-solid fa-refresh"></i> Refresh
@@ -118,41 +65,28 @@ window.PgAlertsView = async function() {
                 </div>
             </div>
 
-            <div class="grid-container mt-3">
-                <!-- Row 1: Main Alerts Table -->
+            ${window.renderAlertsKpiStrip(data.openCount, data.blockingKpis, data.engine)}
+
+            <div class="grid-container mt-2">
                 <div class="col-8 col-laptop-8 col-tablet-6">
                     <div class="card glass-panel">
                         <div class="card-header flex-between">
-                            <h3 style="font-size:0.85rem; margin:0;">Active Incidents</h3>
-                            <span class="text-muted" style="font-size:0.65rem;">Updated: ${new Date().toLocaleTimeString()}</span>
+                            <h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-database text-accent"></i> Alert Engine</h3>
+                            <span class="text-muted" style="font-size:0.65rem;">Evaluated every ~60s · Updated ${new Date().toLocaleTimeString()}</span>
                         </div>
-                        <div class="table-container-compact" style="height: 500px; overflow-y: auto;">
-                            <table class="modern-table modern-table-compact">
-                                <thead>
-                                    <tr>
-                                        <th>Severity</th><th>Category</th><th>Title</th><th>Description</th><th>Hits</th><th>Last Seen</th><th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>${alertRows}</tbody>
-                            </table>
+                        <div style="padding:0.5rem;">
+                            ${window.renderEngineAlertsTable(data.engineAlerts, { showAllStatuses: true })}
                         </div>
                     </div>
                 </div>
-
-                <!-- Row 1, Col 2: Event Timeline -->
                 <div class="col-4 col-laptop-4 col-tablet-6">
                     <div class="card glass-panel">
                         <div class="card-header"><h3 style="font-size:0.85rem; margin:0;"><i class="fa-solid fa-clock text-accent"></i> Recent Activity</h3></div>
-                        <div style="padding: 0.75rem; height: 500px; overflow-y: auto;">
+                        <div style="padding: 0.75rem; height: 360px; overflow-y: auto;">
                             <ul style="list-style:none; padding-left:0; font-size:0.75rem; margin:0;">
-                                <li style="margin-bottom:0.75rem; padding-bottom:0.75rem; border-bottom:1px solid var(--border-color);">
-                                    <div class="flex-between">
-                                        <span class="text-success"><i class="fa-solid fa-check-circle"></i> Monitoring Active</span>
-                                        <span class="text-muted" style="font-size:0.65rem">${new Date().toLocaleTimeString()}</span>
-                                    </div>
-                                    <div class="mt-1">System health checks running normally.</div>
-                                </li>
-                                ${alerts.slice(0, 15).map(a => `
+                                ${timelineItems.length === 0 ? `
+                                    <li class="text-muted">No engine alerts yet. Blocking and replication rules run in the background.</li>
+                                ` : timelineItems.slice(0, 20).map(a => `
                                     <li style="margin-bottom:0.75rem; padding-bottom:0.75rem; border-bottom:1px solid var(--border-color);">
                                         <div class="flex-between">
                                             <span class="text-${a.severity === 'critical' ? 'danger' : 'warning'}"><strong>${window.escapeHtml(a.title)}</strong></span>
@@ -169,30 +103,5 @@ window.PgAlertsView = async function() {
         </div>
     `;
 
-    if (window._pgAlertsActionHandler) {
-        window.routerOutlet.removeEventListener('click', window._pgAlertsActionHandler);
-    }
-    window._pgAlertsActionHandler = function onAlertAction(e) {
-        const btn = e.target.closest('[data-alert-action]');
-        if (!btn) return;
-        const id = btn.dataset.alertId;
-        const action = btn.dataset.alertAction;
-        if (action === 'ack') window._alertAck(id);
-        else if (action === 'resolve') window._alertResolve(id);
-    };
-    window.routerOutlet.addEventListener('click', window._pgAlertsActionHandler);
-};
-
-window._alertAck = async function(id) {
-    try {
-        const resp = await window.apiClient.authenticatedFetch(`/api/alerts/${encodeURIComponent(id)}/acknowledge`, { method: 'POST' });
-        if (resp.ok) window.PgAlertsView();
-    } catch (e) { console.error('Ack failed', e); }
-};
-
-window._alertResolve = async function(id) {
-    try {
-        const resp = await window.apiClient.authenticatedFetch(`/api/alerts/${encodeURIComponent(id)}/resolve`, { method: 'POST' });
-        if (resp.ok) window.PgAlertsView();
-    } catch (e) { console.error('Resolve failed', e); }
+    window.bindAlertsPageActions(window.PgAlertsView);
 };

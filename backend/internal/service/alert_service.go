@@ -61,11 +61,15 @@ func NewAlertService(
 }
 
 // RunEvaluation executes all evaluators for a given serverID and upserts alerts.
+// instanceName is stored on the alert row (falls back to serverID when empty).
 // Returns the number of new/bumped alerts.
-func (s *AlertService) RunEvaluation(ctx context.Context, serverID uuid.UUID, engine alerts.Engine) (int, error) {
+func (s *AlertService) RunEvaluation(ctx context.Context, serverID uuid.UUID, engine alerts.Engine, instanceName string) (int, error) {
 	now := time.Now().UTC()
+	displayName := instanceName
+	if displayName == "" {
+		displayName = serverID.String()
+	}
 
-	// Check maintenance window
 	underMaint, err := s.maintenanceStore.IsUnderMaintenance(ctx, serverID, engine, now)
 	if err != nil {
 		return 0, err
@@ -74,7 +78,9 @@ func (s *AlertService) RunEvaluation(ctx context.Context, serverID uuid.UUID, en
 		return 0, nil
 	}
 
+	firedRules := make(map[string]struct{})
 	var count int
+
 	for _, ev := range s.evaluators {
 		if ev.Engine() != engine {
 			continue
@@ -89,11 +95,12 @@ func (s *AlertService) RunEvaluation(ctx context.Context, serverID uuid.UUID, en
 			continue
 		}
 		for _, r := range results {
+			firedRules[ruleKey(r.Category, r.RuleName)] = struct{}{}
 			fp := alerts.Fingerprint(serverID, engine, r.Category, r.RuleName)
 			a := alerts.Alert{
 				Fingerprint: fp,
 				ServerID:    serverID,
-				ServerName:  r.ServerName,
+				ServerName:  displayName,
 				Engine:      engine,
 				Severity:    r.Severity,
 				Status:      alerts.StatusOpen,
@@ -107,18 +114,52 @@ func (s *AlertService) RunEvaluation(ctx context.Context, serverID uuid.UUID, en
 			}
 			upserted, err := s.alertStore.Upsert(ctx, a)
 			if err != nil {
+				slog.WarnContext(ctx, "alert upsert failed",
+					"engine", engine,
+					"serverID", serverID,
+					"rule", r.RuleName,
+					"error", err,
+				)
 				continue
 			}
 			count++
 
-			// Notify — only on first occurrence (HitCount == 1) to avoid
-			// flooding on every evaluation tick for a persistent condition.
 			if s.notifier != nil && upserted.HitCount == 1 {
 				s.notifier.Dispatch(ctx, upserted, "alert.opened")
 			}
 		}
 	}
+
+	s.autoResolveCleared(ctx, serverID, engine, firedRules, now)
 	return count, nil
+}
+
+func (s *AlertService) autoResolveCleared(ctx context.Context, serverID uuid.UUID, engine alerts.Engine, fired map[string]struct{}, at time.Time) {
+	for _, rule := range builtinRulesForEngine(engine) {
+		if _, ok := fired[ruleKey(rule.Category, rule.RuleName)]; ok {
+			continue
+		}
+		fp := alerts.Fingerprint(serverID, engine, rule.Category, rule.RuleName)
+		resolved, err := s.alertStore.ResolveByFingerprint(ctx, fp, "system", "condition cleared", at)
+		if err != nil {
+			slog.WarnContext(ctx, "alert auto-resolve failed",
+				"engine", engine,
+				"serverID", serverID,
+				"rule", rule.RuleName,
+				"error", err,
+			)
+		} else if resolved {
+			slog.InfoContext(ctx, "alert auto-resolved",
+				"engine", engine,
+				"serverID", serverID,
+				"rule", rule.RuleName,
+			)
+		}
+	}
+}
+
+func ruleKey(category, ruleName string) string {
+	return category + "|" + ruleName
 }
 
 // Acknowledge transitions an alert to acknowledged state.

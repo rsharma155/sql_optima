@@ -239,12 +239,12 @@ INSERT INTO ruleengine.rules (
     'Schema', 'Database', 'Critical', 'BestPractice',
     'Sequences that have consumed ≥ 80 % of their range will soon fail with integer overflow.',
     NULL,
-    'SELECT COUNT(*) AS cnt FROM pg_sequences WHERE maximum_value > 0 AND last_value IS NOT NULL AND (last_value::numeric - minimum_value::numeric + 1) / NULLIF((maximum_value::numeric - minimum_value::numeric + 1), 0) * 100 >= 80;',
+    'SELECT COUNT(*) AS cnt FROM pg_sequences WHERE max_value > 0 AND last_value IS NOT NULL AND (last_value::numeric - min_value::numeric + 1) / NULLIF((max_value::numeric - min_value::numeric + 1), 0) * 100 >= 80;',
     'cnt == 0 ? "OK" : "Critical"',
     '0',
     '0',
     NULL,
-    '-- Find near-exhausted sequences: SELECT schemaname, sequencename, last_value, maximum_value FROM pg_sequences WHERE (last_value::numeric / NULLIF(maximum_value::numeric,0)) >= 0.8 ORDER BY last_value::numeric / NULLIF(maximum_value::numeric,0) DESC;',
+    '-- Find near-exhausted sequences: SELECT schemaname, sequencename, last_value, max_value FROM pg_sequences WHERE (last_value::numeric / NULLIF(max_value::numeric,0)) >= 0.8 ORDER BY last_value::numeric / NULLIF(max_value::numeric,0) DESC;',
     'threshold', '{"max":0}', 33, 'postgres', TRUE
 ),
 
@@ -383,6 +383,14 @@ ON CONFLICT (rule_id) DO UPDATE SET
     target_db_type     = EXCLUDED.target_db_type,
     is_enabled         = EXCLUDED.is_enabled,
     modified_date      = CURRENT_TIMESTAMP;
+
+-- Repair deployed rows: pg_sequences exposes max_value/min_value (not maximum_value/minimum_value).
+UPDATE ruleengine.rules
+SET
+    detection_sql = 'SELECT COUNT(*) AS cnt FROM pg_sequences WHERE max_value > 0 AND last_value IS NOT NULL AND (last_value::numeric - min_value::numeric + 1) / NULLIF((max_value::numeric - min_value::numeric + 1), 0) * 100 >= 80;',
+    detection_sql_pg = 'SELECT COUNT(*) AS cnt FROM pg_sequences WHERE max_value > 0 AND last_value IS NOT NULL AND (last_value::numeric - min_value::numeric + 1) / NULLIF((max_value::numeric - min_value::numeric + 1), 0) * 100 >= 80;',
+    modified_date = CURRENT_TIMESTAMP
+WHERE rule_id = 'PG_SEQUENCE_EXHAUSTION_033';
 
 -- ---------------------------------------------------------------------------
 -- Verification
