@@ -59,6 +59,22 @@ export function getAppTimeRangeISO(opts = {}) {
     };
 }
 
+/** Apply a quick range ending now (hours back) and sync picker + appState. */
+export function setQuickRangeHours(hours) {
+    const h = Number(hours);
+    if (!Number.isFinite(h) || h <= 0) return;
+    const now = new Date();
+    const from = new Date(now.getTime() - h * 3600 * 1000);
+    const fromLocal = formatDateTimeLocalInput(from);
+    const toLocal = formatDateTimeLocalInput(now);
+    window.appState.fromTs = fromLocal;
+    window.appState.toTs = toLocal;
+    const fromInput = document.getElementById('from-ts');
+    const toInput = document.getElementById('to-ts');
+    if (fromInput) fromInput.value = fromLocal;
+    if (toInput) toInput.value = toLocal;
+}
+
 /** Apply global time range: sync picker, refresh current view without full re-navigation when possible. */
 export function applyGlobalTimeRangeRefresh() {
     syncTimeRangeFromPicker();

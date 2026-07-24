@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
 	"github.com/rsharma155/sql_optima/internal/config"
 	ha_repo "github.com/rsharma155/sql_optima/internal/domain/sqlserver_ha_replication/repository"
 	"github.com/rsharma155/sql_optima/internal/service"
@@ -69,8 +70,7 @@ func (h *SqlServerHandlers) DashboardTimeSeries(w http.ResponseWriter, r *http.R
 
 	history, err := h.metricsSvc.GetSQLServerRiskHealthHistory(r.Context(), serverID, hours)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 
@@ -226,7 +226,7 @@ func (h *SqlServerHandlers) WaitStatsDashboardV2(w http.ResponseWriter, r *http.
 			"top_wait_types":     []interface{}{},
 			"active_waits":       []interface{}{},
 			"timescale_ready":    true,
-			"error":              err.Error(),
+			"error":              "failed to load wait stats",
 		})
 		return
 	}
@@ -238,8 +238,7 @@ func (h *SqlServerHandlers) WaitStatsDashboardV2(w http.ResponseWriter, r *http.
 func (h *SqlServerHandlers) Overview(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
@@ -262,8 +261,7 @@ func (h *SqlServerHandlers) Dashboard(w http.ResponseWriter, r *http.Request) {
 	source := r.URL.Query().Get("source")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -372,8 +370,7 @@ func (h *SqlServerHandlers) PerformanceDebt(w http.ResponseWriter, r *http.Reque
 	instance := r.URL.Query().Get("instance")
 	dbFilter := strings.TrimSpace(r.URL.Query().Get("database"))
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
@@ -435,8 +432,7 @@ func (h *SqlServerHandlers) Jobs(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -506,8 +502,7 @@ func (h *SqlServerHandlers) LogShipping(w http.ResponseWriter, r *http.Request) 
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -543,8 +538,7 @@ func (h *SqlServerHandlers) XEvents(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -564,8 +558,7 @@ func (h *SqlServerHandlers) BestPractices(w http.ResponseWriter, r *http.Request
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -585,8 +578,7 @@ func (h *SqlServerHandlers) Guardrails(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -614,8 +606,7 @@ func (h *SqlServerHandlers) CPUDrilldown(w http.ResponseWriter, r *http.Request)
 	dbFilter := strings.TrimSpace(r.URL.Query().Get("database"))
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -704,8 +695,7 @@ func (h *SqlServerHandlers) AGHealth(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -761,8 +751,7 @@ func (h *SqlServerHandlers) AGHealthTimeSeries(w http.ResponseWriter, r *http.Re
 	serverID, _ := h.parseID(r)
 	history, err := h.metricsSvc.GetTimescaleDBLogger().GetAGHealthTimeSeries(r.Context(), serverID, from, to)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 
@@ -830,8 +819,7 @@ func (h *SqlServerHandlers) DBThroughput(w http.ResponseWriter, r *http.Request)
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -861,8 +849,7 @@ func (h *SqlServerHandlers) LatchStats(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -892,8 +879,7 @@ func (h *SqlServerHandlers) WaitingTasks(w http.ResponseWriter, r *http.Request)
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -923,8 +909,7 @@ func (h *SqlServerHandlers) MemoryGrants(w http.ResponseWriter, r *http.Request)
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -954,8 +939,7 @@ func (h *SqlServerHandlers) SchedulerWorkers(w http.ResponseWriter, r *http.Requ
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -985,8 +969,7 @@ func (h *SqlServerHandlers) ProcedureStats(w http.ResponseWriter, r *http.Reques
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -1004,8 +987,7 @@ func (h *SqlServerHandlers) ProcedureStats(w http.ResponseWriter, r *http.Reques
 	serverID, _ := h.parseID(r)
 	stats, err := h.metricsSvc.GetTimescaleDBLogger().GetProcedureStats(r.Context(), serverID, 50)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 	w.Header().Set("X-Data-Source", "timescale")
@@ -1016,8 +998,7 @@ func (h *SqlServerHandlers) FileIOLatency(w http.ResponseWriter, r *http.Request
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -1035,8 +1016,7 @@ func (h *SqlServerHandlers) FileIOLatency(w http.ResponseWriter, r *http.Request
 	serverID, _ := h.parseID(r)
 	stats, err := h.metricsSvc.GetTimescaleDBLogger().GetFileIOLatency(r.Context(), serverID, 50)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 	w.Header().Set("X-Data-Source", "timescale")
@@ -1047,8 +1027,7 @@ func (h *SqlServerHandlers) SpinlockStats(w http.ResponseWriter, r *http.Request
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -1066,8 +1045,7 @@ func (h *SqlServerHandlers) SpinlockStats(w http.ResponseWriter, r *http.Request
 	serverID, _ := h.parseID(r)
 	stats, err := h.metricsSvc.GetTimescaleDBLogger().GetSpinlockStats(r.Context(), serverID, 50)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 	w.Header().Set("X-Data-Source", "timescale")
@@ -1078,8 +1056,7 @@ func (h *SqlServerHandlers) MemoryClerks(w http.ResponseWriter, r *http.Request)
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -1097,8 +1074,7 @@ func (h *SqlServerHandlers) MemoryClerks(w http.ResponseWriter, r *http.Request)
 	serverID, _ := h.parseID(r)
 	stats, err := h.metricsSvc.GetTimescaleDBLogger().GetMemoryClerks(r.Context(), serverID, 50)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 	w.Header().Set("X-Data-Source", "timescale")
@@ -1109,8 +1085,7 @@ func (h *SqlServerHandlers) TempdbStats(w http.ResponseWriter, r *http.Request) 
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -1128,8 +1103,7 @@ func (h *SqlServerHandlers) TempdbStats(w http.ResponseWriter, r *http.Request) 
 	serverID, _ := h.parseID(r)
 	stats, err := h.metricsSvc.GetTimescaleDBLogger().GetTempdbFiles(r.Context(), serverID, 50)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 	w.Header().Set("X-Data-Source", "timescale")
@@ -1139,8 +1113,7 @@ func (h *SqlServerHandlers) TempdbStats(w http.ResponseWriter, r *http.Request) 
 func (h *SqlServerHandlers) PlanCacheHealth(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
@@ -1157,8 +1130,7 @@ func (h *SqlServerHandlers) PlanCacheHealth(w http.ResponseWriter, r *http.Reque
 	serverID, _ := h.parseID(r)
 	rows, err := h.metricsSvc.GetTimescaleDBLogger().GetPlanCacheHealth(r.Context(), serverID, 60)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 	w.Header().Set("X-Data-Source", "timescale")
@@ -1168,8 +1140,7 @@ func (h *SqlServerHandlers) PlanCacheHealth(w http.ResponseWriter, r *http.Reque
 func (h *SqlServerHandlers) MemoryGrantWaiters(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
@@ -1186,8 +1157,7 @@ func (h *SqlServerHandlers) MemoryGrantWaiters(w http.ResponseWriter, r *http.Re
 	serverID, _ := h.parseID(r)
 	rows, err := h.metricsSvc.GetTimescaleDBLogger().GetMemoryGrantWaiters(r.Context(), serverID, 50)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 	w.Header().Set("X-Data-Source", "timescale")
@@ -1197,8 +1167,7 @@ func (h *SqlServerHandlers) MemoryGrantWaiters(w http.ResponseWriter, r *http.Re
 func (h *SqlServerHandlers) TempdbTopConsumers(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
@@ -1215,8 +1184,7 @@ func (h *SqlServerHandlers) TempdbTopConsumers(w http.ResponseWriter, r *http.Re
 	serverID, _ := h.parseID(r)
 	rows, err := h.metricsSvc.GetTimescaleDBLogger().GetTempdbTopConsumers(r.Context(), serverID, 50)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 	w.Header().Set("X-Data-Source", "timescale")
@@ -1226,8 +1194,7 @@ func (h *SqlServerHandlers) TempdbTopConsumers(w http.ResponseWriter, r *http.Re
 func (h *SqlServerHandlers) WaitCategories(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
@@ -1246,8 +1213,7 @@ func (h *SqlServerHandlers) WaitCategories(w http.ResponseWriter, r *http.Reques
 	serverID, _ := h.parseID(r)
 	rows, err := h.metricsSvc.GetTimescaleDBLogger().GetWaitCategoryAgg(r.Context(), serverID, 15, from, to)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 	w.Header().Set("X-Data-Source", "timescale")
@@ -1258,8 +1224,7 @@ func (h *SqlServerHandlers) CPUSchedulerStats(w http.ResponseWriter, r *http.Req
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -1288,8 +1253,7 @@ func (h *SqlServerHandlers) ServerProperties(w http.ResponseWriter, r *http.Requ
 	instance := r.URL.Query().Get("instance")
 
 	if err := validateInstanceName(instance); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 
@@ -1327,8 +1291,7 @@ func (h *SqlServerHandlers) HealthV2(w http.ResponseWriter, r *http.Request) {
 
 	data, err := h.metricsSvc.GetSQLServerHealthV2(r.Context(), serverID, from, to)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 
@@ -1339,7 +1302,7 @@ func (h *SqlServerHandlers) HealthV2(w http.ResponseWriter, r *http.Request) {
 func (h *SqlServerHandlers) ExportBestPracticesCSV(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		apiresponse.WritePlainError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
@@ -1367,7 +1330,7 @@ func (h *SqlServerHandlers) ExportBestPracticesCSV(w http.ResponseWriter, r *htt
 func (h *SqlServerHandlers) ExportGuardrailsCSV(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	if err := validateInstanceName(instance); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		apiresponse.WritePlainError(w, http.StatusBadRequest, err.Error(), err, "handler", "sqlserver")
 		return
 	}
 	if !instanceExists(r.Context(), h.cfg, h.metricsSvc, instance) {
@@ -1562,8 +1525,7 @@ func (h *SqlServerHandlers) GetServerVitals(w http.ResponseWriter, r *http.Reque
 
 	vitals, err := h.metricsSvc.GetSqlServerVitals(r.Context(), serverID)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 
@@ -1582,8 +1544,7 @@ func (h *SqlServerHandlers) GetLiveVolumeStats(w http.ResponseWriter, r *http.Re
 	instanceName := h.metricsSvc.GetServerName(serverID)
 	vols, err := h.metricsSvc.MsRepo.FetchVolumeStats(r.Context(), instanceName)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load SQL Server data", err, "handler", "sqlserver")
 		return
 	}
 

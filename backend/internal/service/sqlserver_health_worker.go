@@ -187,6 +187,7 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 				 WHERE file_id = 2) as log_write_wait_ms,
 				(SELECT COUNT(*) FROM sys.dm_exec_requests WITH (NOLOCK) WHERE blocking_session_id <> 0) as blocked_sessions,
 				(SELECT COUNT(*) FROM sys.dm_exec_sessions WITH (NOLOCK) WHERE is_user_process = 1) as user_connections,
+				ISNULL((SELECT CAST(value_in_use AS INT) FROM sys.configurations WITH (NOLOCK) WHERE name = N'user connections'), 0) as max_connections,
 				ISNULL((SELECT CAST(cntr_value/1024.0 AS DOUBLE PRECISION) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Target Server Memory (KB)' AND object_name LIKE '%Memory Manager%'), 0) as target_mem_mb,
 				ISNULL((SELECT CAST(cntr_value/1024.0 AS DOUBLE PRECISION) FROM sys.dm_os_performance_counters WITH (NOLOCK) WHERE counter_name = 'Total Server Memory (KB)' AND object_name LIKE '%Memory Manager%'), 0) as total_mem_mb,
 				CAST(ISNULL(SERVERPROPERTY('Edition'), 'Unknown') AS NVARCHAR(128)) as edition,
@@ -202,7 +203,7 @@ func (s *MetricsService) collectSqlServerHealthStats(ctx context.Context) {
 			return d.QueryRowContext(ctx, query).Scan(
 				&k.SqlCpuPct, &k.RunnableTasks, &k.MemGrantsPending,
 				&k.LogWriteWaitMs, &k.BlockedSessions,
-				&k.UserConnections, &k.TargetServerMemoryMB, &k.TotalServerMemoryMB,
+				&k.UserConnections, &k.MaxConnections, &k.TargetServerMemoryMB, &k.TotalServerMemoryMB,
 				&k.Edition, &engineEdition, &uptimeSeconds, &k.DataCacheLifeLifeSec,
 			)
 		}

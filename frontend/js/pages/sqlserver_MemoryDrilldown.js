@@ -86,6 +86,7 @@ window.MemoryDrilldown = async function() {
                     <div class="card glass-panel h-chart-md">
                         <div class="card-header flex-between">
                             <h3 style="font-size:0.8rem; margin:0;">Correlation: PLE vs Grants Pending vs Spills/sec</h3>
+                            <span id="memPleHistorySourceBadge" class="badge badge-info" style="display:none; font-size:0.65rem;"></span>
                         </div>
                         <div class="chart-container" style="height: 230px;"><canvas id="memCorrelationChart"></canvas></div>
                     </div>
@@ -161,8 +162,35 @@ window.loadMemoryDrilldownData = async function(instanceName, fromLocal, toLocal
     const toISO = new Date(toLocal).toISOString();
     try {
         const url = `/api/timescale/sqlserver/memory-drilldown?instance=${encodeURIComponent(instanceName)}&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`;
-        const res = await window.apiClient.authenticatedFetch(url);
+        const [res, pleHist] = await Promise.all([
+            window.apiClient.authenticatedFetch(url),
+            typeof window.fetchSqlServerHistory === 'function'
+                ? window.fetchSqlServerHistory('memory', instanceName, fromISO, toISO)
+                : Promise.resolve({ points: [], source: '', ok: false }),
+        ]);
         const data = await res.json();
+        if (pleHist && pleHist.ok && (pleHist.points || []).length) {
+            data.ple_history = pleHist.points;
+            data.ple_source = pleHist.source;
+            if (window.applyHistorySourceBadge) {
+                window.applyHistorySourceBadge('memPleHistorySourceBadge', pleHist.source);
+            }
+            // Overlay PLE onto memory_metrics when drilldown metrics lack ple_seconds
+            const byTs = new Map();
+            for (const p of pleHist.points) {
+                const t = window.tsMs ? window.tsMs(p) : new Date(p.timestamp || p.capture_timestamp).getTime();
+                if (t != null) byTs.set(t, p);
+            }
+            if (Array.isArray(data.memory_metrics)) {
+                for (const m of data.memory_metrics) {
+                    const t = window.tsMs ? window.tsMs(m) : new Date(m.timestamp || m.capture_timestamp).getTime();
+                    const hit = t != null ? byTs.get(t) : null;
+                    if (hit && !(Number(m.ple_seconds) > 0)) {
+                        m.ple_seconds = Number(hit.ple_seconds ?? hit.page_life_expectancy ?? hit.ple ?? 0);
+                    }
+                }
+            }
+        }
         window.renderMemoryDrilldownCharts(data);
         const updateEl = document.getElementById('mem-last-update');
         if (updateEl) updateEl.textContent = new Date().toLocaleTimeString();

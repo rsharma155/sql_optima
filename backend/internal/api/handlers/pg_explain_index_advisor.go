@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -188,8 +189,9 @@ func PgExplainIndexAdvisor(cfg *config.Config) http.HandlerFunc {
 
 		payload, err := pgIndexAdvisorClientSingleton().Analyze(context.Background(), dsn, strings.TrimSpace(req.Query), planMap, req.QueryParams, toAdvisorOptions(&req))
 		if err != nil {
-			writeExplainJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": err.Error()})
-			return
+		slog.Error("index advisor failed", "err", err)
+		writeExplainJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "index advisor failed"})
+		return
 		}
 		payload["success"] = true
 		if dsn != "" {

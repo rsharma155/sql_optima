@@ -38,7 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_optima_server_dr_policy_updated
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS optima_notification_config (
     id              SERIAL PRIMARY KEY,
-    channel         VARCHAR(50) UNIQUE NOT NULL,  -- 'webhook' | 'slack'
+    channel         VARCHAR(50) UNIQUE NOT NULL,  -- 'webhook' | 'slack' | 'pagerduty'
     url             TEXT NOT NULL DEFAULT '',
     is_enabled      BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS optima_notification_config (
 );
 
 INSERT INTO optima_notification_config (channel, url, is_enabled)
-VALUES ('webhook', '', false), ('slack', '', false)
+VALUES ('webhook', '', false), ('slack', '', false), ('pagerduty', '', false), ('email', '', false)
 ON CONFLICT (channel) DO NOTHING;
 
 DO $grant$
@@ -59,4 +59,4 @@ END
 $grant$;
 
 COMMENT ON TABLE optima_notification_config IS
-    'Admin-managed webhook/Slack URLs for alert notifications (loaded by service.Notifier at startup).';
+    'Admin-managed webhook/Slack/PagerDuty destinations for alert notifications (loaded by service.Notifier at startup).';

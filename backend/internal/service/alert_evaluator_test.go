@@ -54,6 +54,26 @@ func TestPgDiskSpaceEvaluator_Interface(t *testing.T) {
 	var _ AlertEvaluator = (*PgDiskSpaceEvaluator)(nil)
 }
 
+func TestPgConnectionSaturationEvaluator_Interface(t *testing.T) {
+	var _ AlertEvaluator = (*PgConnectionSaturationEvaluator)(nil)
+}
+
+func TestPgWalSlotRetentionEvaluator_Interface(t *testing.T) {
+	var _ AlertEvaluator = (*PgWalSlotRetentionEvaluator)(nil)
+}
+
+func TestSqlServerLongRunningQueryEvaluator_Interface(t *testing.T) {
+	var _ AlertEvaluator = (*SqlServerLongRunningQueryEvaluator)(nil)
+}
+
+func TestPgBouncerWaitEvaluator_Interface(t *testing.T) {
+	var _ AlertEvaluator = (*PgBouncerWaitEvaluator)(nil)
+}
+
+func TestSqlServerConnectionPressureEvaluator_Interface(t *testing.T) {
+	var _ AlertEvaluator = (*SqlServerConnectionPressureEvaluator)(nil)
+}
+
 func TestEvaluatorResults_SeverityEscalation(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -20,6 +20,10 @@ export const appState = {
     authMode: 'local',
     /** "docker" | "dedicated" — from API (SQL_OPTIMA_DEPLOYMENT). */
     deployment: 'dedicated',
+    /** From /api/config — unlocks 30d/90d time presets and wider API lookback. */
+    coldStorageEnabled: false,
+    /** Max dashboard from/to span in days (7 default, 90 when cold storage enabled). */
+    maxDashboardRangeDays: 7,
     navigationHistory: [],
     fromTs: null,
     toTs: null,

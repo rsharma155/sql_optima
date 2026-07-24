@@ -17,8 +17,10 @@ type Security struct {
 	AuthRequired bool
 	AuthMode     string // local | oidc
 	// OIDC
-	OIDCIssuerURL string
-	OIDCAudience  string
+	OIDCIssuerURL     string
+	OIDCAudience      string
+	OIDCGroupClaim    string // JWT claim holding groups (default groups)
+	OIDCGroupRoleMap  string // "admins:admin,dbas:dba,viewers:viewer"
 	// Production: reject YAML passwords when true
 	DisallowYAMLPasswords bool
 }
@@ -35,6 +37,8 @@ func LoadSecurity() Security {
 		AuthMode:              strings.TrimSpace(os.Getenv("AUTH_MODE")),
 		OIDCIssuerURL:         strings.TrimSpace(os.Getenv("OIDC_ISSUER_URL")),
 		OIDCAudience:          strings.TrimSpace(os.Getenv("OIDC_AUDIENCE")),
+		OIDCGroupClaim:        strings.TrimSpace(os.Getenv("OIDC_GROUP_CLAIM")),
+		OIDCGroupRoleMap:      strings.TrimSpace(os.Getenv("OIDC_GROUP_ROLE_MAP")),
 		DisallowYAMLPasswords: envTruthy("DISALLOW_YAML_PASSWORDS") || envTruthy("AUTH_REQUIRED"),
 	}
 	if s.AuthMode == "" {

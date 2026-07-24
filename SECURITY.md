@@ -44,7 +44,7 @@ The bash OS agent authenticates with an **admin JWT** (`Authorization: Bearer`) 
 
 | Risk | Mitigation |
 |------|------------|
-| Compromised DB host exposes admin JWT | Store JWT only in root-owned `/etc/sql-optima/os-collector.env` (mode 600); rotate JWT periodically; limit host access. Future: scoped machine token (write-only OS metrics). |
+| Compromised DB host exposes admin JWT | Prefer scoped OS agent token (`POST /api/admin/os-collector/token`, role `os_agent`, scope `os_metrics:write`); store only in root-owned `/etc/sql-optima/os-collector.env` (mode 600); rotate by minting a new token. Admin JWT still accepted for ingest but is discouraged. |
 | Unauthenticated metric spam | Ingest disabled by default; endpoint returns 403 when off; requires valid admin JWT when on. |
 | Agent has no DB credentials | Agent only talks HTTPS to SQL Optima — it does not connect to PostgreSQL. |
 

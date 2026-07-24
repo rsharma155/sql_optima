@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/service"
@@ -944,7 +945,7 @@ func (h *PostgresHandlers) BestPractices(w http.ResponseWriter, r *http.Request)
 func (h *PostgresHandlers) ExportBestPracticesCSV(w http.ResponseWriter, r *http.Request) {
 	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
 	if err := validateInstanceName(instance); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		apiresponse.WritePlainError(w, http.StatusBadRequest, err.Error(), err, "handler", "postgres")
 		return
 	}
 	sid, ok := h.parseID(r)

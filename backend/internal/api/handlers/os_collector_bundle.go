@@ -12,12 +12,14 @@ import (
 
 	"github.com/rsharma155/sql_optima/internal/middleware"
 	"github.com/rsharma155/sql_optima/internal/oscollectorbundle"
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
 // OSCollectorHandlers serves OS collector setup status and bundle download.
 type OSCollectorHandlers struct {
-	metricsSvc *service.MetricsService
+	metricsSvc     *service.MetricsService
+	osAgentRevoker OSAgentTokenRevoker
 }
 
 func NewOSCollectorHandlers(svc *service.MetricsService) *OSCollectorHandlers {
@@ -38,7 +40,7 @@ func (h *OSCollectorHandlers) Status(w http.ResponseWriter, r *http.Request) {
 
 	st, err := h.metricsSvc.GetOSCollectorStatus(r.Context(), instance)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error(), "instance": instance})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, "failed to resolve OS collector status", err, "handler", "os_collector", "instance", instance)
 		return
 	}
 	metricsBase := strings.TrimSpace(r.URL.Query().Get("metrics_base_url"))
@@ -91,7 +93,7 @@ func (h *OSCollectorHandlers) DownloadBundle(w http.ResponseWriter, r *http.Requ
 		GeneratedAt:  time.Now().UTC(),
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to build OS collector bundle", err, "handler", "os_collector")
 		return
 	}
 
@@ -160,7 +162,7 @@ func (h *OSCollectorHandlers) SetIngestConfig(w http.ResponseWriter, r *http.Req
 			})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to update OS ingest setting", err, "handler", "os_collector")
 		return
 	}
 	info := h.metricsSvc.OSMetricsIngestInfo(r.Context())

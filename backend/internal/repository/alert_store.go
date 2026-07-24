@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsharma155/sql_optima/internal/domain/alerts"
 )
@@ -175,14 +176,32 @@ func (s *TimescaleAlertStore) CountOpen(ctx context.Context, serverID uuid.UUID)
 	return count, err
 }
 
-func (s *TimescaleAlertStore) ResolveByFingerprint(ctx context.Context, fingerprint, actor, reason string, at time.Time) (bool, error) {
-	res, err := s.pool.Exec(ctx, `
+func (s *TimescaleAlertStore) ResolveByFingerprint(ctx context.Context, fingerprint, actor, reason string, at time.Time) (alerts.Alert, bool, error) {
+	var a alerts.Alert
+	var engine, severity, status string
+	var evidenceJSON []byte
+	err := s.pool.QueryRow(ctx, `
 		UPDATE optima_alerts
 		SET status = 'resolved', resolved_by = $2, resolved_at = $3, updated_at = $3
 		WHERE fingerprint = $1 AND status IN ('open', 'acknowledged')
-	`, fingerprint, actor, at)
+		RETURNING id, fingerprint, server_id, instance_name, engine, severity, status, category, title, description,
+		          evidence, first_seen_at, last_seen_at, hit_count, acknowledged_by, acknowledged_at,
+		          resolved_by, resolved_at, created_at, updated_at
+	`, fingerprint, actor, at).Scan(
+		&a.ID, &a.Fingerprint, &a.ServerID, &a.ServerName, &engine, &severity, &status, &a.Category, &a.Title, &a.Description,
+		&evidenceJSON, &a.FirstSeenAt, &a.LastSeenAt, &a.HitCount, &a.AcknowledgedBy, &a.AcknowledgedAt,
+		&a.ResolvedBy, &a.ResolvedAt, &a.CreatedAt, &a.UpdatedAt,
+	)
 	if err != nil {
-		return false, err
+		if err == pgx.ErrNoRows {
+			return alerts.Alert{}, false, nil
+		}
+		return alerts.Alert{}, false, err
 	}
-	return res.RowsAffected() > 0, nil
+	a.Engine = alerts.Engine(engine)
+	a.Severity = alerts.Severity(severity)
+	a.Status = alerts.Status(status)
+	_ = json.Unmarshal(evidenceJSON, &a.Evidence)
+	_ = reason // retained for audit callers; history row written by UpdateStatus path elsewhere
+	return a, true, nil
 }

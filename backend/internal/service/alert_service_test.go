@@ -114,20 +114,19 @@ func (m *mockAlertStore) CountOpen(_ context.Context, serverID uuid.UUID) (int, 
 	return count, nil
 }
 
-func (m *mockAlertStore) ResolveByFingerprint(_ context.Context, fingerprint, actor, _ string, at time.Time) (bool, error) {
+func (m *mockAlertStore) ResolveByFingerprint(_ context.Context, fingerprint, actor, _ string, at time.Time) (alerts.Alert, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	resolved := false
 	for id, a := range m.alerts {
 		if a.Fingerprint == fingerprint && a.Status != alerts.StatusResolved {
 			a.Status = alerts.StatusResolved
 			a.ResolvedBy = &actor
 			a.ResolvedAt = &at
 			m.alerts[id] = a
-			resolved = true
+			return a, true, nil
 		}
 	}
-	return resolved, nil
+	return alerts.Alert{}, false, nil
 }
 
 type mockMaintenanceStore struct {

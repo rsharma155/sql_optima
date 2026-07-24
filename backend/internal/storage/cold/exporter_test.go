@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/pashagolub/pgxmock/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -26,14 +26,14 @@ func TestExporter_Run(t *testing.T) {
 	assert.NoError(t, err)
 	defer mockDB.Close()
 
-	mockUploader := new(MockS3Client)
+	mockMgr := new(MockS3Manager)
 	cfg := &Config{
 		Enabled:         true,
 		ExportLagDays:   2,
 		ExportBatchSize: 100,
 		LocalStagingDir: "/tmp/sql-optima-test",
 	}
-	uploader := &S3Uploader{client: mockUploader, cfg: cfg}
+	uploader := &S3Uploader{manager: mockMgr, cfg: cfg}
 	watermark := NewWatermarkStore(mockDB)
 
 	exporter := NewExporter(mockDB, uploader, watermark, cfg)
@@ -47,7 +47,7 @@ func TestExporter_Run(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"cold_export_run_id"}).AddRow(runID))
 
 	// 2. Fetch active servers
-	mockDB.ExpectQuery("SELECT id::text FROM monitored_servers").
+	mockDB.ExpectQuery("SELECT id::text FROM optima_servers").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(serverID))
 
 	// 3. Register a dummy table
@@ -79,7 +79,7 @@ func TestExporter_Run(t *testing.T) {
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(true))
 
-		mockUploader.On("PutObject", mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil).Once()
+		mockMgr.On("Upload", mock.Anything, mock.Anything).Return(&manager.UploadOutput{}, nil).Once()
 
 		mockDB.ExpectExec("INSERT INTO coldstorage.watermarks").
 			WithArgs("test_metrics", serverID, pgxmock.AnyArg()).
@@ -95,7 +95,7 @@ func TestExporter_Run(t *testing.T) {
 	assert.NoError(t, err)
 
 	mockDB.ExpectationsWereMet()
-	mockUploader.AssertExpectations(t)
+	mockMgr.AssertExpectations(t)
 }
 
 func TestExporter_Purge(t *testing.T) {

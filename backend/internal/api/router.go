@@ -28,6 +28,7 @@ import (
 	"github.com/rsharma155/sql_optima/internal/middleware"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/service"
+	"github.com/rsharma155/sql_optima/internal/storage/cold"
 )
 
 
@@ -70,10 +71,14 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 				intelActive = irSvc.CheckStatus(req.Context())
 			}
 
+			coldCfg := cold.ConfigFromEnv()
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"instances":           instances,
-				"feature_flags":       cfg.FeatureFlags,
-				"intelligence_active": intelActive,
+				"instances":                    instances,
+				"feature_flags":                cfg.FeatureFlags,
+				"intelligence_active":          intelActive,
+				"cold_storage_enabled":         coldCfg.Enabled,
+				"cold_storage_query_available": coldCfg.TrinoURL != "",
+				"max_dashboard_range_days":     int(handlers.MaxDashboardTimeRange().Hours() / 24),
 			})
 		}).Methods("GET")
 	}
@@ -86,7 +91,8 @@ func RegisterHealthRoutes(r *mux.Router, cfg *config.Config, metricsSvc *service
 	widgetAdminH := handlers.NewWidgetAdminHandlers(metricsSvc)
 	sqlserverH := handlers.NewSqlServerHandlers(metricsSvc, cfg)
 	postgresH := handlers.NewPostgresHandlers(metricsSvc, cfg)
-timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
+	coldQueryH := handlers.NewColdQueryHandlers() // nil when COLD_STORAGE_TRINO_URL is not set
+	timescaleH := handlers.NewTimescaleHandlers(metricsSvc, coldQueryH)
 	pgSihH := handlers.NewPgStorageIndexHealthHandlers(metricsSvc, cfg)
 	msSihH := handlers.NewSqlServerStorageHandlers(metricsSvc, cfg)
 	unifiedSihH := handlers.NewStorageIndexHealthTimescaleHandlers(metricsSvc, cfg)
@@ -105,6 +111,9 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 	var coldStorageH *handlers.ColdStorageHandlers
 	if pool := metricsSvc.GetTimescaleDBPool(); pool != nil {
 		coldStorageH = handlers.NewColdStorageHandlers(pool)
+		revokeStore := repository.NewOSAgentRevokeStore(pool)
+		osCollectorH.SetOSAgentRevoker(revokeStore)
+		middleware.SetOSAgentRevokeChecker(revokeStore)
 	}
 
 	// SQL Server Intelligence Report — initialize with nil service if pool is missing to ensure routes are registered.
@@ -131,21 +140,24 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 		SqlServerLocks: sqlserverLockH, SqlServerWaitStats: sqlserverWaitStatsH,
 		IntelligenceReport: irH,
 		ColdStorage: coldStorageH,
+		ColdQuery:   coldQueryH,
 		PgObservability: pgObsH, PgBackup: pgBackupH, PgSecurity: pgSecurityH,
 		SQLServerHA: sqlServerHAH, SQLServerBackup: sqlServerBackupH,
 		}
 
 	// ── Shared notifier (config loaded from DB at startup, hot-reloadable via admin panel) ──
 	sharedNotifier := service.NewNotifier(service.NotifierConfig{
-		WebhookURL:      os.Getenv("ALERT_WEBHOOK_URL"),
-		SlackWebhookURL: os.Getenv("SLACK_WEBHOOK_URL"),
+		WebhookURL:          os.Getenv("ALERT_WEBHOOK_URL"),
+		SlackWebhookURL:     os.Getenv("SLACK_WEBHOOK_URL"),
+		PagerDutyRoutingKey: os.Getenv("PAGERDUTY_ROUTING_KEY"),
+		EmailSMTPJSON:       os.Getenv("ALERT_SMTP_JSON"),
 	}, slog.Default())
 
 	// ── Admin notification handler (wired to shared notifier) ──────────────────
 	var adminNotifH *handlers.AdminNotificationHandlers
 	if tsPool := metricsSvc.GetTimescaleDBPool(); tsPool != nil {
 		notifRepo := repository.NewNotificationConfigRepository(tsPool)
-		adminNotifH = handlers.NewAdminNotificationHandlers(notifRepo, sharedNotifier)
+		adminNotifH = handlers.NewAdminNotificationHandlers(notifRepo, sharedNotifier, metricsSvc)
 		sharedNotifier.LoadFromDB(context.Background(), notifRepo)
 	}
 
@@ -161,10 +173,15 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 					service.NewSqlServerBlockingEvaluator(tsPool),
 					service.NewSqlServerFailedJobsEvaluator(tsPool),
 					service.NewSqlServerDiskSpaceEvaluator(tsPool),
+					service.NewSqlServerLongRunningQueryEvaluator(tsPool),
+					service.NewSqlServerConnectionPressureEvaluator(tsPool),
 					service.NewPgReplicationLagEvaluator(tsPool),
 					service.NewPgBlockingEvaluator(tsPool),
 					service.NewPgBackupFreshnessEvaluator(tsPool),
 					service.NewPgDiskSpaceEvaluator(tsPool),
+					service.NewPgConnectionSaturationEvaluator(tsPool),
+					service.NewPgWalSlotRetentionEvaluator(tsPool),
+					service.NewPgBouncerWaitEvaluator(tsPool),
 				}
 
 				alertSvc := service.NewAlertService(
@@ -228,6 +245,10 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 		openAPI.HandleFunc("/os-collector/bundle", osCollectorH.DownloadBundle).Methods("GET")
 		openAPI.HandleFunc("/os-collector/ingest", osCollectorH.GetIngestConfig).Methods("GET")
 		openAPI.HandleFunc("/os-collector/ingest", osCollectorH.SetIngestConfig).Methods("PUT")
+		if mon.ColdQuery != nil {
+			openAPI.HandleFunc("/cold-storage/query", mon.ColdQuery.RunQuery).Methods("POST")
+			openAPI.HandleFunc("/cold-storage/history", mon.ColdQuery.RunHistoryQuery).Methods("POST")
+		}
 		// Alert mutations and destructive PG actions require JWT even in legacy dev mode (see legacyAuthed below).
 	}
 
@@ -275,10 +296,14 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 				intelActive = irSvc.CheckStatus(req.Context())
 			}
 
+			coldCfg := cold.ConfigFromEnv()
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"instances":           instances,
-				"feature_flags":       cfg.FeatureFlags,
-				"intelligence_active": intelActive,
+				"instances":                    instances,
+				"feature_flags":                cfg.FeatureFlags,
+				"intelligence_active":          intelActive,
+				"cold_storage_enabled":         coldCfg.Enabled,
+				"cold_storage_query_available": coldCfg.TrinoURL != "",
+				"max_dashboard_range_days":     int(handlers.MaxDashboardTimeRange().Hours() / 24),
 			})
 		}).Methods("GET")
 
@@ -295,10 +320,16 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 		dbaAPI.Use(middleware.CSRFProtect)
 		registerMonitoringElevatedRoutes(dbaAPI, sqlserverH, handlers.NewPgExplainAnalyzeHandler(metricsSvc), handlers.PgExplainOptimize, handlers.PgExplainIndexAdvisor(cfg))
 		dbaAPI.HandleFunc("/os-collector/bundle", osCollectorH.DownloadBundle).Methods("GET")
+		dbaAPI.HandleFunc("/os-collector/token", osCollectorH.MintOSAgentToken).Methods("POST")
+		dbaAPI.HandleFunc("/os-collector/token/revoke", osCollectorH.RevokeOSAgentToken).Methods("POST")
 		dbaAPI.HandleFunc("/postgres/dr-policy", pgBackupH.PutDRPolicy).Methods("PUT")
 		registerPostgresDBAMutations(dbaAPI, postgresH)
 		registerDashboardWidgetRoutes(dbaAPI, dashboardH)
 		registerAlertMutationRoutes(dbaAPI, getAlertH)
+		if mon.ColdQuery != nil {
+			dbaAPI.HandleFunc("/cold-storage/query", mon.ColdQuery.RunQuery).Methods("POST")
+			dbaAPI.HandleFunc("/cold-storage/history", mon.ColdQuery.RunHistoryQuery).Methods("POST")
+		}
 	}
 
 	if !sec.AuthRequired {
@@ -318,8 +349,7 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 	adminAPI.Use(middleware.RequireAuth("admin"))
 	adminAPI.Use(middleware.CSRFProtect)
 	osMetricsAPI := r.PathPrefix("/api").Subrouter()
-	osMetricsAPI.Use(middleware.RequireAuth(""))
-	osMetricsAPI.Use(middleware.RequireAnyRole("dba", "admin"))
+	osMetricsAPI.Use(middleware.RequireOSMetricsAuth())
 	osMetricsAPI.HandleFunc("/os/metrics", osMetricsH.ReceiveMetrics).Methods("POST")
 	adminAPI.HandleFunc("/users", adminH.CreateUser).Methods("POST")
 	adminAPI.HandleFunc("/users", adminH.ListUsers).Methods("GET")
@@ -337,6 +367,8 @@ timescaleH := handlers.NewTimescaleHandlers(metricsSvc)
 	adminAPI.HandleFunc("/servers/{id}", adminServersH.PatchServer).Methods("PATCH")
 	adminAPI.HandleFunc("/servers/{id}", adminServersH.DeleteServer).Methods("DELETE")
 	adminAPI.HandleFunc("/os-collector/bundle", osCollectorH.DownloadBundle).Methods("GET")
+	adminAPI.HandleFunc("/os-collector/token", osCollectorH.MintOSAgentToken).Methods("POST")
+	adminAPI.HandleFunc("/os-collector/token/revoke", osCollectorH.RevokeOSAgentToken).Methods("POST")
 	adminAPI.HandleFunc("/os-collector/ingest", osCollectorH.GetIngestConfig).Methods("GET")
 	adminAPI.HandleFunc("/os-collector/ingest", osCollectorH.SetIngestConfig).Methods("PUT")
 	adminAPI.HandleFunc("/widgets/{id}", widgetAdminH.UpdateWidget).Methods("PUT")

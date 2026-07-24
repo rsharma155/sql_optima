@@ -22,10 +22,13 @@ apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load d
 | Area | Status |
 |------|--------|
 | OS metrics ingest, cold storage, admin user APIs | Sanitized responses |
-| Legacy monitoring handlers (widgets, storage index, explain) | May still return `err.Error()` — migrate incrementally |
+| Admin collector / notification configs, widget admin, storage-index handlers, wait-stats | Sanitized via `apiresponse` |
+| Query analysis, workload, intelligence report, admin servers, OS collector, setup connection errors | Sanitized |
+| Explain / instance validation messages | May still return safe `err.Error()` from validators |
 | OpenTelemetry | Optional via `OTEL_EXPORTER_OTLP_ENDPOINT` |
 
 ## Roadmap
 
 - Central middleware to map known error types (timeout, not found) to HTTP status + public message.
 - Redact DSN/password substrings in slog attributes (never log request bodies for admin routes).
+- Finish migrating remaining monitoring handlers to `apiresponse.WriteJSONError` / `WritePlainError`.

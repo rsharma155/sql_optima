@@ -306,7 +306,7 @@ func (h *SetupHandlers) PostTimescale(w http.ResponseWriter, r *http.Request) {
 	if h.configPath != "" && len(h.jwtSecret) > 0 {
 		if err := hot.SavePersistedTimescaleConfig(h.configPath, h.jwtSecret, cfg); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "Failed to persist configuration: " + err.Error()})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "failed to persist configuration"})
 			return
 		}
 	}
@@ -314,7 +314,7 @@ func (h *SetupHandlers) PostTimescale(w http.ResponseWriter, r *http.Request) {
 	newStorage, err := hot.New(cfg)
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "TimescaleDB connection failed: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "TimescaleDB connection failed"})
 		return
 	}
 
@@ -322,7 +322,7 @@ func (h *SetupHandlers) PostTimescale(w http.ResponseWriter, r *http.Request) {
 		if err := h.metricsSvc.RebindTimescale(newStorage); err != nil {
 			newStorage.Close()
 			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "Failed to activate connection: " + err.Error()})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "failed to activate connection"})
 			return
 		}
 		// Ensure credential encryption is ready even when TimescaleDB was not

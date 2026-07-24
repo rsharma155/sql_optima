@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sql-optima.fullname" . }}
+  labels:
+    {{- include "sql-optima.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "sql-optima.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "sql-optima.labels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      containers:
+        - name: api
+          image: {{ include "sql-optima.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: ":8080"
+            - name: SQL_OPTIMA_DEPLOYMENT
+              value: docker
+            - name: AUTH_REQUIRED
+              value: {{ ternary "1" "0" .Values.auth.required | quote }}
+            - name: AUTH_MODE
+              value: {{ .Values.auth.mode | quote }}
+            - name: DB_HOST
+              value: {{ .Values.timescale.host | quote }}
+            - name: DB_PORT
+              value: {{ .Values.timescale.port | quote }}
+            - name: DB_NAME
+              value: {{ .Values.timescale.database | quote }}
+            - name: DB_USER
+              value: {{ .Values.timescale.user | quote }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-secrets" (include "sql-optima.fullname" .)) .Values.timescale.existingSecret }}
+                  key: {{ default "DB_PASSWORD" .Values.timescale.existingSecretPasswordKey }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-secrets" (include "sql-optima.fullname" .)) .Values.auth.existingSecret }}
+                  key: JWT_SECRET
+            {{- if .Values.auth.oidc.issuerURL }}
+            - name: OIDC_ISSUER_URL
+              value: {{ .Values.auth.oidc.issuerURL | quote }}
+            - name: OIDC_AUDIENCE
+              value: {{ .Values.auth.oidc.audience | quote }}
+            - name: OIDC_GROUP_CLAIM
+              value: {{ .Values.auth.oidc.groupClaim | quote }}
+            - name: OIDC_GROUP_ROLE_MAP
+              value: {{ .Values.auth.oidc.groupRoleMap | quote }}
+            {{- end }}
+            {{- if .Values.coldStorage.enabled }}
+            - name: COLD_STORAGE_ENABLED
+              value: "true"
+            - name: COLD_STORAGE_TRINO_URL
+              value: {{ .Values.coldStorage.trinoURL | quote }}
+            {{- end }}
+            {{- if .Values.osMetrics.ingestEnabled }}
+            - name: OS_METRICS_INGEST_ENABLED
+              value: {{ .Values.osMetrics.ingestEnabled | quote }}
+            {{- end }}
+            {{- if .Values.vault.enabled }}
+            - name: VAULT_ADDR
+              value: {{ .Values.vault.addr | quote }}
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-secrets" (include "sql-optima.fullname" .)) .Values.vault.existingSecret }}
+                  key: VAULT_TOKEN
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /api/health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

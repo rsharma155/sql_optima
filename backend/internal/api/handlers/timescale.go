@@ -23,10 +23,15 @@ import (
 
 type TimescaleHandlers struct {
 	metricsSvc *service.MetricsService
+	coldQuery  *ColdQueryHandlers
 }
 
-func NewTimescaleHandlers(svc *service.MetricsService) *TimescaleHandlers {
-	return &TimescaleHandlers{metricsSvc: svc}
+func NewTimescaleHandlers(svc *service.MetricsService, coldQuery ...*ColdQueryHandlers) *TimescaleHandlers {
+	h := &TimescaleHandlers{metricsSvc: svc}
+	if len(coldQuery) > 0 {
+		h.coldQuery = coldQuery[0]
+	}
+	return h
 }
 
 func (h *TimescaleHandlers) Status(w http.ResponseWriter, r *http.Request) {
@@ -69,30 +74,6 @@ func (h *TimescaleHandlers) GetSQLServerMetrics(w http.ResponseWriter, r *http.R
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(res)
-}
-
-func (h *TimescaleHandlers) SqlServerCPUHistory(w http.ResponseWriter, r *http.Request) {
-	idStr := mux.Vars(r)["id"]
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	from := r.URL.Query().Get("from")
-	to := r.URL.Query().Get("to")
-
-	logger := h.metricsSvc.GetTimescaleDBLogger()
-	if logger == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		return
-	}
-
-	res, err := logger.GetSQLServerCPUHistory(r.Context(), id, from, to, 500)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
 	_ = json.NewEncoder(w).Encode(res)
 }
 
@@ -180,7 +161,7 @@ func (h *TimescaleHandlers) SqlServerQueryStatsTimeSeries(w http.ResponseWriter,
 	series, err := h.metricsSvc.GetSqlServerQueryStatsTimeSeries(r.Context(), serverID, metric, from, to, dbName, excludeSystem, logins)
 	if err != nil {
 		slog.Error("[Timescale] GetSqlServerQueryStatsTimeSeries error", "err", err)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"series": []interface{}{}, "error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"series": []interface{}{}, "error": "failed to load query stats series"})
 		return
 	}
 

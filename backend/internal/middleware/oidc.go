@@ -9,7 +9,6 @@ package middleware
 
 import (
 	"context"
-	"strings"
 	"sync"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -82,7 +81,10 @@ func firstString(m map[string]interface{}, keys ...string) string {
 
 func mapOIDCRoleClaim(m map[string]interface{}) string {
 	if s, ok := m["optima_role"].(string); ok {
-		return normalizeAppRole(s)
+		return NormalizeRole(s)
+	}
+	if role := roleFromOIDCGroups(m); role != "" {
+		return role
 	}
 	// Keycloak-style resource_access
 	if ra, ok := m["resource_access"].(map[string]interface{}); ok {
@@ -97,28 +99,15 @@ func mapOIDCRoleClaim(m map[string]interface{}) string {
 			}
 			for _, r := range roles {
 				rs, _ := r.(string)
-				nr := normalizeAppRole(rs)
-				if nr == "admin" {
-					return "admin"
+				nr := NormalizeRole(rs)
+				if nr == RoleAdmin {
+					return RoleAdmin
 				}
-				if nr == "dba" {
-					return "dba"
+				if nr == RoleDBA {
+					return RoleDBA
 				}
 			}
 		}
 	}
-	return "viewer"
-}
-
-func normalizeAppRole(r string) string {
-	switch strings.ToLower(r) {
-	case "admin", "administrator":
-		return "admin"
-	case "dba", "db_admin":
-		return "dba"
-	case "viewer", "read", "readonly":
-		return "viewer"
-	default:
-		return "viewer"
-	}
+	return RoleViewer
 }

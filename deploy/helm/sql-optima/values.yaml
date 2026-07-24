@@ -1,0 +1,60 @@
+# Default values for sql-optima (control plane). TimescaleDB is external by default.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/rsharma155/sql-optima
+  tag: "" # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+auth:
+  required: true
+  mode: local # local | oidc
+  existingSecret: ""
+  # existingSecret: sql-optima-auth  (JWT_SECRET key)
+  jwtSecret: ""
+  oidc:
+    issuerURL: ""
+    audience: ""
+    groupClaim: groups
+    # e.g. "sql-optima-admins:admin,sql-optima-dbas:dba"
+    groupRoleMap: ""
+
+timescale:
+  host: timescale
+  port: 5432
+  database: dbmonitor_metrics
+  user: dbmonitor
+  existingSecret: ""
+  existingSecretPasswordKey: DB_PASSWORD
+  # existingSecret: sql-optima-db
+  # existingSecretPasswordKey: password
+  password: ""
+vault:
+  enabled: false
+  addr: ""
+  token: ""
+  # existingSecret: sql-optima-vault (VAULT_TOKEN)
+
+coldStorage:
+  enabled: false
+  trinoURL: ""
+
+osMetrics:
+  ingestEnabled: "" # empty | "0" | "1"
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

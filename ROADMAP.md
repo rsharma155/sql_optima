@@ -3,6 +3,15 @@
 This roadmap is intentionally practical: it focuses on adoption blockers (safety, deployment, trust signals) and operator value.
 
 ## Completed (0.x)
+- **Alert engine extensions** — evaluators for SQL Server long-running queries / connection pressure (% when `max_connections` collected, else absolute), PostgreSQL connection saturation / WAL slot retention / PgBouncer wait; PagerDuty Events API v2 + native SMTP email; `alert.resolved` notifications; scoped OS agent JWT + jti revoke list for metric ingest.
+- **API error sanitization** — widgets, storage-index, wait-stats, admin notification/collector, SQL Server monitoring, query analysis, workload, intelligence, and admin server paths use `apiresponse` (no internal `err.Error()` on 500s).
+- **Cold storage Phase 3** — `/api/config` exposes enablement; global time picker 30d/90d presets; allowlisted `POST /api/cold-storage/history`; hot+cold merge for SQL Server CPU / memory / wait / connection history when Trino is configured.
+- **Frontend federated history** — dashboards/drilldowns call `cpu|memory|wait|connection-history` via shared helper; source badges for hot / hot+cold; Health V2 overlays wait/connection series.
+- **RBAC role constants** — `middleware.RoleAdmin|RoleDBA|RoleViewer` + `NormalizeRole`; widget SQL mutations audited.
+- **OIDC group → role mapping** — `OIDC_GROUP_CLAIM` + `OIDC_GROUP_ROLE_MAP` for enterprise SSO.
+- **Release engineering** — GHCR publish on `v*.*.*` with SPDX SBOM + GitHub Release notes from CHANGELOG.
+- **Helm starter chart** — `deploy/helm/sql-optima` for control-plane Deployment/Service.
+- **Timescale retention helpers** — optional `014_timescale_retention_downsampling.sql` (90d floors + hourly CPU CAGG).
 - **Docker Compose** — one-command deploy (`docker/docker-compose.yml`) with TimescaleDB, Vault, and automatic schema bootstrap.
 - **Prometheus metrics** — `/metrics` endpoint with request counters and duration histograms (`sql_optima_http_*`).
 - **OpenTelemetry tracing** — optional OTLP HTTP exporter.
@@ -21,32 +30,17 @@ This roadmap is intentionally practical: it focuses on adoption blockers (safety
 - **SQL Server Dashboard redesign** — real-time triage view with 4-column KPI layout and per-section time-range selection.
 
 ## Near-term (0.x)
-- **Security hardening**
-  - Expand query sandbox test coverage (edge cases, dialect oddities).
-  - Reduce error leakage across handlers (consistent redaction + request correlation).
-- **Structured logging**
-  - Replace `log.Printf` with a structured logging package carrying request ID, route, and duration.
-- **Packaging**
-  - Publish versioned images to GHCR.
-- **Alert engine extensions**
-  - Additional evaluators (long-running queries, connection pool saturation, WAL growth).
-  - Alert routing integrations (Slack, PagerDuty, email webhooks).
-- **OS collector wiring**
-  - Complete host-level CPU/memory agent → dashboard integration (agent push → handler → chart pipeline).
+- Expand Helm chart with optional TimescaleDB subchart / schema Job.
 
 ## Medium-term (1.0 readiness)
 - **Production model**
   - Clear “control plane vs agent” separation (remote collectors, mTLS).
-  - Storage retention policies and downsampling strategies for TimescaleDB.
+  - Broader continuous-aggregate coverage beyond CPU.
 - **RBAC refinement**
-  - Predefined role constants (viewer, dba, admin) with granular endpoint mapping.
-  - Audit logging for all admin mutations (widget SQL edits, user operations, server registration).
+  - Granular endpoint capability matrix beyond role constants.
 - **Release engineering**
-  - Versioned releases + changelog automation.
-  - Signed artifacts (optional) and SBOM generation.
+  - Cosign/sigstore image signing (optional).
 
 ## Longer-term
-- Kubernetes Helm chart for multi-environment deployments.
 - Multi-tenant mode (namespacing instances, separate storage).
-- OIDC group-to-role mapping for enterprise SSO.
-
+- Full remote collector mesh with mTLS.

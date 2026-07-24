@@ -131,6 +131,14 @@ func Main() {
 	os.Exit(1)
 		}
 		cancel()
+		if sec.OIDCGroupRoleMap != "" {
+			claim := sec.OIDCGroupClaim
+			if claim == "" {
+				claim = "groups"
+			}
+			middleware.SetOIDCGroupRoleMapping(claim, middleware.ParseOIDCGroupRoleMap(sec.OIDCGroupRoleMap))
+			slog.Info("[auth] OIDC group-to-role mapping enabled", "claim", claim)
+		}
 		// Avoid logging issuer URL (often contains internal hostnames).
 		slog.Info("[auth] OIDC verifier enabled")
 	}
@@ -664,20 +672,22 @@ func startColdStorageExporter(ctx context.Context, pool *pgxpool.Pool) {
 	defer ticker.Stop()
 
 	for {
-		now := time.Now().UTC()
-		if now.Hour() == 2 {
-			if err := exporter.Run(ctx); err != nil {
-				slog.Error("[ColdExporter] run failed", "err", err)
-			}
-			// Sleep for an hour to avoid multiple runs within the same hour window
-			time.Sleep(1 * time.Hour)
-		}
-
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// check again
+			now := time.Now().UTC()
+			if now.Hour() == 2 {
+				if err := exporter.Run(ctx); err != nil {
+					slog.Error("[ColdExporter] run failed", "err", err)
+				}
+				// Drain the next tick to avoid a second run within the same hour.
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
 		}
 	}
 }

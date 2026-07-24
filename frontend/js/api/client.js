@@ -79,6 +79,11 @@ window.apiClient = {
             if (response.ok) {
                 const cfg = await response.json();
                 window.appState.config = cfg;
+                window.appState.coldStorageEnabled = !!cfg.cold_storage_enabled;
+                const maxDays = Number(cfg.max_dashboard_range_days);
+                window.appState.maxDashboardRangeDays = Number.isFinite(maxDays) && maxDays > 0
+                    ? maxDays
+                    : (window.appState.coldStorageEnabled ? 90 : 7);
                 return true;
             } else {
                 console.error("Config fetch rejected with status: ", response.status);

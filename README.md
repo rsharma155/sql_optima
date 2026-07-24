@@ -217,7 +217,7 @@ Docs are grouped by role. Start with **Quickstart**, then drill into operations 
 |----------|-------------|
 | **[docs/operations.md](docs/operations.md)** | Restarts, collector warm-up, retention, day-2 operations |
 | **[docs/vault_production.md](docs/vault_production.md)** | Vault Transit in production (AppRole, backups, TLS) — not dev-mode root tokens |
-| **[docs/os_collector.md](os_collector/README.md)** | PostgreSQL host agent (Linux shell) — RAM/CPU for Memory dashboard |
+| **[docs/os_collector.md](docs/os_collector.md)** | PostgreSQL host agent — platform enablement, API, troubleshooting |
 | **[os_collector/README.md](os_collector/README.md)** | Install agent on DB hosts; **download zip** from Admin or PG Memory/CPU UI |
 | **[SECURITY.md](SECURITY.md)** | Disclosure policy and security expectations |
 | **[docs/threat_model.md](docs/threat_model.md)** | Threats, mitigations, and trust assumptions |
@@ -459,7 +459,57 @@ When historical charts are empty, admins can call `GET /api/admin/diagnostics/sq
 
 ### Cold storage (optional)
 
-Nightly archival of aged TimescaleDB rows to S3-compatible storage as **Parquet**, with optional **Iceberg** catalog registration. Configure via `COLD_STORAGE_*` in `docker/.env.example`.
+Nightly archival of aged TimescaleDB rows to S3-compatible storage as **Parquet**, with optional **Apache Iceberg** catalog registration and **Trino** federated query support.
+
+**Three-tier data lifecycle:**
+
+| Tier | Storage | Retention | Query path |
+|------|---------|-----------|-----------|
+| **Hot** | TimescaleDB (compressed after 7 days) | 30–90 days per table | All live dashboards |
+| **Cold** | S3 / MinIO (Parquet, Snappy-compressed) | 1–3 years | DuckDB CLI or Trino |
+| **Federated** | Hot + cold via Trino SQL | — | `/api/cold-storage/query` |
+
+**What gets archived (36 tables):**
+- Core SQL Server metrics: CPU history, memory, waits, disk, connections, throughput, buffer pool, scheduler stats
+- Compliance tables: failed logins, roles snapshots, DDL audit, backup archiver history
+- Operational telemetry: AG health, long-running queries, procedure stats, session activity, wait profiles
+
+**Parquet layout** — queryable by DuckDB with zero extra tooling:
+```
+sql-optima-cold/metrics/engine=sqlserver/table=sqlserver_cpu_history/
+  server_id=<uuid>/year=2025/month=11/day=01/part-000001.parquet
+```
+
+**Enable cold storage** (add to `docker/.env`):
+```bash
+COLD_STORAGE_ENABLED=true
+COLD_STORAGE_ENDPOINT=http://minio:9000   # or your S3 endpoint
+COLD_STORAGE_BUCKET=sql-optima-cold
+COLD_STORAGE_ACCESS_KEY_ID=sqloptima
+COLD_STORAGE_SECRET_ACCESS_KEY=<secret>
+COLD_STORAGE_LAG_DAYS=2                  # export data older than 2 days (ensures compression)
+```
+
+**Start with MinIO, Nessie, and Trino:**
+```bash
+COMPOSE_PROFILES=cold-storage docker compose up -d
+# MinIO console: http://localhost:9001
+```
+
+**Ad-hoc DuckDB query:**
+```sql
+INSTALL httpfs; LOAD httpfs;
+SET s3_endpoint='localhost:9000'; SET s3_use_ssl=false; SET s3_url_style='path';
+SET s3_access_key_id='sqloptima'; SET s3_secret_access_key='change_me_in_production';
+
+SELECT to_timestamp(capture_timestamp_ms / 1000.0) AS ts, sql_cpu_utilization
+FROM read_parquet('s3://sql-optima-cold/metrics/engine=sqlserver/table=sqlserver_cpu_history/**/*.parquet',
+    hive_partitioning = true)
+WHERE server_id = '<uuid>'
+ORDER BY ts;
+```
+
+See **[ARCHITECTURE.md § Cold Storage Tier](ARCHITECTURE.md#cold-storage-tier)** for the full design, safety mechanisms, registered tables, and phase roadmap. Test scripts live in `infrastructure/sql_scripts/Test_scripts/`.
 
 ### Alert engine
 

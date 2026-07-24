@@ -8,9 +8,9 @@
 package handlers
 
 import (
-	"log/slog"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -19,10 +19,24 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/service"
+	"github.com/rsharma155/sql_optima/internal/storage/cold"
 	"github.com/rsharma155/sql_optima/internal/validation"
 )
 
-const maxTimeRange = 7 * 24 * time.Hour
+const (
+	maxTimeRangeDefault = 7 * 24 * time.Hour
+	// When cold storage is enabled, dashboards may look back across hot retention (Group A = 90 days).
+	maxTimeRangeColdEnabled = 90 * 24 * time.Hour
+)
+
+// MaxDashboardTimeRange returns the allowed from/to span for historical APIs.
+// Cold storage Phase 3: unlock up to 90 days when COLD_STORAGE_ENABLED=true.
+func MaxDashboardTimeRange() time.Duration {
+	if cold.ConfigFromEnv().Enabled {
+		return maxTimeRangeColdEnabled
+	}
+	return maxTimeRangeDefault
+}
 
 // ParseTimeRange extracts and normalizes from/to timestamps from query parameters.
 func ParseTimeRange(fromStr, toStr string) (time.Time, time.Time) {
@@ -66,9 +80,10 @@ func ParseTimeRange(fromStr, toStr string) (time.Time, time.Time) {
 		fromT = toT.Add(-1 * time.Hour)
 	}
 
-	// Cap to 7 days only when both endpoints were explicitly supplied
-	if fromProvided && toProvided && toT.Sub(fromT) > maxTimeRange {
-		fromT = toT.Add(-maxTimeRange)
+	// Cap span when both endpoints were explicitly supplied
+	maxRange := MaxDashboardTimeRange()
+	if fromProvided && toProvided && toT.Sub(fromT) > maxRange {
+		fromT = toT.Add(-maxRange)
 	}
 
 	// If the range is purely in the future (skew), cap to now

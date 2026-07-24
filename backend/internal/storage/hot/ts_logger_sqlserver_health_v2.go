@@ -33,9 +33,9 @@ func (tl *TimescaleLogger) LogSqlServerHealthV2KPIs(ctx context.Context, serverI
 			capture_timestamp, server_id, sql_cpu_pct, runnable_tasks, 
 			mem_grants_pending, page_reads_per_sec, log_write_wait_ms, batch_requests, 
 			compilations, logins_per_sec, target_server_memory_mb, total_server_memory_mb,
-			blocked_sessions, user_connections, instance_status, 
+			blocked_sessions, user_connections, max_connections, instance_status, 
 			edition, uptime_seconds
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 	`
 	_, err := tl.pool.Exec(ctx, query,
 		time.Now().UTC(),
@@ -52,6 +52,7 @@ func (tl *TimescaleLogger) LogSqlServerHealthV2KPIs(ctx context.Context, serverI
 		k.TotalServerMemoryMB,
 		k.BlockedSessions,
 		k.UserConnections,
+		k.MaxConnections,
 		k.InstanceStatus,
 		k.Edition,
 		uptimeSeconds,
@@ -72,7 +73,7 @@ func (tl *TimescaleLogger) GetLatestHealthV2KPIs(ctx context.Context, serverID u
 			sql_cpu_pct, runnable_tasks, mem_grants_pending, page_reads_per_sec, 
 			log_write_wait_ms, batch_requests, compilations, logins_per_sec,
 			target_server_memory_mb, total_server_memory_mb,
-			blocked_sessions, user_connections, instance_status, edition, uptime_seconds
+			blocked_sessions, user_connections, COALESCE(max_connections, 0), instance_status, edition, uptime_seconds
 		FROM sqlserver_health_kpis_v2
 		WHERE server_id = $1
 		ORDER BY capture_timestamp DESC
@@ -91,6 +92,7 @@ func (tl *TimescaleLogger) GetLatestHealthV2KPIs(ctx context.Context, serverID u
 		&k.TotalServerMemoryMB,
 		&k.BlockedSessions,
 		&k.UserConnections,
+		&k.MaxConnections,
 		&k.InstanceStatus,
 		&k.Edition,
 		&uptimeSeconds,

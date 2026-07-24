@@ -38,6 +38,7 @@ Timescale              *handlers.TimescaleHandlers
 	SqlServerWaitStats     *handlers.SqlServerWaitStatsHandlers
 	IntelligenceReport     *handlers.IntelligenceReportHandlers
 	ColdStorage            *handlers.ColdStorageHandlers
+	ColdQuery              *handlers.ColdQueryHandlers
 
 	// New Postgres Domain Handlers
 	PgObservability *pg_obs_api.PostgresObservabilityHandler
@@ -230,6 +231,9 @@ func registerMonitoringReadRoutes(sr *mux.Router, h *monitoringHandlers, rulesBe
 	sr.HandleFunc("/timescale/status", ts.Status).Methods("GET")
 	sr.HandleFunc("/timescale/sqlserver/metrics", ts.GetSQLServerMetrics).Methods("GET")
 	sr.HandleFunc("/timescale/sqlserver/cpu-history", ts.SqlServerCPUHistory).Methods("GET")
+	sr.HandleFunc("/timescale/sqlserver/memory-history", ts.SqlServerMemoryHistory).Methods("GET")
+	sr.HandleFunc("/timescale/sqlserver/wait-history", ts.SqlServerWaitHistory).Methods("GET")
+	sr.HandleFunc("/timescale/sqlserver/connection-history", ts.SqlServerConnectionHistory).Methods("GET")
 	sr.HandleFunc("/timescale/sqlserver/memory-drilldown", ts.SqlServerMemoryDrilldown).Methods("GET")
 	sr.HandleFunc("/timescale/sqlserver/top-queries", ts.SqlServerTopQueries).Methods("GET")
 	sr.HandleFunc("/timescale/sqlserver/query-stats-dashboard", ts.SqlServerQueryStatsDashboard).Methods("GET")
@@ -306,11 +310,12 @@ sr.HandleFunc("/health/score", he.Score).Methods("GET")
 	sr.HandleFunc("/sqlserver/intelligence-report/analyze", ir.Analyze).Methods("POST")
 	sr.HandleFunc("/sqlserver/intelligence-report/report/{run_id}", ir.GetReport).Methods("GET")
 
-	// Cold Storage
+	// Cold Storage — status and run history (viewer+)
 	if h.ColdStorage != nil {
 		sr.HandleFunc("/cold-storage/status", h.ColdStorage.GetStatus).Methods("GET")
 		sr.HandleFunc("/cold-storage/runs", h.ColdStorage.GetRuns).Methods("GET")
 	}
+	// Cold Storage — ad-hoc Trino query (dba/admin, registered separately via dbaAPI)
 }
 
 // registerMonitoringElevatedRoutes attaches diagnostics that should be limited to dba or admin.

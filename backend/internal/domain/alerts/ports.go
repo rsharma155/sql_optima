@@ -34,7 +34,8 @@ type AlertStore interface {
 	CountOpen(ctx context.Context, serverID uuid.UUID) (int, error)
 
 	// ResolveByFingerprint resolves an open/acknowledged alert with the given fingerprint.
-	ResolveByFingerprint(ctx context.Context, fingerprint, actor, reason string, at time.Time) (bool, error)
+	// Returns the pre-resolve alert snapshot when a row was updated.
+	ResolveByFingerprint(ctx context.Context, fingerprint, actor, reason string, at time.Time) (Alert, bool, error)
 }
 
 // AlertFilter defines criteria for listing alerts.

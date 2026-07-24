@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/domain"
 	"github.com/rsharma155/sql_optima/internal/service"
@@ -156,8 +157,7 @@ func (h *SqlServerQueryAnalysisHandlers) GetRegressions(w http.ResponseWriter, r
 	logins := h.monitoringLoginsForRequest(r)
 	res, err := h.metricsSvc.GetSqlServerQueryRegressions(r.Context(), id, 50, logins)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load query analysis", err, "handler", "query_analysis")
 		return
 	}
 	_ = json.NewEncoder(w).Encode(res)
@@ -172,8 +172,7 @@ func (h *SqlServerQueryAnalysisHandlers) GetPlanInstability(w http.ResponseWrite
 	res, err := h.metricsSvc.GetSqlServerPlanInstability(r.Context(), id, 50)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load query analysis", err, "handler", "query_analysis")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -205,8 +204,7 @@ func (h *SqlServerQueryAnalysisHandlers) GetTopQueries(w http.ResponseWriter, r 
 	res, err := h.metricsSvc.GetSqlServerTopQueriesAnalysis(r.Context(), id, sortBy, limit, from, to, database, excludeSystem, logins)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load query analysis", err, "handler", "query_analysis")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -244,9 +242,7 @@ func (h *SqlServerQueryAnalysisHandlers) GetTopQueryTrends(w http.ResponseWriter
 	}
 	res, err := h.metricsSvc.GetSqlServerTopQueryTrends(r.Context(), id, from, to, database, excludeSystem, logins, limit, fingerprints)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load query analysis", err, "handler", "query_analysis")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

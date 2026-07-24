@@ -12,14 +12,19 @@ package cold
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/parquet-go/parquet-go"
 )
+
+// workerPoolSize is the number of concurrent table/server export goroutines.
+// Each goroutine is I/O-bound (DB read + S3 upload) so 8 is a safe default.
+const workerPoolSize = 8
 
 // TableExportConfig describes one table to export.
 type TableExportConfig struct {
@@ -27,8 +32,12 @@ type TableExportConfig struct {
 	Engine          string
 	TimestampColumn string
 	ServerIDColumn  string
-	QueryFn         func(ctx context.Context, db DB, serverID string, from, to time.Time, offset, limit int) ([]any, error)
-	WriteParquetFn  func(localPath string, rows []any) (int, error)
+	// SkipCompressionCheck disables the TimescaleDB chunk-compression gate for this
+	// table. Set to true for non-hypertables and event tables where compression
+	// does not apply (e.g. pg_failed_login_events, pg_basebackup_history).
+	SkipCompressionCheck bool
+	QueryFn              func(ctx context.Context, db DB, serverID string, from, to time.Time, offset, limit int) ([]any, error)
+	WriteParquetFn       func(localPath string, rows []any) (int, error)
 }
 
 // Exporter orchestrates cold storage export for all registered tables.
@@ -69,13 +78,13 @@ func (e *Exporter) Run(ctx context.Context) error {
 	}
 
 	cutoff := e.cfg.ExportCutoff()
-	log.Printf("[ColdExporter] Starting export cycle, cutoff=%s", cutoff.Format(time.RFC3339))
+	slog.Info("cold export cycle starting", "cutoff", cutoff.Format(time.RFC3339))
 
 	// Start audit log
 	var runID int64
 	err := e.db.QueryRow(ctx, `INSERT INTO coldstorage.runs (run_started, status) VALUES (NOW(), 'running') RETURNING cold_export_run_id`).Scan(&runID)
 	if err != nil {
-		log.Printf("[ColdExporter] Warning: failed to start audit log: %v", err)
+		slog.Warn("cold export audit start failed", "err", err)
 	}
 
 	serverIDs, err := e.fetchServerIDs(ctx)
@@ -89,28 +98,50 @@ func (e *Exporter) Run(ctx context.Context) error {
 		return fmt.Errorf("cold/exporter: create staging dir: %w", err)
 	}
 
-	var totalRows int64
-	var totalBytes int64
-	var tablesOk int
-	var tablesFailed int
+	// Remove any leftover .tmp files from a previous crashed run.
+	e.cleanStagingDir()
+
+	type exportResult struct {
+		tableName string
+		rows      int64
+		bytes     int64
+		err       error
+	}
+
+	resultCh := make(chan exportResult, len(e.tables)*len(serverIDs))
+	sem := make(chan struct{}, workerPoolSize)
+	var wg sync.WaitGroup
 
 	for _, table := range e.tables {
-		tableOk := true
 		for _, serverID := range serverIDs {
-			rows, bytes, err := e.exportTableForServerWithMetrics(ctx, table, serverID, cutoff)
-			if err != nil {
-				log.Printf("[ColdExporter] ERROR exporting %s / %s: %v", table.TableName, serverID, err)
-				tableOk = false
-			}
-			totalRows += rows
-			totalBytes += bytes
-		}
-		if tableOk {
-			tablesOk++
-		} else {
-			tablesFailed++
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(t TableExportConfig, sid string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				r, b, err := e.exportTableForServerWithMetrics(ctx, t, sid, cutoff)
+				resultCh <- exportResult{tableName: t.TableName, rows: r, bytes: b, err: err}
+			}(table, serverID)
 		}
 	}
+
+	wg.Wait()
+	close(resultCh)
+
+	var totalRows int64
+	var totalBytes int64
+	failedTables := make(map[string]struct{})
+	for res := range resultCh {
+		if res.err != nil {
+			slog.Error("cold export table failed", "table", res.tableName, "err", res.err)
+			failedTables[res.tableName] = struct{}{}
+		}
+		totalRows += res.rows
+		totalBytes += res.bytes
+	}
+
+	tablesOk := len(e.tables) - len(failedTables)
+	tablesFailed := len(failedTables)
 
 	status := "success"
 	if tablesFailed > 0 {
@@ -119,7 +150,7 @@ func (e *Exporter) Run(ctx context.Context) error {
 
 	e.finishRun(ctx, runID, status, tablesOk, tablesFailed, totalRows, totalBytes, "")
 
-	log.Printf("[ColdExporter] Export cycle complete. Status: %s, Rows: %d, Bytes: %d", status, totalRows, totalBytes)
+	slog.Info("cold export cycle complete", "status", status, "rows", totalRows, "bytes", totalBytes)
 
 	// Perform safety purge if enabled
 	if e.cfg.PurgeRetentionDays > 0 {
@@ -132,7 +163,7 @@ func (e *Exporter) Run(ctx context.Context) error {
 // Purge drops old chunks from TimescaleDB for all registered tables,
 // but only if the data has been successfully archived to cold storage.
 func (e *Exporter) Purge(ctx context.Context) {
-	log.Printf("[ColdExporter] Starting safety purge, retention=%d days", e.cfg.PurgeRetentionDays)
+	slog.Info("cold purge starting", "retention_days", e.cfg.PurgeRetentionDays)
 
 	purgeCutoff := time.Now().UTC().AddDate(0, 0, -e.cfg.PurgeRetentionDays)
 
@@ -163,16 +194,16 @@ func (e *Exporter) Purge(ctx context.Context) {
 		parts := strings.Split(table.TableName, ".")
 		simpleName := parts[len(parts)-1]
 
-		log.Printf("[ColdExporter] Purging %s older than %s", table.TableName, effectiveCutoff.Format(time.RFC3339))
+		slog.Info("cold purge table", "table", table.TableName, "older_than", effectiveCutoff.Format(time.RFC3339))
 
 		const qDrop = `SELECT drop_chunks($1, older_than => $2::TIMESTAMPTZ)`
 		_, err = e.db.Exec(ctx, qDrop, simpleName, effectiveCutoff)
 		if err != nil {
-			log.Printf("[ColdExporter] ERROR purging %s: %v", table.TableName, err)
+			slog.Error("cold purge failed", "table", table.TableName, "err", err)
 		}
 	}
 
-	log.Println("[ColdExporter] Safety purge complete")
+	slog.Info("cold purge complete")
 }
 
 func (e *Exporter) finishRun(ctx context.Context, runID int64, status string, ok, failed int, rows, bytes int64, errDetail string) {
@@ -191,7 +222,7 @@ func (e *Exporter) finishRun(ctx context.Context, runID int64, status string, ok
 		WHERE cold_export_run_id = $7`
 	_, err := e.db.Exec(ctx, q, status, ok, failed, rows, bytes, errDetail, runID)
 	if err != nil {
-		log.Printf("[ColdExporter] Warning: failed to finish audit log: %v", err)
+		slog.Warn("cold export audit finish failed", "err", err)
 	}
 }
 
@@ -216,23 +247,23 @@ func (e *Exporter) exportTableForServerWithMetrics(ctx context.Context, table Ta
 		nextDay := current.Add(24 * time.Hour)
 
 		// Optimization: only export if the window is fully compressed in TimescaleDB.
-		// This ensures we don't archive data that is still mutable or being updated.
-		compressed, err := e.isCompressed(ctx, table.TableName, current, nextDay)
-		if err != nil {
-			log.Printf("[ColdExporter] Warning: compression check failed for %s: %v", table.TableName, err)
-			// Proceed anyway if check fails, as fallback.
-			compressed = true
-		}
-
-		if !compressed {
-			log.Printf("[ColdExporter] Skipping %s for %s (chunks not yet compressed)", table.TableName, current.Format("2006-01-02"))
-			break // Stop for this table/server to maintain order
+		// Non-hypertables and event tables set SkipCompressionCheck=true to bypass this.
+		if !table.SkipCompressionCheck {
+			compressed, err := e.isCompressed(ctx, table.TableName, current, nextDay)
+			if err != nil {
+				slog.Warn("cold compression check failed", "table", table.TableName, "err", err)
+				compressed = true // safe fallback: allow export on check error
+			}
+			if !compressed {
+				slog.Info("cold export skip uncompressed", "table", table.TableName, "day", current.Format("2006-01-02"))
+				break // stop for this table/server to preserve order
+			}
 		}
 
 		partNum++
 		localPath, uploaded, rowCount, byteCount, err := e.exportDayWithMetrics(ctx, table, serverID, current, nextDay, partNum)
 		if localPath != "" {
-			_ = os.Remove(localPath)
+			_ = os.Remove(localPath) // clean final path; .tmp already renamed or cleaned up
 		}
 		if err != nil {
 			return totalRows, totalBytes, err
@@ -298,35 +329,61 @@ func (e *Exporter) exportDayWithMetrics(ctx context.Context, table TableExportCo
 		return "", false, 0, 0, nil
 	}
 
-	tmpPath := filepath.Join(e.cfg.LocalStagingDir, fmt.Sprintf("%s_%s_%s_part%d.parquet", table.TableName, serverID, from.Format("20060102"), partNum))
+	// Write to *.tmp first, then rename for atomic delivery.
+	// A killed process leaves a .tmp file that is cleaned up on next run.
+	tmpPath := filepath.Join(e.cfg.LocalStagingDir, fmt.Sprintf("%s_%s_%s_part%d.parquet.tmp", table.TableName, serverID, from.Format("20060102"), partNum))
+	finalPath := tmpPath[:len(tmpPath)-4] // strip .tmp suffix
+
 	rowCount, writeErr := table.WriteParquetFn(tmpPath, allRows)
 	if writeErr != nil {
 		return tmpPath, false, 0, 0, fmt.Errorf("write parquet %s: %w", table.TableName, writeErr)
 	}
 
-	fInfo, _ := os.Stat(tmpPath)
-	byteCount := fInfo.Size()
-
-	objectKey := e.uploader.ObjectKey(table.Engine, table.TableName, serverID, from.Format("2006"), from.Format("01"), from.Format("02"), partNum)
-	if uploadErr := e.uploader.UploadFile(ctx, tmpPath, objectKey); uploadErr != nil {
-		return tmpPath, false, 0, 0, fmt.Errorf("upload %s: %w", objectKey, uploadErr)
+	if renameErr := os.Rename(tmpPath, finalPath); renameErr != nil {
+		return tmpPath, false, 0, 0, fmt.Errorf("rename parquet %s: %w", table.TableName, renameErr)
 	}
 
-	log.Printf("[ColdExporter] Uploaded %s (%d rows) → s3://%s/%s", table.TableName, rowCount, e.cfg.Bucket, objectKey)
+	var byteCount int64
+	if fInfo, statErr := os.Stat(finalPath); statErr == nil {
+		byteCount = fInfo.Size()
+	}
+
+	objectKey := e.uploader.ObjectKey(table.Engine, table.TableName, serverID, from.Format("2006"), from.Format("01"), from.Format("02"), partNum)
+	if uploadErr := e.uploader.UploadFile(ctx, finalPath, objectKey); uploadErr != nil {
+		return finalPath, false, 0, 0, fmt.Errorf("upload %s: %w", objectKey, uploadErr)
+	}
+
+	slog.Info("cold export uploaded", "table", table.TableName, "rows", rowCount, "bucket", e.cfg.Bucket, "key", objectKey)
 
 	// Phase 2: Register with Iceberg catalog if enabled
 	if e.iceberg != nil {
 		s3Path := fmt.Sprintf("s3://%s/%s", e.cfg.Bucket, objectKey)
 		if err := e.iceberg.AppendDataFile(ctx, table.TableName, s3Path, int64(rowCount)); err != nil {
-			log.Printf("[ColdExporter] Warning: failed to register %s with Iceberg: %v", table.TableName, err)
+			slog.Warn("cold iceberg register failed", "table", table.TableName, "err", err)
 		}
 	}
 
 	return tmpPath, true, int64(rowCount), byteCount, nil
 }
 
+// cleanStagingDir removes orphaned .tmp files left by a previously crashed export.
+func (e *Exporter) cleanStagingDir() {
+	entries, err := os.ReadDir(e.cfg.LocalStagingDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".parquet.tmp") {
+			path := filepath.Join(e.cfg.LocalStagingDir, entry.Name())
+			if rmErr := os.Remove(path); rmErr == nil {
+				slog.Info("cold staging orphan removed", "file", entry.Name())
+			}
+		}
+	}
+}
+
 func (e *Exporter) fetchServerIDs(ctx context.Context) ([]string, error) {
-	rows, err := e.db.Query(ctx, `SELECT id::text FROM monitored_servers WHERE is_active = true`)
+	rows, err := e.db.Query(ctx, `SELECT id::text FROM optima_servers WHERE is_active = true`)
 	if err != nil {
 		return nil, err
 	}
@@ -343,6 +400,11 @@ func (e *Exporter) fetchServerIDs(ctx context.Context) ([]string, error) {
 	return ids, rows.Err()
 }
 
+// pageBufferSize controls how much data is buffered before a Parquet page is flushed.
+// 8 MB produces row groups large enough for DuckDB/Trino predicate pushdown to be
+// effective, while staying well within typical memory budgets.
+const pageBufferSize = 8 * 1024 * 1024
+
 // WriteTypedParquet is a generic helper for writing a slice of typed rows to Parquet.
 func WriteTypedParquet[T any](path string, rows []T) (int, error) {
 	f, err := os.Create(path)
@@ -351,7 +413,10 @@ func WriteTypedParquet[T any](path string, rows []T) (int, error) {
 	}
 	defer f.Close()
 
-	writer := parquet.NewGenericWriter[T](f, parquet.Compression(&parquet.Snappy))
+	writer := parquet.NewGenericWriter[T](f,
+		parquet.Compression(&parquet.Snappy),
+		parquet.PageBufferSize(pageBufferSize),
+	)
 	n, err := writer.Write(rows)
 	if err != nil {
 		_ = writer.Close()

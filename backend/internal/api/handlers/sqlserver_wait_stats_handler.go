@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
@@ -39,7 +40,7 @@ func (h *SqlServerWaitStatsHandlers) GetKPIs(w http.ResponseWriter, r *http.Requ
 
 	kpis, err := h.metricsSvc.GetTimescaleDBLogger().GetWaitKPIsV2(ctx, serverID, from, to)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load wait stats", err, "handler", "sqlserver_wait_stats")
 		return
 	}
 
@@ -60,7 +61,7 @@ func (h *SqlServerWaitStatsHandlers) GetTrends(w http.ResponseWriter, r *http.Re
 
 	trends, err := h.metricsSvc.GetTimescaleDBLogger().GetWaitTrendsV2(ctx, serverID, from, to)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load wait stats", err, "handler", "sqlserver_wait_stats")
 		return
 	}
 
@@ -81,7 +82,7 @@ func (h *SqlServerWaitStatsHandlers) GetTopWaitTypes(w http.ResponseWriter, r *h
 
 	top, err := h.metricsSvc.GetTimescaleDBLogger().GetTopWaitTypesV2(ctx, serverID, from, to, 10)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load wait stats", err, "handler", "sqlserver_wait_stats")
 		return
 	}
 
@@ -102,7 +103,7 @@ func (h *SqlServerWaitStatsHandlers) GetCPUPressure(w http.ResponseWriter, r *ht
 
 	cpu, err := h.metricsSvc.GetTimescaleDBLogger().GetCPUPressureTrend(ctx, serverID, from, to)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load wait stats", err, "handler", "sqlserver_wait_stats")
 		return
 	}
 
@@ -122,7 +123,7 @@ func (h *SqlServerWaitStatsHandlers) GetActiveSessions(w http.ResponseWriter, r 
 	ctx := r.Context()
 	sessions, err := h.metricsSvc.GetTimescaleDBLogger().GetActiveWaitSessionsV2(ctx, serverID, from, to)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load wait stats", err, "handler", "sqlserver_wait_stats")
 		return
 	}
 
@@ -142,7 +143,7 @@ func (h *SqlServerWaitStatsHandlers) GetBlockingTree(w http.ResponseWriter, r *h
 	ctx := r.Context()
 	tree, err := h.metricsSvc.GetTimescaleDBLogger().GetBlockingTree(ctx, serverID, from, to)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load wait stats", err, "handler", "sqlserver_wait_stats")
 		return
 	}
 
@@ -162,7 +163,7 @@ func (h *SqlServerWaitStatsHandlers) GetDatabaseImpact(w http.ResponseWriter, r 
 	ctx := r.Context()
 	impact, err := h.metricsSvc.GetTimescaleDBLogger().GetDatabaseWaitImpact(ctx, serverID, from, to)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load wait stats", err, "handler", "sqlserver_wait_stats")
 		return
 	}
 
@@ -181,7 +182,7 @@ func (h *SqlServerWaitStatsHandlers) GetWaitTypeHelp(w http.ResponseWriter, r *h
 	ctx := r.Context()
 	help, err := h.metricsSvc.GetTimescaleDBLogger().GetWaitTypeHelp(ctx, waitType)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load wait stats", err, "handler", "sqlserver_wait_stats")
 		return
 	}
 

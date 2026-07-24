@@ -49,9 +49,15 @@ import {
     syncTimeRangeFromPicker,
     localDateTimeToISO,
     getAppTimeRangeISO,
+    setQuickRangeHours,
     applyGlobalTimeRangeRefresh
 } from './utils/time-range.js';
 import { decodeQueryText } from './utils/query-text.js';
+import {
+    fetchSqlServerHistory,
+    normalizeHistoryPayload,
+    applyHistorySourceBadge
+} from './utils/sqlserver-history.js';
 
 window.appState = appState;
 window.tsMs = tsMs;
@@ -86,6 +92,9 @@ window.setDashboardRefresh = setDashboardRefresh;
 window.setJobsRefresh = setJobsRefresh;
 window.showQueryModal = showQueryModal;
 window.decodeQueryText = decodeQueryText;
+window.fetchSqlServerHistory = fetchSqlServerHistory;
+window.normalizeHistoryPayload = normalizeHistoryPayload;
+window.applyHistorySourceBadge = applyHistorySourceBadge;
 window.boot = boot;
 window.deleteAdminServer = AdminManager.deleteServer;
 window.patchServerActive = AdminManager.patchServerActive;
@@ -94,6 +103,7 @@ window.formatDateTimeLocalInput = formatDateTimeLocalInput;
 window.syncTimeRangeFromPicker = syncTimeRangeFromPicker;
 window.localDateTimeToISO = localDateTimeToISO;
 window.getAppTimeRangeISO = getAppTimeRangeISO;
+window.setQuickRangeHours = setQuickRangeHours;
 window.applyGlobalTimeRangeRefresh = applyGlobalTimeRangeRefresh;
 
 window.initPageTimePicker = function() {
@@ -129,6 +139,18 @@ window.initPageTimePicker = function() {
     toInput.addEventListener('change', onInputChange);
     fromInput.addEventListener('input', onInputChange);
     toInput.addEventListener('input', onInputChange);
+
+    const coldEnabled = !!(window.appState.coldStorageEnabled || window.appState.config?.cold_storage_enabled);
+    target.querySelectorAll('.time-range-preset.cold-only').forEach((btn) => {
+        btn.hidden = !coldEnabled;
+    });
+    target.querySelectorAll('.time-range-preset').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const hours = Number(btn.getAttribute('data-hours'));
+            setQuickRangeHours(hours);
+            applyGlobalTimeRangeRefresh();
+        });
+    });
 
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => applyGlobalTimeRangeRefresh());

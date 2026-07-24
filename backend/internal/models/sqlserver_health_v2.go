@@ -34,6 +34,7 @@ type HealthV2KPIs struct {
 	LogWriteWaitMs   float64 `json:"log_write_wait_ms"`
 	BlockedSessions  int     `json:"blocked_sessions"`
 	UserConnections  int     `json:"user_connections"`
+	MaxConnections   int     `json:"max_connections"`
 	BatchRequests    float64 `json:"batch_requests"`
 	Compilations          float64 `json:"compilations"`
 	LoginsPerSec          float64 `json:"logins_per_sec"`

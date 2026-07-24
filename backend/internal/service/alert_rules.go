@@ -21,6 +21,8 @@ func builtinRulesForEngine(engine alerts.Engine) []alertRuleKey {
 			{"Performance", "MSBlockingIncident"},
 			{"Job Agent", "MSJobFailed"},
 			{"Storage", "MSDiskSpaceLow"},
+			{"Performance", "MSLongRunningQuery"},
+			{"Capacity", "MSConnectionPressure"},
 		}
 	case alerts.EnginePostgres:
 		return []alertRuleKey{
@@ -30,6 +32,9 @@ func builtinRulesForEngine(engine alerts.Engine) []alertRuleKey {
 			{"Backup", "PGBackupNeverRun"},
 			{"Backup", "PGBackupStale"},
 			{"Storage", "PGDiskSpaceLow"},
+			{"Capacity", "PGConnectionSaturation"},
+			{"Replication", "PGWalSlotRetentionHigh"},
+			{"Capacity", "PGBouncerWaitHigh"},
 		}
 	default:
 		return nil

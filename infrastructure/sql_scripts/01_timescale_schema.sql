@@ -2078,6 +2078,20 @@ CREATE TABLE IF NOT EXISTS optima_audit_logs (
 CREATE INDEX IF NOT EXISTS idx_optima_audit_logs_time ON optima_audit_logs (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_optima_audit_logs_server_time ON optima_audit_logs (server_id, created_at DESC);
 
+-- Revoked OS-agent machine JWTs (jti). Checked on POST /api/os/metrics.
+CREATE TABLE IF NOT EXISTS optima_os_agent_revoked_tokens (
+    jti         TEXT PRIMARY KEY,
+    server_id   UUID,
+    revoked_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revoked_by  TEXT,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    reason      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_os_agent_revoked_expires
+    ON optima_os_agent_revoked_tokens (expires_at);
+COMMENT ON TABLE optima_os_agent_revoked_tokens IS
+    'Revoked OS-agent JWT ids (jti). Middleware rejects matching tokens until expires_at; prune afterward.';
+
 -- Per-instance DR / backup RPO policy (dimension table; one row per server).
 CREATE TABLE IF NOT EXISTS optima_server_dr_policy (
     server_id UUID PRIMARY KEY REFERENCES optima_servers(id) ON DELETE CASCADE,
@@ -3071,14 +3085,14 @@ SELECT add_retention_policy('monitor.pg_memory_components', INTERVAL '365 days',
 -- Notification Config (Admin-managed outbound alert destinations)
 CREATE TABLE IF NOT EXISTS optima_notification_config (
     id              SERIAL PRIMARY KEY,
-    channel         VARCHAR(50) UNIQUE NOT NULL,  -- 'webhook' | 'slack'
+    channel         VARCHAR(50) UNIQUE NOT NULL,  -- 'webhook' | 'slack' | 'pagerduty'
     url             TEXT NOT NULL DEFAULT '',
     is_enabled      BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_by      VARCHAR(100)
 );
 INSERT INTO optima_notification_config (channel, url, is_enabled)
-VALUES ('webhook', '', false), ('slack', '', false)
+VALUES ('webhook', '', false), ('slack', '', false), ('pagerduty', '', false), ('email', '', false)
 ON CONFLICT (channel) DO NOTHING;
 GRANT SELECT, INSERT, UPDATE ON optima_notification_config TO sql_optima_app;
 GRANT USAGE, SELECT ON SEQUENCE optima_notification_config_id_seq TO sql_optima_app;
@@ -5433,6 +5447,7 @@ ALTER TABLE IF EXISTS sqlserver_health_kpis_v2 ADD COLUMN IF NOT EXISTS logins_p
 ALTER TABLE IF EXISTS sqlserver_health_kpis_v2 ADD COLUMN IF NOT EXISTS target_server_memory_mb  DOUBLE PRECISION;
 ALTER TABLE IF EXISTS sqlserver_health_kpis_v2 ADD COLUMN IF NOT EXISTS total_server_memory_mb   DOUBLE PRECISION;
 ALTER TABLE IF EXISTS sqlserver_health_kpis_v2 ADD COLUMN IF NOT EXISTS inserted_at              TIMESTAMPTZ;
+ALTER TABLE IF EXISTS sqlserver_health_kpis_v2 ADD COLUMN IF NOT EXISTS max_connections          INTEGER;
 
 -- Recreate perf_counters dedup index with instance_name (only if column was just added).
 -- Uses DO block to avoid failure when duplicate rows prevent unique index creation.

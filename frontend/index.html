@@ -89,6 +89,14 @@
     <!-- Hidden Time Picker Template for injection -->
     <template id="global-time-picker-template">
         <div class="glass-panel" style="padding: 0.2rem 0.5rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.7rem; border: 1px solid var(--border-color); flex-wrap: nowrap; overflow: visible;">
+            <div class="time-range-presets" style="display:flex; align-items:center; gap:0.2rem;">
+                <button type="button" class="btn btn-xs btn-outline time-range-preset" data-hours="1" style="padding:2px 6px; min-width:auto;" title="Last 1 hour">1h</button>
+                <button type="button" class="btn btn-xs btn-outline time-range-preset" data-hours="6" style="padding:2px 6px; min-width:auto;" title="Last 6 hours">6h</button>
+                <button type="button" class="btn btn-xs btn-outline time-range-preset" data-hours="24" style="padding:2px 6px; min-width:auto;" title="Last 24 hours">24h</button>
+                <button type="button" class="btn btn-xs btn-outline time-range-preset" data-hours="168" style="padding:2px 6px; min-width:auto;" title="Last 7 days">7d</button>
+                <button type="button" class="btn btn-xs btn-outline time-range-preset cold-only" data-hours="720" hidden style="padding:2px 6px; min-width:auto;" title="Last 30 days (cold storage)">30d</button>
+                <button type="button" class="btn btn-xs btn-outline time-range-preset cold-only" data-hours="2160" hidden style="padding:2px 6px; min-width:auto;" title="Last 90 days (cold storage)">90d</button>
+            </div>
             <label class="text-muted" style="margin:0; font-weight:600; text-transform:uppercase; font-size:0.6rem;">From</label>
             <input type="datetime-local" id="from-ts" step="1" style="background:transparent; border:none; color:inherit; font-size:0.7rem; width:11.5rem; padding:0;" />
             <label class="text-muted" style="margin:0; font-weight:600; text-transform:uppercase; font-size:0.6rem;">To</label>

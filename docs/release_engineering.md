@@ -31,7 +31,7 @@ ghcr.io/<org>/sql-optima:latest   # only on stable x.y.z tags
    git push origin v0.5.0
    ```
 
-3. GitHub Actions workflow `.github/workflows/release.yml` builds and pushes the image.
+3. GitHub Actions workflow `.github/workflows/release.yml` builds and pushes the image, attaches an **SPDX SBOM**, and opens a GitHub Release with notes extracted from `CHANGELOG.md`.
 
 ### Consumers: pin by digest
 
@@ -41,13 +41,15 @@ Production should pin an immutable digest, not `:latest`:
 image: ghcr.io/rsharma155/sql-optima:0.5.0
 ```
 
+SBOM artifact: attached to the GitHub Release as `sbom-sql-optima.spdx.json` (BuildKit also records image SBOM/provenance).
+
 ## Pre-release checklist
 
 - [ ] `cd backend && go test -race -timeout 120s ./...`
 - [ ] `cd backend && golangci-lint run` (or CI green)
 - [ ] `AUTH_REQUIRED=1` smoke test on Docker compose
 - [ ] Schema migrations idempotent (`infrastructure/sql_scripts/`)
-- [ ] Update §20 tracker in `cursor_project_details.md` if used locally
+- [ ] Update `CHANGELOG.md` / `RELEASES.md` / `VERSION` for the cut
 
 ## OS collector artifact
 

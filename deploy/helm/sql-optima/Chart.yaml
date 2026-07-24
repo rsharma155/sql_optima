@@ -1,0 +1,14 @@
+apiVersion: v2
+name: sql-optima
+description: SQL Optima self-hosted database observability (API + SPA)
+type: application
+version: 0.1.0
+appVersion: "0.5.0"
+keywords:
+  - sql
+  - postgres
+  - sqlserver
+  - observability
+home: https://github.com/rsharma155/sql_optima
+sources:
+  - https://github.com/rsharma155/sql_optima

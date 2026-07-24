@@ -1,7 +1,7 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
 // File: backend/internal/storage/cold/s3uploader_test.go
-// Purpose: Unit tests for the S3 uploader, mocking the AWS SDK v2 client.
+// Purpose: Unit tests for the S3 uploader, mocking the AWS SDK v2 client and transfer manager.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -14,35 +14,41 @@ import (
 	"os"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-// MockS3Client is a mock of the S3 API.
-type MockS3Client struct {
+// MockS3BucketClient mocks S3BucketAPI for EnsureBucket tests.
+type MockS3BucketClient struct {
 	mock.Mock
 }
 
-func (m *MockS3Client) CreateBucket(ctx context.Context, params *s3.CreateBucketInput, optFns ...func(*s3.Options)) (*s3.CreateBucketOutput, error) {
+func (m *MockS3BucketClient) CreateBucket(ctx context.Context, params *s3.CreateBucketInput, optFns ...func(*s3.Options)) (*s3.CreateBucketOutput, error) {
 	args := m.Called(ctx, params)
 	return args.Get(0).(*s3.CreateBucketOutput), args.Error(1)
 }
 
-func (m *MockS3Client) PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
-	args := m.Called(ctx, params)
-	return args.Get(0).(*s3.PutObjectOutput), args.Error(1)
+// MockS3Manager mocks s3ManagerAPI for UploadFile tests.
+type MockS3Manager struct {
+	mock.Mock
+}
+
+func (m *MockS3Manager) Upload(ctx context.Context, input *s3.PutObjectInput, optFns ...func(*manager.Uploader)) (*manager.UploadOutput, error) {
+	args := m.Called(ctx, input)
+	return args.Get(0).(*manager.UploadOutput), args.Error(1)
 }
 
 func TestS3Uploader_UploadFile(t *testing.T) {
-	mockClient := new(MockS3Client)
+	mockMgr := new(MockS3Manager)
 	cfg := &Config{
 		Bucket: "test-bucket",
 		Prefix: "test-prefix/",
 	}
 	uploader := &S3Uploader{
-		client: mockClient,
-		cfg:    cfg,
+		manager: mockMgr,
+		cfg:     cfg,
 	}
 
 	ctx := context.Background()
@@ -53,14 +59,14 @@ func TestS3Uploader_UploadFile(t *testing.T) {
 
 	objectKey := "metrics/test.parquet"
 
-	mockClient.On("PutObject", ctx, mock.MatchedBy(func(input *s3.PutObjectInput) bool {
+	mockMgr.On("Upload", ctx, mock.MatchedBy(func(input *s3.PutObjectInput) bool {
 		return *input.Bucket == "test-bucket" && *input.Key == objectKey
-	})).Return(&s3.PutObjectOutput{}, nil)
+	})).Return(&manager.UploadOutput{}, nil)
 
 	err = uploader.UploadFile(ctx, localPath, objectKey)
 	assert.NoError(t, err)
 
-	mockClient.AssertExpectations(t)
+	mockMgr.AssertExpectations(t)
 }
 
 func TestS3Uploader_ObjectKey(t *testing.T) {

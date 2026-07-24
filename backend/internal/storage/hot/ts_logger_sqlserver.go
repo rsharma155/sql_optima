@@ -676,6 +676,132 @@ func (tl *TimescaleLogger) GetSQLServerCPUHistory(ctx context.Context, serverID 
 	return out, rows.Err()
 }
 
+// GetSQLServerMemoryHistory returns PLE samples for [from, to].
+func (tl *TimescaleLogger) GetSQLServerMemoryHistory(ctx context.Context, serverID uuid.UUID, from, to string, limit int) ([]map[string]interface{}, error) {
+	start, end, err := parseTimeRangeRFC3339(from, to)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 500
+	}
+	q := `
+		SELECT capture_timestamp, COALESCE(page_life_expectancy, 0)
+		FROM sqlserver_memory_history
+		WHERE server_id = $1
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		ORDER BY capture_timestamp ASC
+		LIMIT $4`
+	rows, err := tl.pool.Query(ctx, q, serverID, start, end, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []map[string]interface{}
+	for rows.Next() {
+		var ts time.Time
+		var ple float64
+		if err := rows.Scan(&ts, &ple); err != nil {
+			continue
+		}
+		out = append(out, map[string]interface{}{
+			"timestamp":            ts,
+			"page_life_expectancy": ple,
+		})
+	}
+	return out, rows.Err()
+}
+
+// GetSQLServerWaitHistoryRange returns category wait-rate samples for [from, to].
+func (tl *TimescaleLogger) GetSQLServerWaitHistoryRange(ctx context.Context, serverID uuid.UUID, from, to string, limit int) ([]map[string]interface{}, error) {
+	start, end, err := parseTimeRangeRFC3339(from, to)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 500
+	}
+	q := `
+		SELECT capture_timestamp,
+		       COALESCE(disk_read_ms_per_sec, 0),
+		       COALESCE(blocking_ms_per_sec, 0),
+		       COALESCE(parallelism_ms_per_sec, 0),
+		       COALESCE(other_ms_per_sec, 0)
+		FROM sqlserver_wait_history
+		WHERE server_id = $1
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		ORDER BY capture_timestamp ASC
+		LIMIT $4`
+	rows, err := tl.pool.Query(ctx, q, serverID, start, end, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []map[string]interface{}
+	for rows.Next() {
+		var ts time.Time
+		var disk, blocking, parallel, other float64
+		if err := rows.Scan(&ts, &disk, &blocking, &parallel, &other); err != nil {
+			continue
+		}
+		out = append(out, map[string]interface{}{
+			"timestamp":              ts,
+			"disk_read_ms_per_sec":   disk,
+			"blocking_ms_per_sec":    blocking,
+			"parallelism_ms_per_sec": parallel,
+			"other_ms_per_sec":       other,
+		})
+	}
+	return out, rows.Err()
+}
+
+// GetSQLServerConnectionHistoryRange returns connection samples for [from, to].
+func (tl *TimescaleLogger) GetSQLServerConnectionHistoryRange(ctx context.Context, serverID uuid.UUID, from, to string, limit int) ([]map[string]interface{}, error) {
+	start, end, err := parseTimeRangeRFC3339(from, to)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 500
+	}
+	q := `
+		SELECT capture_timestamp,
+		       COALESCE(login_name, ''),
+		       COALESCE(database_name, ''),
+		       COALESCE(active_connections, 0),
+		       COALESCE(active_requests, 0)
+		FROM sqlserver_connection_history
+		WHERE server_id = $1
+		  AND capture_timestamp >= $2
+		  AND capture_timestamp <= $3
+		ORDER BY capture_timestamp ASC
+		LIMIT $4`
+	rows, err := tl.pool.Query(ctx, q, serverID, start, end, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []map[string]interface{}
+	for rows.Next() {
+		var ts time.Time
+		var login, dbname string
+		var conns, reqs int
+		if err := rows.Scan(&ts, &login, &dbname, &conns, &reqs); err != nil {
+			continue
+		}
+		out = append(out, map[string]interface{}{
+			"timestamp":          ts,
+			"login_name":         login,
+			"database_name":      dbname,
+			"active_connections": conns,
+			"active_requests":    reqs,
+		})
+	}
+	return out, rows.Err()
+}
+
 func (tl *TimescaleLogger) OpenMsBlockingIncident(ctx context.Context, serverID uuid.UUID, startedAt time.Time, rootPID *int, rootQuery string) (int64, error) {
 	q := `
 		INSERT INTO sqlserver_blocking_incidents (server_id, started_at, root_blocker_pid, root_blocker_query, status)

@@ -64,12 +64,15 @@ Larger features live under `backend/internal/domain/`:
 - **Storage**
   - TimescaleDB (Postgres + Timescale extension) for metric snapshots, dashboards, widget registry, alert tables, server registry, and `coldstorage.*` export control
   - Redis (optional) — Asynq task queue for scaled collector deployments
+  - S3/MinIO (optional) — cold storage Parquet archive (see Cold Storage tier below)
 
 - **External integrations**
   - HashiCorp Vault (optional) — Transit engine for credential encryption at rest
   - Prometheus — `/metrics` endpoint with request counters and duration histograms
   - OpenTelemetry — optional OTLP tracing export
-  - S3/MinIO (optional) — cold storage Parquet export pipeline
+  - MinIO / S3 (optional) — cold storage Parquet export pipeline
+  - Apache Iceberg REST catalog (optional, Phase 2) — table catalog for Parquet files; supports Nessie or tabular/iceberg-rest
+  - Trino (optional, Phase 2) — federated SQL across TimescaleDB hot tier + cold Parquet tier
 
 ## Data flow
 
@@ -85,7 +88,11 @@ flowchart LR
   Worker[Worker Process] -->|dequeue + collect| Redis
   Worker -->|write metrics| Timescale
   Prometheus[Prometheus] -->|scrape /metrics| Api
-  Timescale -->|nightly export| Cold[Cold storage S3]
+  Timescale -->|nightly Parquet export| Exporter[Cold Storage Exporter]
+  Exporter -->|Hive-partitioned .parquet| MinIO[MinIO / S3]
+  Exporter -.->|register files Phase 2| Iceberg[Iceberg Catalog]
+  Iceberg -.->|catalog| Trino[Trino Phase 2]
+  Trino -.->|federated query| Api
 ```
 
 ## Key subsystems
@@ -152,3 +159,159 @@ First-run setup applies scripts in order (`internal/setup/timescale_migrate.go`)
 - **Admin diagnostics** return aggregate Timescale row counts only — no connection strings or passwords.
 
 For a deeper security view, see `docs/threat_model.md`.
+
+---
+
+## Cold Storage Tier
+
+SQL Optima supports an optional tiered archival pipeline that moves aged TimescaleDB rows to long-term object storage, reducing disk pressure without losing historical data.
+
+### Architecture
+
+```
+HOT TIER (TimescaleDB)              COLD TIER (MinIO / S3)
+─────────────────────               ──────────────────────
+Live dashboards                     Parquet files (Snappy)
+90-day retention (core)      →      1–3 year retention
+7-day chunk compression             Hive partition layout
+Collector writes every minute       Nightly export at 02:00 UTC
+```
+
+### Partition Layout
+
+Parquet files land under the configured bucket with a Hive-compatible path:
+
+```
+sql-optima-cold/
+  metrics/
+    engine=sqlserver/
+      table=sqlserver_cpu_history/
+        server_id=<uuid>/
+          year=2025/month=11/day=01/
+            part-000001.parquet
+    engine=postgres/
+      table=postgres_wait_event_stats/
+        ...
+```
+
+DuckDB and Trino can query this layout with zero additional tooling using `hive_partitioning = true`.
+
+### Go package: `internal/storage/cold/`
+
+| File | Responsibility |
+|------|---------------|
+| `config.go` | Cold storage env var config; `ExportCutoff()` computes `NOW() - lag_days` |
+| `exporter.go` | Orchestrator: reads TimescaleDB → writes Parquet → uploads to S3; 8-worker concurrent pool; atomic `.tmp` → rename write |
+| `s3uploader.go` | S3/MinIO upload via `aws-sdk-go-v2/feature/s3/manager` (multipart for large files) |
+| `watermark.go` | Tracks `last_exported_at` per (table, server) in `coldstorage.watermarks`; never advances on failure |
+| `iceberg.go` | Phase 2: Iceberg REST catalog registration after S3 upload |
+| `registration.go` | Dispatcher that calls all domain registration functions |
+| `registration_sqlserver_core.go` | CPU, wait, metrics, connection, lock exports |
+| `registration_sqlserver_storage.go` | Memory history, memory metrics, disk, throughput, buffer pool |
+| `registration_sqlserver_ha.go` | AG health, risk health, AG cluster info |
+| `registration_sqlserver_queries.go` | Long-running queries, procedure stats, buffer pool, scheduler |
+| `registration_sqlserver_advanced.go` | Query Store, latches, spinlocks, memory grant waiters |
+| `registration_postgres.go` | Wait events, IO stats, pgss delta, query wait profile |
+| `registration_postgres_activity.go` | Session activity, wait summary, DB load, DDL, backup, roles |
+| `registration_system.go` | SQL Server jobs, PG settings/roles, collector runs |
+
+### Schema: `coldstorage` namespace in TimescaleDB
+
+```sql
+coldstorage.watermarks   -- one row per (table_name, server_id), tracks last_exported_at
+coldstorage.runs         -- hypertable audit log; each export cycle writes one row
+coldstorage.status_view  -- JOIN of watermarks + optima_servers; shows age and lag
+```
+
+### Registered Tables (36 total)
+
+**Group A — 90-day hot retention** (core metrics, archive to cold):
+`sqlserver_cpu_history`, `sqlserver_memory_history`, `sqlserver_wait_history`, `sqlserver_metrics`, `sqlserver_connection_history`, `sqlserver_lock_history`, `sqlserver_disk_history`, `sqlserver_database_throughput`, `sqlserver_memory_metrics`, `sqlserver_buffer_pool_db`, `sqlserver_cpu_scheduler_stats`, `postgres_settings_snapshot`, `monitor.pg_backup_archiver_ts`, `monitor.pg_basebackup_history`, `monitor.pg_roles_snapshot`, `monitor.pg_failed_login_events`
+
+**Group B — 30-day hot retention** (operational, archive selectively):
+`sqlserver_ag_health`, `sqlserver_risk_health`, `sqlserver_long_running_queries`, `sqlserver_latch_waits`, `sqlserver_waiting_tasks`, `sqlserver_procedure_stats`, `sqlserver_spinlock_stats`, `sqlserver_memory_grant_waiters`, `postgres_wait_event_stats`, `postgres_db_io_stats`, `monitor.pg_session_activity_ts`, `monitor.pg_wait_event_summary_ts`, `monitor.pg_db_load_ts`, `monitor.pg_query_wait_profile_ts`, `monitor.pg_ddl_activity_ts`
+
+**Not archived** (Group C — 7-day transient staging tables):
+`staging.sqlserver_session_request_raw`, `staging.*_raw`, `monitor.pg_incident_feed_ts`, `sqlserver_tempdb_consumers`
+
+### Safety Mechanisms
+
+- **Watermark-gated export**: data is re-exported on retry if upload fails (at-least-once semantics)
+- **Chunk compression gate**: exporter checks `timescaledb_information.chunks.is_compressed` before reading a day's data; skips uncompressed windows (configurable via `SkipCompressionCheck` on event tables)
+- **Atomic staging**: writes to `*.parquet.tmp` then renames; orphaned `.tmp` files are cleaned on startup
+- **Safety purge**: `Exporter.Purge()` drops TimescaleDB chunks only if every server's watermark covers the window — no purge if any server is behind
+- **Context-aware scheduler**: uses `select { case <-ctx.Done(): case <-ticker.C: }` for clean shutdown
+
+### Configuration Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `COLD_STORAGE_ENABLED` | `false` | Enable the export pipeline |
+| `COLD_STORAGE_ENDPOINT` | `http://minio:9000` | S3-compatible endpoint |
+| `COLD_STORAGE_BUCKET` | `sql-optima-cold` | Target bucket |
+| `COLD_STORAGE_ACCESS_KEY_ID` | — | Access key (MinIO root user) |
+| `COLD_STORAGE_SECRET_ACCESS_KEY` | — | Secret key |
+| `COLD_STORAGE_FORCE_PATH_STYLE` | `true` | Required for MinIO; set `false` for AWS S3 |
+| `COLD_STORAGE_LAG_DAYS` | `2` | Days behind today for export cutoff (ensures chunks are compressed) |
+| `COLD_STORAGE_BATCH_SIZE` | `50000` | Rows per DB fetch |
+| `COLD_STORAGE_PURGE_RETENTION_DAYS` | `30` | Days of hot data to retain after archival; `0` disables purge |
+| `COLD_STORAGE_CATALOG_URL` | — | Iceberg REST catalog URL (Phase 2; leave empty for Phase 1) |
+| `COLD_STORAGE_TRINO_URL` | — | Trino JDBC URL for federated queries (Phase 2) |
+| `COLD_STORAGE_STAGING_DIR` | `/tmp/sql-optima-cold-staging` | Local temp dir for Parquet staging files |
+
+### Docker Compose Profiles
+
+The `cold-storage` compose profile starts MinIO, minio-init (bucket creation), Nessie (Iceberg catalog), and Trino:
+
+```bash
+# Start full cold storage stack
+COMPOSE_PROFILES=cold-storage docker compose up -d
+
+# MinIO console: http://localhost:9001
+# Nessie catalog: http://localhost:19120
+# Trino UI:       http://localhost:8081
+```
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/cold-storage/status` | Watermark status for all tables and servers |
+| `GET` | `/api/cold-storage/runs` | Export run history with row/byte counts |
+| `POST` | `/api/cold-storage/query` | Execute a read-only SQL query via Trino (requires `COLD_STORAGE_TRINO_URL`) |
+
+`GET /api/config` also exposes `cold_storage_enabled`, `cold_storage_query_available`, and `max_dashboard_range_days` (7 or 90) so the SPA can unlock extended time presets.
+
+### Phase Roadmap
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 1 — S3 export | ✅ Complete | Parquet export to MinIO/S3 with watermarks, compression check, audit log |
+| Phase 2 — Iceberg + Trino | ✅ Complete | Iceberg REST catalog registration; Trino federated query endpoint |
+| Phase 3 — Frontend time picker | ✅ Complete | Extended presets (30d/90d) + API lookback up to 90 days when `COLD_STORAGE_ENABLED=true` |
+| Post-validation — retention reduction | 📄 Opt-in script | Run `migrations/011_cold_storage_reduce_hot_retention_60d.sql` only after 2+ weeks of validated exports (not auto-applied) |
+| Phase 4 — Federated dashboard reads | 🚧 Foundation | `internal/storage/cold/federation` helpers (split hot/cold ranges, safe Iceberg names); wire per-handler incrementally via Trino |
+
+### Ad-hoc DuckDB Queries
+
+DuckDB can query cold Parquet files directly from MinIO without any catalog:
+
+```sql
+INSTALL httpfs; LOAD httpfs;
+SET s3_endpoint='localhost:9000';
+SET s3_access_key_id='sqloptima';
+SET s3_secret_access_key='change_me_in_production';
+SET s3_use_ssl=false;
+SET s3_url_style='path';
+
+-- All CPU history for a server
+SELECT to_timestamp(capture_timestamp_ms / 1000.0) AS ts, sql_cpu_utilization
+FROM read_parquet(
+    's3://sql-optima-cold/metrics/engine=sqlserver/table=sqlserver_cpu_history/**/*.parquet',
+    hive_partitioning = true
+)
+WHERE server_id = '<uuid>'
+ORDER BY ts;
+```
+
+See `infrastructure/sql_scripts/Test_scripts/07_cold_storage_duckdb_validation.sql` for the full validation query suite.
