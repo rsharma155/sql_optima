@@ -1,0 +1,22 @@
+SQL Optima {{ .Chart.AppVersion }} (chart {{ .Chart.Version }})
+
+1. API Service:
+   kubectl port-forward svc/{{ include "sql-optima.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+   Then open http://127.0.0.1:{{ .Values.service.port }}
+
+2. TimescaleDB:
+{{- if .Values.timescaledb.enabled }}
+   Bundled subchart Service: {{ include "sql-optima.timescaleHost" . }}:{{ include "sql-optima.timescalePort" . }}
+   Share the control-plane DB password via:
+     --set timescaledb.auth.existingSecret={{ include "sql-optima.fullname" . }}-secrets
+   (or set timescaledb.auth.password equal to timescale.password)
+{{- else }}
+   External host: {{ include "sql-optima.timescaleHost" . }}:{{ include "sql-optima.timescalePort" . }}
+{{- end }}
+
+3. Schema:
+{{- if .Values.schemaJob.enabled }}
+   post-install/upgrade Job applies scripts 01–07 (same order as docker schema-setup).
+{{- else }}
+   schemaJob.enabled=false — apply infrastructure/sql_scripts yourself or re-install with --set schemaJob.enabled=true
+{{- end }}

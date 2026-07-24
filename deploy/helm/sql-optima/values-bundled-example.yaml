@@ -1,0 +1,26 @@
+# Default values for a self-contained install (bundled TimescaleDB + schema Job).
+# Usage:
+#   helm upgrade --install sql-optima ./deploy/helm/sql-optima \
+#     -f deploy/helm/sql-optima/values-bundled-example.yaml \
+#     --set timescale.password="$PW" \
+#     --set timescaledb.auth.existingSecret=sql-optima-sql-optima-secrets \
+#     --set auth.jwtSecret="$JWT"
+
+timescaledb:
+  enabled: true
+  # Prefer sharing the control-plane secret created by this chart:
+  #   existingSecret: <release>-sql-optima-secrets
+  # Set at install time once the release name is known (see README).
+  auth:
+    username: dbmonitor
+    database: dbmonitor_metrics
+    existingSecretPasswordKey: DB_PASSWORD
+
+schemaJob:
+  enabled: true
+  scriptsSource: chart
+
+timescale:
+  # host is ignored when timescaledb.enabled=true (wired to <release>-timescaledb)
+  database: dbmonitor_metrics
+  user: dbmonitor

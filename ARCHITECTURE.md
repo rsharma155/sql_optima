@@ -51,7 +51,8 @@ Larger features live under `backend/internal/domain/`:
   - **OS collector bundle** (`internal/oscollectorbundle/`) — builds UI download zip with pre-filled agent config; ingest toggle in `optima_platform_settings`
   - **API error sanitization** (`internal/apiresponse/`) — stable client-facing errors on selected routes; full errors in `slog` server logs
   - **Worker queue** (optional) — Asynq/Redis for distributed live + historical collection (`internal/queue/`)
-  - **Credential encryption** — Vault Transit KMS or local envelope encryption fallback (`internal/security/`)
+  - **Credential encryption** — Vault Transit KMS or local envelope encryption fallback (`internal/security/` — `encryption.go`, `vault.go`, `local_kms.go`)
+  - **Helm chart** — `deploy/helm/sql-optima` control-plane Deployment/Service with optional TimescaleDB subchart + schema Job (scripts 01–07)
 
 - **Frontend (`frontend/`)**
   - Static HTML/CSS/JS SPA
@@ -145,7 +146,7 @@ First-run setup applies scripts in order (`internal/setup/timescale_migrate.go`)
 4. `04_alert_engine.sql`
 5. `05_os_metrics_collector.sql`
 6. `06_seed_data.sql`
-7. `07_rule_engine_os_enriched.sql`
+7. `07_optima_server_dr_policy.sql`
 
 ## Trust boundaries / safety controls
 
@@ -279,6 +280,7 @@ COMPOSE_PROFILES=cold-storage docker compose up -d
 | `GET` | `/api/cold-storage/status` | Watermark status for all tables and servers |
 | `GET` | `/api/cold-storage/runs` | Export run history with row/byte counts |
 | `POST` | `/api/cold-storage/query` | Execute a read-only SQL query via Trino (requires `COLD_STORAGE_TRINO_URL`) |
+| `POST` | `/api/cold-storage/history` | Allowlisted hot+cold federated history (CPU / memory / wait / connection) when Trino is configured |
 
 `GET /api/config` also exposes `cold_storage_enabled`, `cold_storage_query_available`, and `max_dashboard_range_days` (7 or 90) so the SPA can unlock extended time presets.
 
@@ -288,9 +290,9 @@ COMPOSE_PROFILES=cold-storage docker compose up -d
 |-------|--------|-------------|
 | Phase 1 — S3 export | ✅ Complete | Parquet export to MinIO/S3 with watermarks, compression check, audit log |
 | Phase 2 — Iceberg + Trino | ✅ Complete | Iceberg REST catalog registration; Trino federated query endpoint |
-| Phase 3 — Frontend time picker | ✅ Complete | Extended presets (30d/90d) + API lookback up to 90 days when `COLD_STORAGE_ENABLED=true` |
+| Phase 3 — Frontend time picker + federated history | ✅ Complete | Extended presets (30d/90d); allowlisted `POST /api/cold-storage/history`; hot+cold merge for SQL Server CPU / memory / wait / connection when Trino is configured |
 | Post-validation — retention reduction | 📄 Opt-in script | Run `migrations/011_cold_storage_reduce_hot_retention_60d.sql` only after 2+ weeks of validated exports (not auto-applied) |
-| Phase 4 — Federated dashboard reads | 🚧 Foundation | `internal/storage/cold/federation` helpers (split hot/cold ranges, safe Iceberg names); wire per-handler incrementally via Trino |
+| Further federation | 🚧 Incremental | Expand beyond the allowlisted history series via `internal/storage/cold/federation` helpers |
 
 ### Ad-hoc DuckDB Queries
 

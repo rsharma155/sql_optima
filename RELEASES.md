@@ -20,7 +20,7 @@ Until 1.0, releases may include breaking changes. We still aim to keep changes d
 - **PostgreSQL Backup & DR**: DR policy API, readiness scoring, and refreshed backup UI (`pg_backups`).
 - **OS collector (bash)**: Replaces Go agent. UI zip bundle with pre-filled server ID; **Enable ingest** toggle stored in `optima_platform_settings` (no API restart). See [`docs/os_collector.md`](docs/os_collector.md) and [`os_collector/README.md`](os_collector/README.md).
 - **Admin SQL Server diagnostics**: `GET /api/admin/diagnostics/sqlserver/{instance}` — row counts per Timescale table, collector hints (admin role).
-- **OS-aware PostgreSQL rules**: `07_rule_engine_os_enriched.sql` + `oscontext` package for host-RAM-aware best-practice evaluation.
+- **OS-aware PostgreSQL rules**: Host-RAM-aware best-practice evaluation via `oscontext` (rules live in `02_rule_engine.sql`; standalone `07_rule_engine_os_enriched.sql` was removed).
 - **SQL Server query analysis**: Statement fingerprint grouping, user-workload filter, extra Query V2 delta columns.
 - **Intelligence report**: Narrative enrichment, v4 HTML template, report cache.
 
@@ -28,7 +28,7 @@ Until 1.0, releases may include breaking changes. We still aim to keep changes d
 - Cold storage control tables merged into `01_timescale_schema.sql`; `07_cold_storage.sql` removed.
 - New hypertables: `monitor.sqlserver_backup_database_posture`, `monitor.sqlserver_backup_history`.
 - Retention policies added for several SQL Server hypertables; `optima_platform_settings` for UI-managed toggles.
-- Setup wizard step 7: `07_rule_engine_os_enriched.sql`.
+- Setup wizard step 7: `07_optima_server_dr_policy.sql` (DR / RPO policy table).
 
 ### Breaking / upgrade notes
 - **OS collector**: Remove any deployed Go `os_collector` binary; install the bash agent from the UI bundle or [`os_collector/sql-optima-os-collector.sh`](os_collector/sql-optima-os-collector.sh).

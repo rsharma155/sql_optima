@@ -2,7 +2,7 @@ apiVersion: v2
 name: sql-optima
 description: SQL Optima self-hosted database observability (API + SPA)
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "0.5.0"
 keywords:
   - sql
@@ -12,3 +12,7 @@ keywords:
 home: https://github.com/rsharma155/sql_optima
 sources:
   - https://github.com/rsharma155/sql_optima
+dependencies:
+  - name: timescaledb
+    version: "0.1.0"
+    condition: timescaledb.enabled

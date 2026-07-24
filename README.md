@@ -27,7 +27,7 @@ After you register a server, use the in-app **Dashboard Info** pages for a full 
 | Engine | Dashboards | Metrics covered | In-app route |
 |--------|------------|-----------------|--------------|
 | PostgreSQL | **14** | 100+ with threshold reference | **Dashboard Info** under PostgreSQL |
-| SQL Server | **15** | 80+ with threshold reference | **Dashboard Info** under SQL Server |
+| SQL Server | **16** | 80+ with threshold reference | **Dashboard Info** under SQL Server |
 
 ### PostgreSQL — 14 dashboards
 
@@ -51,7 +51,7 @@ After you register a server, use the in-app **Dashboard Info** pages for a full 
 | **Best Practices** | Configuration audit against DBA guardrails with remediation SQL. |
 | **Alerts & Events** | Open incidents, event timeline, and repeat-incident patterns. |
 
-### SQL Server — 15 dashboards
+### SQL Server — 16 dashboards
 
 ![SQL Server Dashboard Guide](docs/screenshots/sqlserver_dashboard_guide.png)
 *In-app SQL Server Dashboard Guide — overview of all SQL Server screens, metrics, and DBA thresholds.*
@@ -66,6 +66,7 @@ After you register a server, use the in-app **Dashboard Info** pages for a full 
 | **Enterprise Metrics** | Engine telemetry over time: compilations, plan cache, TempDB, latch trends. |
 | **Storage & Index Health** | Growth forecasting, fragmentation, index read/write ratios, reclaimable space. |
 | **Performance Debt** | MAXDOP, memory caps, statistics health, backup SLA, and risky settings. |
+| **Backup & Recovery** | `msdb` posture/history, RPO policy, readiness chips, and backup SLA triage. |
 | **Intelligence Report** | Rule-based health narrative, risk scoring, and statistical forecasting. |
 | **Query Analysis** | Query Store regressions, plan instability, and top CPU consumers. |
 | **Plan Analyzer** | Interactive execution-plan trees and optimization guidance. |
@@ -168,6 +169,7 @@ Sign in as **`admin`**, then add servers from **Admin**. See [QUICKSTART → Pro
 |------|--------|
 | Try SQL Optima locally in ~5 minutes | **[docs/QUICKSTART.md](docs/QUICKSTART.md)** → Development |
 | Production / shared network | **[QUICKSTART → Production](docs/QUICKSTART.md#production--hardened-deployment)** |
+| Kubernetes (Helm) | **[deploy/helm/sql-optima/README.md](deploy/helm/sql-optima/README.md)** |
 | Local PG + SQL Server HA + load generator | **[QUICKSTART → Local test environment](docs/QUICKSTART.md#local-test-environment-ha-clusters-for-development)** |
 | Hack on the Go API, DB in Docker | [Option 2: Dev workflow](#option-2-timescaledb-via-docker--manual-go-server-dev-workflow) below |
 | Bring your own TimescaleDB | [Option 3: Dedicated TimescaleDB](#option-3-dedicated-postgresql--timescaledb-no-docker) below |
@@ -205,7 +207,7 @@ Docs are grouped by role. Start with **Quickstart**, then drill into operations 
 | Document | Description |
 |----------|-------------|
 | **[docs/QUICKSTART.md](docs/QUICKSTART.md)** | Step-by-step install, first server, local HA test clusters, troubleshooting |
-| **[Dashboard guides](#dashboard-guides)** | In-app metric reference (14 PG + 15 SQL Server dashboards); screenshots in README |
+| **[Dashboard guides](#dashboard-guides)** | In-app metric reference (14 PG + 16 SQL Server dashboards); screenshots in README |
 | **[ARCHITECTURE.md](ARCHITECTURE.md)** | Components, trust boundaries, live vs historical query paths |
 | **[ROADMAP.md](ROADMAP.md)** | Shipped features and near-term plans |
 | **[RELEASES.md](RELEASES.md)** | Release notes and upgrade context (current: **0.5.0**) |
@@ -215,7 +217,8 @@ Docs are grouped by role. Start with **Quickstart**, then drill into operations 
 
 | Document | Description |
 |----------|-------------|
-| **[docs/operations.md](docs/operations.md)** | Restarts, collector warm-up, retention, day-2 operations |
+| **[docs/operations.md](docs/operations.md)** | Restarts, collector warm-up, retention, Helm notes, day-2 operations |
+| **[deploy/helm/sql-optima/README.md](deploy/helm/sql-optima/README.md)** | Kubernetes Helm starter chart (control plane + optional TimescaleDB/schema Job) |
 | **[docs/vault_production.md](docs/vault_production.md)** | Vault Transit in production (AppRole, backups, TLS) — not dev-mode root tokens |
 | **[docs/os_collector.md](docs/os_collector.md)** | PostgreSQL host agent — platform enablement, API, troubleshooting |
 | **[os_collector/README.md](os_collector/README.md)** | Install agent on DB hosts; **download zip** from Admin or PG Memory/CPU UI |
@@ -413,6 +416,7 @@ See **[ARCHITECTURE.md](ARCHITECTURE.md)** for live vs historical paths, collect
 | `docker/docker-compose.dev.yml` | Optional overlay when Custom + LAN/DBeaver is enabled |
 | `docker/docker-compose.yml` | Primary stack — API + TimescaleDB + Vault + schema bootstrap |
 | `docker-compose.platform.yml` | Production profile — worker, Redis, Prometheus, Grafana |
+| `deploy/helm/sql-optima/` | Kubernetes Helm starter chart |
 | `infrastructure/sql_scripts/` | Schema, seeds, migrations, target DB setup — [README](infrastructure/sql_scripts/README.md) |
 | `backend/` | Go API, collectors, services, repositories |
 | `frontend/` | Static SPA served by the API |
@@ -431,7 +435,7 @@ The sections below summarize major modules. For API paths and behavior, use **[d
 Full per-dashboard metric reference, DBA thresholds, and remediation tips live in the app under **Dashboard Info** (see **[Dashboard guides](#dashboard-guides)** and the screenshots there).
 
 - **PostgreSQL (14 screens):** Control Center, Enterprise Monitor, CPU/memory (optional [**OS collector**](os_collector/README.md) on the DB host), waits & sessions, locks, Query Monitor (`pg_stat_statements`), EXPLAIN analyzer, storage & maintenance, index & table health, Backup & DR, security, best practices, alerts.
-- **SQL Server (15 screens):** Instance dashboard, workload analytics, wait stats, memory analyzer, locks & blocking, enterprise metrics, storage & index health, performance debt, **Intelligence Report**, query analysis, plan analyzer, watched queries, SQL Agent jobs, alerts, best practices.
+- **SQL Server (16 screens):** Instance dashboard, workload analytics, wait stats, memory analyzer, locks & blocking, enterprise metrics, storage & index health, performance debt, **Backup & Recovery**, **Intelligence Report**, query analysis, plan analyzer, watched queries, SQL Agent jobs, alerts, best practices.
 
 ### SQL Server Intelligence Report
 

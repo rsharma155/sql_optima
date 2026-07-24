@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Helm starter chart** — `deploy/helm/sql-optima` for control-plane Deployment/Service; optional TimescaleDB subchart + schema Job (scripts 01–07).
+- **Cold storage Phase 3** — `/api/config` cold-storage flags; global time picker 30d/90d presets; allowlisted `POST /api/cold-storage/history`; hot+cold merge for SQL Server CPU / memory / wait / connection history when Trino is configured.
+- **Frontend federated history** — shared helper + source badges (hot / hot+cold) on SQL Server history charts.
+- **OIDC group → role mapping** — `OIDC_GROUP_CLAIM` + `OIDC_GROUP_ROLE_MAP`.
+- **RBAC role constants** — `middleware.RoleAdmin|RoleDBA|RoleViewer` + `NormalizeRole`.
+- **Timescale retention helpers** — optional `014_timescale_retention_downsampling.sql` (90d floors + hourly CPU CAGG).
+- **Alert notifications** — PagerDuty Events API v2 + native SMTP; `alert.resolved` notifications; scoped OS agent JWT + jti revoke list.
+- **In-app Dashboard Info guides** — PostgreSQL (14) and SQL Server (16) metric/threshold reference pages.
+
+### Changed
+- Broader `apiresponse` sanitization across widget, storage-index, wait-stats, admin, SQL Server monitoring, query analysis, workload, and intelligence routes.
+- Schema bootstrap step 7 is `07_optima_server_dr_policy.sql` (OS-enriched rules remain in `02_rule_engine.sql`).
+
 ## [0.5.0] - 2026-05-25
 
 ### Security

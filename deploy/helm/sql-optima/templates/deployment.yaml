@@ -19,6 +19,48 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
+      {{- if or .Values.schemaJob.enabled .Values.timescaledb.enabled }}
+      initContainers:
+        - name: wait-for-db
+          image: {{ .Values.schemaJob.image | quote }}
+          imagePullPolicy: {{ .Values.schemaJob.imagePullPolicy }}
+          env:
+            - name: DB_HOST
+              value: {{ include "sql-optima.timescaleHost" . | quote }}
+            - name: DB_PORT
+              value: {{ include "sql-optima.timescalePort" . | quote }}
+            - name: DB_NAME
+              value: {{ include "sql-optima.timescaleDatabase" . | quote }}
+            - name: DB_USER
+              value: {{ include "sql-optima.timescaleUser" . | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sql-optima.dbPasswordSecretName" . }}
+                  key: {{ include "sql-optima.dbPasswordSecretKey" . }}
+            - name: WAIT_FOR_SCHEMA
+              value: {{ ternary "1" "0" .Values.schemaJob.enabled | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "Waiting for PostgreSQL at $DB_HOST:$DB_PORT..."
+              until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER"; do sleep 2; done
+              if [ "$WAIT_FOR_SCHEMA" = "1" ]; then
+                echo "Waiting for schema (optima_servers)..."
+                i=0
+                until psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tAc \
+                  "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='optima_servers'" | grep -q 1; do
+                  i=$((i+1))
+                  if [ "$i" -gt 90 ]; then
+                    echo "Timed out waiting for schema Job" >&2
+                    exit 1
+                  fi
+                  sleep 2
+                done
+              fi
+              echo "Database ready."
+      {{- end }}
       containers:
         - name: api
           image: {{ include "sql-optima.image" . }}
@@ -36,18 +78,18 @@ spec:
             - name: AUTH_MODE
               value: {{ .Values.auth.mode | quote }}
             - name: DB_HOST
-              value: {{ .Values.timescale.host | quote }}
+              value: {{ include "sql-optima.timescaleHost" . | quote }}
             - name: DB_PORT
-              value: {{ .Values.timescale.port | quote }}
+              value: {{ include "sql-optima.timescalePort" . | quote }}
             - name: DB_NAME
-              value: {{ .Values.timescale.database | quote }}
+              value: {{ include "sql-optima.timescaleDatabase" . | quote }}
             - name: DB_USER
-              value: {{ .Values.timescale.user | quote }}
+              value: {{ include "sql-optima.timescaleUser" . | quote }}
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ default (printf "%s-secrets" (include "sql-optima.fullname" .)) .Values.timescale.existingSecret }}
-                  key: {{ default "DB_PASSWORD" .Values.timescale.existingSecretPasswordKey }}
+                  name: {{ include "sql-optima.dbPasswordSecretName" . }}
+                  key: {{ include "sql-optima.dbPasswordSecretKey" . }}
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:

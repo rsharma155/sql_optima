@@ -1,4 +1,5 @@
-# Default values for sql-optima (control plane). TimescaleDB is external by default.
+# Default values for sql-optima (control plane).
+# TimescaleDB is external by default; enable the bundled subchart for a self-contained install.
 replicaCount: 1
 
 image:
@@ -31,6 +32,8 @@ auth:
     # e.g. "sql-optima-admins:admin,sql-optima-dbas:dba"
     groupRoleMap: ""
 
+# Connection settings used by the API (and schema Job).
+# When timescaledb.enabled=true, host/port/user/database are taken from the subchart service.
 timescale:
   host: timescale
   port: 5432
@@ -41,6 +44,60 @@ timescale:
   # existingSecret: sql-optima-db
   # existingSecretPasswordKey: password
   password: ""
+
+# Optional local TimescaleDB subchart (charts/timescaledb).
+# When enabling, point auth.existingSecret at the control-plane secret so passwords match:
+#   timescaledb.auth.existingSecret: <release>-sql-optima-secrets
+# Or set timescaledb.auth.password to the same value as timescale.password.
+timescaledb:
+  enabled: false
+  image:
+    repository: timescale/timescaledb
+    tag: latest-pg16
+    pullPolicy: IfNotPresent
+  auth:
+    username: dbmonitor
+    database: dbmonitor_metrics
+    existingSecret: ""
+    existingSecretPasswordKey: DB_PASSWORD
+    password: ""
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  shm:
+    sizeLimit: 1Gi
+  service:
+    port: 5432
+
+# One-shot Job applying infrastructure/sql_scripts (01–07), same order as docker schema-setup.
+schemaJob:
+  enabled: false
+  image: postgres:16-alpine
+  imagePullPolicy: IfNotPresent
+  # chart = ConfigMap from files/sql (synced from infrastructure/sql_scripts)
+  # existingConfigMap = use an externally created ConfigMap with the same filenames
+  scriptsSource: chart
+  existingConfigMap: ""
+  backoffLimit: 6
+  activeDeadlineSeconds: 1800
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
 vault:
   enabled: false
   addr: ""

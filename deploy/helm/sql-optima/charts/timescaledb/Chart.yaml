@@ -1,0 +1,10 @@
+apiVersion: v2
+name: timescaledb
+description: Optional TimescaleDB (PostgreSQL) for SQL Optima control-plane metrics
+type: application
+version: 0.1.0
+appVersion: "pg16"
+keywords:
+  - timescaledb
+  - postgresql
+home: https://github.com/rsharma155/sql_optima

@@ -25,6 +25,11 @@ cd docker
 docker compose up --build
 ```
 
+One-command local stack: `./install.sh` (macOS/Linux) or `.\install.ps1` (Windows). See [docs/QUICKSTART.md](docs/QUICKSTART.md).
+
+### Optional: Helm
+- Starter chart: [`deploy/helm/sql-optima/README.md`](deploy/helm/sql-optima/README.md).
+
 ## Contribution guidelines
 
 ### Code quality bar
@@ -34,8 +39,9 @@ docker compose up --build
 - Prefer small PRs with a clear scope and an obvious test plan.
 
 ### Database schema changes
-- Add new goose migrations under `backend/migrations/` (format: `00NNN_description.sql`).
-- Keep `infrastructure/sql_scripts/` in sync for Docker schema-setup (idempotent `IF NOT EXISTS`).
+- Prefer idempotent updates in `infrastructure/sql_scripts/` (numbered **01–07** for first-run bootstrap; optional files under `migrations/` for later opt-in changes).
+- Goose migrations under `backend/migrations/` exist for historical/alternate paths — keep Docker/Helm schema-setup scripts in sync when changing schema.
+- All first-run scripts must use `IF NOT EXISTS` / equivalent idempotent DDL.
 
 ### Tests
 - Add/extend tests for anything that touches:
@@ -43,11 +49,12 @@ docker compose up --build
   - auth / routing / handlers (`backend/internal/api/`)
   - repository SQL logic (`backend/internal/repository/`)
   - alert engine domain, service, and handlers (`backend/internal/domain/alerts/`, `backend/internal/service/`, `backend/internal/api/handlers/`)
+  - cold storage / federation (`backend/internal/storage/cold/`)
 
 ### Commit / PR expectations
 - Describe the **why** and include a short **test plan** (commands run + what you verified).
 - Note any operational impact (new env vars, migrations, config changes).
+- Follow product naming: monitored engine is **SQL Server** (not MSSQL).
 
 ## Reporting security issues
-Please do **not** open public issues for security findings. See `SECURITY.md`. 
-
+Please do **not** open public issues for security findings. See `SECURITY.md`.

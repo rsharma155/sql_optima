@@ -59,7 +59,7 @@ See [`docs/os_collector.md`](docs/os_collector.md) and [`os_collector/README.md`
 - Configure Vault Transit for production credential encryption (`VAULT_ADDR`, AppRole — not root tokens). See [`docs/vault_production.md`](docs/vault_production.md).
 - Set `AUTH_REQUIRED=1` and `DISABLE_PUBLIC_SETUP=1` after initial bootstrap.
 - Set a strong `JWT_SECRET` (32+ random bytes); never use compose example values in production.
-- Use `AUTH_MODE=oidc` with an external identity provider for enterprise SSO.
+- Use `AUTH_MODE=oidc` with an external identity provider for enterprise SSO (`OIDC_ISSUER_URL`, `OIDC_AUDIENCE`; optional `OIDC_GROUP_CLAIM` + `OIDC_GROUP_ROLE_MAP`).
 - Pin container images by digest or semver tag (`ghcr.io/<org>/sql-optima:0.5.0`), not `:latest`, in production.
 
 ## Vault (Transit KMS)

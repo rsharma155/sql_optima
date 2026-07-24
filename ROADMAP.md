@@ -10,7 +10,7 @@ This roadmap is intentionally practical: it focuses on adoption blockers (safety
 - **RBAC role constants** — `middleware.RoleAdmin|RoleDBA|RoleViewer` + `NormalizeRole`; widget SQL mutations audited.
 - **OIDC group → role mapping** — `OIDC_GROUP_CLAIM` + `OIDC_GROUP_ROLE_MAP` for enterprise SSO.
 - **Release engineering** — GHCR publish on `v*.*.*` with SPDX SBOM + GitHub Release notes from CHANGELOG.
-- **Helm starter chart** — `deploy/helm/sql-optima` for control-plane Deployment/Service.
+- **Helm starter chart** — `deploy/helm/sql-optima` for control-plane Deployment/Service; optional TimescaleDB subchart + schema Job (scripts 01–07).
 - **Timescale retention helpers** — optional `014_timescale_retention_downsampling.sql` (90d floors + hourly CPU CAGG).
 - **Docker Compose** — one-command deploy (`docker/docker-compose.yml`) with TimescaleDB, Vault, and automatic schema bootstrap.
 - **Prometheus metrics** — `/metrics` endpoint with request counters and duration histograms (`sql_optima_http_*`).
@@ -28,9 +28,6 @@ This roadmap is intentionally practical: it focuses on adoption blockers (safety
 - **Collector engine refactor** — domain-driven architecture with isolated, single-responsibility collectors; modularized `pg_stats`.
 - **Rule engine expansion** — 15+ new signal-aware best-practice evaluators for both engines.
 - **SQL Server Dashboard redesign** — real-time triage view with 4-column KPI layout and per-section time-range selection.
-
-## Near-term (0.x)
-- Expand Helm chart with optional TimescaleDB subchart / schema Job.
 
 ## Medium-term (1.0 readiness)
 - **Production model**

@@ -56,7 +56,15 @@ Precedence: explicit `optima_role` claim → group map (admin > dba > viewer) �
 
 ## Kubernetes (Helm)
 
-Starter chart: [`deploy/helm/sql-optima`](../deploy/helm/sql-optima). TimescaleDB remains external.
+Chart: [`deploy/helm/sql-optima`](../deploy/helm/sql-optima) (v0.2+).
+
+| Mode | Values | Notes |
+|------|--------|--------|
+| Control plane only | default | Point `timescale.host` at an existing TimescaleDB |
+| Bundled DB + schema | `timescaledb.enabled=true`, `schemaJob.enabled=true` | See `values-bundled-example.yaml`; share DB password via `timescaledb.auth.existingSecret=<release>-sql-optima-secrets` |
+| Schema only | `schemaJob.enabled=true` | Job applies `files/sql` (synced from `infrastructure/sql_scripts` 01–07) |
+
+After editing SQL bootstrap scripts, run `deploy/helm/sql-optima/scripts/sync-sql-scripts.sh` (or `.ps1`) before packaging the chart.
 
 ### SQL Server collector diagnostics (admin)
 

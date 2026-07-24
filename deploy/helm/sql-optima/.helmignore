@@ -1,0 +1,4 @@
+# Ignore build artifacts; keep unpacked local subchart and SQL files.
+*.tgz
+charts/*.tgz
+# Do not ignore charts/timescaledb (local dependency source).

@@ -1,0 +1,13 @@
+{{- if and .Values.schemaJob.enabled (eq .Values.schemaJob.scriptsSource "chart") (not .Values.schemaJob.existingConfigMap) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sql-optima.fullname" . }}-schema-sql
+  labels:
+    {{- include "sql-optima.labels" . | nindent 4 }}
+data:
+{{- range $path, $_ := .Files.Glob "files/sql/*.sql" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}
+{{- end }}
