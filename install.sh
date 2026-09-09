@@ -122,4 +122,11 @@ echo "[sql-optima] Using repository: ${REPO_ROOT}"
 START_ARGS=()
 [[ "$NO_BROWSER" -eq 1 ]] && START_ARGS+=(--no-browser)
 
-exec "${REPO_ROOT}/docker/start-dev.sh" "${START_ARGS[@]}"
+START_DEV="${REPO_ROOT}/docker/start-dev.sh"
+if [[ ! -f "$START_DEV" ]]; then
+  echo "[sql-optima] ERROR: missing ${START_DEV}" >&2
+  exit 1
+fi
+# chmod + bash: some clones drop the execute bit (Windows Git, noexec mounts).
+chmod +x "$START_DEV" 2>/dev/null || true
+exec bash "$START_DEV" "${START_ARGS[@]}"
