@@ -34,8 +34,8 @@ func TestValidateReadOnly_RejectsDangerous(t *testing.T) {
 			if err := ValidateReadOnly(Options{Dialect: "postgres"}, tc.sql); err == nil {
 				t.Fatalf("expected reject for %q", tc.sql)
 			}
-			if err := ValidateReadOnly(Options{Dialect: "sqlserver"}, tc.sql); err == nil && !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(tc.sql)), "SELECT") {
-				// sqlserver path also rejects dangerous keywords when it reaches that check
+			if err := ValidateReadOnly(Options{Dialect: "sqlserver"}, tc.sql); err == nil {
+				t.Fatalf("expected sqlserver reject for %q", tc.sql)
 			}
 		})
 	}

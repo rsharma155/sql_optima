@@ -2,7 +2,6 @@
 //
 // File: backend/internal/storage/cold/s3uploader.go
 // Purpose: S3-compatible object storage client for uploading Parquet files to MinIO or AWS S3.
-//          Uses multipart upload via the AWS S3 Transfer Manager for large-file robustness.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -19,17 +18,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-)
-
-const (
-	// multipartPartSize is the target part size for multipart uploads (5 MB).
-	// The AWS minimum is 5 MB; this keeps part counts low for typical Parquet files.
-	multipartPartSize = 5 * 1024 * 1024
-	// multipartConcurrency controls how many S3 parts are uploaded concurrently.
-	multipartConcurrency = 4
 )
 
 // S3BucketAPI is the minimal interface used by EnsureBucket.
@@ -37,16 +27,16 @@ type S3BucketAPI interface {
 	CreateBucket(ctx context.Context, params *s3.CreateBucketInput, optFns ...func(*s3.Options)) (*s3.CreateBucketOutput, error)
 }
 
-// s3ManagerAPI abstracts manager.Uploader for testability.
-type s3ManagerAPI interface {
-	Upload(ctx context.Context, input *s3.PutObjectInput, optFns ...func(*manager.Uploader)) (*manager.UploadOutput, error)
+// s3PutAPI abstracts s3.Client.PutObject for testability.
+type s3PutAPI interface {
+	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 }
 
-// S3Uploader wraps the AWS S3 client and transfer manager for cold storage uploads.
+// S3Uploader wraps the AWS S3 client for cold storage uploads.
 type S3Uploader struct {
-	bucket  S3BucketAPI
-	manager s3ManagerAPI
-	cfg     *Config
+	bucket S3BucketAPI
+	put    s3PutAPI
+	cfg    *Config
 }
 
 // NewS3Uploader creates an S3 client configured for either MinIO or AWS S3.
@@ -70,12 +60,7 @@ func NewS3Uploader(ctx context.Context, cfg *Config) (*S3Uploader, error) {
 		o.UsePathStyle = cfg.ForcePathStyle
 	})
 
-	mgr := manager.NewUploader(client, func(u *manager.Uploader) {
-		u.PartSize = multipartPartSize
-		u.Concurrency = multipartConcurrency
-	})
-
-	return &S3Uploader{bucket: client, manager: mgr, cfg: cfg}, nil
+	return &S3Uploader{bucket: client, put: client, cfg: cfg}, nil
 }
 
 // EnsureBucket creates the bucket if it does not exist. Idempotent.
@@ -95,8 +80,7 @@ func (u *S3Uploader) EnsureBucket(ctx context.Context) error {
 	return nil
 }
 
-// UploadFile uploads a local file to S3 at the given object key using multipart upload.
-// Files under 5 MB are sent in a single PUT; larger files are chunked automatically.
+// UploadFile uploads a local file to S3 at the given object key (single PutObject).
 func (u *S3Uploader) UploadFile(ctx context.Context, localPath, objectKey string) error {
 	f, err := os.Open(localPath)
 	if err != nil {
@@ -104,7 +88,7 @@ func (u *S3Uploader) UploadFile(ctx context.Context, localPath, objectKey string
 	}
 	defer f.Close()
 
-	_, err = u.manager.Upload(ctx, &s3.PutObjectInput{
+	_, err = u.put.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(u.cfg.Bucket),
 		Key:         aws.String(objectKey),
 		Body:        f,

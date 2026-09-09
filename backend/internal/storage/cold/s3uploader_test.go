@@ -1,7 +1,7 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
 // File: backend/internal/storage/cold/s3uploader_test.go
-// Purpose: Unit tests for the S3 uploader, mocking the AWS SDK v2 client and transfer manager.
+// Purpose: Unit tests for the S3 uploader, mocking the AWS SDK v2 client.
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -14,7 +14,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -30,14 +29,14 @@ func (m *MockS3BucketClient) CreateBucket(ctx context.Context, params *s3.Create
 	return args.Get(0).(*s3.CreateBucketOutput), args.Error(1)
 }
 
-// MockS3Manager mocks s3ManagerAPI for UploadFile tests.
+// MockS3Manager mocks s3PutAPI for UploadFile tests.
 type MockS3Manager struct {
 	mock.Mock
 }
 
-func (m *MockS3Manager) Upload(ctx context.Context, input *s3.PutObjectInput, optFns ...func(*manager.Uploader)) (*manager.UploadOutput, error) {
+func (m *MockS3Manager) PutObject(ctx context.Context, input *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
 	args := m.Called(ctx, input)
-	return args.Get(0).(*manager.UploadOutput), args.Error(1)
+	return args.Get(0).(*s3.PutObjectOutput), args.Error(1)
 }
 
 func TestS3Uploader_UploadFile(t *testing.T) {
@@ -47,8 +46,8 @@ func TestS3Uploader_UploadFile(t *testing.T) {
 		Prefix: "test-prefix/",
 	}
 	uploader := &S3Uploader{
-		manager: mockMgr,
-		cfg:     cfg,
+		put: mockMgr,
+		cfg: cfg,
 	}
 
 	ctx := context.Background()
@@ -59,9 +58,9 @@ func TestS3Uploader_UploadFile(t *testing.T) {
 
 	objectKey := "metrics/test.parquet"
 
-	mockMgr.On("Upload", ctx, mock.MatchedBy(func(input *s3.PutObjectInput) bool {
+	mockMgr.On("PutObject", ctx, mock.MatchedBy(func(input *s3.PutObjectInput) bool {
 		return *input.Bucket == "test-bucket" && *input.Key == objectKey
-	})).Return(&manager.UploadOutput{}, nil)
+	})).Return(&s3.PutObjectOutput{}, nil)
 
 	err = uploader.UploadFile(ctx, localPath, objectKey)
 	assert.NoError(t, err)

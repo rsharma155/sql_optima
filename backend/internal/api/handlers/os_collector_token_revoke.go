@@ -70,7 +70,7 @@ func (h *OSCollectorHandlers) RevokeOSAgentToken(w http.ResponseWriter, r *http.
 		}
 		jti = claims.ID
 		if claims.ExpiresAt != nil {
-			expiresAt = claims.ExpiresAt.Time.UTC()
+			expiresAt = claims.ExpiresAt.UTC()
 		}
 		if claims.ServerID != "" {
 			if sid, err := uuid.Parse(claims.ServerID); err == nil {

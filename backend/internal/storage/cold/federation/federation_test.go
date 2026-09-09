@@ -37,9 +37,6 @@ func TestSplitRange_HotThenCold(t *testing.T) {
 	if !ok {
 		t.Fatal("expected split")
 	}
-	if cold.To.After(hot.From) && !cold.To.Equal(hot.From) {
-		// cold ends where hot begins
-	}
 	if !cold.To.Equal(hot.From) {
 		t.Fatalf("cold.To (%v) should equal hot.From (%v)", cold.To, hot.From)
 	}

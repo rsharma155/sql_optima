@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/pashagolub/pgxmock/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -33,7 +33,7 @@ func TestExporter_Run(t *testing.T) {
 		ExportBatchSize: 100,
 		LocalStagingDir: "/tmp/sql-optima-test",
 	}
-	uploader := &S3Uploader{manager: mockMgr, cfg: cfg}
+	uploader := &S3Uploader{put: mockMgr, cfg: cfg}
 	watermark := NewWatermarkStore(mockDB)
 
 	exporter := NewExporter(mockDB, uploader, watermark, cfg)
@@ -79,7 +79,7 @@ func TestExporter_Run(t *testing.T) {
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(true))
 
-		mockMgr.On("Upload", mock.Anything, mock.Anything).Return(&manager.UploadOutput{}, nil).Once()
+		mockMgr.On("PutObject", mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil).Once()
 
 		mockDB.ExpectExec("INSERT INTO coldstorage.watermarks").
 			WithArgs("test_metrics", serverID, pgxmock.AnyArg()).
