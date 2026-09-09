@@ -10,10 +10,10 @@
 package repository
 
 import (
-	"log/slog"
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -34,9 +34,9 @@ type PgRepository struct {
 	serverIDs      map[string]uuid.UUID // Mapping from instance name to ServerID (UUID)
 	serverIDToName map[string]string    // Mapping from ServerID string to Name
 	pgConns        map[string]*sql.DB   // Cache for per-database connections: "instanceName/dbName" -> *sql.DB
-	status    map[string]string    // Instance status: "online", "offline", "error"
-	mutex     sync.RWMutex         // Thread-safe access to connections
-	cfg       *config.Config       // Application configuration
+	status         map[string]string    // Instance status: "online", "offline", "error"
+	mutex          sync.RWMutex         // Thread-safe access to connections
+	cfg            *config.Config       // Application configuration
 
 	// Lightweight in-memory cache for size deltas (growth estimation).
 	lastDbSizeBytes map[string]int64
@@ -253,8 +253,12 @@ func (c *PgRepository) GetConnForDB(instanceName, dbName string) (*sql.DB, error
 		Host:   net.JoinHostPort(inst.Host, fmt.Sprintf("%d", port)),
 		Path:   dbName,
 	}
+	sslmode := inst.SSLMode
+	if sslmode == "" {
+		sslmode = "disable"
+	}
 	q := pgURL.Query()
-	q.Set("sslmode", "disable")
+	q.Set("sslmode", sslmode)
 	pgURL.RawQuery = q.Encode()
 
 	newDb, err := sql.Open("postgres", pgURL.String())
@@ -285,21 +289,21 @@ func (c *PgRepository) HasConnection(instanceName string) bool {
 // NewPgRepository creates a new PostgreSQL repository and initializes connections to all configured instances.
 func NewPgRepository(ctx context.Context, cfg *config.Config) *PgRepository {
 	c := &PgRepository{
-		conns:             make(map[string]*sql.DB),
-		serverIDs:         make(map[string]uuid.UUID),
-		serverIDToName:    make(map[string]string),
-		pgConns:           make(map[string]*sql.DB),
-		status:            make(map[string]string),
-		cfg:               cfg,
-		lastDbSizeBytes:   make(map[string]int64),
-		lastDbSizeAt:      make(map[string]time.Time),
-		previousSnapshots: make(map[string]map[string]PgQueryStat),
-		pgssSupported:     make(map[string]bool),
-		pgssSharedPreload: make(map[string]bool),
+		conns:                  make(map[string]*sql.DB),
+		serverIDs:              make(map[string]uuid.UUID),
+		serverIDToName:         make(map[string]string),
+		pgConns:                make(map[string]*sql.DB),
+		status:                 make(map[string]string),
+		cfg:                    cfg,
+		lastDbSizeBytes:        make(map[string]int64),
+		lastDbSizeAt:           make(map[string]time.Time),
+		previousSnapshots:      make(map[string]map[string]PgQueryStat),
+		pgssSupported:          make(map[string]bool),
+		pgssSharedPreload:      make(map[string]bool),
 		pgssExtensionInstalled: make(map[string]bool),
-		pgssSchema:        make(map[string]string),
-		pgssHasBlkTime:    make(map[string]bool),
-		pgVersion:         make(map[string]int),
+		pgssSchema:             make(map[string]string),
+		pgssHasBlkTime:         make(map[string]bool),
+		pgVersion:              make(map[string]int),
 	}
 
 	for _, inst := range cfg.Instances {

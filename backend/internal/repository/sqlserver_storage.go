@@ -71,24 +71,25 @@ func (c *SqlServerRepository) FetchTableSizeStats(ctx context.Context, instanceN
 		return nil, fmt.Errorf("connection not found")
 	}
 
+	ident := strings.ReplaceAll(databaseName, "]", "]]")
 	query := fmt.Sprintf(`
-		/* SQL_OPTIMA */ 
-		USE [%s];
-		SELECT /* SQL_OPTIMA */   
-			SCHEMA_NAME(t.schema_id) AS schema_name,
+		/* SQL_OPTIMA */
+		SELECT
+			s.name AS schema_name,
 			t.name AS table_name,
 			p.rows AS row_count,
 			SUM(a.total_pages) * 8 / 1024.0 AS total_mb,
 			SUM(a.data_pages) * 8 / 1024.0 AS data_mb,
 			(SUM(a.used_pages) - SUM(a.data_pages)) * 8 / 1024.0 AS index_mb
-		FROM sys.tables t WITH (NOLOCK)
-		INNER JOIN sys.indexes i WITH (NOLOCK) ON t.object_id = i.object_id
-		INNER JOIN sys.partitions p WITH (NOLOCK) ON i.object_id = p.object_id AND i.index_id = p.index_id
-		INNER JOIN sys.allocation_units a WITH (NOLOCK) ON p.partition_id = a.container_id
+		FROM [%s].sys.tables t WITH (NOLOCK)
+		INNER JOIN [%s].sys.schemas s WITH (NOLOCK) ON t.schema_id = s.schema_id
+		INNER JOIN [%s].sys.indexes i WITH (NOLOCK) ON t.object_id = i.object_id
+		INNER JOIN [%s].sys.partitions p WITH (NOLOCK) ON i.object_id = p.object_id AND i.index_id = p.index_id
+		INNER JOIN [%s].sys.allocation_units a WITH (NOLOCK) ON p.partition_id = a.container_id
 		WHERE t.is_ms_shipped = 0
-		GROUP BY t.schema_id, t.name, p.rows
+		GROUP BY s.name, t.name, p.rows
 		ORDER BY total_mb DESC
-	`, strings.ReplaceAll(databaseName, "]", "]]"))
+	`, ident, ident, ident, ident, ident)
 
 	ctx, cancel := WithQueryTimeout(ctx, 0)
 	defer cancel()

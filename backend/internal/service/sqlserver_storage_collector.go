@@ -8,9 +8,9 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
-	"context"
 	"strings"
 	"time"
 
@@ -20,10 +20,9 @@ import (
 )
 
 func (s *MetricsService) StartSqlServerStorageHistoryCollector(ctx context.Context) {
-	interval := s.GetCollectorInterval(ctx, "SQL Server Storage History", 6*time.Hour)
+	interval := s.GetCollectorInterval(ctx, "sqlserver_storage_index_health", 5*time.Minute)
 	if interval <= 0 {
 		slog.Warn("[SQLServerStorage] Collector is disabled (interval=0)")
-		// Still start a ticker but with a very long interval to avoid panic and allow dynamic re-enable
 		interval = 24 * time.Hour
 	}
 	slog.Info("[SQLServerStorage] Starting background collector", "interval", interval)
@@ -31,7 +30,6 @@ func (s *MetricsService) StartSqlServerStorageHistoryCollector(ctx context.Conte
 	ticker := time.NewTicker(interval)
 	go func() {
 		defer ticker.Stop()
-		// Run once immediately
 		if interval > 0 {
 			s.collectSqlServerStorageStats(ctx)
 		}
@@ -41,8 +39,7 @@ func (s *MetricsService) StartSqlServerStorageHistoryCollector(ctx context.Conte
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				// Dynamic interval check
-				newInterval := s.GetCollectorInterval(ctx, "SQL Server Storage History", 6*time.Hour)
+				newInterval := s.GetCollectorInterval(ctx, "sqlserver_storage_index_health", 5*time.Minute)
 				if newInterval != interval && newInterval > 0 {
 					slog.Info("[SQLServerStorage] Frequency changed from", "arg1", interval, "arg2", newInterval)
 					interval = newInterval
@@ -58,6 +55,9 @@ func (s *MetricsService) StartSqlServerStorageHistoryCollector(ctx context.Conte
 }
 
 func (s *MetricsService) collectSqlServerStorageStats(ctx context.Context) {
+	if s.tsLogger == nil || s.MsRepo == nil || s.Config == nil {
+		return
+	}
 	for _, inst := range s.Config.Instances {
 		if strings.ToLower(inst.Type) != "sqlserver" {
 			continue
@@ -84,51 +84,59 @@ func (s *MetricsService) collectSqlServerStorageStats(ctx context.Context) {
 		}
 		slog.Info("[SQLServerStorage] Discovered databases", "instance", inst.Name, "count", len(databases))
 
+		collectUsage := s.sihDue(serverID, "sqlserver_storage_index_health_index15m", s.GetCollectorInterval(ctx, "sqlserver_storage_index_health_index15m", 15*time.Minute))
+		collectGrowth := s.sihDue(serverID, "sqlserver_storage_index_health_growth6h", s.GetCollectorInterval(ctx, "SQL Server Storage History", 6*time.Hour))
+		if !collectUsage && !collectGrowth {
+			continue
+		}
+
 		for _, dbName := range databases {
-			// Table Size History
-			stats, err := s.MsRepo.FetchTableSizeStats(ctx, inst.Name, dbName)
-			if err != nil {
-				slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: FetchTableSizeStats error: %v", inst.Name, dbName, err))
-				_ = s.tsLogger.LogCollectorError(ctx, serverID, "Permission error or query failure: "+err.Error())
+			if collectGrowth {
+				// Table Size History
+				stats, err := s.MsRepo.FetchTableSizeStats(ctx, inst.Name, dbName)
+				if err != nil {
+					slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: FetchTableSizeStats error: %v", inst.Name, dbName, err))
+					_ = s.tsLogger.LogCollectorError(ctx, serverID, "Permission error or query failure: "+err.Error())
+				} else if len(stats) > 0 {
+					slog.Debug("[SQLServerStorage] Collected table size stats", "db", dbName, "tables", len(stats))
+					var hotRows []hot.TableSizeHistoryRow
+					now := time.Now().UTC()
+					for _, st := range stats {
+						row := hot.TableSizeHistoryRow{
+							CaptureTimestamp: now,
+							ServerID:         serverID,
+							DatabaseName:     dbName,
+							SchemaName:       st.SchemaName,
+							TableName:        st.TableName,
+							RowCount:         st.RowCount,
+							TotalMB:          st.TotalMB,
+							DataMB:           st.DataMB,
+							IndexMB:          st.IndexMB,
+						}
+						hotRows = append(hotRows, row)
+
+						// Also populate unified monitor table
+						_ = s.tsLogger.InsertTableSizeHistory(ctx, models.TableSizeHistory{
+							Timestamp:   now,
+							Engine:      "sqlserver",
+							ServerID:    serverID,
+							DBName:      dbName,
+							SchemaName:  st.SchemaName,
+							TableName:   st.TableName,
+							TableSizeMB: st.DataMB,
+							IndexSizeMB: st.IndexMB,
+							RowCount:    st.RowCount,
+						})
+					}
+					_ = s.tsLogger.LogTableSizeHistoryWithChangeDetection(ctx, serverID, hotRows)
+				}
+			}
+
+			if !collectUsage {
 				continue
 			}
-			if len(stats) > 0 {
-				slog.Debug("[SQLServerStorage] Collected table size stats", "db", dbName, "tables", len(stats))
-				var hotRows []hot.TableSizeHistoryRow
-				now := time.Now().UTC()
-				for _, st := range stats {
-					row := hot.TableSizeHistoryRow{
-						CaptureTimestamp: now,
-						ServerID:         serverID,
-						DatabaseName:     dbName,
-						SchemaName:       st.SchemaName,
-						TableName:        st.TableName,
-						RowCount:         st.RowCount,
-						TotalMB:          st.TotalMB,
-						DataMB:           st.DataMB,
-						IndexMB:          st.IndexMB,
-					}
-					hotRows = append(hotRows, row)
 
-					// Also populate unified monitor table
-					_ = s.tsLogger.InsertTableSizeHistory(ctx, models.TableSizeHistory{
-						Timestamp:   now,
-						Engine:      "sqlserver",
-						ServerID:    serverID,
-						DBName:      dbName,
-						SchemaName:  st.SchemaName,
-						TableName:   st.TableName,
-						TableSizeMB: st.DataMB,
-						IndexSizeMB: st.IndexMB,
-						RowCount:    st.RowCount,
-					})
-				}
-				_ = s.tsLogger.LogTableSizeHistoryWithChangeDetection(ctx, serverID, hotRows)
-			}
-
-			// Index Usage History - using delta logic to avoid double-counting cumulative counters
-			// We use the specialized collector that handles state management and delta calculation.
-			// DMVs are per-database, so we must be in the correct context (handled inside Collect function).
+			// Index Usage History - using delta logic to avoid double-counting cumulative counters.
 			idxRows, err := collectors.CollectSQLServerIndexUsage(ctx, db, dbName)
 			if err != nil {
 				slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: IndexUsage collection error: %v", inst.Name, dbName, err))
@@ -144,67 +152,17 @@ func (s *MetricsService) collectSqlServerStorageStats(ctx context.Context) {
 				}
 			}
 
-			// Table Usage Stats — seq/idx scans, rows read/modified per table.
-			// Uses sys.dm_db_index_operational_stats (TVF) for row-level operation counters;
-			// sys.dm_db_index_usage_stats only has user_seeks/scans/lookups/updates, not leaf counts.
-			tableUsageRows, tableUsageErr := db.QueryContext(ctx, `
-				/* SQL_OPTIMA */
-				SELECT
-					ISNULL(s.name, 'dbo')                                             AS schema_name,
-					ISNULL(t.name, 'Unknown')                                          AS table_name,
-					ISNULL(SUM(ios.range_scan_count), 0)                               AS seq_scans,
-					ISNULL(SUM(ios.singleton_lookup_count), 0)                         AS idx_scans,
-					ISNULL(SUM(ios.leaf_insert_count + ios.leaf_delete_count +
-					           ios.leaf_update_count + ios.range_scan_count +
-					           ios.singleton_lookup_count), 0)                         AS rows_read,
-					ISNULL(SUM(ios.leaf_insert_count + ios.leaf_delete_count +
-					           ios.leaf_update_count), 0)                              AS rows_modified,
-					ISNULL(SUM(a.total_pages) * 8.0 / 1024.0, 0)                      AS table_size_mb,
-					ISNULL(SUM(CASE WHEN i.index_id > 1 THEN a.total_pages ELSE 0 END) * 8.0 / 1024.0, 0) AS index_size_mb,
-					ISNULL(MAX(p.rows), 0)                                             AS row_count
-				FROM sys.tables t WITH (NOLOCK)
-				JOIN sys.schemas s WITH (NOLOCK) ON t.schema_id = s.schema_id
-				LEFT JOIN sys.indexes i WITH (NOLOCK) ON t.object_id = i.object_id
-				LEFT JOIN sys.dm_db_index_operational_stats(DB_ID(), NULL, NULL, NULL) ios
-					ON i.object_id = ios.object_id AND i.index_id = ios.index_id
-				LEFT JOIN sys.partitions p WITH (NOLOCK)
-					ON i.object_id = p.object_id AND i.index_id = p.index_id
-				LEFT JOIN sys.allocation_units a WITH (NOLOCK)
-					ON p.partition_id = a.container_id
-				WHERE t.is_ms_shipped = 0
-				GROUP BY s.name, t.name
-				HAVING SUM(a.total_pages) > 0
-				ORDER BY table_size_mb DESC
-			`)
-			if tableUsageErr != nil {
-				slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: TableUsageStats error: %v", inst.Name, dbName, tableUsageErr))
-				_ = s.tsLogger.LogCollectorError(ctx, serverID, "Table usage stats collection error: "+tableUsageErr.Error())
-			} else {
-				now := time.Now().UTC()
-				for tableUsageRows.Next() {
-					var schemaName, tableName string
-					var seqScans, idxScans, rowsRead, rowsModified, rowCount int64
-					var tableSizeMB, indexSizeMB float64
-					if err := tableUsageRows.Scan(&schemaName, &tableName, &seqScans, &idxScans, &rowsRead, &rowsModified, &tableSizeMB, &indexSizeMB, &rowCount); err != nil {
-						continue
-					}
-					_ = s.tsLogger.InsertTableUsageStat(ctx, models.TableUsageStat{
-						Timestamp:    now,
-						Engine:       "sqlserver",
-						ServerID:     serverID,
-						DBName:       dbName,
-						SchemaName:   schemaName,
-						TableName:    tableName,
-						SeqScans:     seqScans,
-						IdxScans:     idxScans,
-						RowsRead:     rowsRead,
-						RowsModified: rowsModified,
-						TableSizeMB:  tableSizeMB,
-						IndexSizeMB:  indexSizeMB,
-						RowCount:     rowCount,
-					})
+			tblRows, tblErr := collectors.CollectSQLServerTableSizeSnapshot(ctx, db, dbName)
+			if tblErr != nil {
+				slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: TableUsageStats error: %v", inst.Name, dbName, tblErr))
+				_ = s.tsLogger.LogCollectorError(ctx, serverID, "Table usage stats collection error: "+tblErr.Error())
+			} else if len(tblRows) > 0 {
+				if _, pErr := collectors.PersistSQLServerTableUsageDeltas(ctx, s.tsLogger, serverID, tblRows, time.Now()); pErr != nil {
+					slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: TableUsage persistence error: %v", inst.Name, dbName, pErr))
 				}
-				tableUsageRows.Close()
+				if _, pErr := collectors.PersistSQLServerTableSizeHistory(ctx, s.tsLogger, serverID, tblRows, time.Now()); pErr != nil {
+					slog.Error(fmt.Sprintf("[SQLServerStorage] %s/%s: TableSizeHistory persistence error: %v", inst.Name, dbName, pErr))
+				}
 			}
 		}
 	}

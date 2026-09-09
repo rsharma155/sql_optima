@@ -8,11 +8,11 @@
 package hot
 
 import (
-	"log/slog"
 	"context"
 	"database/sql"
 	"fmt"
 	"github.com/google/uuid"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -377,9 +377,9 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthIndexUsage(ctx context.Context
 		out = append(out, r)
 	}
 	return out, rows.Err()
-	}
+}
 
-	func (tl *TimescaleLogger) QueryStorageIndexHealthTableUsage(ctx context.Context, engine, serverID, from, to string, limit int) ([]models.TableUsageStat, error) {
+func (tl *TimescaleLogger) QueryStorageIndexHealthTableUsage(ctx context.Context, engine, serverID, from, to string, limit int) ([]models.TableUsageStat, error) {
 	q := `SELECT capture_timestamp, engine, server_id, db_name, schema_name, table_name, seq_scans, idx_scans, rows_read, rows_modified, table_size_mb, index_size_mb, row_count
 	      FROM monitor.table_usage_stats WHERE engine = $1 AND server_id = $2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz
 	      ORDER BY capture_timestamp DESC LIMIT $5`
@@ -397,9 +397,9 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthIndexUsage(ctx context.Context
 		out = append(out, r)
 	}
 	return out, nil
-	}
+}
 
-	func (tl *TimescaleLogger) QueryStorageIndexHealthTableGrowth(ctx context.Context, engine, serverID string, from, to string, limit int) ([]models.TableSizeHistory, error) {
+func (tl *TimescaleLogger) QueryStorageIndexHealthTableGrowth(ctx context.Context, engine, serverID string, from, to string, limit int) ([]models.TableSizeHistory, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -420,7 +420,7 @@ func (tl *TimescaleLogger) QueryStorageIndexHealthIndexUsage(ctx context.Context
 		out = append(out, r)
 	}
 	return out, nil
-	}
+}
 func (tl *TimescaleLogger) RefreshIndexUnusedCandidatesDaily(ctx context.Context, engine, serverID string, analysisEnd time.Time, minUpdates int64) (int64, error) {
 	if minUpdates <= 0 {
 		minUpdates = 100
@@ -668,7 +668,7 @@ func (tl *TimescaleLogger) GetTableSizeHistory(ctx context.Context, engine, serv
 		if engine == "postgres" {
 			q = `SELECT capture_timestamp, server_id, db_name, schema_name, table_name, row_count, table_size_mb, index_size_mb
 			      FROM monitor.table_size_history
-			      WHERE engine = $1 AND server_id = $2 AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
+			      WHERE engine = $1 AND server_id = $2::uuid AND capture_timestamp >= $3::timestamptz AND capture_timestamp <= $4::timestamptz`
 			args = []interface{}{engine, serverID, from, to}
 		} else {
 			// SQLSERVER snapshot table uses server_id and database_name

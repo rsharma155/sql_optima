@@ -53,8 +53,8 @@ window.runSqlServerStorageIndexHealthDashboard = async function(opts) {
         const filterQS = window.sihShared.buildFilterQS(state, inst.name);
         
         const [filters, dash] = await Promise.all([
-            window.apiClient.authenticatedFetch(`${base}/filters?${filterQS}`).then(r => r.json()),
-            window.apiClient.authenticatedFetch(`${base}/dashboard?${filterQS}`).then(r => r.json())
+            window.sihShared.fetchJson(`${base}/filters?${filterQS}`),
+            window.sihShared.fetchJson(`${base}/dashboard?${filterQS}`)
         ]);
 
         if (container) container.classList.remove('loading');
