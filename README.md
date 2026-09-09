@@ -155,13 +155,12 @@ For shared or internet-facing deployments, use production defaults from `docker/
 ```bash
 cd sql_optima/docker
 cp .env.example .env
-# Edit .env: JWT_SECRET, DB_PASSWORD; keep AUTH_REQUIRED=1 and DISABLE_PUBLIC_SETUP=1
-docker compose up --build -d
-cd ../backend
-NEW_ADMIN_PASSWORD='YourStrongPassword8+' go run reset_password.go
+# Edit .env: JWT_SECRET, DB_PASSWORD, SQL_OPTIMA_IMAGE; keep AUTH_REQUIRED=1 and DISABLE_PUBLIC_SETUP=1
+docker compose pull
+docker compose up -d --no-build
 ```
 
-Sign in as **`admin`**, then add servers from **Admin**. See [QUICKSTART → Production](docs/QUICKSTART.md#production--hardened-deployment), [docs/vault_production.md](docs/vault_production.md), and [SECURITY.md](SECURITY.md).
+Sign in as **`admin`** (production: create the admin per [QUICKSTART → Production](docs/QUICKSTART.md#production--hardened-deployment); the setup wizard is off when `DISABLE_PUBLIC_SETUP=1`). Then add servers from **Admin**. See [docs/vault_production.md](docs/vault_production.md) and [SECURITY.md](SECURITY.md).
 
 ### Choose a deployment path
 

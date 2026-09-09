@@ -18,11 +18,18 @@ go run ./cmd/server
 ```
 
 ### Run with Docker Compose
-- From repo root:
+- Operators (prebuilt API image, no Go on the host), from `docker/`:
+
+```bash
+docker compose pull
+docker compose up -d --no-build
+```
+
+- Contributors changing the Go API (compile inside Docker):
 
 ```bash
 cd docker
-docker compose up --build
+SQL_OPTIMA_BUILD_API=1 docker compose up --build
 ```
 
 One-command local stack: `./install.sh` (macOS/Linux) or `.\install.ps1` (Windows). See [docs/QUICKSTART.md](docs/QUICKSTART.md).

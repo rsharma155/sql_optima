@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **In-app Dashboard Info guides** — PostgreSQL (14) and SQL Server (16) metric/threshold reference pages.
 
 ### Changed
+- **Docker Compose uses the GHCR API image** by default (`SQL_OPTIMA_IMAGE`, tag **0.5.1+**). Operators `docker compose pull && up` with no Go toolchain; `start-dev` / `install` fall back to `--build` if the tag is missing. The published image matches Compose (Debian, Vault token entrypoint, wget healthcheck). Tag **0.5.0** on GHCR remains distroless and is not used by current Compose.
 - Broader `apiresponse` sanitization across widget, storage-index, wait-stats, admin, SQL Server monitoring, query analysis, workload, and intelligence routes.
 - Schema bootstrap step 7 is `07_optima_server_dr_policy.sql` (OS-enriched rules remain in `02_rule_engine.sql`).
 

@@ -60,7 +60,7 @@ See [`docs/os_collector.md`](docs/os_collector.md) and [`os_collector/README.md`
 - Set `AUTH_REQUIRED=1` and `DISABLE_PUBLIC_SETUP=1` after initial bootstrap.
 - Set a strong `JWT_SECRET` (32+ random bytes); never use compose example values in production.
 - Use `AUTH_MODE=oidc` with an external identity provider for enterprise SSO (`OIDC_ISSUER_URL`, `OIDC_AUDIENCE`; optional `OIDC_GROUP_CLAIM` + `OIDC_GROUP_ROLE_MAP`).
-- Pin container images by digest or semver tag (`ghcr.io/<org>/sql-optima:0.5.0`), not `:latest`, in production.
+- Pin container images by digest or semver tag (`ghcr.io/<org>/sql-optima:0.5.1`), not `:latest`, in production. Do not use GHCR **0.5.0** with current Docker Compose (distroless; no Vault entrypoint).
 
 ## Vault (Transit KMS)
 

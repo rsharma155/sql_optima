@@ -135,6 +135,9 @@ DB_NAME=${DEV_DB_NAME}
 
 API_PORT=${DEV_API_PORT}
 
+# Prebuilt API (GHCR). First compose-compatible tag is 0.5.1; start-dev falls back to --build if missing.
+SQL_OPTIMA_IMAGE=ghcr.io/rsharma155/sql-optima:0.5.1
+
 AUTH_REQUIRED=1
 DISABLE_PUBLIC_SETUP=0
 JWT_SECRET=sql-optima-local-dev-jwt-secret-32chars-min

@@ -1,5 +1,12 @@
-# Compose API image: shell entrypoint loads Vault token from vault_data (dev Docker).
-# Build context: repository root.
+# Retired path. Compose and GHCR use the repository-root Dockerfile
+# (context = repo root, dockerfile = Dockerfile).
+#
+# Historical command (still works if this file stays in sync):
+#   docker build -f docker/Dockerfile.compose-api -t sql-optima:local .
+#
+# This file is a copy of ../Dockerfile so older scripts keep working.
+# Edit the root Dockerfile and copy changes here if you must keep this path.
+
 FROM golang:1.26-bookworm AS build
 WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
@@ -10,6 +17,7 @@ COPY infrastructure/sql_scripts /src/infrastructure/sql_scripts
 RUN echo 'instances: []' > ../config.yaml
 COPY frontend /src/frontend
 RUN CGO_ENABLED=0 go build -mod=mod -ldflags="-s -w" -o /sql-optima ./cmd/server
+RUN mkdir -p /src/backend/logs && chmod 0777 /src/backend/logs
 
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -25,6 +33,9 @@ COPY --from=build /sql-optima ./backend/sql-optima
 COPY docker/scripts/api-entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh
 WORKDIR /srv/backend
+COPY --from=build /src/backend/logs ./logs
 EXPOSE 8080
 ENV PORT=:8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:8080/api/health || exit 1
 ENTRYPOINT ["/entrypoint.sh"]
