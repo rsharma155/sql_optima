@@ -17,7 +17,7 @@ This document maps trust boundaries and controls for the monitoring stack. It co
 1. **Browser ↔ API** — HTTPS assumed in production; JWT Bearer or OIDC-validated tokens when `AUTH_REQUIRED` is enabled.
 2. **API ↔ monitored databases** — TLS to SQL Server/PostgreSQL where configured; least-privilege logins (`infrastructure/security/roles/`).
 3. **API ↔ app Postgres / Timescale** — connection strings via env; widget SQL runs only against configured pools after sandbox checks.
-4. **Future: agent ↔ control plane** — not in scope for this revision; use mTLS and signed payloads when introduced.
+4. **Agent ↔ control plane** — OS collector uses scoped `os_agent` JWT (`os_metrics:write`) or dba/admin JWT on `POST /api/os/metrics` only; machine tokens are rejected on all other routes. Compromised tokens can be killed via jti revoke list (`POST /api/admin/os-collector/token/revoke`). OIDC deployments can map IdP groups via `OIDC_GROUP_ROLE_MAP`. Future remote collectors should use mTLS.
 
 ## Attack surfaces and mitigations
 

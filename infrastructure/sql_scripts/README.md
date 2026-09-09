@@ -42,7 +42,10 @@ Apply in numeric order when upgrading an existing database. `009_postgres_system
 | `008_add_job_error_tracking.sql` | Job error tracking |
 | `009_postgres_system_stats_cpu_enhancement.sql` | Extended `postgres_system_stats` CPU columns |
 | `010_rule_engine_phase2_1.sql` | SQL Server rule-engine Epic 2.1 first-batch metadata refresh |
-| `011_log_shipping_health_epic2_2.sql` | SQL Server log-shipping health Timescale hypertable (Epic 2.2) |
+| `011_cold_storage_reduce_hot_retention_60d.sql` | Opt-in: reduce hot retention 90→60 after cold validation |
+| `012_os_agent_token_revoke.sql` | OS-agent JWT revoke list (`optima_os_agent_revoked_tokens`) |
+| `013_sqlserver_health_kpi_max_connections.sql` | SQL Server KPI `max_connections` for % saturation alerts |
+| `014_timescale_retention_downsampling.sql` | Optional 90d retention floors + hourly CPU CAGG |
 
 ## Usage
 

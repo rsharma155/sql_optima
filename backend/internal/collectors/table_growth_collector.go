@@ -24,7 +24,7 @@ import (
 // CollectSQLServerTableGrowthSnapshot is an alias of CollectSQLServerTableSizeSnapshot.
 // It returns (db, schema, table, row_count, table_size_mb, index_size_mb).
 func CollectSQLServerTableGrowthSnapshot(ctx context.Context, dbq repository.Queryer) ([]SqlServerTableUsageRow, error) {
-	return CollectSQLServerTableSizeSnapshot(ctx, dbq)
+	return CollectSQLServerTableSizeSnapshot(ctx, dbq, "")
 }
 
 // PersistSQLServerTableGrowthHistory is an alias of PersistSQLServerTableSizeHistory.

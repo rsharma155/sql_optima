@@ -17,7 +17,7 @@ import (
 const DefaultMaxRows = 5000
 
 var (
-	dangerousKeywords = regexp.MustCompile(`(?is)\b(INSERT|UPDATE|DELETE|MERGE|INTO\s|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|COPY\s|CALL\s|DO\s*\(|EXECUTE\s+IMMEDIATE|xp_|sp_executesql|sp_configure|BACKUP|RESTORE|SHUTDOWN|DBCC\s|BULK\s+INSERT)\b`)
+	dangerousKeywords = regexp.MustCompile(`(?is)\b(INSERT|UPDATE|DELETE|MERGE|INTO\s|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|COPY\s|CALL\s|DO\s*\(|EXECUTE\s+IMMEDIATE|xp_cmdshell|xp_|sp_executesql|sp_configure|BACKUP|RESTORE|SHUTDOWN|DBCC\s|BULK\s+INSERT)\b`)
 )
 
 // Options tune validation (timeouts are enforced by callers via context).
@@ -51,9 +51,9 @@ func ValidateReadOnly(opt Options, sql string) error {
 
 	u := strings.ToUpper(s)
 	switch opt.Dialect {
-	case "postgres", "":
+	case "postgres", "trino", "":
 		if !(strings.HasPrefix(u, "SELECT") || strings.HasPrefix(u, "WITH") || strings.HasPrefix(u, "(")) {
-			return fmt.Errorf("sqlsandbox: postgres SQL must begin with SELECT, WITH, or (")
+			return fmt.Errorf("sqlsandbox: postgres/trino SQL must begin with SELECT, WITH, or (")
 		}
 	case "sqlserver":
 		if !(strings.HasPrefix(u, "SELECT") || strings.HasPrefix(u, "WITH")) {
@@ -75,7 +75,7 @@ func WrapWithRowLimit(dialect, sql string, maxRows int) (string, error) {
 		return "", err
 	}
 	switch dialect {
-	case "postgres", "":
+	case "postgres", "trino", "":
 		return fmt.Sprintf("SELECT * FROM (%s) AS _optima_sandbox LIMIT %d", s, maxRows), nil
 	case "sqlserver":
 		// SQL Server does not allow CTEs (WITH clause) inside a subquery.

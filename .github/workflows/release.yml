@@ -1,4 +1,4 @@
-# Publish sql-optima Docker image to GHCR on version tags (P2-6).
+# Publish sql-optima Docker image to GHCR on version tags (+ SBOM + GitHub Release notes).
 name: Release
 
 on:
@@ -7,8 +7,9 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: read
+  contents: write
   packages: write
+  id-token: write
 
 jobs:
   publish:
@@ -22,6 +23,27 @@ jobs:
           V="${GITHUB_REF_NAME#v}"
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "Publishing version $V"
+
+      - name: Extract changelog section
+        id: notes
+        run: |
+          python3 <<'PY'
+          import pathlib, os, re
+          tag = os.environ["GITHUB_REF_NAME"]
+          ver = tag.lstrip("v")
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          # Match ## [0.5.0] or ## [v0.5.0]
+          pat = re.compile(rf"^## \[v?{re.escape(ver)}\].*$", re.M)
+          m = pat.search(text)
+          body = f"Release {tag}\n"
+          if m:
+              start = m.end()
+              nxt = re.search(r"^## \[", text[start:], re.M)
+              end = start + nxt.start() if nxt else len(text)
+              body = text[m.start():end].strip() + "\n"
+          pathlib.Path("release_notes.md").write_text(body, encoding="utf-8")
+          print(body[:500])
+          PY
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -39,10 +61,34 @@ jobs:
             type=semver,pattern={{version}},value=${{ steps.ver.outputs.version }}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+
+      - name: Generate SPDX SBOM (syft)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/sql-optima:${{ steps.ver.outputs.version }}
+          format: spdx-json
+          output-file: sbom-sql-optima.spdx.json
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: release_notes.md
+          files: |
+            sbom-sql-optima.spdx.json
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

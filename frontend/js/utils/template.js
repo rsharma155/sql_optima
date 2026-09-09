@@ -64,6 +64,9 @@ window.updateSourceBadge = function updateSourceBadge(badgeId, sourceHeaderValue
     // Normalize common values
     let label = raw;
     if (raw === 'timescale') label = 'Timescale snapshot';
+    if (raw === 'hot') label = 'Timescale (hot)';
+    if (raw === 'hot+cold' || raw === 'hot + cold') label = 'Hot + cold storage';
+    if (raw.includes('cold') && raw.includes('hot')) label = 'Hot + cold storage';
     if (raw === 'live_cache') label = 'Live DMV (cached)';
     if (raw === 'live_cache_fallback') label = 'Live DMV fallback';
     if (raw === 'live') label = 'Live DMV';
@@ -71,7 +74,8 @@ window.updateSourceBadge = function updateSourceBadge(badgeId, sourceHeaderValue
     el.textContent = `Source: ${label}`;
     el.className = 'badge badge-info';
     if (raw.includes('fallback')) el.className = 'badge badge-warning';
-    if (raw.includes('timescale')) el.className = 'badge badge-success';
+    if (raw.includes('timescale') || raw === 'hot') el.className = 'badge badge-success';
+    if (raw.includes('cold')) el.className = 'badge badge-success';
 
     el.style.display = 'inline-block';
 };

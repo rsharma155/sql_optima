@@ -9,9 +9,51 @@
  */
 
 const CHANNELS = [
-    { key: 'webhook', label: 'Generic Webhook', icon: 'fa-solid fa-link', desc: 'POST JSON alert payload to any HTTP endpoint (PagerDuty, custom receiver). Do not use Slack URLs here.' },
-    { key: 'slack',   label: 'Slack',           icon: 'fa-brands fa-slack', desc: 'Slack Incoming Webhook URL (hooks.slack.com/…). Required for Slack — the generic webhook channel will not work with Slack.' },
+    { key: 'webhook', label: 'Generic Webhook', icon: 'fa-solid fa-link', desc: 'POST JSON alert payload to any HTTP endpoint (custom receiver). Do not use Slack or PagerDuty Events API URLs here.', placeholder: 'https://…', inputType: 'url', fieldLabel: 'Webhook URL' },
+    { key: 'slack',   label: 'Slack',           icon: 'fa-brands fa-slack', desc: 'Slack Incoming Webhook URL (hooks.slack.com/…). Required for Slack — the generic webhook channel will not work with Slack.', placeholder: 'https://hooks.slack.com/services/…', inputType: 'url', fieldLabel: 'Webhook URL' },
+    { key: 'pagerduty', label: 'PagerDuty',     icon: 'fa-solid fa-pager', desc: 'PagerDuty Events API v2 routing key (Integration Key). Opens/resolves incidents via dedup_key = alert fingerprint.', placeholder: 'Events API routing key', inputType: 'text', fieldLabel: 'Routing key' },
+    { key: 'email', label: 'Email (SMTP)', icon: 'fa-solid fa-envelope', desc: 'Native SMTP delivery. Password is never shown after save; leave blank to keep the existing password.', placeholder: '', inputType: 'email-form', fieldLabel: 'SMTP' },
 ];
+
+function emailFormHTML(ch, es, enabled) {
+    const e = es || {};
+    const toVal = Array.isArray(e.to) ? e.to.join(', ') : '';
+    return `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+            <div>
+                <label style="font-size:0.78rem;color:var(--text-muted);display:block;margin-bottom:0.25rem;">Host</label>
+                <input type="text" id="notif-email-host" class="form-control" style="font-size:0.82rem;" value="${window.escapeHtml(e.host || '')}" autocomplete="off" />
+            </div>
+            <div>
+                <label style="font-size:0.78rem;color:var(--text-muted);display:block;margin-bottom:0.25rem;">Port</label>
+                <input type="number" id="notif-email-port" class="form-control" style="font-size:0.82rem;" value="${e.port || 587}" min="1" max="65535" />
+            </div>
+            <div>
+                <label style="font-size:0.78rem;color:var(--text-muted);display:block;margin-bottom:0.25rem;">Username</label>
+                <input type="text" id="notif-email-user" class="form-control" style="font-size:0.82rem;" value="${window.escapeHtml(e.username || '')}" autocomplete="off" />
+            </div>
+            <div>
+                <label style="font-size:0.78rem;color:var(--text-muted);display:block;margin-bottom:0.25rem;">Password ${e.has_password ? '(saved)' : ''}</label>
+                <input type="password" id="notif-email-pass" class="form-control" style="font-size:0.82rem;" placeholder="${e.has_password ? 'Leave blank to keep' : ''}" autocomplete="new-password" />
+            </div>
+            <div style="grid-column:1/-1;">
+                <label style="font-size:0.78rem;color:var(--text-muted);display:block;margin-bottom:0.25rem;">From</label>
+                <input type="email" id="notif-email-from" class="form-control" style="font-size:0.82rem;" value="${window.escapeHtml(e.from || '')}" />
+            </div>
+            <div style="grid-column:1/-1;">
+                <label style="font-size:0.78rem;color:var(--text-muted);display:block;margin-bottom:0.25rem;">To (comma-separated)</label>
+                <input type="text" id="notif-email-to" class="form-control" style="font-size:0.82rem;" value="${window.escapeHtml(toVal)}" />
+            </div>
+            <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.82rem;cursor:pointer;">
+                <input type="checkbox" id="notif-email-starttls" ${e.starttls !== false ? 'checked' : ''} style="accent-color:var(--accent-color);">
+                STARTTLS
+            </label>
+            <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.82rem;cursor:pointer;">
+                <input type="checkbox" id="notif-enabled-email" ${enabled ? 'checked' : ''} style="accent-color:var(--accent-color);">
+                Enabled
+            </label>
+        </div>`;
+}
 
 export async function loadNotificationConfig() {
     const content = document.getElementById('admin-content');
@@ -24,7 +66,7 @@ export async function loadNotificationConfig() {
                     <i class="fa-solid fa-bell text-accent"></i> Alert notification channels
                 </h2>
                 <p class="text-muted" style="margin:0.35rem 0 0;font-size:0.82rem;max-width:48rem;">
-                    URLs are encrypted at rest. Changes take effect immediately without a server restart.
+                    Secrets are never shown in full after save. Changes take effect immediately without a server restart.
                 </p>
             </div>
             <div id="notif-channel-cards" style="display:flex;flex-direction:column;gap:1rem;">
@@ -48,6 +90,22 @@ export async function loadNotificationConfig() {
         const enabled = row.is_enabled || false;
         const urlMasked = row.url_masked || '';
         const hasURL = row.has_url || false;
+        const fields = ch.inputType === 'email-form'
+            ? emailFormHTML(ch, row.email_settings, enabled)
+            : `
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:flex-end;">
+                        <div style="flex:1;min-width:200px;">
+                            <label style="font-size:0.78rem;color:var(--text-muted);display:block;margin-bottom:0.25rem;">${window.escapeHtml(ch.fieldLabel || 'Webhook URL')}</label>
+                            <input type="${ch.inputType || 'url'}" id="notif-url-${ch.key}" class="form-control" style="font-size:0.82rem;"
+                                placeholder="${hasURL ? 'Enter new value to replace (current: ' + window.escapeHtml(urlMasked) + ')' : window.escapeHtml(ch.placeholder || 'https://…')}"
+                                autocomplete="off" spellcheck="false" />
+                            ${hasURL ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.2rem;">Current: <code>${window.escapeHtml(urlMasked)}</code></div>` : ''}
+                        </div>
+                        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.82rem;white-space:nowrap;cursor:pointer;padding-bottom:0.1rem;">
+                            <input type="checkbox" id="notif-enabled-${ch.key}" ${enabled ? 'checked' : ''} style="accent-color:var(--accent-color);width:1rem;height:1rem;">
+                            Enabled
+                        </label>
+                    </div>`;
 
         return `
         <div class="glass-panel" id="notif-card-${ch.key}" style="padding:1.1rem 1.25rem;border-radius:10px;border:1px solid var(--border-color);">
@@ -64,24 +122,12 @@ export async function loadNotificationConfig() {
                 </div>
                 <div style="flex:2;min-width:260px;">
                     <div id="notif-msg-${ch.key}" style="min-height:1.4rem;margin-bottom:0.5rem;font-size:0.82rem;"></div>
-                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:flex-end;">
-                        <div style="flex:1;min-width:200px;">
-                            <label style="font-size:0.78rem;color:var(--text-muted);display:block;margin-bottom:0.25rem;">Webhook URL</label>
-                            <input type="url" id="notif-url-${ch.key}" class="form-control" style="font-size:0.82rem;"
-                                placeholder="${hasURL ? 'Enter new URL to replace (current: ' + window.escapeHtml(urlMasked) + ')' : 'https://…'}"
-                                autocomplete="off" spellcheck="false" />
-                            ${hasURL ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.2rem;">Current: <code>${window.escapeHtml(urlMasked)}</code></div>` : ''}
-                        </div>
-                        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.82rem;white-space:nowrap;cursor:pointer;padding-bottom:0.1rem;">
-                            <input type="checkbox" id="notif-enabled-${ch.key}" ${enabled ? 'checked' : ''} style="accent-color:var(--accent-color);width:1rem;height:1rem;">
-                            Enabled
-                        </label>
-                    </div>
+                    ${fields}
                     <div style="display:flex;gap:0.5rem;margin-top:0.65rem;flex-wrap:wrap;">
                         <button class="btn btn-sm btn-accent" id="notif-save-${ch.key}">
                             <i class="fa-solid fa-floppy-disk"></i> Save
                         </button>
-                        <button class="btn btn-sm btn-outline" id="notif-test-${ch.key}" ${!hasURL || !enabled ? 'disabled title="Enable and save a URL first"' : ''}>
+                        <button class="btn btn-sm btn-outline" id="notif-test-${ch.key}" ${!hasURL || !enabled ? 'disabled title="Enable and save first"' : ''}>
                             <i class="fa-solid fa-paper-plane"></i> Test
                         </button>
                     </div>
@@ -97,15 +143,35 @@ export async function loadNotificationConfig() {
 }
 
 async function saveChannel(channel) {
-    const urlInput   = document.getElementById(`notif-url-${channel}`);
-    const enabledCb  = document.getElementById(`notif-enabled-${channel}`);
-    const msgEl      = document.getElementById(`notif-msg-${channel}`);
-    const saveBtn    = document.getElementById(`notif-save-${channel}`);
-
-    const url     = (urlInput?.value || '').trim();
-    const enabled = enabledCb?.checked || false;
-
+    const msgEl   = document.getElementById(`notif-msg-${channel}`);
+    const saveBtn = document.getElementById(`notif-save-${channel}`);
     if (!msgEl || !saveBtn) return;
+
+    let body;
+    if (channel === 'email') {
+        const toRaw = (document.getElementById('notif-email-to')?.value || '').trim();
+        body = {
+            channel: 'email',
+            is_enabled: !!document.getElementById('notif-enabled-email')?.checked,
+            email: {
+                host: (document.getElementById('notif-email-host')?.value || '').trim(),
+                port: Number(document.getElementById('notif-email-port')?.value || 587),
+                username: (document.getElementById('notif-email-user')?.value || '').trim(),
+                password: document.getElementById('notif-email-pass')?.value || '',
+                from: (document.getElementById('notif-email-from')?.value || '').trim(),
+                to: toRaw.split(',').map(s => s.trim()).filter(Boolean),
+                starttls: !!document.getElementById('notif-email-starttls')?.checked,
+            },
+        };
+    } else {
+        const urlInput = document.getElementById(`notif-url-${channel}`);
+        const enabledCb = document.getElementById(`notif-enabled-${channel}`);
+        body = {
+            channel,
+            url: (urlInput?.value || '').trim(),
+            is_enabled: enabledCb?.checked || false,
+        };
+    }
 
     saveBtn.disabled = true;
     msgEl.innerHTML = `<span class="text-muted"><span class="spinner" style="width:12px;height:12px;"></span> Saving…</span>`;
@@ -114,31 +180,31 @@ async function saveChannel(channel) {
         const resp = await window.apiClient.authenticatedFetch('/api/admin/notifications/config', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ channel, url, is_enabled: enabled }),
+            body: JSON.stringify(body),
         });
         if (!resp.ok) {
-            const body = await resp.text();
-            throw new Error(body || `HTTP ${resp.status}`);
+            const errBody = await resp.text();
+            throw new Error(errBody || `HTTP ${resp.status}`);
         }
         msgEl.innerHTML = `<span class="text-success"><i class="fa-solid fa-check"></i> Saved successfully</span>`;
-
-        // Update badge
+        const enabled = body.is_enabled;
         const badge = document.getElementById(`notif-badge-${channel}`);
         if (badge) {
             badge.className = `badge ${enabled ? 'badge-success' : 'badge-muted'}`;
             badge.textContent = enabled ? 'Enabled' : 'Disabled';
         }
-
-        // Enable test button if we have a URL
         const testBtn = document.getElementById(`notif-test-${channel}`);
         if (testBtn) {
-            const hasURL = url !== '' || (urlInput?.placeholder || '').includes('current:');
-            testBtn.disabled = !enabled || !hasURL;
-            testBtn.title = (!enabled || !hasURL) ? 'Enable and save a URL first' : '';
+            testBtn.disabled = !enabled;
+            testBtn.title = !enabled ? 'Enable and save first' : '';
         }
-
-        // Clear the URL field (it was saved)
-        if (url && urlInput) urlInput.value = '';
+        if (channel === 'email') {
+            const pass = document.getElementById('notif-email-pass');
+            if (pass) pass.value = '';
+        } else {
+            const urlInput = document.getElementById(`notif-url-${channel}`);
+            if (body.url && urlInput) urlInput.value = '';
+        }
     } catch (err) {
         msgEl.innerHTML = `<span class="text-danger"><i class="fa-solid fa-triangle-exclamation"></i> ${window.escapeHtml(String(err.message))}</span>`;
     } finally {

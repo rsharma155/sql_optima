@@ -1,0 +1,41 @@
+# Optional TimescaleDB subchart defaults (overridden from parent values key `timescaledb`).
+image:
+  repository: timescale/timescaledb
+  tag: latest-pg16
+  pullPolicy: IfNotPresent
+
+auth:
+  username: dbmonitor
+  database: dbmonitor_metrics
+  # Prefer existingSecret shared with the control plane (DB_PASSWORD key).
+  existingSecret: ""
+  existingSecretPasswordKey: DB_PASSWORD
+  # Used only when existingSecret is empty (chart creates a Secret).
+  password: ""
+
+persistence:
+  enabled: true
+  size: 20Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+# Shared memory for Timescale / parallel query (mirrors docker compose shm_size).
+shm:
+  sizeLimit: 1Gi
+
+service:
+  port: 5432
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

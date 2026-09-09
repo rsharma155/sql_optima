@@ -39,11 +39,24 @@ window.runPgStorageIndexHealthDashboard = async function(opts) {
         const filterQS = window.sihShared.buildFilterQS(state, inst.name);
         
         const [filters, dash] = await Promise.all([
-            window.apiClient.authenticatedFetch(`${base}/filters?${filterQS}`).then(r => r.json()),
-            window.apiClient.authenticatedFetch(`${base}/dashboard?${filterQS}`).then(r => r.json())
+            window.sihShared.fetchJson(`${base}/filters?${filterQS}`),
+            window.sihShared.fetchJson(`${base}/dashboard?${filterQS}`)
         ]);
 
         if (container) container.classList.remove('loading');
+
+        const hasNoData = (!dash.largest_tables || dash.largest_tables.length === 0) &&
+                          (!filters.databases || filters.databases.length === 0);
+        if (hasNoData) {
+            container.innerHTML = `
+                <div class="glass-panel mt-3" style="padding:2rem; text-align:center; opacity:0.75;">
+                    <i class="fa-solid fa-hourglass-half mb-2" style="font-size:1.5rem; color:var(--text-muted);"></i>
+                    <p style="font-size:0.85rem; font-weight:600; margin:0.5rem 0 0.25rem;">Waiting for collection data</p>
+                    <p style="font-size:0.75rem; color:var(--text-muted); margin:0;">Index &amp; Table Health snapshots run shortly after startup, then about every 15 minutes. Filters populate after the first successful collection.</p>
+                </div>
+            `;
+            return;
+        }
 
         const k = dash.kpis || {};
         const gs = dash.growth_summary || {};

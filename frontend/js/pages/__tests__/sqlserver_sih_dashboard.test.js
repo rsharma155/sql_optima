@@ -6,6 +6,10 @@ const { runSqlServerStorageIndexHealthDashboard } = require('../sqlserver_storag
 // Mock sihShared as it's a global in the browser but we need it here
 global.sihShared = {
     buildFilterQS: jest.fn(() => 'instance=test'),
+    fetchJson: jest.fn(async (url) => {
+        const r = await global.apiClient.authenticatedFetch(url);
+        return r.json();
+    }),
     buildHealthScore: jest.fn(() => 95),
     fmt: jest.fn(v => v),
     renderBanner: jest.fn(),
@@ -28,10 +32,14 @@ global.apiClient = {
     authenticatedFetch: jest.fn(() => Promise.resolve({
         ok: true,
         json: () => Promise.resolve({
+            databases: ['appdb'],
+            schemas: ['dbo'],
+            tables: ['Orders'],
             kpis: { total_db_size_mb: 1024, growth_7d_pct: 5, forecast_table_mb_90d: 1200, unused_index_count: 2, unused_index_mb: 150, high_scan_table_count: 1, index_write_overhead_pct: 10 },
             growth_summary: { daily_growth_mb: 5 },
             growth: [],
-            insights: []
+            insights: [],
+            largest_tables: [{ db_name: 'appdb', schema_name: 'dbo', table_name: 'Orders', value: 100 }]
         })
     }))
 };

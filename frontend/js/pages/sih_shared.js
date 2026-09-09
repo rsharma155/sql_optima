@@ -27,6 +27,16 @@ window.sihShared = (function() {
         return `instance=${encodeURIComponent(instName)}&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}&db=${encodeURIComponent(db)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}`;
     }
 
+    async function fetchJson(url) {
+        const r = await window.apiClient.authenticatedFetch(url);
+        let data = {};
+        try { data = await r.json(); } catch (_) { data = {}; }
+        if (!r.ok) {
+            throw new Error(data.error || data.message || `HTTP ${r.status}`);
+        }
+        return data;
+    }
+
     function renderSparkline(canvasId, data, color) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
@@ -473,7 +483,7 @@ window.sihShared = (function() {
     }
 
     return {
-        fmt, escH, emptyRow, buildFilterQS,
+        fmt, escH, emptyRow, buildFilterQS, fetchJson,
         renderSparkline, renderGrowthChart, renderTopGrowthChart,
         renderSeekScanLookupChart,
         buildHealthScore, buildBannerMessages, renderBanner,

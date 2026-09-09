@@ -8,12 +8,14 @@
 package handlers
 
 import (
-	"log/slog"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
 	"github.com/rsharma155/sql_optima/internal/middleware"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/service"
@@ -50,13 +52,12 @@ func (h *AdminCollectorHandlers) getRepo() *repository.CollectorConfigRepository
 func (h *AdminCollectorHandlers) ListConfigs(w http.ResponseWriter, r *http.Request) {
 	repo := h.getRepo()
 	if repo == nil {
-		http.Error(w, "Repository not available (TimescaleDB not connected)", http.StatusServiceUnavailable)
+		apiresponse.WritePlainError(w, http.StatusServiceUnavailable, "repository unavailable", nil)
 		return
 	}
 	configs, err := repo.ListAll(r.Context())
 	if err != nil {
-		slog.Error("[AdminCollectorHandlers] ListConfigs error", "err", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to list collector configs", err, "handler", "ListConfigs")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -66,7 +67,7 @@ func (h *AdminCollectorHandlers) ListConfigs(w http.ResponseWriter, r *http.Requ
 func (h *AdminCollectorHandlers) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	repo := h.getRepo()
 	if repo == nil {
-		http.Error(w, "Repository not available (TimescaleDB not connected)", http.StatusServiceUnavailable)
+		apiresponse.WritePlainError(w, http.StatusServiceUnavailable, "repository unavailable", nil)
 		return
 	}
 	vars := mux.Vars(r)
@@ -76,13 +77,13 @@ func (h *AdminCollectorHandlers) UpdateConfig(w http.ResponseWriter, r *http.Req
 		FrequencySeconds int `json:"frequency_seconds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
+		apiresponse.WritePlainError(w, http.StatusBadRequest, "invalid input", err)
 		return
 	}
 
 	// Validation: 15 seconds to 7 days (604800 seconds)
 	if input.FrequencySeconds < 15 || input.FrequencySeconds > 604800 {
-		http.Error(w, "Frequency must be between 15 and 604800 seconds (7 days)", http.StatusBadRequest)
+		apiresponse.WritePlainError(w, http.StatusBadRequest, "frequency must be between 15 and 604800 seconds (7 days)", nil)
 		return
 	}
 
@@ -93,8 +94,19 @@ func (h *AdminCollectorHandlers) UpdateConfig(w http.ResponseWriter, r *http.Req
 	}
 
 	if err := repo.UpdateFrequency(r.Context(), id, input.FrequencySeconds, updatedBy); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to update collector frequency", err, "handler", "UpdateConfig", "id", id)
 		return
+	}
+
+	middleware.AuditAction(slog.Default(), r, "admin_update_collector_frequency",
+		slog.Int("id", id),
+		slog.Int("frequency_seconds", input.FrequencySeconds),
+	)
+	if h.metricsSvc != nil && h.metricsSvc.AuditRepo != nil {
+		_ = h.metricsSvc.AuditRepo.Log(r.Context(), "update_collector_frequency", uuid.Nil, updatedBy, r.RemoteAddr, map[string]interface{}{
+			"id":                id,
+			"frequency_seconds": input.FrequencySeconds,
+		})
 	}
 
 	w.WriteHeader(http.StatusNoContent)

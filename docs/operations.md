@@ -37,7 +37,34 @@ DMV counters reset on **SQL Server restart** (`restart_detected` on wait-stats d
 
 - Ensure `schema-setup` completed (`05_os_metrics_collector.sql` for OS tables).
 - Tune retention/compression via `01_timescale_schema.sql` policies.
+- Optional upgrade scripts:
+  - `migrations/014_timescale_retention_downsampling.sql` — explicit 90d retention floors + hourly CPU continuous aggregate.
+  - `migrations/011_cold_storage_reduce_hot_retention_60d.sql` — opt-in 60d hot retention after cold validation.
+- Federated long lookbacks (when `COLD_STORAGE_TRINO_URL` is set): CPU / memory / wait / connection history APIs return `X-Data-Source: hot+cold`.
 - See [`docs/os_collector.md`](os_collector.md) for host RAM telemetry.
+
+## OIDC group → role mapping
+
+When `AUTH_MODE=oidc`, set:
+
+| Variable | Purpose |
+|----------|---------|
+| `OIDC_GROUP_CLAIM` | Claim name (`groups` or `roles`) |
+| `OIDC_GROUP_ROLE_MAP` | `groupName:admin,other:dba,viewers:viewer` |
+
+Precedence: explicit `optima_role` claim → group map (admin > dba > viewer) → Keycloak `resource_access` roles → viewer.
+
+## Kubernetes (Helm)
+
+Chart: [`deploy/helm/sql-optima`](../deploy/helm/sql-optima) (v0.2+).
+
+| Mode | Values | Notes |
+|------|--------|--------|
+| Control plane only | default | Point `timescale.host` at an existing TimescaleDB |
+| Bundled DB + schema | `timescaledb.enabled=true`, `schemaJob.enabled=true` | See `values-bundled-example.yaml`; share DB password via `timescaledb.auth.existingSecret=<release>-sql-optima-secrets` |
+| Schema only | `schemaJob.enabled=true` | Job applies `files/sql` (synced from `infrastructure/sql_scripts` 01–07) |
+
+After editing SQL bootstrap scripts, run `deploy/helm/sql-optima/scripts/sync-sql-scripts.sh` (or `.ps1`) before packaging the chart.
 
 ### SQL Server collector diagnostics (admin)
 
@@ -101,7 +128,8 @@ curl -s -b cookies.txt \
 - **Monitored server CRUD** → `optima_audit_logs` (`add_server`, `update_server`, `delete_server`, …).
 - **Admin users** → `optima_audit_logs` (`create_user`, `delete_user`, `update_user_role`) + structured slog via `middleware.AuditAction`.
 - **Alerts** → `optima_alert_history` append-only status transitions.
-- **Not yet persisted**: collector frequency edits, notification channel URL changes (slog only). Track in release notes until v1.1.
+- **Collector frequency** → `optima_audit_logs` (`update_collector_frequency`) + slog `AuditAction` (metadata: id, frequency_seconds; no secrets).
+- **Notification channels** → `optima_audit_logs` (`update_notification_channel`) + slog `AuditAction` (metadata: channel, is_enabled, url_changed — **URL never stored**).
 
 Query audit table:
 

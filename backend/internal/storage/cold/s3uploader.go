@@ -11,6 +11,7 @@ package cold
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -18,23 +19,28 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
-// S3API defines the subset of S3 methods used by the uploader.
-type S3API interface {
+// S3BucketAPI is the minimal interface used by EnsureBucket.
+type S3BucketAPI interface {
 	CreateBucket(ctx context.Context, params *s3.CreateBucketInput, optFns ...func(*s3.Options)) (*s3.CreateBucketOutput, error)
+}
+
+// s3PutAPI abstracts s3.Client.PutObject for testability.
+type s3PutAPI interface {
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 }
 
 // S3Uploader wraps the AWS S3 client for cold storage uploads.
 type S3Uploader struct {
-	client S3API
+	bucket S3BucketAPI
+	put    s3PutAPI
 	cfg    *Config
 }
 
 // NewS3Uploader creates an S3 client configured for either MinIO or AWS S3.
 func NewS3Uploader(ctx context.Context, cfg *Config) (*S3Uploader, error) {
-	// AWS SDK v2 uses a more modern approach to custom endpoints.
 	awsCfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion(cfg.Region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
@@ -54,23 +60,27 @@ func NewS3Uploader(ctx context.Context, cfg *Config) (*S3Uploader, error) {
 		o.UsePathStyle = cfg.ForcePathStyle
 	})
 
-	return &S3Uploader{client: client, cfg: cfg}, nil
+	return &S3Uploader{bucket: client, put: client, cfg: cfg}, nil
 }
 
 // EnsureBucket creates the bucket if it does not exist. Idempotent.
+// BucketAlreadyOwnedByYou and BucketAlreadyExists are treated as success.
 func (u *S3Uploader) EnsureBucket(ctx context.Context) error {
-	_, err := u.client.CreateBucket(ctx, &s3.CreateBucketInput{
+	_, err := u.bucket.CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(u.cfg.Bucket),
 	})
 	if err != nil {
-		// In production, we might want to check for specific error codes like BucketAlreadyOwnedByYou.
-		// For now, we'll log it or ignore it as the roadmap suggests.
-		_ = err
+		var owned *types.BucketAlreadyOwnedByYou
+		var exists *types.BucketAlreadyExists
+		if errors.As(err, &owned) || errors.As(err, &exists) {
+			return nil
+		}
+		return fmt.Errorf("cold/s3: ensure bucket %q: %w", u.cfg.Bucket, err)
 	}
 	return nil
 }
 
-// UploadFile uploads a local file to S3 at the given object key.
+// UploadFile uploads a local file to S3 at the given object key (single PutObject).
 func (u *S3Uploader) UploadFile(ctx context.Context, localPath, objectKey string) error {
 	f, err := os.Open(localPath)
 	if err != nil {
@@ -78,22 +88,15 @@ func (u *S3Uploader) UploadFile(ctx context.Context, localPath, objectKey string
 	}
 	defer f.Close()
 
-	stat, err := f.Stat()
-	if err != nil {
-		return fmt.Errorf("cold/s3: stat %q: %w", localPath, err)
-	}
-
-	_, err = u.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:        aws.String(u.cfg.Bucket),
-		Key:           aws.String(objectKey),
-		Body:          f,
-		ContentLength: aws.Int64(stat.Size()),
-		ContentType:   aws.String("application/octet-stream"),
+	_, err = u.put.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(u.cfg.Bucket),
+		Key:         aws.String(objectKey),
+		Body:        f,
+		ContentType: aws.String("application/octet-stream"),
 	})
 	if err != nil {
-		return fmt.Errorf("cold/s3: put object %q: %w", objectKey, err)
+		return fmt.Errorf("cold/s3: upload %q: %w", objectKey, err)
 	}
-
 	return nil
 }
 

@@ -33,7 +33,10 @@ window.CpuDrilldown = async function() {
                     <div class="card glass-panel h-chart-md">
                         <div class="card-header flex-between">
                             <h3 style="font-size:0.8rem; margin:0;"><i class="fa-solid fa-chart-area text-rose"></i> CPU Usage Trend (SQL Server vs System)</h3>
-                            <span id="cpuDrilldownLastUpdate" class="text-muted" style="font-size:0.65rem;">Loading...</span>
+                            <div style="display:flex; align-items:center; gap:0.5rem;">
+                                <span id="cpuHistorySourceBadge" class="badge badge-info" style="display:none; font-size:0.65rem;"></span>
+                                <span id="cpuDrilldownLastUpdate" class="text-muted" style="font-size:0.65rem;">Loading...</span>
+                            </div>
                         </div>
                         <div class="chart-container" style="height: 230px;"><canvas id="cpuHistoryChart"></canvas></div>
                     </div>
@@ -183,10 +186,14 @@ window.loadCpuDrilldownChartOnly = async function(instanceName, fromLocal, toLoc
     const fromISO = new Date(fromLocal).toISOString();
     const toISO = new Date(toLocal).toISOString();
     try {
-        const url = `/api/timescale/sqlserver/cpu-history?instance=${encodeURIComponent(instanceName)}&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`;
-        const res = await window.apiClient.authenticatedFetch(url);
-        const data = await res.json();
-        window.renderCpuDrilldownCharts(data.points || []);
+        const hist = typeof window.fetchSqlServerHistory === 'function'
+            ? await window.fetchSqlServerHistory('cpu', instanceName, fromISO, toISO)
+            : { points: [], source: '', ok: false };
+        const points = hist.points || [];
+        window.renderCpuDrilldownCharts(points);
+        if (window.applyHistorySourceBadge) {
+            window.applyHistorySourceBadge('cpuHistorySourceBadge', hist.source || (hist.ok ? 'hot' : ''));
+        }
         document.getElementById('cpuDrilldownLastUpdate').textContent = 'Last update: ' + new Date().toLocaleTimeString();
     } catch (e) { console.error(e); }
 };
@@ -194,8 +201,15 @@ window.loadCpuDrilldownChartOnly = async function(instanceName, fromLocal, toLoc
 window.renderCpuDrilldownCharts = function(cpuHistory) {
     if (window.cpuDrilldownChart) window.cpuDrilldownChart.destroy();
     if (!cpuHistory || cpuHistory.length === 0) return;
-    const sorted = cpuHistory.sort((a, b) => new Date(a.capture_timestamp).getTime() - new Date(b.capture_timestamp).getTime());
-    const labels = sorted.map(t => new Date(t.capture_timestamp).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }));
+    const sorted = (window.sortByChartTime ? window.sortByChartTime(cpuHistory) : [...cpuHistory].sort((a, b) => {
+        const ta = new Date(a.capture_timestamp || a.timestamp).getTime();
+        const tb = new Date(b.capture_timestamp || b.timestamp).getTime();
+        return ta - tb;
+    }));
+    const labels = sorted.map(t => {
+        const d = new Date(t.capture_timestamp || t.timestamp);
+        return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+    });
     const ctx = document.getElementById('cpuHistoryChart').getContext('2d');
     window.cpuDrilldownChart = new Chart(ctx, {
         type: 'line',

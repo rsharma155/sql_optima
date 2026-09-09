@@ -12,6 +12,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/service"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
@@ -45,8 +46,7 @@ func (h *StorageIndexHealthTimescaleHandlers) GetIndexUsage(w http.ResponseWrite
 
 	res, err := h.metricsSvc.TimescaleStorageIndexHealthIndexUsage(r.Context(), id, from, to, db, schema, table)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "storage_index_health_timescale")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -65,8 +65,7 @@ func (h *StorageIndexHealthTimescaleHandlers) GetTableUsage(w http.ResponseWrite
 
 	res, err := h.metricsSvc.TimescaleStorageIndexHealthTableUsage(r.Context(), id, from, to)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "storage_index_health_timescale")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -85,8 +84,7 @@ func (h *StorageIndexHealthTimescaleHandlers) GetGrowth(w http.ResponseWriter, r
 
 	res, err := h.metricsSvc.TimescaleStorageIndexHealthGrowth(r.Context(), id, from, to)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "storage_index_health_timescale")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -112,8 +110,7 @@ func (h *StorageIndexHealthTimescaleHandlers) GetDashboard(w http.ResponseWriter
 
 	res, err := h.metricsSvc.TimescaleStorageIndexHealthDashboard(r.Context(), id, from, to, filters)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "storage_index_health_timescale")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -134,8 +131,7 @@ func (h *StorageIndexHealthTimescaleHandlers) GetFilterOptions(w http.ResponseWr
 
 	res, err := h.metricsSvc.TimescaleStorageIndexHealthFilterOptions(r.Context(), id, from, to, db, schema)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "storage_index_health_timescale")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -154,8 +150,7 @@ func (h *StorageIndexHealthTimescaleHandlers) GetIndexDefinition(w http.Response
 
 	res, err := h.metricsSvc.TimescaleStorageIndexDefinition(r.Context(), id, from, to)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "storage_index_health_timescale")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -177,8 +172,7 @@ func (h *StorageIndexHealthTimescaleHandlers) GetIndexUsageTrend(w http.Response
 
 	res, err := h.metricsSvc.TimescaleStorageIndexHealthIndexUsage(r.Context(), id, from, to, db, schema, table)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "storage_index_health_timescale")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

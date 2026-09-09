@@ -79,16 +79,28 @@ $RepoUrl = if ($env:SQL_OPTIMA_REPO_URL) { $env:SQL_OPTIMA_REPO_URL } else { 'ht
 if ($env:SQL_OPTIMA_DIR -and -not $Dir) { $Dir = $env:SQL_OPTIMA_DIR }
 if ($env:SQL_OPTIMA_NO_BROWSER -eq '1') { $NoBrowser = $true }
 
+function Test-DockerCommand {
+    param([Parameter(Mandatory)][string[]]$DockerArgs)
+    # With $ErrorActionPreference=Stop, docker stderr becomes a terminating
+    # NativeCommandError even when redirected. Temporarily silence that.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        & docker @DockerArgs 1>$null 2>$null
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
 Write-Host '[sql-optima] Checking prerequisites...'
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'Docker is not installed. Install Docker Desktop or Docker Engine: https://docs.docker.com/get-docker/'
 }
-docker info 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw 'Docker daemon is not running. Start Docker and retry.'
+if (-not (Test-DockerCommand -DockerArgs @('info'))) {
+    throw 'Docker daemon is not running. Start Docker Desktop, wait until it shows "Engine running", then retry.'
 }
-docker compose version 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) {
+if (-not (Test-DockerCommand -DockerArgs @('compose', 'version'))) {
     throw "Docker Compose v2 is required ('docker compose')."
 }
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {

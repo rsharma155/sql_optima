@@ -8,11 +8,13 @@
 package handlers
 
 import (
-	"log/slog"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
+	"github.com/rsharma155/sql_optima/internal/middleware"
 	"github.com/rsharma155/sql_optima/internal/models"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
@@ -36,22 +38,22 @@ func (h *WidgetAdminHandlers) UpdateWidget(w http.ResponseWriter, r *http.Reques
 	widgetID := mux.Vars(r)["id"]
 	var req models.WidgetUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, "invalid request body", err, "handler", "UpdateWidget")
 		return
 	}
 	if req.CurrentSQL == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "current_sql is required"})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, "current_sql is required", nil, "handler", "UpdateWidget")
 		return
 	}
 
 	if err := h.metricsSvc.WidgetRepo.UpdateWidgetSQL(r.Context(), widgetID, req.CurrentSQL); err != nil {
-		slog.Error("[API] Widget update error", "target", widgetID, "err", err)
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, "failed to update widget SQL", err, "handler", "UpdateWidget", "widget_id", widgetID)
 		return
 	}
+
+	middleware.AuditAction(slog.Default(), r, "admin_update_widget_sql",
+		slog.String("widget_id", widgetID),
+	)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":   true,
@@ -70,11 +72,13 @@ func (h *WidgetAdminHandlers) RestoreWidget(w http.ResponseWriter, r *http.Reque
 
 	widgetID := mux.Vars(r)["id"]
 	if err := h.metricsSvc.WidgetRepo.RestoreWidgetDefault(r.Context(), widgetID); err != nil {
-		slog.Error("[API] Widget restore error", "target", widgetID, "err", err)
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusBadRequest, "failed to restore widget", err, "handler", "RestoreWidget", "widget_id", widgetID)
 		return
 	}
+
+	middleware.AuditAction(slog.Default(), r, "admin_restore_widget_sql",
+		slog.String("widget_id", widgetID),
+	)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":   true,
@@ -94,8 +98,7 @@ func (h *WidgetAdminHandlers) GetWidget(w http.ResponseWriter, r *http.Request) 
 	widgetID := mux.Vars(r)["id"]
 	widget, err := h.metricsSvc.WidgetRepo.GetWidgetByID(r.Context(), widgetID)
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusNotFound, "widget not found", err, "handler", "GetWidget", "widget_id", widgetID)
 		return
 	}
 
@@ -113,8 +116,7 @@ func (h *WidgetAdminHandlers) ListWidgets(w http.ResponseWriter, r *http.Request
 	query := `SELECT widget_id, dashboard_section, title, chart_type, current_sql, default_sql, updated_at FROM optima_ui_widgets ORDER BY dashboard_section, widget_id`
 	rows, err := h.metricsSvc.WidgetRepo.Pool().Query(r.Context(), query)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to list widgets", err, "handler", "ListWidgets")
 		return
 	}
 	defer rows.Close()

@@ -12,6 +12,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/service"
 	"github.com/rsharma155/sql_optima/internal/storage/hot"
@@ -46,8 +47,7 @@ func (h *PgStorageIndexHealthHandlers) GetIndexUsage(w http.ResponseWriter, r *h
 
 	res, err := h.metricsSvc.TimescaleStorageIndexHealthIndexUsage(r.Context(), id, from, to, db, schema, table)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "pg_storage_index")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -67,8 +67,7 @@ func (h *PgStorageIndexHealthHandlers) GetTableUsage(w http.ResponseWriter, r *h
 
 	res, err := h.metricsSvc.TimescaleStorageIndexHealthTableUsage(r.Context(), id, from, to)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "pg_storage_index")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -88,8 +87,7 @@ func (h *PgStorageIndexHealthHandlers) GetGrowth(w http.ResponseWriter, r *http.
 
 	res, err := h.metricsSvc.TimescaleStorageIndexHealthGrowth(r.Context(), id, from, to)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "pg_storage_index")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -114,8 +112,7 @@ func (h *PgStorageIndexHealthHandlers) GetDashboard(w http.ResponseWriter, r *ht
 
 	res, err := h.metricsSvc.TimescaleStorageIndexHealthDashboard(r.Context(), id, from, to, filters)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "pg_storage_index")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -137,8 +134,7 @@ func (h *PgStorageIndexHealthHandlers) GetFilterOptions(w http.ResponseWriter, r
 
 	res, err := h.metricsSvc.TimescaleStorageIndexHealthFilterOptions(r.Context(), id, from, to, db, schema)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "pg_storage_index")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -158,8 +154,7 @@ func (h *PgStorageIndexHealthHandlers) GetIndexDefinition(w http.ResponseWriter,
 
 	res, err := h.metricsSvc.TimescaleStorageIndexDefinition(r.Context(), id, from, to)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load storage index health", err, "handler", "pg_storage_index")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

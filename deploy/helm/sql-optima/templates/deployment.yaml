@@ -1,0 +1,152 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sql-optima.fullname" . }}
+  labels:
+    {{- include "sql-optima.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "sql-optima.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "sql-optima.labels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- if or .Values.schemaJob.enabled .Values.timescaledb.enabled }}
+      initContainers:
+        - name: wait-for-db
+          image: {{ .Values.schemaJob.image | quote }}
+          imagePullPolicy: {{ .Values.schemaJob.imagePullPolicy }}
+          env:
+            - name: DB_HOST
+              value: {{ include "sql-optima.timescaleHost" . | quote }}
+            - name: DB_PORT
+              value: {{ include "sql-optima.timescalePort" . | quote }}
+            - name: DB_NAME
+              value: {{ include "sql-optima.timescaleDatabase" . | quote }}
+            - name: DB_USER
+              value: {{ include "sql-optima.timescaleUser" . | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sql-optima.dbPasswordSecretName" . }}
+                  key: {{ include "sql-optima.dbPasswordSecretKey" . }}
+            - name: WAIT_FOR_SCHEMA
+              value: {{ ternary "1" "0" .Values.schemaJob.enabled | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "Waiting for PostgreSQL at $DB_HOST:$DB_PORT..."
+              until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER"; do sleep 2; done
+              if [ "$WAIT_FOR_SCHEMA" = "1" ]; then
+                echo "Waiting for schema (optima_servers)..."
+                i=0
+                until psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tAc \
+                  "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='optima_servers'" | grep -q 1; do
+                  i=$((i+1))
+                  if [ "$i" -gt 90 ]; then
+                    echo "Timed out waiting for schema Job" >&2
+                    exit 1
+                  fi
+                  sleep 2
+                done
+              fi
+              echo "Database ready."
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ include "sql-optima.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: ":8080"
+            - name: SQL_OPTIMA_DEPLOYMENT
+              value: docker
+            - name: AUTH_REQUIRED
+              value: {{ ternary "1" "0" .Values.auth.required | quote }}
+            - name: AUTH_MODE
+              value: {{ .Values.auth.mode | quote }}
+            - name: DB_HOST
+              value: {{ include "sql-optima.timescaleHost" . | quote }}
+            - name: DB_PORT
+              value: {{ include "sql-optima.timescalePort" . | quote }}
+            - name: DB_NAME
+              value: {{ include "sql-optima.timescaleDatabase" . | quote }}
+            - name: DB_USER
+              value: {{ include "sql-optima.timescaleUser" . | quote }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sql-optima.dbPasswordSecretName" . }}
+                  key: {{ include "sql-optima.dbPasswordSecretKey" . }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-secrets" (include "sql-optima.fullname" .)) .Values.auth.existingSecret }}
+                  key: JWT_SECRET
+            {{- if .Values.auth.oidc.issuerURL }}
+            - name: OIDC_ISSUER_URL
+              value: {{ .Values.auth.oidc.issuerURL | quote }}
+            - name: OIDC_AUDIENCE
+              value: {{ .Values.auth.oidc.audience | quote }}
+            - name: OIDC_GROUP_CLAIM
+              value: {{ .Values.auth.oidc.groupClaim | quote }}
+            - name: OIDC_GROUP_ROLE_MAP
+              value: {{ .Values.auth.oidc.groupRoleMap | quote }}
+            {{- end }}
+            {{- if .Values.coldStorage.enabled }}
+            - name: COLD_STORAGE_ENABLED
+              value: "true"
+            - name: COLD_STORAGE_TRINO_URL
+              value: {{ .Values.coldStorage.trinoURL | quote }}
+            {{- end }}
+            {{- if .Values.osMetrics.ingestEnabled }}
+            - name: OS_METRICS_INGEST_ENABLED
+              value: {{ .Values.osMetrics.ingestEnabled | quote }}
+            {{- end }}
+            {{- if .Values.vault.enabled }}
+            - name: VAULT_ADDR
+              value: {{ .Values.vault.addr | quote }}
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-secrets" (include "sql-optima.fullname" .)) .Values.vault.existingSecret }}
+                  key: VAULT_TOKEN
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /api/health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

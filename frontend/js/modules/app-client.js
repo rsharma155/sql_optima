@@ -145,6 +145,11 @@ export const apiClient = {
             if (response.ok) {
                 const cfg = await response.json();
                 appState.config = cfg;
+                appState.coldStorageEnabled = !!cfg.cold_storage_enabled;
+                const maxDays = Number(cfg.max_dashboard_range_days);
+                appState.maxDashboardRangeDays = Number.isFinite(maxDays) && maxDays > 0
+                    ? maxDays
+                    : (appState.coldStorageEnabled ? 90 : 7);
                 return true;
             }
         } catch (e) {

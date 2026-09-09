@@ -96,7 +96,7 @@ func (h *SqlServerWorkloadHandlers) GetDatabases(w http.ResponseWriter, r *http.
 	}
 	list, err := h.metricsSvc.GetSqlServerDatabasesInRange(r.Context(), id, from, to, partial)
 	if err != nil {
-		writeWorkloadTimescaleJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list databases", "detail": err.Error()})
+		writeWorkloadTimescaleJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list databases"})
 		return
 	}
 	scope := selectedDB
@@ -206,8 +206,7 @@ func (h *SqlServerWorkloadHandlers) GetTopOffenders(w http.ResponseWriter, r *ht
 	if err != nil {
 		slog.Error("GetSqlServerWorkloadTopOffenders", "instance", id, "database", filter.Database, "err", err)
 		writeWorkloadTimescaleJSON(w, http.StatusInternalServerError, map[string]string{
-			"error":  "failed to load top queries",
-			"detail": err.Error(),
+			"error": "failed to load top queries",
 		})
 		return
 	}

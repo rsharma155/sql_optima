@@ -1,0 +1,14 @@
+# Optional image for schema Jobs (postgres client + bundled SQL).
+# Build from repo root:
+#   docker build -f docker/Dockerfile.schema -t sql-optima-schema:local .
+# Chart default uses postgres:16-alpine + ConfigMap; this image is for air-gapped /
+# existingConfigMap-free workflows if you prefer baking scripts into an image.
+FROM postgres:16-alpine
+COPY infrastructure/sql_scripts/01_timescale_schema.sql \
+     infrastructure/sql_scripts/02_rule_engine.sql \
+     infrastructure/sql_scripts/03_additional_pg_rules.sql \
+     infrastructure/sql_scripts/04_alert_engine.sql \
+     infrastructure/sql_scripts/05_os_metrics_collector.sql \
+     infrastructure/sql_scripts/06_seed_data.sql \
+     infrastructure/sql_scripts/07_optima_server_dr_policy.sql \
+     /sql_scripts/

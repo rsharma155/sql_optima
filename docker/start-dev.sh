@@ -68,8 +68,27 @@ print_timescale_access() {
   echo "  Allow TCP ${pub_port} in the host firewall for remote machines."
 }
 
-echo "[sql-optima] Starting stack (first run may take a few minutes to build)..."
-if ! docker compose up --build -d; then
+# Prefer the published GHCR API image. Compile inside Docker only when pull fails
+# (tag not published yet, private registry, or SQL_OPTIMA_BUILD_API=1).
+compose_up() {
+  if [[ "${SQL_OPTIMA_BUILD_API:-}" == "1" ]]; then
+    echo "[sql-optima] SQL_OPTIMA_BUILD_API=1 — building API image locally (Go runs inside Docker, not on the host)."
+    docker compose up --build -d || return $?
+    return 0
+  fi
+  echo "[sql-optima] Pulling images (prebuilt API from GHCR; TimescaleDB, Vault, schema tools)..."
+  if docker compose pull; then
+    echo "[sql-optima] Pull succeeded — starting without compiling the API."
+    docker compose up -d --no-build || return $?
+    return 0
+  fi
+  echo "[sql-optima] Prebuilt API image not available. Compiling inside Docker (no Go install required on the host)."
+  docker compose up --build -d || return $?
+  return 0
+}
+
+echo "[sql-optima] Starting stack..."
+if ! compose_up; then
   echo ""
   echo "[sql-optima] docker compose failed. Service status:"
   docker compose ps -a 2>/dev/null || true
@@ -105,7 +124,7 @@ elapsed=0
 last_progress=0
 
 echo ""
-echo "[sql-optima] Waiting for API at ${BASE_URL} (up to ${MAX_WAIT}s on first build)..."
+echo "[sql-optima] Waiting for API at ${BASE_URL} (up to ${MAX_WAIT}s)..."
 
 wait_http_ok() {
   local url="$1"

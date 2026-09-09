@@ -134,6 +134,8 @@ function Write-DevEnvFile([string]$Path = '.env') {
         ''
         "API_PORT=$script:DevApiPort"
         ''
+        'SQL_OPTIMA_IMAGE=ghcr.io/rsharma155/sql-optima:0.5.1'
+        ''
         'AUTH_REQUIRED=1'
         'DISABLE_PUBLIC_SETUP=0'
         'JWT_SECRET=sql-optima-local-dev-jwt-secret-32chars-min'
@@ -210,9 +212,30 @@ function Write-TimescaleAccess {
     Write-Host "  Allow TCP $pubPort in the host firewall for remote machines."
 }
 
-Write-Host '[sql-optima] Starting stack (first run may take a few minutes to build)...'
-docker compose up --build -d
-$composeExit = $LASTEXITCODE
+function Start-SqlOptimaCompose {
+    if ($env:SQL_OPTIMA_BUILD_API -eq '1') {
+        Write-Host '[sql-optima] SQL_OPTIMA_BUILD_API=1 — building API image locally (Go runs inside Docker, not on the host).'
+        docker compose up --build -d
+        return $LASTEXITCODE
+    }
+    Write-Host '[sql-optima] Pulling images (prebuilt API from GHCR; TimescaleDB, Vault, schema tools)...'
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    docker compose pull
+    $pullOk = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $prevEap
+    if ($pullOk) {
+        Write-Host '[sql-optima] Pull succeeded — starting without compiling the API.'
+        docker compose up -d --no-build
+        return $LASTEXITCODE
+    }
+    Write-Host '[sql-optima] Prebuilt API image not available. Compiling inside Docker (no Go install required on the host).'
+    docker compose up --build -d
+    return $LASTEXITCODE
+}
+
+Write-Host '[sql-optima] Starting stack...'
+$composeExit = Start-SqlOptimaCompose
 if ($composeExit -ne 0) {
     Write-Host ''
     Write-Host "[sql-optima] docker compose failed (exit code $composeExit)."
@@ -247,7 +270,7 @@ $elapsed = 0
 $lastProgress = 0
 
 Write-Host ''
-Write-Host "[sql-optima] Waiting for API at $baseUrl (up to ${maxWait}s on first build)..."
+Write-Host "[sql-optima] Waiting for API at $baseUrl (up to ${maxWait}s)..."
 
 function Test-ApiReady([string]$Url) {
     try {

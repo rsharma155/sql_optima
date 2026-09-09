@@ -36,6 +36,10 @@ type AuthClaims struct {
 	UserID   int    `json:"user_id"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	// Scope is optional; used by machine tokens (e.g. os_metrics:write).
+	Scope string `json:"scope,omitempty"`
+	// ServerID binds an os_agent token to one monitored instance (UUID string).
+	ServerID string `json:"server_id,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -96,6 +100,29 @@ func validateLocalJWT(tokenString string) (*AuthClaims, error) {
 	return claims, nil
 }
 
+// ParseTokenClaimsAllowExpired verifies HS256 signature but ignores exp/nbf.
+// Used when revoking an already-expired OS-agent token by presenting the JWT.
+func ParseTokenClaimsAllowExpired(tokenString string) (*AuthClaims, error) {
+	if len(JWTSecret) < 32 {
+		return nil, errors.New("jwt secret is not configured")
+	}
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	token, err := parser.ParseWithClaims(tokenString, &AuthClaims{}, func(t *jwt.Token) (interface{}, error) {
+		if t.Method != jwt.SigningMethodHS256 {
+			return nil, jwt.ErrTokenUnverifiable
+		}
+		return JWTSecret, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	claims, ok := token.Claims.(*AuthClaims)
+	if !ok {
+		return nil, jwt.ErrTokenInvalidClaims
+	}
+	return claims, nil
+}
+
 // contextKey is a custom type for context keys.
 type contextKey string
 
@@ -144,6 +171,14 @@ func RequireAuth(requiredRole string) func(http.Handler) http.Handler {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired token"})
+				return
+			}
+
+			// Machine tokens are write-scoped; never admit them to general API routes.
+			if claims.Role == RoleOSAgent {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]string{"error": "insufficient permissions"})
 				return
 			}
 

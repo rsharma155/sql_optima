@@ -8,9 +8,10 @@
 package collectors
 
 import (
-	"log/slog"
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,8 +31,10 @@ type SqlServerTableUsageRow struct {
 
 // CollectSQLServerTableSizeSnapshot returns table size + row_count. SQL Server doesn't expose seq_scan/idx_scan,
 // so those are stored as zeros (dashboard uses index_usage_stats for seek/scan patterns).
-func CollectSQLServerTableSizeSnapshot(ctx context.Context, dbq repository.Queryer) ([]SqlServerTableUsageRow, error) {
-	q := ` /* SQL_OPTIMA */ 
+func CollectSQLServerTableSizeSnapshot(ctx context.Context, dbq repository.Queryer, dbName string) ([]SqlServerTableUsageRow, error) {
+	var q string
+	if strings.TrimSpace(dbName) == "" {
+		q = ` /* SQL_OPTIMA */
 		SELECT
 			DB_NAME() AS db_name,
 			s.name AS schema_name,
@@ -46,6 +49,25 @@ func CollectSQLServerTableSizeSnapshot(ctx context.Context, dbq repository.Query
 		WHERE t.is_ms_shipped = 0
 		GROUP BY s.name, t.name
 	`
+	} else {
+		br := sqlServerBracketIdent(dbName)
+		idLit := sqlServerNString(dbName)
+		q = fmt.Sprintf(` /* SQL_OPTIMA */
+		SELECT
+			DB_NAME(DB_ID(%[1]s)) AS db_name,
+			s.name AS schema_name,
+			t.name AS table_name,
+			SUM(p.rows) AS row_count,
+			CAST(SUM(a.total_pages) * 8.0 / 1024.0 AS float) AS table_size_mb,
+			CAST(SUM(a.used_pages) * 8.0 / 1024.0 AS float) AS index_size_mb
+		FROM %[2]s.sys.tables t
+		JOIN %[2]s.sys.schemas s ON t.schema_id = s.schema_id
+		JOIN %[2]s.sys.partitions p ON t.object_id = p.object_id
+		JOIN %[2]s.sys.allocation_units a ON p.partition_id = a.container_id
+		WHERE t.is_ms_shipped = 0
+		GROUP BY s.name, t.name
+	`, idLit, br)
+	}
 
 	rows, err := dbq.QueryContext(ctx, q)
 	if err != nil {
@@ -73,7 +95,26 @@ func PersistSQLServerTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogg
 			return inserted, fmt.Errorf("get table usage state: %w", err)
 		}
 		if prev == nil {
-			// seed state to zeros
+			stat := models.TableUsageStat{
+				Timestamp:    capture.UTC(),
+				Engine:       engine,
+				ServerID:     serverID,
+				DBName:       r.DBName,
+				SchemaName:   r.SchemaName,
+				TableName:    r.TableName,
+				SeqScans:     0,
+				IdxScans:     0,
+				RowsRead:     0,
+				RowsModified: 0,
+				TableSizeMB:  r.TableSizeMB,
+				IndexSizeMB:  r.IndexSizeMB,
+				RowCount:     r.RowCount,
+			}
+			if err := tl.InsertTableUsageStat(ctx, stat); err != nil {
+				slog.Error("[Collector] table_usage_stats bootstrap insert failed", "err", err)
+			} else {
+				inserted++
+			}
 			if err := tl.UpsertTableUsageState(ctx, engine, serverID.String(), r.DBName, r.SchemaName, r.TableName, 0, 0, 0, 0, r.TableSizeMB, r.IndexSizeMB, r.RowCount); err != nil {
 				return inserted, fmt.Errorf("seed table usage state: %w", err)
 			}

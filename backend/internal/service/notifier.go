@@ -1,6 +1,6 @@
 // SQL Optima — https://github.com/rsharma155/sql_optima
 //
-// Purpose: Notification dispatcher for alert engine (Webhook/Slack).
+// Purpose: Notification dispatcher for alert engine (Webhook/Slack/PagerDuty).
 //
 // Author: Ravi Sharma
 // Copyright (c) 2026 Ravi Sharma
@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,11 +22,15 @@ import (
 	"github.com/rsharma155/sql_optima/internal/repository"
 )
 
+const pagerDutyEventsURL = "https://events.pagerduty.com/v2/enqueue"
+
 // NotifierConfig holds outbound notification destinations.
 // All fields are optional — if empty, that channel is skipped.
 type NotifierConfig struct {
-	WebhookURL      string // generic HTTP POST, receives WebhookPayload JSON
-	SlackWebhookURL string // Slack Incoming Webhook URL
+	WebhookURL          string // generic HTTP POST, receives WebhookPayload JSON
+	SlackWebhookURL     string // Slack Incoming Webhook URL
+	PagerDutyRoutingKey string // PagerDuty Events API v2 routing key
+	EmailSMTPJSON       string // JSON EmailSMTPConfig for native SMTP
 }
 
 // Notifier dispatches alert notifications to configured channels.
@@ -75,6 +80,10 @@ func (n *Notifier) LoadFromDB(ctx context.Context, repo *repository.Notification
 			cfg.WebhookURL = r.URL
 		case "slack":
 			cfg.SlackWebhookURL = r.URL
+		case "pagerduty":
+			cfg.PagerDutyRoutingKey = r.URL
+		case "email":
+			cfg.EmailSMTPJSON = r.URL
 		}
 	}
 	n.UpdateConfig(cfg)
@@ -108,7 +117,7 @@ type WebhookPayload struct {
 // the caller (a notification failure must never block alert persistence).
 func (n *Notifier) Dispatch(ctx context.Context, a alerts.Alert, eventType string) {
 	cfg := n.GetConfig()
-	if cfg.WebhookURL == "" && cfg.SlackWebhookURL == "" {
+	if cfg.WebhookURL == "" && cfg.SlackWebhookURL == "" && cfg.PagerDutyRoutingKey == "" && cfg.EmailSMTPJSON == "" {
 		return // nothing configured — skip silently
 	}
 
@@ -137,6 +146,24 @@ func (n *Notifier) Dispatch(ctx context.Context, a alerts.Alert, eventType strin
 	}
 	if cfg.SlackWebhookURL != "" {
 		go n.postSlack(ctx, cfg.SlackWebhookURL, payload)
+	}
+	if cfg.PagerDutyRoutingKey != "" {
+		go n.postPagerDuty(ctx, cfg.PagerDutyRoutingKey, payload)
+	}
+	if cfg.EmailSMTPJSON != "" {
+		go n.postEmail(ctx, cfg.EmailSMTPJSON, payload)
+	}
+}
+
+func (n *Notifier) postEmail(ctx context.Context, smtpJSON string, p WebhookPayload) {
+	cfg, err := ParseEmailSMTPConfig(smtpJSON)
+	if err != nil {
+		n.log.Error("notifier: invalid email smtp config", "error", err)
+		return
+	}
+	subject, body := BuildAlertEmail(p)
+	if err := SendEmailSMTP(ctx, cfg, subject, body); err != nil {
+		n.log.Error("notifier: email delivery failed", "host", cfg.Host, "error", err)
 	}
 }
 
@@ -182,8 +209,14 @@ func buildSlackMessage(p WebhookPayload) slackMessage {
 	if color == "" {
 		color = "warning"
 	}
+	if p.EventType == "alert.resolved" {
+		color = "good"
+	}
 
 	emoji := map[string]string{"critical": "🔴", "warning": "🟡", "info": "🔵"}[p.Severity]
+	if p.EventType == "alert.resolved" {
+		emoji = "✅"
+	}
 	server := p.ServerName
 	if server == "" {
 		server = "SQL Optima"
@@ -193,7 +226,7 @@ func buildSlackMessage(p WebhookPayload) slackMessage {
 		Attachments: []slackAttachment{{
 			Color:  color,
 			Title:  p.Title,
-			Text:   fmt.Sprintf("*Severity:* %s\n*Category:* %s\n*Engine:* %s\n%s", p.Severity, p.Category, p.Engine, p.Description),
+			Text:   fmt.Sprintf("*Severity:* %s\n*Category:* %s\n*Engine:* %s\n*Event:* %s\n%s", p.Severity, p.Category, p.Engine, p.EventType, p.Description),
 			Footer: fmt.Sprintf("SQL Optima • %s", server),
 			Ts:     p.FiredAt.Unix(),
 		}},
@@ -204,28 +237,92 @@ func (n *Notifier) postSlack(ctx context.Context, url string, p WebhookPayload) 
 	n.postJSON(ctx, url, buildSlackMessage(p))
 }
 
+type pagerDutyEvent struct {
+	RoutingKey  string             `json:"routing_key"`
+	EventAction string             `json:"event_action"`
+	DedupKey    string             `json:"dedup_key,omitempty"`
+	Payload     *pagerDutyPayload  `json:"payload,omitempty"`
+}
+
+type pagerDutyPayload struct {
+	Summary       string         `json:"summary"`
+	Severity      string         `json:"severity"`
+	Source        string         `json:"source"`
+	Component     string         `json:"component,omitempty"`
+	CustomDetails map[string]any `json:"custom_details,omitempty"`
+}
+
+func buildPagerDutyEvent(routingKey string, p WebhookPayload) pagerDutyEvent {
+	action := "trigger"
+	if p.EventType == "alert.resolved" {
+		action = "resolve"
+	}
+	sev := strings.ToLower(p.Severity)
+	switch sev {
+	case "critical", "error", "warning", "info":
+	default:
+		sev = "warning"
+	}
+	source := p.ServerName
+	if source == "" {
+		source = "sql-optima"
+	}
+	ev := pagerDutyEvent{
+		RoutingKey:  routingKey,
+		EventAction: action,
+		DedupKey:    p.Fingerprint,
+	}
+	if action == "trigger" {
+		ev.Payload = &pagerDutyPayload{
+			Summary:   p.Title,
+			Severity:  sev,
+			Source:    source,
+			Component: p.Category,
+			CustomDetails: map[string]any{
+				"engine":      p.Engine,
+				"description": p.Description,
+				"alert_id":    p.AlertID,
+				"evidence":    p.Evidence,
+			},
+		}
+	}
+	return ev
+}
+
+func (n *Notifier) postPagerDuty(ctx context.Context, routingKey string, p WebhookPayload) {
+	n.postJSON(ctx, pagerDutyEventsURL, buildPagerDutyEvent(routingKey, p))
+}
+
 // TestPayload returns the JSON body used by the admin "Test" action for a channel.
 func TestPayload(channel string) any {
-	if channel == "slack" {
-		return buildSlackMessage(WebhookPayload{
-			EventType:   "test",
-			ServerName:  "SQL Optima",
-			Severity:    "info",
-			Category:    "test",
-			Title:       "SQL Optima — Test Notification",
-			Description: "This is a test message from SQL Optima admin panel.",
-			FiredAt:     time.Now(),
-		})
-	}
-	return WebhookPayload{
+	sample := WebhookPayload{
 		EventType:   "test",
 		ServerName:  "SQL Optima",
 		Severity:    "info",
 		Category:    "test",
 		Title:       "SQL Optima — Test Notification",
 		Description: "This is a test message from SQL Optima admin panel.",
+		Fingerprint: "sql-optima-test",
 		FiredAt:     time.Now(),
 	}
+	if channel == "slack" {
+		return buildSlackMessage(sample)
+	}
+	return sample
+}
+
+// TestPagerDutyPayload builds an Events API v2 trigger for admin Test with the given routing key.
+func TestPagerDutyPayload(routingKey string) any {
+	return buildPagerDutyEvent(routingKey, WebhookPayload{
+		EventType:   "test",
+		ServerName:  "SQL Optima",
+		Severity:    "info",
+		Category:    "test",
+		Title:       "SQL Optima — Test Notification",
+		Description: "This is a test message from SQL Optima admin panel.",
+		Fingerprint: "sql-optima-test",
+		FiredAt:     time.Now(),
+	})
 }
 
 // PostSync delivers payload to url and returns a non-nil error on failure.
@@ -248,4 +345,9 @@ func (n *Notifier) PostSync(ctx context.Context, url string, payload any) error 
 		return fmt.Errorf("endpoint returned %s", resp.Status)
 	}
 	return nil
+}
+
+// PostSyncPagerDuty delivers an Events API v2 payload using routingKey.
+func (n *Notifier) PostSyncPagerDuty(ctx context.Context, routingKey string, payload any) error {
+	return n.PostSync(ctx, pagerDutyEventsURL, payload)
 }

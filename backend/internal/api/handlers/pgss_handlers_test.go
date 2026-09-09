@@ -145,11 +145,25 @@ func TestParseTimeRange_SwapsInverted(t *testing.T) {
 }
 
 func TestParseTimeRange_CapsAt7Days(t *testing.T) {
+	t.Setenv("COLD_STORAGE_ENABLED", "false")
 	req := httptest.NewRequest(http.MethodGet, "/test?from=2020-01-01T00:00:00Z&to=2026-04-17T00:00:00Z", nil)
 	from, to := parseTimeRangeReq(req)
 	diff := to.Sub(from)
 	if diff > 7*24*time.Hour+time.Second {
 		t.Fatalf("range should be capped at 7 days, got %v", diff)
+	}
+}
+
+func TestParseTimeRange_CapsAt90DaysWhenColdEnabled(t *testing.T) {
+	t.Setenv("COLD_STORAGE_ENABLED", "true")
+	req := httptest.NewRequest(http.MethodGet, "/test?from=2020-01-01T00:00:00Z&to=2026-04-17T00:00:00Z", nil)
+	from, to := parseTimeRangeReq(req)
+	diff := to.Sub(from)
+	if diff > 90*24*time.Hour+time.Second {
+		t.Fatalf("range should be capped at 90 days when cold storage enabled, got %v", diff)
+	}
+	if diff < 89*24*time.Hour {
+		t.Fatalf("expected ~90 day cap when cold storage enabled, got %v", diff)
 	}
 }
 

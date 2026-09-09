@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
 	"github.com/rsharma155/sql_optima/internal/domain/servers"
 	"github.com/rsharma155/sql_optima/internal/middleware"
 	"github.com/rsharma155/sql_optima/internal/service"
@@ -50,8 +51,7 @@ func (h *AdminServerHandlers) ListServers(w http.ResponseWriter, r *http.Request
 	}
 	list, err := store.List(r.Context(), false)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to list servers", err, "handler", "admin_servers")
 		return
 	}
 	if list == nil {
@@ -115,7 +115,7 @@ func (h *AdminServerHandlers) AddServer(w http.ResponseWriter, r *http.Request) 
 		plaintextDEK, eDEK, kerr := kms.GenerateDataKey(r.Context())
 		if kerr != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "key generation failed: " + kerr.Error()})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "key generation failed"})
 			return
 		}
 		eSecret, berr := box.Encrypt(credJSON, plaintextDEK)
@@ -148,8 +148,7 @@ func (h *AdminServerHandlers) AddServer(w http.ResponseWriter, r *http.Request) 
 
 	res, err := store.Create(r.Context(), s, encSecret, encDEK)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to create server", err, "handler", "admin_servers")
 		return
 	}
 

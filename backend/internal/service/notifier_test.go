@@ -1,34 +1,41 @@
+// SQL Optima — https://github.com/rsharma155/sql_optima
+//
+// Purpose: Unit tests for PagerDuty / Slack notification payload builders.
+//
 package service
 
 import (
-	"encoding/json"
 	"testing"
+	"time"
 )
 
-func TestTestPayload_slackHasTextField(t *testing.T) {
-	raw, err := json.Marshal(TestPayload("slack"))
-	if err != nil {
-		t.Fatal(err)
+func TestBuildPagerDutyEvent_TriggerAndResolve(t *testing.T) {
+	p := WebhookPayload{
+		EventType:   "alert.opened",
+		Fingerprint: "fp-1",
+		ServerName:  "pg-1",
+		Severity:    "critical",
+		Category:    "Capacity",
+		Title:       "connections high",
+		FiredAt:     time.Now(),
 	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
+	ev := buildPagerDutyEvent("rk-test", p)
+	if ev.EventAction != "trigger" {
+		t.Fatalf("want trigger, got %s", ev.EventAction)
 	}
-	if _, ok := m["text"]; !ok {
-		t.Fatalf("slack test payload must include text field, got %s", string(raw))
+	if ev.DedupKey != "fp-1" || ev.RoutingKey != "rk-test" {
+		t.Fatalf("unexpected keys: %+v", ev)
 	}
-}
+	if ev.Payload == nil || ev.Payload.Severity != "critical" {
+		t.Fatalf("missing payload: %+v", ev.Payload)
+	}
 
-func TestTestPayload_webhookUsesAlertShape(t *testing.T) {
-	raw, err := json.Marshal(TestPayload("webhook"))
-	if err != nil {
-		t.Fatal(err)
+	p.EventType = "alert.resolved"
+	ev = buildPagerDutyEvent("rk-test", p)
+	if ev.EventAction != "resolve" {
+		t.Fatalf("want resolve, got %s", ev.EventAction)
 	}
-	var p WebhookPayload
-	if err := json.Unmarshal(raw, &p); err != nil {
-		t.Fatal(err)
-	}
-	if p.EventType != "test" || p.Title == "" {
-		t.Fatalf("unexpected webhook test payload: %+v", p)
+	if ev.Payload != nil {
+		t.Fatalf("resolve should omit payload")
 	}
 }

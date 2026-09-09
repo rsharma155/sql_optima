@@ -31,15 +31,30 @@ ghcr.io/<org>/sql-optima:latest   # only on stable x.y.z tags
    git push origin v0.5.0
    ```
 
-3. GitHub Actions workflow `.github/workflows/release.yml` builds and pushes the image.
+3. GitHub Actions workflow `.github/workflows/release.yml` builds and pushes the image, attaches an **SPDX SBOM**, and opens a GitHub Release with notes extracted from `CHANGELOG.md`.
 
 ### Consumers: pin by digest
 
 Production should pin an immutable digest, not `:latest`:
 
 ```yaml
-image: ghcr.io/rsharma155/sql-optima:0.5.0
+image: ghcr.io/rsharma155/sql-optima:0.5.1
 ```
+
+**Compose vs older tags:** from **0.5.1** the published image is the Compose API image (Debian slim, `/entrypoint.sh` loads Vault’s token from `VAULT_TOKEN_FILE`, `wget` healthcheck). **0.5.0** GHCR images are distroless and **do not** work with `docker/docker-compose.yml`.
+
+`docker/docker-compose.yml` sets `image: ${SQL_OPTIMA_IMAGE:-ghcr.io/rsharma155/sql-optima:0.5.1}` and still has a `build:` section. Operators:
+
+```bash
+cd docker
+cp .env.example .env   # set JWT_SECRET, DB_PASSWORD, optionally SQL_OPTIMA_IMAGE
+docker compose pull
+docker compose up -d --no-build
+```
+
+If the tag is not on GHCR yet, `./start-dev.sh` / `.\start-dev.ps1` pull then **fall back to compiling inside Docker** (Go is not installed on the host). Force a local compile with `SQL_OPTIMA_BUILD_API=1`.
+
+SBOM artifact: attached to the GitHub Release as `sbom-sql-optima.spdx.json` (BuildKit also records image SBOM/provenance).
 
 ## Pre-release checklist
 
@@ -47,7 +62,7 @@ image: ghcr.io/rsharma155/sql-optima:0.5.0
 - [ ] `cd backend && golangci-lint run` (or CI green)
 - [ ] `AUTH_REQUIRED=1` smoke test on Docker compose
 - [ ] Schema migrations idempotent (`infrastructure/sql_scripts/`)
-- [ ] Update §20 tracker in `cursor_project_details.md` if used locally
+- [ ] Update `CHANGELOG.md` / `RELEASES.md` / `VERSION` for the cut
 
 ## OS collector artifact
 

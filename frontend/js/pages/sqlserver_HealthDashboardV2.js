@@ -312,6 +312,7 @@ window.SqlServerHealthV2View = async function() {
                             <div style="display:flex; align-items:center; gap:8px;">
                                 <h3><i class="fa-solid fa-hourglass-half text-warning"></i> Wait Stats Trend</h3>
                                 <div id="summary-waits" style="font-size:0.6rem; color:var(--text-muted); font-weight:600; text-transform:uppercase;"></div>
+                                <span id="v2WaitHistorySourceBadge" class="badge badge-info" style="display:none; font-size:0.6rem;"></span>
                             </div>
                             <i class="fa-solid fa-info-circle info-icon-clickable" data-action="show-sqlserver-info" data-section="Wait Statistics"></i>
                         </div>
@@ -337,7 +338,10 @@ window.SqlServerHealthV2View = async function() {
                 <div class="dash-v2-row elastic-row-3">
                     <div class="v2-panel" style="grid-column: span 4;">
                         <div class="v2-panel-header">
-                            <h3><i class="fa-solid fa-chart-line text-success"></i> Throughput vs Logins</h3>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <h3><i class="fa-solid fa-chart-line text-success"></i> Throughput vs Logins</h3>
+                                <span id="v2ConnHistorySourceBadge" class="badge badge-info" style="display:none; font-size:0.6rem;"></span>
+                            </div>
                             <i class="fa-solid fa-info-circle info-icon-clickable" data-action="show-sqlserver-info" data-section="Workload Analytics" data-metric="Throughput"></i>
                         </div>
                         <div class="v2-panel-content">
@@ -404,7 +408,8 @@ window.SqlServerHealthV2View = async function() {
             const response = await window.apiClient.authenticatedFetch(url);
             if (response.ok) {
                 const data = await response.json();
-                renderV2Dashboard(data);
+                const enriched = await enrichHealthV2WithFederatedHistory(data, inst.name, from, to);
+                renderV2Dashboard(enriched);
                 
                 // Dynamically adjust refresh rate based on backend configuration
                 if (data.refresh_interval_ms && window.setDashboardRefresh) {
@@ -446,14 +451,96 @@ window.SqlServerHealthV2View = async function() {
         const response = await window.apiClient.authenticatedFetch(url);
         if (!response.ok) throw new Error("API error: " + response.status);
         const data = await response.json();
+        const enriched = await enrichHealthV2WithFederatedHistory(data, inst.name, from, to);
 
-        renderV2Dashboard(data);
+        renderV2Dashboard(enriched);
     } catch (err) {
         console.error("[V2] Load failed", err);
         // Ensure UI is populated with empty state
         renderV2Dashboard({ kpis: {}, problems: { long_running: [], blocking: [] } });
     }
 };
+
+/** Map federated wait-history rows to Health V2 wait_trends shape. */
+function mapFederatedWaitToTrends(points) {
+    return (points || []).map((p) => ({
+        timestamp: p.timestamp || p.capture_timestamp,
+        cpu: Number(p.cpu_ms_per_sec ?? p.cpu ?? 0),
+        io: Number(p.disk_read_ms_per_sec ?? p.io ?? 0),
+        memory: Number(p.memory_ms_per_sec ?? p.memory ?? p.other_ms_per_sec ?? 0),
+        locking: Number(p.blocking_ms_per_sec ?? p.locking ?? 0),
+        parallel: Number(p.parallelism_ms_per_sec ?? p.parallel ?? 0),
+    }));
+}
+
+/** Aggregate connection-history rows by timestamp for throughput overlay. */
+function aggregateConnectionHistory(points) {
+    const byTs = new Map();
+    for (const p of points || []) {
+        const ts = p.timestamp || p.capture_timestamp;
+        if (!ts) continue;
+        const key = String(ts);
+        const prev = byTs.get(key) || { timestamp: ts, connections: 0, logins_per_sec: 0, batch_requests: 0 };
+        prev.connections += Number(p.active_connections ?? p.connections ?? 0);
+        byTs.set(key, prev);
+    }
+    return Array.from(byTs.values()).sort((a, b) => {
+        const ta = new Date(a.timestamp).getTime();
+        const tb = new Date(b.timestamp).getTime();
+        return (isNaN(ta) || isNaN(tb)) ? 0 : ta - tb;
+    });
+}
+
+/**
+ * Overlay federated hot/cold history onto health-v2 payload when available
+ * (longer lookbacks / denser series than the live health endpoint alone).
+ */
+async function enrichHealthV2WithFederatedHistory(data, instanceName, from, to) {
+    if (!data || typeof window.fetchSqlServerHistory !== 'function') return data;
+    const out = { ...data };
+    try {
+        const [waitHist, connHist] = await Promise.all([
+            window.fetchSqlServerHistory('wait', instanceName, from, to),
+            window.fetchSqlServerHistory('connection', instanceName, from, to),
+        ]);
+        const liveWaits = Array.isArray(out.wait_trends) ? out.wait_trends : [];
+        if (waitHist && waitHist.ok && (waitHist.points || []).length) {
+            const mapped = mapFederatedWaitToTrends(waitHist.points);
+            if (mapped.length >= liveWaits.length) {
+                out.wait_trends = mapped;
+            }
+            if (window.applyHistorySourceBadge) {
+                window.applyHistorySourceBadge('v2WaitHistorySourceBadge', waitHist.source);
+            }
+        }
+        if (connHist && connHist.ok && (connHist.points || []).length) {
+            const aggregated = aggregateConnectionHistory(connHist.points);
+            const liveTp = Array.isArray(out.throughput) ? out.throughput : [];
+            if (aggregated.length && (!liveTp.length || aggregated.length >= liveTp.length)) {
+                if (liveTp.length) {
+                    const byLive = new Map(liveTp.map((t) => [String(t.timestamp || ''), t]));
+                    out.throughput = aggregated.map((c) => {
+                        const hit = byLive.get(String(c.timestamp)) || {};
+                        return {
+                            timestamp: c.timestamp,
+                            connections: c.connections,
+                            batch_requests: Number(hit.batch_requests ?? 0),
+                            logins_per_sec: Number(hit.logins_per_sec ?? 0),
+                        };
+                    });
+                } else {
+                    out.throughput = aggregated;
+                }
+            }
+            if (window.applyHistorySourceBadge) {
+                window.applyHistorySourceBadge('v2ConnHistorySourceBadge', connHist.source);
+            }
+        }
+    } catch (e) {
+        console.warn('[V2] federated history enrich failed', e);
+    }
+    return out;
+}
 
 /** chartjs-plugin-zoom options (only when the plugin is registered). */
 function getChartZoomPluginOptions() {

@@ -8,94 +8,126 @@
 package handlers
 
 import (
-	"log/slog"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
 	"github.com/rsharma155/sql_optima/internal/middleware"
 	"github.com/rsharma155/sql_optima/internal/repository"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
 
 type AdminNotificationHandlers struct {
-	repo     *repository.NotificationConfigRepository
-	notifier *service.Notifier
+	repo       *repository.NotificationConfigRepository
+	notifier   *service.Notifier
+	metricsSvc *service.MetricsService
 }
 
-func NewAdminNotificationHandlers(repo *repository.NotificationConfigRepository, notifier *service.Notifier) *AdminNotificationHandlers {
-	return &AdminNotificationHandlers{repo: repo, notifier: notifier}
+func NewAdminNotificationHandlers(repo *repository.NotificationConfigRepository, notifier *service.Notifier, metricsSvc *service.MetricsService) *AdminNotificationHandlers {
+	return &AdminNotificationHandlers{repo: repo, notifier: notifier, metricsSvc: metricsSvc}
 }
 
-// GetConfig returns all notification channel configs, masking the URL to last 6 chars.
+func isAllowedNotificationChannel(ch string) bool {
+	switch ch {
+	case "webhook", "slack", "pagerduty", "email":
+		return true
+	default:
+		return false
+	}
+}
+
+// GetConfig returns all notification channel configs, masking secrets.
 func (h *AdminNotificationHandlers) GetConfig(w http.ResponseWriter, r *http.Request) {
 	if h.repo == nil {
-		http.Error(w, "repository unavailable", http.StatusServiceUnavailable)
+		apiresponse.WritePlainError(w, http.StatusServiceUnavailable, "repository unavailable", nil)
 		return
 	}
 	rows, err := h.repo.ListAll(r.Context())
 	if err != nil {
-		slog.Error("[AdminNotification] GetConfig error", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load notification config", err, "handler", "GetConfig")
 		return
 	}
 	type safeRow struct {
-		Channel   string `json:"channel"`
-		URLMasked string `json:"url_masked"`
-		IsEnabled bool   `json:"is_enabled"`
-		HasURL    bool   `json:"has_url"`
+		Channel      string          `json:"channel"`
+		URLMasked    string          `json:"url_masked"`
+		IsEnabled    bool            `json:"is_enabled"`
+		HasURL       bool            `json:"has_url"`
+		EmailSettings json.RawMessage `json:"email_settings,omitempty"`
 	}
 	out := make([]safeRow, 0, len(rows))
-	for _, r := range rows {
-		masked := ""
-		if len(r.URL) > 6 {
-			masked = "••••••" + r.URL[len(r.URL)-6:]
-		} else if r.URL != "" {
-			masked = "••••••"
+	for _, row := range rows {
+		sr := safeRow{
+			Channel:   row.Channel,
+			IsEnabled: row.IsEnabled,
+			HasURL:    row.URL != "",
 		}
-		out = append(out, safeRow{
-			Channel:   r.Channel,
-			URLMasked: masked,
-			IsEnabled: r.IsEnabled,
-			HasURL:    r.URL != "",
-		})
+		if row.Channel == "email" && row.URL != "" {
+			if cfg, err := service.ParseEmailSMTPConfig(row.URL); err == nil {
+				sr.EmailSettings = json.RawMessage(cfg.RedactedJSON())
+				sr.URLMasked = "smtp://" + cfg.Host
+			} else {
+				sr.URLMasked = "••••••"
+			}
+		} else if len(row.URL) > 6 {
+			sr.URLMasked = "••••••" + row.URL[len(row.URL)-6:]
+		} else if row.URL != "" {
+			sr.URLMasked = "••••••"
+		}
+		out = append(out, sr)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
 }
 
-// UpdateConfig saves a single channel's URL and enabled state.
-// Body: { "channel": "webhook"|"slack", "url": "...", "is_enabled": true }
+// UpdateConfig saves a channel config.
+// Webhook/Slack/PagerDuty: { "channel", "url", "is_enabled" }
+// Email: { "channel":"email", "is_enabled", "email": { host, port, username, password?, from, to, starttls } }
 func (h *AdminNotificationHandlers) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if h.repo == nil {
-		http.Error(w, "repository unavailable", http.StatusServiceUnavailable)
+		apiresponse.WritePlainError(w, http.StatusServiceUnavailable, "repository unavailable", nil)
 		return
 	}
 	var input struct {
-		Channel   string `json:"channel"`
-		URL       string `json:"url"`
-		IsEnabled bool   `json:"is_enabled"`
+		Channel   string          `json:"channel"`
+		URL       string          `json:"url"`
+		IsEnabled bool            `json:"is_enabled"`
+		Email     json.RawMessage `json:"email"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		apiresponse.WritePlainError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
 	input.Channel = strings.ToLower(strings.TrimSpace(input.Channel))
-	if input.Channel != "webhook" && input.Channel != "slack" {
-		http.Error(w, "channel must be 'webhook' or 'slack'", http.StatusBadRequest)
+	if !isAllowedNotificationChannel(input.Channel) {
+		apiresponse.WritePlainError(w, http.StatusBadRequest, "channel must be webhook, slack, pagerduty, or email", nil)
 		return
 	}
-	input.URL = strings.TrimSpace(input.URL)
-	if input.URL == "" {
+
+	urlProvided := strings.TrimSpace(input.URL) != "" || len(input.Email) > 0
+	storeURL := strings.TrimSpace(input.URL)
+
+	if input.Channel == "email" {
+		merged, err := h.mergeEmailConfig(r, input.Email)
+		if err != nil {
+			apiresponse.WritePlainError(w, http.StatusBadRequest, err.Error(), err)
+			return
+		}
+		raw, _ := json.Marshal(merged)
+		storeURL = string(raw)
+		urlProvided = true
+	} else if storeURL == "" {
 		rows, err := h.repo.ListAll(r.Context())
 		if err != nil {
-			slog.Error("[AdminNotification] UpdateConfig list error", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load notification config", err, "handler", "UpdateConfig")
 			return
 		}
 		for _, row := range rows {
 			if row.Channel == input.Channel {
-				input.URL = row.URL
+				storeURL = row.URL
 				break
 			}
 		}
@@ -105,44 +137,86 @@ func (h *AdminNotificationHandlers) UpdateConfig(w http.ResponseWriter, r *http.
 	if claims := middleware.GetAuthClaims(r); claims != nil {
 		actor = claims.Username
 	}
-	if err := h.repo.Upsert(r.Context(), input.Channel, input.URL, input.IsEnabled, actor); err != nil {
-		slog.Error("[AdminNotification] UpdateConfig error", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	if err := h.repo.Upsert(r.Context(), input.Channel, storeURL, input.IsEnabled, actor); err != nil {
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to update notification channel", err, "handler", "UpdateConfig", "channel", input.Channel)
 		return
+	}
+
+	middleware.AuditAction(slog.Default(), r, "admin_update_notification_channel",
+		slog.String("channel", input.Channel),
+		slog.Bool("enabled", input.IsEnabled),
+		slog.Bool("url_changed", urlProvided),
+	)
+	if h.metricsSvc != nil && h.metricsSvc.AuditRepo != nil {
+		_ = h.metricsSvc.AuditRepo.Log(r.Context(), "update_notification_channel", uuid.Nil, actor, r.RemoteAddr, map[string]interface{}{
+			"channel":     input.Channel,
+			"is_enabled":  input.IsEnabled,
+			"url_changed": urlProvided,
+		})
 	}
 	slog.Info("[AdminNotification] channel updated", "channel", input.Channel, "actor", actor, "enabled", input.IsEnabled)
 
-	// Apply change to the live notifier immediately.
 	if h.notifier != nil {
 		h.notifier.LoadFromDB(r.Context(), h.repo)
 	}
-
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *AdminNotificationHandlers) mergeEmailConfig(r *http.Request, raw json.RawMessage) (service.EmailSMTPConfig, error) {
+	if len(raw) == 0 {
+		return service.EmailSMTPConfig{}, errEmailConfigRequired()
+	}
+	var partial service.EmailSMTPConfig
+	if err := json.Unmarshal(raw, &partial); err != nil {
+		return service.EmailSMTPConfig{}, err
+	}
+	if partial.Password == "" && h.repo != nil {
+		rows, lerr := h.repo.ListAll(r.Context())
+		if lerr == nil {
+			for _, row := range rows {
+				if row.Channel == "email" && row.URL != "" {
+					if prev, perr := service.ParseEmailSMTPConfig(row.URL); perr == nil {
+						partial.Password = prev.Password
+					}
+					break
+				}
+			}
+		}
+	}
+	b, _ := json.Marshal(partial)
+	return service.ParseEmailSMTPConfig(string(b))
+}
+
+func errEmailConfigRequired() error {
+	return &emailConfigError{msg: "email settings object is required"}
+}
+
+type emailConfigError struct{ msg string }
+
+func (e *emailConfigError) Error() string { return e.msg }
+
 // TestNotification sends a test payload to the specified channel.
-// Body: { "channel": "webhook"|"slack" }
 func (h *AdminNotificationHandlers) TestNotification(w http.ResponseWriter, r *http.Request) {
 	if h.repo == nil {
-		http.Error(w, "repository unavailable", http.StatusServiceUnavailable)
+		apiresponse.WritePlainError(w, http.StatusServiceUnavailable, "repository unavailable", nil)
 		return
 	}
 	var input struct {
 		Channel string `json:"channel"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		apiresponse.WritePlainError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
 	input.Channel = strings.ToLower(strings.TrimSpace(input.Channel))
-	if input.Channel != "webhook" && input.Channel != "slack" {
-		http.Error(w, "channel must be 'webhook' or 'slack'", http.StatusBadRequest)
+	if !isAllowedNotificationChannel(input.Channel) {
+		apiresponse.WritePlainError(w, http.StatusBadRequest, "channel must be webhook, slack, pagerduty, or email", nil)
 		return
 	}
 
 	rows, err := h.repo.ListAll(r.Context())
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		apiresponse.WritePlainError(w, http.StatusInternalServerError, "failed to load notification config", err, "handler", "TestNotification")
 		return
 	}
 	var targetURL string
@@ -153,12 +227,11 @@ func (h *AdminNotificationHandlers) TestNotification(w http.ResponseWriter, r *h
 		}
 	}
 	if targetURL == "" {
-		http.Error(w, "channel not configured or not enabled", http.StatusBadRequest)
+		apiresponse.WritePlainError(w, http.StatusBadRequest, "channel not configured or not enabled", nil)
 		return
 	}
-
 	if h.notifier == nil {
-		http.Error(w, "notifier unavailable", http.StatusServiceUnavailable)
+		apiresponse.WritePlainError(w, http.StatusServiceUnavailable, "notifier unavailable", nil)
 		return
 	}
 
@@ -166,9 +239,28 @@ func (h *AdminNotificationHandlers) TestNotification(w http.ResponseWriter, r *h
 		OK      bool   `json:"ok"`
 		Message string `json:"message,omitempty"`
 	}
-	if err := h.notifier.PostSync(r.Context(), targetURL, service.TestPayload(input.Channel)); err != nil {
+	var errSend error
+	switch input.Channel {
+	case "pagerduty":
+		errSend = h.notifier.PostSyncPagerDuty(r.Context(), targetURL, service.TestPagerDutyPayload(targetURL))
+	case "email":
+		cfg, perr := service.ParseEmailSMTPConfig(targetURL)
+		if perr != nil {
+			apiresponse.WritePlainError(w, http.StatusBadRequest, "invalid email smtp config", perr)
+			return
+		}
+		subject, body := service.BuildAlertEmail(service.WebhookPayload{
+			EventType: "test", Title: "SQL Optima — Test Notification", Severity: "info",
+			ServerName: "SQL Optima", Category: "test", FiredAt: time.Now().UTC(),
+		})
+		errSend = service.SendEmailSMTP(r.Context(), cfg, subject, body)
+	default:
+		errSend = h.notifier.PostSync(r.Context(), targetURL, service.TestPayload(input.Channel))
+	}
+	if errSend != nil {
+		slog.Error("[AdminNotification] test notification failed", "channel", input.Channel, "err", errSend)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(testResult{OK: false, Message: err.Error()})
+		_ = json.NewEncoder(w).Encode(testResult{OK: false, Message: "test notification failed"})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

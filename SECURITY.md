@@ -44,7 +44,7 @@ The bash OS agent authenticates with an **admin JWT** (`Authorization: Bearer`) 
 
 | Risk | Mitigation |
 |------|------------|
-| Compromised DB host exposes admin JWT | Store JWT only in root-owned `/etc/sql-optima/os-collector.env` (mode 600); rotate JWT periodically; limit host access. Future: scoped machine token (write-only OS metrics). |
+| Compromised DB host exposes admin JWT | Prefer scoped OS agent token (`POST /api/admin/os-collector/token`, role `os_agent`, scope `os_metrics:write`); store only in root-owned `/etc/sql-optima/os-collector.env` (mode 600); rotate by minting a new token. Admin JWT still accepted for ingest but is discouraged. |
 | Unauthenticated metric spam | Ingest disabled by default; endpoint returns 403 when off; requires valid admin JWT when on. |
 | Agent has no DB credentials | Agent only talks HTTPS to SQL Optima — it does not connect to PostgreSQL. |
 
@@ -59,8 +59,8 @@ See [`docs/os_collector.md`](docs/os_collector.md) and [`os_collector/README.md`
 - Configure Vault Transit for production credential encryption (`VAULT_ADDR`, AppRole — not root tokens). See [`docs/vault_production.md`](docs/vault_production.md).
 - Set `AUTH_REQUIRED=1` and `DISABLE_PUBLIC_SETUP=1` after initial bootstrap.
 - Set a strong `JWT_SECRET` (32+ random bytes); never use compose example values in production.
-- Use `AUTH_MODE=oidc` with an external identity provider for enterprise SSO.
-- Pin container images by digest or semver tag (`ghcr.io/<org>/sql-optima:0.5.0`), not `:latest`, in production.
+- Use `AUTH_MODE=oidc` with an external identity provider for enterprise SSO (`OIDC_ISSUER_URL`, `OIDC_AUDIENCE`; optional `OIDC_GROUP_CLAIM` + `OIDC_GROUP_ROLE_MAP`).
+- Pin container images by digest or semver tag (`ghcr.io/<org>/sql-optima:0.5.1`), not `:latest`, in production. Do not use GHCR **0.5.0** with current Docker Compose (distroless; no Vault entrypoint).
 
 ## Vault (Transit KMS)
 

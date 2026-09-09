@@ -140,7 +140,7 @@ func (s *AlertService) autoResolveCleared(ctx context.Context, serverID uuid.UUI
 			continue
 		}
 		fp := alerts.Fingerprint(serverID, engine, rule.Category, rule.RuleName)
-		resolved, err := s.alertStore.ResolveByFingerprint(ctx, fp, "system", "condition cleared", at)
+		resolvedAlert, resolved, err := s.alertStore.ResolveByFingerprint(ctx, fp, "system", "condition cleared", at)
 		if err != nil {
 			slog.WarnContext(ctx, "alert auto-resolve failed",
 				"engine", engine,
@@ -154,6 +154,9 @@ func (s *AlertService) autoResolveCleared(ctx context.Context, serverID uuid.UUI
 				"serverID", serverID,
 				"rule", rule.RuleName,
 			)
+			if s.notifier != nil {
+				s.notifier.Dispatch(ctx, resolvedAlert, "alert.resolved")
+			}
 		}
 	}
 }
@@ -185,7 +188,13 @@ func (s *AlertService) Resolve(ctx context.Context, id uuid.UUID, actor, reason 
 	if err := a.Resolve(actor, now); err != nil {
 		return err
 	}
-	return s.alertStore.UpdateStatus(ctx, id, alerts.StatusResolved, actor, reason, now)
+	if err := s.alertStore.UpdateStatus(ctx, id, alerts.StatusResolved, actor, reason, now); err != nil {
+		return err
+	}
+	if s.notifier != nil {
+		s.notifier.Dispatch(ctx, a, "alert.resolved")
+	}
+	return nil
 }
 
 func (s *AlertService) List(ctx context.Context, f alerts.AlertFilter) ([]alerts.Alert, error) {

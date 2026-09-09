@@ -1,8 +1,16 @@
 services:
   api:
+    # Prebuilt image from GitHub Container Registry (no Go compile on the host).
+    # v0.5.0 GHCR images are distroless and are NOT compatible with this Compose file.
+    # Default tag 0.5.1 is the first compose-compatible publish; until that tag exists,
+    # start-dev / install scripts pull, then fall back to --build (Go runs inside Docker only).
+    # Override: SQL_OPTIMA_IMAGE=ghcr.io/org/sql-optima:1.2.3
+    # Developers: SQL_OPTIMA_BUILD_API=1 or docker compose up --build
+    image: ${SQL_OPTIMA_IMAGE:-ghcr.io/rsharma155/sql-optima:0.5.1}
+    pull_policy: ${SQL_OPTIMA_PULL_POLICY:-missing}
     build:
       context: ..
-      dockerfile: docker/Dockerfile.compose-api
+      dockerfile: Dockerfile
     ports:
       - "${API_PORT:-8080}:8080"
     env_file:

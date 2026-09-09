@@ -61,12 +61,12 @@ func TestSQLServerCPUSchema(t *testing.T) {
 func TestSQLServerWaitSchema(t *testing.T) {
 	rows := []SQLServerWaitRow{
 		{
-			CaptureTimestampMs: 123456789,
-			ServerID:           "server1",
-			WaitType:           "CXPACKET",
-			WaitingTasksCount:  10,
-			WaitTimeMsDelta:    100.5,
-			SignalWaitMsDelta:  10.0,
+			CaptureTimestampMs:  123456789,
+			ServerID:            "server1",
+			DiskReadMsPerSec:    12.5,
+			BlockingMsPerSec:    3.0,
+			ParallelismMsPerSec: 8.0,
+			OtherMsPerSec:       1.5,
 		},
 	}
 

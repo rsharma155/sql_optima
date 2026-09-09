@@ -8,11 +8,10 @@
 package collectors
 
 import (
-	"log/slog"
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,14 +41,15 @@ type SqlServerIndexUsageRow struct {
 
 func CollectSQLServerIndexUsage(ctx context.Context, dbq repository.Queryer, dbName string) ([]SqlServerIndexUsageRow, error) {
 	// NOTE: counters are cumulative; deltas are computed against monitor.index_usage_state.
-	// Aggregate pages per (object_id, index_id) in a subquery so we do not need a GROUP BY
-	// that would make s.last_user_* invalid in the SELECT list (SQL Server rejects that).
-	query := fmt.Sprintf(`/* SQL_OPTIMA */ 
-		USE [%s];
+	// Catalog views are database-scoped: query them via three-part names so we do not depend
+	// on USE (TDS can return an empty first result set for USE+SELECT batches).
+	br := sqlServerBracketIdent(dbName)
+	idLit := sqlServerNString(dbName)
+	query := fmt.Sprintf(`/* SQL_OPTIMA */
 		SELECT
-			DB_NAME() AS db_name,
-			OBJECT_SCHEMA_NAME(i.object_id) AS schema_name,
-			OBJECT_NAME(i.object_id) AS table_name,
+			DB_NAME(DB_ID(%[1]s)) AS db_name,
+			sch.name AS schema_name,
+			tbl.name AS table_name,
 			i.name AS index_name,
 			COALESCE(s.user_seeks, 0) AS user_seeks,
 			COALESCE(s.user_scans, 0) AS user_scans,
@@ -62,19 +62,20 @@ func CollectSQLServerIndexUsage(ctx context.Context, dbq repository.Queryer, dbN
 			CAST(i.is_unique AS bit) AS is_unique,
 			CASE WHEN i.is_primary_key = 1 THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS is_pk,
 			COALESCE(NULLIF(i.fill_factor, 0), 0) AS fill_factor
-		FROM sys.indexes i
+		FROM %[2]s.sys.indexes i
+		INNER JOIN %[2]s.sys.tables tbl ON tbl.object_id = i.object_id AND tbl.is_ms_shipped = 0
+		INNER JOIN %[2]s.sys.schemas sch ON sch.schema_id = tbl.schema_id
 		LEFT JOIN sys.dm_db_index_usage_stats s
-		       ON s.database_id = DB_ID() AND s.object_id = i.object_id AND s.index_id = i.index_id
+		       ON s.database_id = DB_ID(%[1]s) AND s.object_id = i.object_id AND s.index_id = i.index_id
 		LEFT JOIN (
 			SELECT p.object_id, p.index_id, SUM(a.total_pages) AS total_pages
-			FROM sys.partitions p
-			INNER JOIN sys.allocation_units a ON a.container_id = p.partition_id
+			FROM %[2]s.sys.partitions p
+			INNER JOIN %[2]s.sys.allocation_units a ON a.container_id = p.partition_id
 			GROUP BY p.object_id, p.index_id
 		) sz ON sz.object_id = i.object_id AND sz.index_id = i.index_id
 		WHERE i.name IS NOT NULL
 		  AND i.index_id > 0
-		  AND OBJECTPROPERTY(i.object_id, 'IsUserTable') = 1
-	`, strings.ReplaceAll(dbName, "]", "]]"))
+	`, idLit, br)
 
 	rows, err := dbq.QueryContext(ctx, query)
 	if err != nil {

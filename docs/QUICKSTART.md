@@ -55,7 +55,7 @@ The install script delegates to `docker/start-dev.sh` or `docker/start-dev.ps1`.
 
 Non-interactive installs (`curl … \| bash`) default to **Easy** (no prompts). Override with env vars (see below).
 
-Then `docker compose up --build -d` runs.
+Then the script **pulls** the prebuilt API image from GHCR (and Timescale/Vault). If that tag is not published yet, it **compiles the API inside Docker** (no Go install on the host). Force a local image build with `SQL_OPTIMA_BUILD_API=1`.
 
 **Alternate** (manual clone + compose):
 
@@ -132,7 +132,8 @@ Use the companion [sqlserver_postgres_ha_cluster](https://github.com/rsharma155/
 | PowerShell blocks the script | Run `PowerShell -ExecutionPolicy Bypass -File .\start-dev.ps1` |
 | Port 8080 in use | Set `API_PORT=8081` in `docker/.env` and restart |
 | `docker-vault-1 is unhealthy` / `Vault API did not become ready within 90s` | Update `docker/scripts/vault-entrypoint.sh` (fixed wait for uninitialized Vault), then `docker compose down -v` and restart; see `docker compose logs vault` |
-| Save server: `invalid token` / Transit 403 | Use the **full repo** (not only `docker/`). Remove `VAULT_TOKEN=root` from `.env`. Rebuild API: `docker compose up -d --build --force-recreate api`. Logs should show `[api] Using Vault token from /vault/token/.root_token` |
+| Save server: `invalid token` / Transit 403 | Use the **full repo** (not only `docker/`). Remove `VAULT_TOKEN=root` from `.env`. Recreate API: `docker compose up -d --force-recreate api` (add `--build` if you compile locally). Logs should show `[api] Using Vault token from /vault/token/.root_token` |
+| Pull of `sql-optima:0.5.1` fails / API never starts after pull | Tag **0.5.1+** is the Compose-compatible GHCR image; **0.5.0** is distroless and will not work. Wait for the tag, set `SQL_OPTIMA_IMAGE`, or run `SQL_OPTIMA_BUILD_API=1` / `docker compose up --build -d` |
 | `/api/os-collector/status` 404 while adding a server | Harmless while typing a name before save; status returns `registered: false` after API rebuild. Hard-refresh the browser for updated JS |
 | Build: `parent snapshot ... does not exist: not found` | Corrupted BuildKit cache (Windows). Run `docker builder prune -af`, then `docker compose build --no-cache api`, then `docker compose up -d`. Restart Docker Desktop if needed |
 
@@ -155,6 +156,7 @@ Edit `.env` and set at minimum:
 |----------|--------|
 | `JWT_SECRET` | Strong random value, e.g. `openssl rand -base64 32` |
 | `DB_PASSWORD` | Strong password for the TimescaleDB role |
+| `SQL_OPTIMA_IMAGE` | Pin the API image, e.g. `ghcr.io/rsharma155/sql-optima:0.5.1` (not **0.5.0**) |
 | `AUTH_REQUIRED` | Keep `1` |
 | `DISABLE_PUBLIC_SETUP` | Keep `1` (locks public setup API after bootstrap) |
 
@@ -162,9 +164,20 @@ See inline comments in [`docker/.env.example`](../docker/.env.example) for webho
 
 ### 2. Start the stack
 
+No Go toolchain on the host. Pull the published API image, then start:
+
+```bash
+docker compose pull
+docker compose up -d --no-build
+```
+
+If `pull` cannot find `SQL_OPTIMA_IMAGE` (tag not published yet), compile **inside Docker** once:
+
 ```bash
 docker compose up --build -d
 ```
+
+Contributors changing Go can always use `--build` or `SQL_OPTIMA_BUILD_API=1`.
 
 ### 3. Create the first admin
 
@@ -184,7 +197,7 @@ Sign in at the UI as user **`admin`** with that password. Add further users from
 - [ ] Register monitored servers only via **Admin** (credentials encrypted with Vault Transit)
 - [ ] Follow [`docs/vault_production.md`](vault_production.md) for Vault (not dev root tokens)
 - [ ] Read [`SECURITY.md`](../SECURITY.md) and [`docs/operations.md`](operations.md)
-- [ ] Pin container images by version tag, e.g. `ghcr.io/rsharma155/sql-optima:0.5.0`
+- [ ] Pin container images by version tag, e.g. `ghcr.io/rsharma155/sql-optima:0.5.1` (Compose-compatible; do not pin **0.5.0**)
 
 ### Platform profile (Redis worker, Prometheus, Grafana)
 

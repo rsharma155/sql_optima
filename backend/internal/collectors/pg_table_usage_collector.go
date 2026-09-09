@@ -8,9 +8,9 @@
 package collectors
 
 import (
-	"log/slog"
 	"context"
 	"database/sql"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -196,6 +196,31 @@ func PersistPostgresTableUsageDeltas(ctx context.Context, tl *hot.TimescaleLogge
 			return inserted, err
 		}
 		if prev == nil {
+			dSeq, ok1 := storageindex.Delta(r.SeqScanTotal, 0)
+			dIdx, ok2 := storageindex.Delta(r.IdxScanTotal, 0)
+			dMod, ok3 := storageindex.Delta(r.RowsModifiedTotal, 0)
+			if ok1 && ok2 && ok3 {
+				stat := models.TableUsageStat{
+					Timestamp:    capture.UTC(),
+					Engine:       engine,
+					ServerID:     serverID,
+					DBName:       r.DBName,
+					SchemaName:   r.SchemaName,
+					TableName:    r.TableName,
+					SeqScans:     dSeq,
+					IdxScans:     dIdx,
+					RowsRead:     0,
+					RowsModified: dMod,
+					TableSizeMB:  r.TableSizeMB,
+					IndexSizeMB:  r.IndexSizeMB,
+					RowCount:     r.RowCount,
+				}
+				if err := tl.InsertTableUsageStat(ctx, stat); err != nil {
+					slog.Error("[Collector] pg table_usage_stats bootstrap insert failed", "err", err)
+				} else {
+					inserted++
+				}
+			}
 			if err := tl.UpsertTableUsageState(ctx, engine, serverID.String(), r.DBName, r.SchemaName, r.TableName, r.SeqScanTotal, r.IdxScanTotal, 0, r.RowsModifiedTotal, r.TableSizeMB, r.IndexSizeMB, r.RowCount); err != nil {
 				return inserted, err
 			}

@@ -312,14 +312,25 @@ async function fetchTimescaleMetrics(instanceName) {
             toISO = new Date(window.appState.toTs).toISOString();
         }
 
-        const [sqlserverRes, dbRes, topQueriesRes, longRunningRes, bottlenecksRes, liveDashRes, cpuHistRes] = await Promise.all([
+        const [sqlserverRes, dbRes, topQueriesRes, longRunningRes, bottlenecksRes, liveDashRes, cpuHist, memHist, waitHist, connHist] = await Promise.all([
             window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/metrics?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}`),
             window.apiClient.authenticatedFetch(`/api/sqlserver/db-throughput?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}`),
             window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/top-queries?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}`),
             window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/long-running-queries?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}${dbQ}`),
             window.apiClient.authenticatedFetch(`/api/queries/bottlenecks?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}&time_range=${encodeURIComponent(topOffendersSnapshotRange)}&limit=20${dbQ}`),
             window.apiClient.authenticatedFetch(`/api/sqlserver/dashboard/v2?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}`),
-            window.apiClient.authenticatedFetch(`/api/timescale/sqlserver/cpu-history?instance=${encodeURIComponent(instanceName)}&from=${fromISO}&to=${toISO}`)
+            typeof window.fetchSqlServerHistory === 'function'
+                ? window.fetchSqlServerHistory('cpu', instanceName, fromISO, toISO)
+                : Promise.resolve({ points: [], source: '', ok: false }),
+            typeof window.fetchSqlServerHistory === 'function'
+                ? window.fetchSqlServerHistory('memory', instanceName, fromISO, toISO)
+                : Promise.resolve({ points: [], source: '', ok: false }),
+            typeof window.fetchSqlServerHistory === 'function'
+                ? window.fetchSqlServerHistory('wait', instanceName, fromISO, toISO)
+                : Promise.resolve({ points: [], source: '', ok: false }),
+            typeof window.fetchSqlServerHistory === 'function'
+                ? window.fetchSqlServerHistory('connection', instanceName, fromISO, toISO)
+                : Promise.resolve({ points: [], source: '', ok: false }),
         ]).finally(() => {
             window.appState.fetchingMetrics = false;
         });
@@ -328,10 +339,33 @@ async function fetchTimescaleMetrics(instanceName) {
             const data = await sqlserverRes.json();
             window.appState.timescaleMetrics.sqlserver = data.metrics || [];
         }
-        if (cpuHistRes && cpuHistRes.ok) {
-            const data = await cpuHistRes.json();
-            window.appState.timescaleMetrics.cpuHistory = data.points || [];
-        }        if (dbRes.ok) {
+        if (cpuHist && cpuHist.ok) {
+            window.appState.timescaleMetrics.cpuHistory = cpuHist.points || [];
+            window.appState.historySources = window.appState.historySources || {};
+            window.appState.historySources.cpu = cpuHist.source || 'hot';
+            if (window.applyHistorySourceBadge) {
+                window.applyHistorySourceBadge('dashCpuHistorySourceBadge', cpuHist.source);
+            }
+        }
+        if (memHist && memHist.ok && (memHist.points || []).length) {
+            window.appState.pleHistory = memHist.points;
+            window.appState.historySources = window.appState.historySources || {};
+            window.appState.historySources.memory = memHist.source || 'hot';
+            if (window.applyHistorySourceBadge) {
+                window.applyHistorySourceBadge('dashPleHistorySourceBadge', memHist.source);
+            }
+        }
+        if (waitHist && waitHist.ok) {
+            window.appState.timescaleMetrics.waitHistory = waitHist.points || [];
+            window.appState.historySources = window.appState.historySources || {};
+            window.appState.historySources.wait = waitHist.source || 'hot';
+        }
+        if (connHist && connHist.ok) {
+            window.appState.timescaleMetrics.connectionHistory = connHist.points || [];
+            window.appState.historySources = window.appState.historySources || {};
+            window.appState.historySources.connection = connHist.source || 'hot';
+        }
+        if (dbRes.ok) {
             const data = await dbRes.json();
             window.appState.timescaleMetrics.throughput = data.db_stats || [];
         }
@@ -360,11 +394,20 @@ async function fetchTimescaleMetrics(instanceName) {
             window.appState.dashboardV2 = v2;
             const ld = (v2 && v2.compat && v2.compat.dashboard) ? v2.compat.dashboard : v2;
             window.appState.liveMetrics = ld;
-            window.appState.pleHistory = ld.ple_history || ld.PLEHistory || window.appState.pleHistory || [];
+            // Prefer federated memory-history PLE when present (supports hot+cold lookback).
+            if (!(window.appState.pleHistory && window.appState.pleHistory.length)) {
+                window.appState.pleHistory = ld.ple_history || ld.PLEHistory || [];
+            }
+            // Prefer federated wait-history when present.
+            const fedWait = window.appState.timescaleMetrics?.waitHistory;
+            if (fedWait && fedWait.length) {
+                window.appState.waitHistory = fedWait;
+            } else {
+                window.appState.waitHistory = ld.wait_history || ld.WaitHistory || window.appState.waitHistory || [];
+            }
             // Prefer v2 disk latency trend (Timescale-backed) when present.
             const ioTrend = (v2 && v2.root_cause && Array.isArray(v2.root_cause.disk_latency_trend_1h)) ? v2.root_cause.disk_latency_trend_1h : null;
             if (ioTrend && ioTrend.length > 0) {
-                // Must match DashboardView + updateIoChart: timestamp + files[] (not flat capture_time / p.ts).
                 window.appState.fileHistory = ioTrend.map(p => ({
                     timestamp: (p.timestamp ? new Date(p.timestamp).toISOString() : ''),
                     files: [{
@@ -375,7 +418,6 @@ async function fetchTimescaleMetrics(instanceName) {
             } else {
                 window.appState.fileHistory = ld.file_history || ld.FileHistory || window.appState.fileHistory || [];
             }
-            window.appState.waitHistory = ld.wait_history || ld.WaitHistory || window.appState.waitHistory || [];
         }
         window.appState.lastUpdate = new Date();
         updateLastRefreshTime();
@@ -919,7 +961,10 @@ function renderDashboardStructure(inst, v2) {
         <div class="grid-container">
             <div class="col-4 col-laptop-4 col-tablet-6">
                 <div class="card glass-panel h-chart-md">
-                    <div class="card-header" title="Trend of SQL Server CPU usage vs total system CPU usage over the last hour."><h3 style="font-size:0.8rem; margin:0;">System Resources (CPU) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="CPU Load"></i></h3></div>
+                    <div class="card-header" title="Trend of SQL Server CPU usage vs total system CPU usage over the last hour.">
+                        <h3 style="font-size:0.8rem; margin:0;">System Resources (CPU) <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="CPU Load"></i></h3>
+                        <span id="dashCpuHistorySourceBadge" class="badge badge-info" style="display:none; font-size:0.65rem;"></span>
+                    </div>
                     <div class="chart-container" style="height:210px;"><canvas id="dashResourcesChart"></canvas></div>
                 </div>
             </div>
@@ -947,7 +992,10 @@ function renderDashboardStructure(inst, v2) {
             </div>
             <div class="col-4 col-laptop-4 col-tablet-3">
                 <div class="card glass-panel" style="height: 180px; padding: 0.75rem;" title="Average time a data page stays in memory. Lower values indicate memory pressure and frequent disk reads.">
-                    <div class="card-header" style="padding: 0 0 0.5rem 0;"><h4 style="font-size:0.7rem; margin:0;">Page Life Expectancy <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="PLE"></i></h4></div>
+                    <div class="card-header" style="padding: 0 0 0.5rem 0; display:flex; justify-content:space-between; align-items:center;">
+                        <h4 style="font-size:0.7rem; margin:0;">Page Life Expectancy <i class="fa-solid fa-info-circle info-icon-sm" data-action="show-sqlserver-info" data-section="Instance Dashboard" data-metric="PLE"></i></h4>
+                        <span id="dashPleHistorySourceBadge" class="badge badge-info" style="display:none; font-size:0.6rem;"></span>
+                    </div>
                     <div class="chart-container" style="height:120px;"><canvas id="dashPleChart"></canvas></div>
                 </div>
             </div>
@@ -1388,19 +1436,20 @@ window.updatePleChart = function() {
                 labels = pleData.map((_, i) => '-' + (pleData.length - 1 - i) + 'm');
             }
         } else if (typeof pleHist[0] === 'object') {
-            // Support keys: ple, avg_ple, value, ple_seconds
-            hasData = pleHist.some(v => (v.ple ?? v.avg_ple ?? v.value ?? v.ple_seconds ?? 0) > 0);
+            // Support keys: ple, avg_ple, value, ple_seconds, page_life_expectancy (federated history)
+            const pleVal = (v) => v.ple ?? v.avg_ple ?? v.value ?? v.ple_seconds ?? v.page_life_expectancy ?? 0;
+            hasData = pleHist.some(v => pleVal(v) > 0);
             if (hasData) {
                 const sorted = [...pleHist].sort((a, b) => {
-                    const taStr = String(a.timestamp || a.capture_time || a.event_time || '').replace(' ', 'T');
-                    const tbStr = String(b.timestamp || b.capture_time || b.event_time || '').replace(' ', 'T');
+                    const taStr = String(a.timestamp || a.capture_timestamp || a.capture_time || a.event_time || '').replace(' ', 'T');
+                    const tbStr = String(b.timestamp || b.capture_timestamp || b.capture_time || b.event_time || '').replace(' ', 'T');
                     const ta = new Date(taStr).getTime();
                     const tb = new Date(tbStr).getTime();
                     return (isNaN(ta) || isNaN(tb)) ? 0 : ta - tb;
                 }).slice(-60);
-                pleData = sorted.map(t => t.ple ?? t.avg_ple ?? t.value ?? t.ple_seconds ?? 0);
+                pleData = sorted.map(t => pleVal(t));
                 labels = sorted.map(t => {
-                    const ts = t.timestamp || t.capture_time || t.event_time;
+                    const ts = t.timestamp || t.capture_timestamp || t.capture_time || t.event_time;
                     if(!ts) return '';
                     const tsStr = String(ts).replace(' ', 'T');
                     const date = new Date(tsStr);

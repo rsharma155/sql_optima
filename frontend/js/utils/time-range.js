@@ -59,6 +59,22 @@ export function getAppTimeRangeISO(opts = {}) {
     };
 }
 
+/** Apply a quick range ending now (hours back) and sync picker + appState. */
+export function setQuickRangeHours(hours) {
+    const h = Number(hours);
+    if (!Number.isFinite(h) || h <= 0) return;
+    const now = new Date();
+    const from = new Date(now.getTime() - h * 3600 * 1000);
+    const fromLocal = formatDateTimeLocalInput(from);
+    const toLocal = formatDateTimeLocalInput(now);
+    window.appState.fromTs = fromLocal;
+    window.appState.toTs = toLocal;
+    const fromInput = document.getElementById('from-ts');
+    const toInput = document.getElementById('to-ts');
+    if (fromInput) fromInput.value = fromLocal;
+    if (toInput) toInput.value = toLocal;
+}
+
 /** Apply global time range: sync picker, refresh current view without full re-navigation when possible. */
 export function applyGlobalTimeRangeRefresh() {
     syncTimeRangeFromPicker();
@@ -98,10 +114,10 @@ export function applyGlobalTimeRangeRefresh() {
             break;
         case 'storage-index-health': {
             const inst = window.appState.config?.instances?.[window.appState.currentInstanceIdx];
+            const pad = (n) => String(n).padStart(2, '0');
+            const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
             if (inst?.type === 'sqlserver' && typeof window.runSqlServerStorageIndexHealthDashboard === 'function') {
                 const msSih = window.appState.msSih || (window.appState.msSih = {});
-                const pad = (n) => String(n).padStart(2, '0');
-                const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
                 if (window.appState.fromTs) {
                     msSih.fromLocal = window.formatDateTimeLocalInput
                         ? window.formatDateTimeLocalInput(window.appState.fromTs).slice(0, 16)
@@ -113,6 +129,21 @@ export function applyGlobalTimeRangeRefresh() {
                         : String(window.appState.toTs).slice(0, 16);
                 }
                 void window.runSqlServerStorageIndexHealthDashboard({ skipLoadingShell: true });
+                return;
+            }
+            if (String(inst?.type || '').toLowerCase() === 'postgres' && typeof window.runPgStorageIndexHealthDashboard === 'function') {
+                const pgSih = window.appState.pgSih || (window.appState.pgSih = {});
+                if (window.appState.fromTs) {
+                    pgSih.fromLocal = window.formatDateTimeLocalInput
+                        ? window.formatDateTimeLocalInput(window.appState.fromTs).slice(0, 16)
+                        : fmt(new Date(window.appState.fromTs));
+                }
+                if (window.appState.toTs) {
+                    pgSih.toLocal = window.formatDateTimeLocalInput
+                        ? window.formatDateTimeLocalInput(window.appState.toTs).slice(0, 16)
+                        : fmt(new Date(window.appState.toTs));
+                }
+                void window.runPgStorageIndexHealthDashboard({ skipLoadingShell: true });
                 return;
             }
             break;

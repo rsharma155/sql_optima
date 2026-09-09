@@ -12,6 +12,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/rsharma155/sql_optima/internal/apiresponse"
 	"github.com/rsharma155/sql_optima/internal/config"
 	"github.com/rsharma155/sql_optima/internal/service"
 )
@@ -44,8 +45,7 @@ func (h *IntelligenceReportHandlers) Analyze(w http.ResponseWriter, r *http.Requ
 
 	result, err := h.svc.Analyze(r.Context(), serverID)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to run intelligence analysis", err, "handler", "intelligence")
 		return
 	}
 
@@ -82,8 +82,7 @@ func (h *IntelligenceReportHandlers) Latest(w http.ResponseWriter, r *http.Reque
 
 	meta, err := h.svc.GetLatestMeta(r.Context(), serverID)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load intelligence snapshot", err, "handler", "intelligence")
 		return
 	}
 
@@ -109,8 +108,7 @@ func (h *IntelligenceReportHandlers) GetReport(w http.ResponseWriter, r *http.Re
 
 	content, err := h.svc.GetReport(r.Context(), runID, format, instanceName, r.URL.Query())
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		apiresponse.WriteJSONError(w, http.StatusInternalServerError, "failed to load intelligence report", err, "handler", "intelligence")
 		return
 	}
 

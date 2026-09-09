@@ -49,6 +49,7 @@ window.AdminPanelView = async function() {
                 <button type="button" class="btn btn-sm btn-outline admin-nav-btn" id="admin-tab-collectors"><i class="fa-solid fa-clock-rotate-left"></i> Collector frequencies</button>
                 <button type="button" class="btn btn-sm btn-outline admin-nav-btn" id="admin-tab-notifications"><i class="fa-solid fa-bell"></i> Notifications</button>
                 <button type="button" class="btn btn-sm btn-outline admin-nav-btn" id="admin-tab-diagnostics"><i class="fa-solid fa-stethoscope"></i> SQL diagnostics</button>
+                <button type="button" class="btn btn-sm btn-outline admin-nav-btn" id="admin-tab-cold-storage"><i class="fa-solid fa-snowflake"></i> Cold storage</button>
             </div>
             <div id="admin-content">
                 <div style="display:flex; justify-content:center; align-items:center; min-height:12rem;">
@@ -65,9 +66,11 @@ window.AdminPanelView = async function() {
     document.getElementById('admin-tab-collectors').addEventListener('click', () => window.showAdminTab('collectors'));
     document.getElementById('admin-tab-notifications').addEventListener('click', () => window.showAdminTab('notifications'));
     document.getElementById('admin-tab-diagnostics').addEventListener('click', () => window.showAdminTab('diagnostics'));
+    document.getElementById('admin-tab-cold-storage').addEventListener('click', () => window.showAdminTab('cold-storage'));
 
     const initialTab = new URLSearchParams(window.location.search).get('tab');
-    if (initialTab === 'diagnostics' || initialTab === 'collectors' || initialTab === 'notifications' || initialTab === 'servers' || initialTab === 'users') {
+    const validTabs = ['diagnostics', 'collectors', 'notifications', 'servers', 'users', 'cold-storage'];
+    if (validTabs.includes(initialTab)) {
         window.showAdminTab(initialTab);
     } else {
         window.showAdminTab('users');
@@ -210,6 +213,28 @@ window.showAdminTab = async function(tab) {
                 </div>
             `;
             document.getElementById('admin-diag-retry-btn')?.addEventListener('click', () => window.showAdminTab('diagnostics'));
+        }
+    } else if (tab === 'cold-storage') {
+        try {
+            const { loadColdStorage } = await import('./admin_cold_storage.js');
+            if (typeof loadColdStorage === 'function') {
+                await loadColdStorage(content);
+            } else {
+                throw new Error('loadColdStorage is not a function');
+            }
+        } catch (err) {
+            console.error('Failed to load cold storage module:', err);
+            content.innerHTML = `
+                <div class="glass-panel" style="padding:2rem; border-radius:12px; text-align:center;">
+                    <i class="fa-solid fa-triangle-exclamation text-danger" style="font-size:2rem; margin-bottom:1rem;"></i>
+                    <h3 style="margin:0 0 0.5rem;">Failed to load Cold Storage</h3>
+                    <p class="text-muted">${window.escapeHtml(err.message)}</p>
+                    <button class="btn btn-sm btn-accent" id="admin-cold-retry-btn">
+                        <i class="fa-solid fa-rotate"></i> Retry
+                    </button>
+                </div>
+            `;
+            document.getElementById('admin-cold-retry-btn')?.addEventListener('click', () => window.showAdminTab('cold-storage'));
         }
     }
 };

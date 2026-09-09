@@ -26,6 +26,10 @@ type Config struct {
 	ForcePathStyle     bool
 	Prefix             string
 	CatalogURL         string
+	// TrinoURL is the HTTP address of the Trino coordinator (Phase 2).
+	// Used by the /api/cold-storage/query endpoint.
+	// Leave empty to disable the query endpoint.
+	TrinoURL           string
 	ExportBatchSize    int
 	ExportLagDays      int
 	PurgeRetentionDays int
@@ -44,6 +48,7 @@ func ConfigFromEnv() *Config {
 		ForcePathStyle:     envBool("COLD_STORAGE_FORCE_PATH_STYLE", true),
 		Prefix:             envStr("COLD_STORAGE_PREFIX", "metrics/"),
 		CatalogURL:         envStr("COLD_STORAGE_CATALOG_URL", ""),
+		TrinoURL:           envStr("COLD_STORAGE_TRINO_URL", ""),
 		ExportBatchSize:    envInt("COLD_STORAGE_BATCH_SIZE", 50000),
 		ExportLagDays:      envInt("COLD_STORAGE_LAG_DAYS", 2),
 		PurgeRetentionDays: envInt("COLD_STORAGE_PURGE_RETENTION_DAYS", 30),
